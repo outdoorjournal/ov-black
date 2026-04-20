@@ -25,6 +25,7 @@ import {
   createApiClient,
   createSessionEndpoint,
   getClient,
+  getItinerary,
   listTurns,
   type AgentTurnSummary,
 } from "@ov-black/api-client";
@@ -33,6 +34,7 @@ import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase";
 
 import { ChatShell } from "./_components/ChatShell";
+import { cardFromNode, type InitialCardPayload } from "./_components/types";
 
 // The shell is user-specific and session-specific — never cache it.
 export const dynamic = "force-dynamic";
@@ -90,11 +92,19 @@ export default async function ChatPage({ params }: PageProps) {
     ? { id: clientResult.client.id, full_name: clientResult.client.full_name }
     : { id: clientId, full_name: "Your concierge" };
 
-  // Replay prior turns if any — this is the reload path. A brand-new
-  // session returns an empty list and the ChatShell auto-fires a bootstrap
-  // opener turn on mount.
-  const turnsResult = await listTurns(api, sessionResult.session_id);
+  // Replay prior turns AND prior MoodBoard cards in parallel — this is the
+  // reload path. A brand-new session returns empty lists and the ChatShell
+  // auto-fires a bootstrap opener turn on mount.
+  const [turnsResult, itineraryResult] = await Promise.all([
+    listTurns(api, sessionResult.session_id),
+    getItinerary(api, sessionResult.itinerary_id),
+  ]);
   const initialTurns: AgentTurnSummary[] = turnsResult.ok ? turnsResult.turns : [];
+  const initialCards: InitialCardPayload[] = itineraryResult.ok
+    ? itineraryResult.nodes
+        .map(cardFromNode)
+        .filter((c): c is InitialCardPayload => c !== null)
+    : [];
 
   return (
     <ChatShell
@@ -103,6 +113,8 @@ export default async function ChatPage({ params }: PageProps) {
       apiBaseUrl={apiBaseUrl}
       client={clientForShell}
       initialTurns={initialTurns}
+      itineraryId={sessionResult.itinerary_id}
+      initialCards={initialCards}
     />
   );
 }

@@ -118,18 +118,23 @@ async def create_session_endpoint(
     session: "AsyncSession" = Depends(get_session),
 ) -> OpenSessionResponse:
     actor = await _actor_for_user(user, session)
-    outcome, agent_session = await open_or_reuse_session(
+    outcome, agent_session, itinerary_id = await open_or_reuse_session(
         get_sessionmaker(),
         actor=actor,
         client_id=payload.client_id,
     )
-    if outcome is not SessionOutcome.OK or agent_session is None:
+    if (
+        outcome is not SessionOutcome.OK
+        or agent_session is None
+        or itinerary_id is None
+    ):
         # Collapsed 404 shape (D015) — FORBIDDEN and CLIENT_NOT_FOUND both
         # land here so a caller cannot probe existence of a client_id.
         raise HTTPException(status_code=404, detail="client_not_found")
     return OpenSessionResponse(
         session_id=agent_session.id,
         agentcore_session_id=agent_session.agentcore_session_id,
+        itinerary_id=itinerary_id,
     )
 
 

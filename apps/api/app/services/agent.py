@@ -235,20 +235,26 @@ async def open_or_reuse_session(
     *,
     actor: ActorContext,
     client_id: uuid.UUID,
-) -> tuple[SessionOutcome, AgentSession | None]:
+) -> tuple[SessionOutcome, AgentSession | None, uuid.UUID | None]:
     """Idempotently open an AgentSession for a client.
 
     If an open session exists (``ended_at IS NULL``), return it; else INSERT
     one with a fresh ``agentcore_session_id``. Caller cannot distinguish
     reuse from create from the HTTP surface — both return 201 above. We
     *do* emit different log events so observability can tell the two apart.
+
+    On the OK path the tuple's third element is the one-per-client itinerary
+    id (created on-demand by ``_ensure_itinerary_for_client`` if it's the
+    very first session). This lets the RSC chat page hydrate the MoodBoard
+    on a hard reload without a separate lookup. Non-OK outcomes return
+    ``None`` for the itinerary id.
     """
     async with session_factory() as session:
         client = (
             await session.execute(select(Client).where(Client.id == client_id))
         ).scalar_one_or_none()
         if client is None:
-            return SessionOutcome.CLIENT_NOT_FOUND, None
+            return SessionOutcome.CLIENT_NOT_FOUND, None, None
 
         # JIT-backfill the client↔auth.users link on the first POST /sessions
         # made by the client themself. Only runs when the link is missing and
@@ -266,10 +272,10 @@ async def open_or_reuse_session(
         # Access check against the (possibly-updated) client row.
         if actor.actor_kind == "advisor":
             if actor.user_id is None or client.owner_id != actor.user_id:
-                return SessionOutcome.FORBIDDEN, None
+                return SessionOutcome.FORBIDDEN, None, None
         elif actor.actor_kind == "user":
             if actor.user_id is None or client.auth_user_id != actor.user_id:
-                return SessionOutcome.FORBIDDEN, None
+                return SessionOutcome.FORBIDDEN, None, None
         # actor_kind == 'agent' is internal — no additional gate here.
 
         existing = (
@@ -297,7 +303,12 @@ async def open_or_reuse_session(
                     "client_id": str(client_id),
                 },
             )
-            return SessionOutcome.OK, existing
+            itinerary_id = await _ensure_itinerary_for_client(
+                session,
+                client_id=client_id,
+                actor_user_id=actor.user_id,
+            )
+            return SessionOutcome.OK, existing, itinerary_id
 
         new = AgentSession(
             client_id=client_id,
@@ -322,7 +333,12 @@ async def open_or_reuse_session(
                 "client_id": str(client_id),
             },
         )
-        return SessionOutcome.OK, new
+        itinerary_id = await _ensure_itinerary_for_client(
+            session,
+            client_id=client_id,
+            actor_user_id=actor.user_id,
+        )
+        return SessionOutcome.OK, new, itinerary_id
 
 
 # ── list_turns ─────────────────────────────────────────────────────────────

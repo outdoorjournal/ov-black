@@ -718,13 +718,16 @@ async def test_open_or_reuse_session_returns_existing_open_session(
 ) -> None:
     """If a session with ended_at IS NULL exists, reuse — don't INSERT."""
     factory.open_agent_session_on_reuse = agent_session
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=advisor_actor,
         client_id=client_row.id,
     )
     assert outcome is SessionOutcome.OK
     assert session_row is agent_session
+    # S07 T05: open_or_reuse_session now ensures a one-per-client itinerary
+    # and returns its id so the RSC chat page can hydrate the MoodBoard.
+    assert itinerary_id is not None
     # No new AgentSession was added to any FakeSession.
     assert all(
         not isinstance(obj, AgentSession)
@@ -740,7 +743,7 @@ async def test_open_or_reuse_session_inserts_when_none_exists(
 ) -> None:
     """With no open session, a fresh row is inserted and returned."""
     factory.open_agent_session_on_reuse = None
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=advisor_actor,
         client_id=client_row.id,
@@ -749,6 +752,9 @@ async def test_open_or_reuse_session_inserts_when_none_exists(
     assert isinstance(session_row, AgentSession)
     # The inserted row uses a real UUID for agentcore_session_id.
     uuid.UUID(session_row.agentcore_session_id)
+    # And an itinerary was ensured for the client at session-open time.
+    assert itinerary_id is not None
+    assert any(str(it.id) == str(itinerary_id) for it in factory.itineraries)
 
 
 async def test_stream_turn_turn_index_monotonically_increases(
@@ -870,7 +876,7 @@ async def test_open_or_reuse_session_jit_backfill_matching_email_populates_auth_
     )
 
     caplog.set_level(logging.INFO, logger="ov_black.agent.service")
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, _itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=user_actor,
         client_id=client_row.id,
@@ -917,7 +923,7 @@ async def test_open_or_reuse_session_jit_backfill_mismatched_email_forbidden(
     )
 
     caplog.set_level(logging.INFO, logger="ov_black.agent.service")
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=user_actor,
         client_id=client_row.id,
@@ -925,6 +931,8 @@ async def test_open_or_reuse_session_jit_backfill_mismatched_email_forbidden(
 
     assert outcome is SessionOutcome.FORBIDDEN
     assert session_row is None
+    # Non-OK outcomes must not leak an itinerary id (D015 collapse shape).
+    assert itinerary_id is None
     # No UPDATE was issued, and the in-memory row is still NULL.
     assert factory.auth_update_count == 0
     assert client_row.auth_user_id is None
@@ -951,7 +959,7 @@ async def test_open_or_reuse_session_jit_backfill_skipped_when_already_populated
     )
 
     caplog.set_level(logging.INFO, logger="ov_black.agent.service")
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, _itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=user_actor,
         client_id=client_row.id,
@@ -992,7 +1000,7 @@ async def test_open_or_reuse_session_jit_backfill_profiles_upsert_inserts_client
         user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
     )
 
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, _itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=user_actor,
         client_id=client_row.id,
@@ -1032,7 +1040,7 @@ async def test_open_or_reuse_session_jit_backfill_profiles_upsert_never_downgrad
         user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
     )
 
-    outcome, session_row = await open_or_reuse_session(
+    outcome, session_row, _itinerary_id = await open_or_reuse_session(
         factory,  # type: ignore[arg-type]
         actor=user_actor,
         client_id=client_row.id,

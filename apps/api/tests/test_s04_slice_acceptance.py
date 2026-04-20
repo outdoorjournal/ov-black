@@ -132,6 +132,14 @@ def _seed_advisor_client_doll(
     async def _do(eng) -> None:
         async with eng.begin() as conn:
             await _insert_auth_user(conn, advisor_id, advisor_email)
+            # S07 T05: open_or_reuse_session now eagerly ensures a one-per-client
+            # itinerary at session-open time, and itineraries.client_id is FK-bound
+            # to auth.users(id). public.clients.id is a generated uuid that is NOT
+            # in auth.users, so we seed an auth.users row under the SAME id used as
+            # public.clients.id — i.e., the seeded "client" is an identity reused
+            # as both the public.clients PK and its matching auth.users row. This
+            # mirrors the steady-state post-JIT-backfill shape in production.
+            await _insert_auth_user(conn, client_id, client_email)
             await conn.execute(
                 text(
                     "insert into public.profiles (id, role) values (:id, 'advisor')"
@@ -177,9 +185,15 @@ def _seed_advisor_client_doll(
     return Seed(advisor_id=advisor_id, client_id=client_id)
 
 
-def _cleanup_seed(advisor_id: uuid.UUID) -> None:
+def _cleanup_seed(advisor_id: uuid.UUID, client_id: uuid.UUID | None = None) -> None:
     """Delete any agent state + the seeded identities. ON DELETE CASCADE
-    handles public.voodoo_dolls and public.agent_sessions/turns."""
+    handles public.voodoo_dolls and public.agent_sessions/turns.
+
+    S07 T05: ``client_id`` is optional to keep backward compatibility with
+    existing callers; when provided, the matching auth.users row seeded for
+    the client is also deleted (itineraries.client_id cascades via SET NULL,
+    which is fine — the S04 tests don't inspect the post-cleanup state).
+    """
 
     async def _do(eng) -> None:
         async with eng.begin() as conn:
@@ -193,6 +207,11 @@ def _cleanup_seed(advisor_id: uuid.UUID) -> None:
                 text("delete from auth.users where id = :id"),
                 {"id": advisor_id},
             )
+            if client_id is not None:
+                await conn.execute(
+                    text("delete from auth.users where id = :id"),
+                    {"id": client_id},
+                )
 
     _run_with_engine(_do)
 
@@ -390,7 +409,7 @@ def test_seeded_voodoo_doll_loads_into_first_turn(
             "Voodoo Doll passion did not reach the system prompt"
         )
     finally:
-        _cleanup_seed(seed.advisor_id)
+        _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
 # ── Test 2: 5-turn scripted onboarding persists all turns ──────────────────
@@ -471,7 +490,7 @@ def test_scripted_five_turn_onboarding_persists_all_turns(
         for i, reply in enumerate(assistant_texts):
             assert rows[i * 2 + 1][2] == reply
     finally:
-        _cleanup_seed(seed.advisor_id)
+        _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
 # ── Test 3: first_token_ms lands in the SSE frame + the DB row ─────────────
@@ -529,7 +548,7 @@ def test_first_token_ms_recorded_under_budget(
         assert rows[0][0] is not None, "agent_turns.first_token_ms is NULL"
         assert 0 <= int(rows[0][0]) <= 2000
     finally:
-        _cleanup_seed(seed.advisor_id)
+        _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
 # ── Test 4: ThrottlingException on turn 3 → silent retry, no frame loss ────
@@ -616,7 +635,7 @@ def test_throttling_on_turn_3_triggers_silent_retry_without_frame_loss(
             row = next(r for r in rows if r[0] == idx)
             assert row[2] == 0, f"unexpected retry on turn_index {idx}"
     finally:
-        _cleanup_seed(seed.advisor_id)
+        _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
 # ── Test 5: both attempts fail → crafted fallback + error row ──────────────
@@ -678,7 +697,7 @@ def test_retries_exhausted_surfaces_crafted_fallback(
         assert error_row[2] == 1
         assert error_row[3] == ""
     finally:
-        _cleanup_seed(seed.advisor_id)
+        _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
 # ── Test 6: Voodoo Doll sensitive context never appears in logs ────────────
@@ -745,7 +764,7 @@ def test_voodoo_doll_context_never_appears_in_logs(
                 f"{record.name} {record.getMessage()!r}"
             )
     finally:
-        _cleanup_seed(seed.advisor_id)
+        _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
 # ── Self-check: regex imports are still referenced ─────────────────────────

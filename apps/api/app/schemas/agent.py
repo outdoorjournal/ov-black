@@ -41,6 +41,12 @@ class OpenSessionResponse(BaseModel):
 
     session_id: uuid.UUID
     agentcore_session_id: str
+    # S07 T05: exposed so the RSC chat page can call GET /itinerary/{id} to
+    # rehydrate proposed cards on a hard reload without round-tripping through
+    # a separate lookup. One-itinerary-per-client is ensured at session-open
+    # time (open_or_reuse_session) and reused lazily when stream_turn persists
+    # agent-proposed cards.
+    itinerary_id: uuid.UUID
 
 
 class TurnRequest(BaseModel):

@@ -189,6 +189,7 @@ def test_post_sessions_advisor_owned_client_returns_201(
     advisor = override_actor_as_advisor
     client_id = uuid.uuid4()
     session_id = uuid.uuid4()
+    itinerary_id = uuid.uuid4()
     agent_sess = _FakeAgentSession(
         session_id=session_id,
         client_id=client_id,
@@ -197,10 +198,10 @@ def test_post_sessions_advisor_owned_client_returns_201(
 
     async def _fake_open(
         _factory: Any, *, actor: ActorContext, client_id: uuid.UUID
-    ) -> tuple[SessionOutcome, Any]:
+    ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         assert actor.actor_kind == "advisor"
         assert actor.user_id == advisor
-        return SessionOutcome.OK, agent_sess
+        return SessionOutcome.OK, agent_sess, itinerary_id
 
     monkeypatch.setattr(agent_router_module, "open_or_reuse_session", _fake_open)
 
@@ -214,6 +215,7 @@ def test_post_sessions_advisor_owned_client_returns_201(
     body = resp.json()
     assert body["session_id"] == str(session_id)
     assert body["agentcore_session_id"] == "ac-sess-owned"
+    assert body["itinerary_id"] == str(itinerary_id)
 
 
 def test_post_sessions_cross_advisor_returns_404(
@@ -228,8 +230,8 @@ def test_post_sessions_cross_advisor_returns_404(
 
     async def _fake_open(
         _factory: Any, *, actor: ActorContext, client_id: uuid.UUID
-    ) -> tuple[SessionOutcome, Any]:
-        return SessionOutcome.FORBIDDEN, None
+    ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
+        return SessionOutcome.FORBIDDEN, None, None
 
     monkeypatch.setattr(agent_router_module, "open_or_reuse_session", _fake_open)
 
@@ -253,6 +255,7 @@ def test_post_sessions_is_idempotent_on_reopen(
     """Two consecutive POSTs return the same session_id — service is idempotent."""
     client_id = uuid.uuid4()
     session_id = uuid.uuid4()
+    itinerary_id = uuid.uuid4()
     agent_sess = _FakeAgentSession(
         session_id=session_id,
         client_id=client_id,
@@ -263,9 +266,9 @@ def test_post_sessions_is_idempotent_on_reopen(
 
     async def _fake_open(
         _factory: Any, *, actor: ActorContext, client_id: uuid.UUID
-    ) -> tuple[SessionOutcome, Any]:
+    ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         call_count["n"] += 1
-        return SessionOutcome.OK, agent_sess
+        return SessionOutcome.OK, agent_sess, itinerary_id
 
     monkeypatch.setattr(agent_router_module, "open_or_reuse_session", _fake_open)
 

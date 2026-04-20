@@ -354,7 +354,14 @@ export type CreateSessionDetail =
  * CLIENT_NOT_FOUND and FORBIDDEN (D015 shape) so the UI cannot probe.
  */
 export type CreateSessionResult =
-  | { ok: true; session_id: string; agentcore_session_id: string }
+  | {
+      ok: true;
+      session_id: string;
+      agentcore_session_id: string;
+      // S07 T05: exposed so the RSC chat page can feed GET /itinerary/{id}
+      // to rehydrate proposed cards on reload without a separate lookup.
+      itinerary_id: string;
+    }
   | { ok: false; status: number; detail: CreateSessionDetail };
 
 /**
@@ -378,6 +385,7 @@ export async function createSessionEndpoint(
         ok: true,
         session_id: data.session_id,
         agentcore_session_id: data.agentcore_session_id,
+        itinerary_id: data.itinerary_id,
       };
     }
     return {
