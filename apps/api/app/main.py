@@ -5,12 +5,14 @@ from typing import TYPE_CHECKING
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
+from app.agent.bedrock import Boto3AgentRuntimeClient, MockAgentRuntimeClient
 from app.auth import PUBLIC_PATHS, AuthenticatedUser, JWTAuthMiddleware, require_user
 from app.config import get_settings
 from app.db import dispose_engine
 from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.registry import get_registry
+from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
 from app.routers.clients import router as clients_router
 from app.routers.inventory import router as inventory_router
@@ -62,6 +64,35 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         "inventory.providers.registered",
         extra={"sources": registered},
     )
+
+    # ── AgentCore runtime wiring (S04 T05) ─────────────────────────────────
+    # Stash a single AgentRuntimeClient on app.state so request handlers can
+    # resolve it through the get_agent_runtime dependency. In local dev with
+    # an unset ARN we install a canned mock so `uv run pytest` and
+    # `uvicorn --reload` work without AWS creds.
+    if settings.env == "local" and not settings.bedrock_agentcore_runtime_arn:
+        _app.state.agent_runtime = MockAgentRuntimeClient(
+            events=[
+                {"type": "delta", "text": "Hello, I'm your AgentCore scratchpad."},
+                {"type": "done"},
+            ]
+        )
+        logger.info(
+            "agent.runtime.configured",
+            extra={"arn_tail": None, "mode": "mock"},
+        )
+    else:
+        _app.state.agent_runtime = Boto3AgentRuntimeClient(settings=settings)
+        arn_tail = (
+            settings.bedrock_agentcore_runtime_arn[-16:]
+            if settings.bedrock_agentcore_runtime_arn
+            else None
+        )
+        logger.info(
+            "agent.runtime.configured",
+            extra={"arn_tail": arn_tail, "mode": "boto3"},
+        )
+
     try:
         yield
     finally:
@@ -89,6 +120,7 @@ app.include_router(auth_router)
 app.include_router(itineraries_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)
+app.include_router(agent_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

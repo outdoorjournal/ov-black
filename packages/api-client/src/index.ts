@@ -11,14 +11,19 @@ import { createClient } from "./generated/client/client.gen.js";
 import type { Client } from "./generated/client/types.gen.js";
 import {
   createClientEndpointClientsPost,
+  createSessionEndpointSessionsPost,
   getClientEndpointClientsClientIdGet,
   listClientsEndpointClientsGet,
+  listTurnsEndpointSessionsSessionIdTurnsGet,
   redeemInviteEndpointAuthRedeemInvitePost,
 } from "./generated/sdk.gen.js";
 import type {
+  AgentTurnSummary,
   ClientCreatePayload,
   ClientDetail,
   ClientSummary,
+  OpenSessionRequest,
+  OpenSessionResponse,
   RedeemInviteRequest,
 } from "./generated/types.gen.js";
 
@@ -72,6 +77,18 @@ export type {
   VoodooDollJsonb,
   ContactChannel,
   GroupType,
+} from "./generated/types.gen.js";
+
+// Agent sessions (S04): POST /sessions request/response + the replay shape
+// for GET /sessions/{id}/turns. The SSE stream for /turn is consumed by a
+// DIY reader in apps/web (S05) — only the non-streaming surfaces are typed
+// here.
+export type {
+  OpenSessionRequest,
+  OpenSessionResponse,
+  TurnRequest,
+  AgentTurnSummary,
+  TurnRole,
 } from "./generated/types.gen.js";
 
 export interface ApiClientConfig {
@@ -317,5 +334,103 @@ export async function getClient(
 function parseGetClientDetail(status: number): GetClientDetail {
   if (status === 404) return "client_not_found";
   if (status === 403) return "advisor_only";
+  return "unknown";
+}
+
+export type CreateSessionDetail =
+  | "client_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for POST /sessions. 404 collapses both
+ * CLIENT_NOT_FOUND and FORBIDDEN (D015 shape) so the UI cannot probe.
+ */
+export type CreateSessionResult =
+  | { ok: true; session_id: string; agentcore_session_id: string }
+  | { ok: false; status: number; detail: CreateSessionDetail };
+
+/**
+ * Typed wrapper for POST /sessions (open or reuse an agent session).
+ *
+ * Idempotent on the backend — two consecutive calls with the same
+ * `client_id` return the same session_id. Callers can treat the 201 as
+ * "you now have a session" without tracking create-vs-reuse state.
+ */
+export async function createSessionEndpoint(
+  client: Client,
+  body: OpenSessionRequest,
+): Promise<CreateSessionResult> {
+  try {
+    const { data, error, response } = await createSessionEndpointSessionsPost({
+      client,
+      body,
+    });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        session_id: data.session_id,
+        agentcore_session_id: data.agentcore_session_id,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseCreateSessionDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseCreateSessionDetail(status: number): CreateSessionDetail {
+  if (status === 404) return "client_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type ListTurnsDetail =
+  | "session_not_found"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for GET /sessions/{id}/turns.
+ */
+export type ListTurnsResult =
+  | { ok: true; turns: AgentTurnSummary[] }
+  | { ok: false; status: number; detail: ListTurnsDetail };
+
+/**
+ * Typed wrapper for GET /sessions/{id}/turns — returns every turn on a
+ * session in turn_index order. This is the Command Center replay path;
+ * the live SSE stream is consumed with a DIY reader in apps/web.
+ */
+export async function listTurns(
+  client: Client,
+  sessionId: string,
+): Promise<ListTurnsResult> {
+  try {
+    const { data, error, response } =
+      await listTurnsEndpointSessionsSessionIdTurnsGet({
+        client,
+        path: { session_id: sessionId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, turns: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseListTurnsDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseListTurnsDetail(status: number): ListTurnsDetail {
+  if (status === 404) return "session_not_found";
   return "unknown";
 }
