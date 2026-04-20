@@ -1,9 +1,21 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { createApiClient, listClients } from "@ov-black/api-client";
+
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase";
 
-// Always render per-request — this page gates on the current user session,
-// which lives in request cookies and must never be cached.
+// Always render per-request — this page gates on the current user session
+// and reads the advisor's client list, which must never be cached.
 export const dynamic = "force-dynamic";
 
 export default async function CommandCenterPage() {
@@ -19,16 +31,116 @@ export default async function CommandCenterPage() {
     redirect("/");
   }
 
+  // Safe to read the session token AFTER the getUser() validation: the
+  // token we forward to our API is the same JWT the server just accepted.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
+
+  const { apiBaseUrl } = publicEnv();
+  const api = createApiClient(
+    accessToken ? { baseUrl: apiBaseUrl, accessToken } : { baseUrl: apiBaseUrl },
+  );
+  const result = await listClients(api);
+
   return (
-    <main className="flex min-h-screen items-center justify-center px-6 py-16">
-      <div className="text-center">
-        <h1 className="font-serif text-6xl tracking-tight text-ink">
-          Command Center
-        </h1>
-        <p className="mt-6 font-sans text-sm uppercase tracking-[0.3em] text-ink/60">
-          Ready when you are.
-        </p>
-      </div>
+    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-12 px-6 py-16">
+      <header className="flex items-end justify-between gap-6">
+        <div>
+          <h1 className="font-serif text-5xl tracking-tight text-ink">
+            Command Center
+          </h1>
+          <p className="mt-3 font-sans text-xs uppercase tracking-[0.3em] text-ink/60">
+            Your clients
+          </p>
+        </div>
+        <Button asChild>
+          <Link href="/command-center/new-client">New Client</Link>
+        </Button>
+      </header>
+
+      {result.ok ? (
+        <ClientList clients={result.clients} />
+      ) : (
+        <Card className="border-destructive/40">
+          <CardHeader>
+            <CardTitle className="text-lg">Could not load clients</CardTitle>
+            <CardDescription>{errorCopy(result.detail)}</CardDescription>
+          </CardHeader>
+        </Card>
+      )}
     </main>
   );
+}
+
+function ClientList({
+  clients,
+}: {
+  clients: Array<{
+    id: string;
+    full_name: string;
+    email: string;
+    has_voodoo_doll: boolean;
+    invite_status: "pending" | "consumed";
+    created_at: string;
+  }>;
+}) {
+  if (clients.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">No clients yet</CardTitle>
+          <CardDescription>
+            Click New Client to create the first Voodoo Doll and issue an
+            invite.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  return (
+    <ul className="flex flex-col gap-4">
+      {clients.map((c) => (
+        <li key={c.id}>
+          <Card>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-6">
+                <div>
+                  <CardTitle className="font-serif text-2xl">
+                    {c.full_name}
+                  </CardTitle>
+                  <CardDescription className="font-sans text-sm text-ink/70">
+                    {c.email}
+                  </CardDescription>
+                </div>
+                <span className="whitespace-nowrap font-sans text-[11px] uppercase tracking-[0.2em] text-ink/60">
+                  {c.invite_status === "consumed"
+                    ? "Invite accepted"
+                    : "Invite pending"}
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="font-sans text-sm text-ink/70">
+              {c.has_voodoo_doll
+                ? "Voodoo Doll on file."
+                : "No Voodoo Doll yet."}
+            </CardContent>
+          </Card>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function errorCopy(detail: string): string {
+  switch (detail) {
+    case "advisor_only":
+      return "This workspace is advisor-only.";
+    case "network_error":
+      return "Could not reach the server. Try again in a moment.";
+    default:
+      return "Something went wrong. Try again in a moment.";
+  }
 }

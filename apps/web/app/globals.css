@@ -5,6 +5,29 @@
 :root {
   --font-serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* shadcn/ui theme tokens — neutral base, tuned to match the OV paper/ink
+     palette so the generated primitives sit quietly on our background. */
+  --background: 40 33% 95%;
+  --foreground: 0 0% 4%;
+  --card: 40 33% 97%;
+  --card-foreground: 0 0% 4%;
+  --popover: 40 33% 97%;
+  --popover-foreground: 0 0% 4%;
+  --primary: 0 0% 4%;
+  --primary-foreground: 40 33% 97%;
+  --secondary: 40 20% 90%;
+  --secondary-foreground: 0 0% 4%;
+  --muted: 40 20% 90%;
+  --muted-foreground: 0 0% 35%;
+  --accent: 40 20% 88%;
+  --accent-foreground: 0 0% 4%;
+  --destructive: 0 72% 42%;
+  --destructive-foreground: 40 33% 97%;
+  --border: 40 15% 80%;
+  --input: 40 15% 80%;
+  --ring: 0 0% 4%;
+  --radius: 0.375rem;
 }
 
 html,
