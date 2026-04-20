@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── JS/TS workspaces: lint, typecheck, build, test across apps/web, packages/*, infra/cdk ──
+  workspaces:
+    name: pnpm + turbo (lint/typecheck/build/test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack (pnpm from packageManager field)
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Turbo lint
+        run: pnpm turbo run lint
+
+      - name: Turbo typecheck
+        run: pnpm turbo run typecheck
+
+      - name: Turbo build
+        run: pnpm turbo run build
+
+      - name: Turbo test
+        run: pnpm turbo run test
+
+  # ── Python/FastAPI: uv-managed pytest for apps/api ──
+  api-pytest:
+    name: apps/api pytest (uv)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Sync dependencies (frozen)
+        run: uv sync --frozen
+
+      - name: Run pytest
+        run: uv run pytest -q
+
+  # ── CDK synth: hermetic synth from a clean checkout (no AWS creds needed — D018) ──
+  cdk-synth:
+    name: infra/cdk synth
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: cdk synth
+        working-directory: infra/cdk
+        run: pnpm cdk synth --quiet
+
+  # ── Deploy gate: only runs on push to main, blocks on the `staging` environment's manual approval ──
+  deploy-staging:
+    name: Deploy to staging (manual approval)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [workspaces, api-pytest, cdk-synth]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Placeholder — deploy pipeline is wired in a later milestone
+        run: |
+          echo "Reached staging deploy gate for ${{ github.sha }}."
+          echo "The GitHub Environment's required-reviewer gate is what enforces manual approval;"
+          echo "the actual CDK deploy + ECR push is scoped to a later slice."
