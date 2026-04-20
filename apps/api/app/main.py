@@ -8,6 +8,9 @@ from pydantic import BaseModel
 from app.auth import PUBLIC_PATHS, AuthenticatedUser, JWTAuthMiddleware, require_user
 from app.config import get_settings
 from app.db import dispose_engine
+from app.inventory.providers.mock import MockProvider
+from app.inventory.providers.ov import OVProvider
+from app.inventory.registry import get_registry
 from app.routers.auth import router as auth_router
 
 if TYPE_CHECKING:
@@ -32,6 +35,30 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     logger.info("api.startup", extra={"env": settings.env})
+
+    registry = get_registry()
+    enabled = [
+        name.strip()
+        for name in settings.inventory_providers_enabled.split(",")
+        if name.strip()
+    ]
+    registered: list[str] = []
+    for name in enabled:
+        if name == "ov":
+            registry.register(OVProvider(settings=settings))
+            registered.append("ov")
+        elif name == "mock":
+            registry.register(MockProvider())
+            registered.append("mock")
+        else:
+            logger.warning(
+                "inventory.providers.unknown",
+                extra={"source": name},
+            )
+    logger.info(
+        "inventory.providers.registered",
+        extra={"sources": registered},
+    )
     try:
         yield
     finally:

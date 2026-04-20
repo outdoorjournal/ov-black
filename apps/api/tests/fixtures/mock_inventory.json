@@ -1,0 +1,93 @@
+[
+  {
+    "kind": "experience",
+    "source": "mock",
+    "source_id": "mock-exp-como-01",
+    "title": "Lakeside Walks Around Lake Como",
+    "description": "A gentle multi-day walking experience along Lake Como's western shore, staying in small family-run inns.",
+    "photos": [
+      "https://example.test/mock/como-exp/hero.jpg",
+      "https://example.test/mock/como-exp/2.jpg"
+    ],
+    "location": {
+      "lat": 45.9852,
+      "lng": 9.2572,
+      "label": "Lake Como, Italy"
+    },
+    "price": {
+      "amount_min": 850.0,
+      "amount_max": 1200.0,
+      "currency": "USD"
+    },
+    "editorial_links": [],
+    "tags": ["walking", "lakes", "slow travel"],
+    "duration_days": {"min": 4, "max": 6},
+    "difficulty": {"min": 1, "max": 2},
+    "raw": {"mock_note": "hand-authored fixture, not sourced from OV"}
+  },
+  {
+    "kind": "experience",
+    "source": "mock",
+    "source_id": "mock-exp-dolomites-01",
+    "title": "Via Ferrata Adventure in the Dolomites",
+    "description": "Guided via ferrata routes across the Sella massif, suitable for fit intermediates with a head for heights.",
+    "photos": [
+      "https://example.test/mock/dolomites-exp/hero.jpg"
+    ],
+    "location": {
+      "lat": 46.4102,
+      "lng": 11.8440,
+      "label": "Sella, Italy"
+    },
+    "price": {
+      "amount_min": 1400.0,
+      "amount_max": 1400.0,
+      "currency": "EUR"
+    },
+    "editorial_links": [],
+    "tags": ["via ferrata", "hiking", "alps"],
+    "duration_days": {"min": 3, "max": 3},
+    "difficulty": {"min": 3, "max": 4},
+    "raw": {}
+  },
+  {
+    "kind": "destination",
+    "source": "mock",
+    "source_id": "mock-dest-como-region",
+    "title": "Lake Como Region",
+    "description": "The Italian lakes anchor of Lombardy — villas, gardens, and ferry-connected lakeside villages.",
+    "photos": [
+      "https://example.test/mock/como-dest/hero.jpg"
+    ],
+    "location": {
+      "lat": 45.9852,
+      "lng": 9.2572,
+      "label": "Lake Como, Italy"
+    },
+    "price": null,
+    "editorial_links": [
+      {"url": "https://example.test/guides/lake-como", "title": "Lake Como primer"}
+    ],
+    "tags": ["italy", "lakes", "destination"],
+    "raw": {}
+  },
+  {
+    "kind": "destination",
+    "source": "mock",
+    "source_id": "mock-dest-patagonia",
+    "title": "Torres del Paine, Patagonia",
+    "description": "Southern Chilean Patagonia's flagship national park — the W and O circuits anchor the region.",
+    "photos": [
+      "https://example.test/mock/patagonia-dest/hero.jpg"
+    ],
+    "location": {
+      "lat": -50.9423,
+      "lng": -72.9867,
+      "label": "Torres del Paine, Chile"
+    },
+    "price": null,
+    "editorial_links": [],
+    "tags": ["patagonia", "trekking", "destination"],
+    "raw": {}
+  }
+]

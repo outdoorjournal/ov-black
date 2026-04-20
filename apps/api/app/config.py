@@ -74,6 +74,15 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    inventory_providers_enabled: str = Field(
+        default="ov,mock",
+        description=(
+            "Comma-separated list of inventory provider sources to register at "
+            "startup. Known values: 'ov', 'mock'. Unknown names are skipped "
+            "with a warning so a typo doesn't crash the whole boot."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
