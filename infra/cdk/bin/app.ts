@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+import 'source-map-support/register';
+import { App } from 'aws-cdk-lib';
+import { loadEnvConfig } from '../config/env';
+import { SecretsStack } from '../lib/secrets-stack';
+import { ApiStack } from '../lib/api-stack';
+
+const app = new App();
+const config = loadEnvConfig(app);
+const awsEnv = { account: config.account, region: config.region };
+const imageTagContext = app.node.tryGetContext('imageTag') as string | undefined;
+
+const secretsStack = new SecretsStack(app, `OvBlackSecrets-${config.envName}`, {
+  envName: config.envName,
+  env: awsEnv,
+  description: `ov-black Secrets Manager entries for ${config.envName} (Supabase service role + JWT).`,
+});
+
+const apiStack = new ApiStack(app, `OvBlackApi-${config.envName}`, {
+  envName: config.envName,
+  vpcId: config.vpcId,
+  availabilityZones: config.availabilityZones,
+  publicSubnetIds: config.publicSubnetIds,
+  privateSubnetIds: config.privateSubnetIds,
+  supabaseServiceRoleSecret: secretsStack.supabaseServiceRole,
+  supabaseJwtSecret: secretsStack.supabaseJwt,
+  ...(imageTagContext ? { imageTag: imageTagContext } : {}),
+  env: awsEnv,
+  description: `ov-black apps/api on ECS Fargate behind an ALB for ${config.envName} (D002).`,
+});
+apiStack.addDependency(secretsStack);
+
+app.synth();

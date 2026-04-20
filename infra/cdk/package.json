@@ -1,0 +1,25 @@
+{
+  "name": "@ov-black/infra-cdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OV Black AWS infrastructure (ECR, ECS Fargate, ALB, Secrets Manager, CloudWatch) synthesized with AWS CDK v2 (D002, D012).",
+  "bin": {
+    "ov-black-cdk": "bin/app.ts"
+  },
+  "scripts": {
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf cdk.out .turbo"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "aws-cdk": "2.1118.4",
+    "aws-cdk-lib": "2.250.0",
+    "constructs": "10.6.0",
+    "source-map-support": "0.5.21",
+    "ts-node": "10.9.2",
+    "typescript": "5.7.2"
+  }
+}
