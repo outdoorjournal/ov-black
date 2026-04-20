@@ -1,0 +1,402 @@
+"""Itinerary graph HTTP surface (M001/S02).
+
+Seven endpoints:
+
+- ``POST   /itinerary``                              create a graph
+- ``GET    /itinerary/{id}``                         assembled graph view
+- ``POST   /itinerary/{id}/nodes``                   insert a node
+- ``PATCH  /itinerary/{id}/nodes/{node_id}``         update a node
+- ``DELETE /itinerary/{id}/nodes/{node_id}``         delete a node
+- ``POST   /itinerary/{id}/edges``                   insert an edge
+- ``DELETE /itinerary/{id}/edges/{edge_id}``         delete an edge
+
+All of them sit behind the JWT middleware; ``AuthenticatedUser`` is pulled via
+``require_user`` and mapped into an :class:`ActorContext` with
+``kind=USER``. Service outcomes are mapped to HTTP status codes here; the
+service never raises.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from typing import TYPE_CHECKING, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.auth import AuthenticatedUser, require_user
+from app.db import get_session
+from app.models import EdgeType, NodeStatus, NodeType
+from app.services.itineraries import (
+    ActorContext,
+    ActorKind,
+    ItineraryError,
+    ItineraryOutcome,
+    add_edge,
+    add_node,
+    create_itinerary,
+    delete_edge,
+    delete_node,
+    get_itinerary_graph,
+    update_node,
+)
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+logger = logging.getLogger("ov_black.routers.itineraries")
+
+router = APIRouter(prefix="/itinerary", tags=["itinerary"])
+
+
+# ── Request / response models ──────────────────────────────────────────────
+
+
+class CreateItineraryRequest(BaseModel):
+    title: str = Field(default="", max_length=512)
+    client_id: uuid.UUID | None = None
+
+
+class ItineraryResponse(BaseModel):
+    id: uuid.UUID
+    title: str
+    client_id: uuid.UUID | None
+    created_by: uuid.UUID | None
+
+
+class CreateNodeRequest(BaseModel):
+    type: NodeType
+    status: NodeStatus = NodeStatus.idea
+    title: str = ""
+    parent_subgraph_id: uuid.UUID | None = None
+    source: str | None = None
+    source_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateNodeRequest(BaseModel):
+    """Partial update. Any field omitted is left unchanged.
+
+    ``model_config`` uses ``extra="forbid"`` so a misspelled field surfaces
+    as 422, not a silent no-op.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: NodeType | None = None
+    status: NodeStatus | None = None
+    title: str | None = None
+    source: str | None = None
+    source_id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class NodeResponse(BaseModel):
+    id: uuid.UUID
+    itinerary_id: uuid.UUID
+    parent_subgraph_id: uuid.UUID | None
+    type: NodeType
+    status: NodeStatus
+    title: str
+    source: str | None
+    source_id: str | None
+    metadata: dict[str, Any]
+    depth: int | None = None
+
+
+class CreateEdgeRequest(BaseModel):
+    from_node_id: uuid.UUID
+    to_node_id: uuid.UUID
+    type: EdgeType
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EdgeResponse(BaseModel):
+    id: uuid.UUID
+    itinerary_id: uuid.UUID
+    from_node_id: uuid.UUID
+    to_node_id: uuid.UUID
+    type: EdgeType
+    metadata: dict[str, Any]
+
+
+class GraphResponse(BaseModel):
+    itinerary: ItineraryResponse
+    nodes: list[NodeResponse]
+    edges: list[EdgeResponse]
+
+
+# ── Actor resolution ────────────────────────────────────────────────────────
+
+
+def _actor_from_user(user: AuthenticatedUser) -> ActorContext:
+    """Map a Supabase-authenticated user to an ActorContext.
+
+    ``user.sub`` is a UUID string from Supabase Auth. We parse it here so a
+    malformed sub surfaces as 401 at the middleware layer rather than a 500
+    inside the service; if parsing fails the actor is still recorded but
+    with ``user_id=None``.
+    """
+    try:
+        user_uuid = uuid.UUID(user.sub)
+    except (ValueError, AttributeError):
+        user_uuid = None
+    return ActorContext(user_id=user_uuid, kind=ActorKind.USER, actor_id=user.sub)
+
+
+# ── Outcome mapping ────────────────────────────────────────────────────────
+
+
+def _raise_for_error(err: ItineraryError) -> None:
+    """Map an ItineraryError to the conventional HTTPException."""
+    if err.outcome is ItineraryOutcome.NOT_FOUND:
+        raise HTTPException(status_code=404, detail="not_found")
+    if err.outcome is ItineraryOutcome.INVALID_PROVENANCE:
+        raise HTTPException(
+            status_code=400,
+            detail=err.detail or "invalid_provenance",
+        )
+    if err.outcome is ItineraryOutcome.INVALID_PARENT:
+        raise HTTPException(
+            status_code=400,
+            detail=err.detail or "invalid_parent",
+        )
+    if err.outcome is ItineraryOutcome.VALIDATION_ERROR:
+        raise HTTPException(
+            status_code=400,
+            detail=err.detail or "validation_error",
+        )
+    if err.outcome is ItineraryOutcome.FORBIDDEN:
+        raise HTTPException(status_code=403, detail=err.detail or "forbidden")
+    # Defensive — every enum value is mapped above.
+    logger.error(
+        "itinerary.router.unhandled_outcome", extra={"outcome": err.outcome.value}
+    )
+    raise HTTPException(status_code=500, detail="internal_error")
+
+
+# ── Routes ──────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ItineraryResponse,
+    summary="Create a new itinerary graph.",
+)
+async def create_itinerary_endpoint(
+    payload: CreateItineraryRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> ItineraryResponse:
+    actor = _actor_from_user(user)
+    itinerary = await create_itinerary(
+        session, actor, title=payload.title, client_id=payload.client_id
+    )
+    return ItineraryResponse(
+        id=itinerary.id,
+        title=itinerary.title,
+        client_id=itinerary.client_id,
+        created_by=itinerary.created_by,
+    )
+
+
+@router.get(
+    "/{itinerary_id}",
+    response_model=GraphResponse,
+    summary="Get the assembled itinerary graph.",
+)
+async def get_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    _user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> GraphResponse:
+    result = await get_itinerary_graph(session, itinerary_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    # mypy: result is GraphView past this point
+    return GraphResponse(
+        itinerary=ItineraryResponse(
+            id=result.itinerary.id,
+            title=result.itinerary.title,
+            client_id=result.itinerary.client_id,
+            created_by=result.itinerary.created_by,
+        ),
+        nodes=[
+            NodeResponse(
+                id=n.id,
+                itinerary_id=n.itinerary_id,
+                parent_subgraph_id=n.parent_subgraph_id,
+                type=n.type,
+                status=n.status,
+                title=n.title,
+                source=n.source,
+                source_id=n.source_id,
+                metadata=n.metadata,
+                depth=n.depth,
+            )
+            for n in result.nodes
+        ],
+        edges=[
+            EdgeResponse(
+                id=e.id,
+                itinerary_id=e.itinerary_id,
+                from_node_id=e.from_node_id,
+                to_node_id=e.to_node_id,
+                type=e.type,
+                metadata=e.metadata,
+            )
+            for e in result.edges
+        ],
+    )
+
+
+@router.post(
+    "/{itinerary_id}/nodes",
+    status_code=status.HTTP_201_CREATED,
+    response_model=NodeResponse,
+    summary="Insert a node into an itinerary graph.",
+)
+async def create_node_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: CreateNodeRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> NodeResponse:
+    actor = _actor_from_user(user)
+    result = await add_node(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        type=payload.type,
+        status=payload.status,
+        title=payload.title,
+        parent_subgraph_id=payload.parent_subgraph_id,
+        source=payload.source,
+        source_id=payload.source_id,
+        metadata=payload.metadata,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return NodeResponse(
+        id=result.id,
+        itinerary_id=result.itinerary_id,
+        parent_subgraph_id=result.parent_subgraph_id,
+        type=result.type,
+        status=result.status,
+        title=result.title,
+        source=result.source,
+        source_id=result.source_id,
+        metadata=result.metadata_,
+    )
+
+
+@router.patch(
+    "/{itinerary_id}/nodes/{node_id}",
+    response_model=NodeResponse,
+    summary="Update a node (partial).",
+)
+async def update_node_endpoint(
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    payload: UpdateNodeRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> NodeResponse:
+    actor = _actor_from_user(user)
+    # Only forward fields the client actually set so "omitted" ≠ "set to None".
+    fields = payload.model_dump(exclude_unset=True)
+    result = await update_node(
+        session, actor, itinerary_id=itinerary_id, node_id=node_id, **fields
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return NodeResponse(
+        id=result.id,
+        itinerary_id=result.itinerary_id,
+        parent_subgraph_id=result.parent_subgraph_id,
+        type=result.type,
+        status=result.status,
+        title=result.title,
+        source=result.source,
+        source_id=result.source_id,
+        metadata=result.metadata_,
+    )
+
+
+@router.delete(
+    "/{itinerary_id}/nodes/{node_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Delete a node.",
+)
+async def delete_node_endpoint(
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> Response:
+    actor = _actor_from_user(user)
+    err = await delete_node(
+        session, actor, itinerary_id=itinerary_id, node_id=node_id
+    )
+    if err is not None:
+        _raise_for_error(err)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{itinerary_id}/edges",
+    status_code=status.HTTP_201_CREATED,
+    response_model=EdgeResponse,
+    summary="Insert an edge into an itinerary graph.",
+)
+async def create_edge_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: CreateEdgeRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> EdgeResponse:
+    actor = _actor_from_user(user)
+    result = await add_edge(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        from_node_id=payload.from_node_id,
+        to_node_id=payload.to_node_id,
+        type=payload.type,
+        metadata=payload.metadata,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return EdgeResponse(
+        id=result.id,
+        itinerary_id=result.itinerary_id,
+        from_node_id=result.from_node_id,
+        to_node_id=result.to_node_id,
+        type=result.type,
+        metadata=result.metadata_,
+    )
+
+
+@router.delete(
+    "/{itinerary_id}/edges/{edge_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Delete an edge.",
+)
+async def delete_edge_endpoint(
+    itinerary_id: uuid.UUID,
+    edge_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> Response:
+    actor = _actor_from_user(user)
+    err = await delete_edge(
+        session, actor, itinerary_id=itinerary_id, edge_id=edge_id
+    )
+    if err is not None:
+        _raise_for_error(err)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

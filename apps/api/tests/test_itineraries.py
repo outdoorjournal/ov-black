@@ -1,0 +1,967 @@
+"""Coverage for the itinerary graph surface (M001/S02 T05).
+
+Two layers:
+
+1. Router tests — exercise the HTTP contract with the service dependency
+   overridden. We care here about outcome-to-status mapping, JWT
+   enforcement, and payload validation (Pydantic 422s).
+2. Service + integration tests — exercise the real service against a
+   locally-running Supabase Postgres so same-transaction history writes,
+   the recursive CTE assembly, and the schema-level constraints
+   (provenance, self-loop) are all covered end-to-end. Gated on
+   ``_supabase_running()`` so a fresh checkout without Docker skips cleanly.
+"""
+
+from __future__ import annotations
+
+import socket
+import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+import pytest
+import pytest_asyncio
+from fastapi.testclient import TestClient
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.db import get_session
+from app.main import app as fastapi_app
+from app.models import (
+    Edge,
+    EdgeHistory,
+    EdgeType,
+    Itinerary,
+    Node,
+    NodeHistory,
+    NodeStatus,
+    NodeType,
+)
+from app.services import itineraries as itineraries_service
+from app.services.itineraries import (
+    ActorContext,
+    ActorKind,
+    ItineraryError,
+    ItineraryOutcome,
+    _check_provenance,
+    add_edge,
+    add_node,
+    create_itinerary,
+    delete_edge,
+    delete_node,
+    get_itinerary_graph,
+    update_node,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+
+LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
+LOCAL_HOST = "127.0.0.1"
+LOCAL_PORT = 54322
+
+
+def _supabase_running() -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        try:
+            s.connect((LOCAL_HOST, LOCAL_PORT))
+        except OSError:
+            return False
+        return True
+
+
+integration = pytest.mark.skipif(
+    not _supabase_running(),
+    reason="local Supabase (127.0.0.1:54322) not running — `supabase start` first",
+)
+
+
+# ── Pure unit tests: provenance gate ───────────────────────────────────────
+
+
+def test_check_provenance_accepts_both_set() -> None:
+    assert _check_provenance("ov", "trip-123") is None
+
+
+def test_check_provenance_accepts_both_unset() -> None:
+    assert _check_provenance(None, None) is None
+
+
+def test_check_provenance_rejects_source_without_id() -> None:
+    err = _check_provenance("ov", None)
+    assert err is not None
+    assert err.outcome is ItineraryOutcome.INVALID_PROVENANCE
+
+
+def test_check_provenance_rejects_id_without_source() -> None:
+    err = _check_provenance(None, "trip-123")
+    assert err is not None
+    assert err.outcome is ItineraryOutcome.INVALID_PROVENANCE
+
+
+# ── Router tests (service stubbed, JWT real) ───────────────────────────────
+
+
+@pytest.fixture()
+def auth_headers(make_token: "Callable[..., str]") -> dict[str, str]:
+    """Mint a valid JWT for router tests that require auth."""
+    return {"Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"}
+
+
+@pytest.fixture()
+def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Replace every service function with a deterministic fake.
+
+    Stored call args + configurable return values so tests can assert the
+    router forwards inputs correctly and maps outcomes to the right status.
+    """
+    calls: dict[str, list[dict[str, Any]]] = {
+        "create_itinerary": [],
+        "get_itinerary_graph": [],
+        "add_node": [],
+        "update_node": [],
+        "delete_node": [],
+        "add_edge": [],
+        "delete_edge": [],
+    }
+    returns: dict[str, Any] = {}
+
+    async def _create(_session: Any, actor: ActorContext, **kwargs: Any) -> Any:
+        calls["create_itinerary"].append({"actor": actor, **kwargs})
+        return returns.get("create_itinerary") or Itinerary(
+            id=uuid.uuid4(),
+            title=kwargs.get("title", ""),
+            client_id=kwargs.get("client_id"),
+            created_by=actor.user_id,
+        )
+
+    async def _get_graph(_session: Any, itinerary_id: uuid.UUID) -> Any:
+        calls["get_itinerary_graph"].append({"itinerary_id": itinerary_id})
+        return returns.get("get_itinerary_graph", ItineraryError(
+            outcome=ItineraryOutcome.NOT_FOUND
+        ))
+
+    async def _add_node(
+        _session: Any, actor: ActorContext, **kwargs: Any
+    ) -> Any:
+        calls["add_node"].append({"actor": actor, **kwargs})
+        if "add_node" in returns:
+            return returns["add_node"]
+        return Node(
+            id=uuid.uuid4(),
+            itinerary_id=kwargs["itinerary_id"],
+            parent_subgraph_id=kwargs.get("parent_subgraph_id"),
+            type=kwargs["type"],
+            status=kwargs.get("status", NodeStatus.idea),
+            title=kwargs.get("title", ""),
+            source=kwargs.get("source"),
+            source_id=kwargs.get("source_id"),
+            metadata_=kwargs.get("metadata") or {},
+        )
+
+    async def _update_node(
+        _session: Any, actor: ActorContext, **kwargs: Any
+    ) -> Any:
+        calls["update_node"].append({"actor": actor, **kwargs})
+        if "update_node" in returns:
+            return returns["update_node"]
+        return Node(
+            id=kwargs["node_id"],
+            itinerary_id=kwargs["itinerary_id"],
+            parent_subgraph_id=None,
+            type=NodeType.note,
+            status=NodeStatus.idea,
+            title=kwargs.get("title", ""),
+            source=None,
+            source_id=None,
+            metadata_={},
+        )
+
+    async def _delete_node(
+        _session: Any, actor: ActorContext, **kwargs: Any
+    ) -> Any:
+        calls["delete_node"].append({"actor": actor, **kwargs})
+        return returns.get("delete_node")  # None = success by default
+
+    async def _add_edge(
+        _session: Any, actor: ActorContext, **kwargs: Any
+    ) -> Any:
+        calls["add_edge"].append({"actor": actor, **kwargs})
+        if "add_edge" in returns:
+            return returns["add_edge"]
+        return Edge(
+            id=uuid.uuid4(),
+            itinerary_id=kwargs["itinerary_id"],
+            from_node_id=kwargs["from_node_id"],
+            to_node_id=kwargs["to_node_id"],
+            type=kwargs["type"],
+            metadata_=kwargs.get("metadata") or {},
+        )
+
+    async def _delete_edge(
+        _session: Any, actor: ActorContext, **kwargs: Any
+    ) -> Any:
+        calls["delete_edge"].append({"actor": actor, **kwargs})
+        return returns.get("delete_edge")
+
+    # Patch the bound names inside the router module — that's the call site.
+    from app.routers import itineraries as routers_itineraries
+
+    monkeypatch.setattr(routers_itineraries, "create_itinerary", _create)
+    monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _get_graph)
+    monkeypatch.setattr(routers_itineraries, "add_node", _add_node)
+    monkeypatch.setattr(routers_itineraries, "update_node", _update_node)
+    monkeypatch.setattr(routers_itineraries, "delete_node", _delete_node)
+    monkeypatch.setattr(routers_itineraries, "add_edge", _add_edge)
+    monkeypatch.setattr(routers_itineraries, "delete_edge", _delete_edge)
+
+    # Also override the session dependency so no DB is required.
+    async def _dep() -> "Iterator[object]":
+        yield object()
+
+    fastapi_app.dependency_overrides[get_session] = _dep
+    try:
+        yield {"calls": calls, "returns": returns}
+    finally:
+        fastapi_app.dependency_overrides.pop(get_session, None)
+
+
+def test_create_itinerary_requires_jwt(
+    client: TestClient, stub_service: dict[str, Any]
+) -> None:
+    resp = client.post("/itinerary", json={"title": "Como"})
+    assert resp.status_code == 401
+
+
+def test_create_itinerary_returns_201_and_forwards_actor(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+    make_token: "Callable[..., str]",
+) -> None:
+    sub = str(uuid.uuid4())
+    headers = {"Authorization": f"Bearer {make_token(sub=sub)}"}
+    resp = client.post("/itinerary", json={"title": "Como"}, headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["title"] == "Como"
+    assert uuid.UUID(body["id"])
+    assert stub_service["calls"]["create_itinerary"][0]["actor"].kind is ActorKind.USER
+    assert stub_service["calls"]["create_itinerary"][0]["actor"].user_id == uuid.UUID(sub)
+
+
+def test_create_itinerary_with_non_uuid_sub_still_succeeds(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    make_token: "Callable[..., str]",
+) -> None:
+    # Some Supabase user ids may not be UUIDs in dev; the router must not 500
+    # — it records the string in actor_id and leaves user_id NULL.
+    headers = {"Authorization": f"Bearer {make_token(sub='not-a-uuid')}"}
+    resp = client.post("/itinerary", json={"title": "Como"}, headers=headers)
+    assert resp.status_code == 201
+    actor = stub_service["calls"]["create_itinerary"][0]["actor"]
+    assert actor.user_id is None
+    assert actor.actor_id == "not-a-uuid"
+
+
+def test_get_itinerary_not_found_is_404(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid = uuid.uuid4()
+    resp = client.get(f"/itinerary/{iid}", headers=auth_headers)
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "not_found"
+
+
+def test_get_itinerary_assembles_graph(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    from app.services.itineraries import EdgeOut, GraphView, NodeOut
+
+    iid = uuid.uuid4()
+    root_id, child_id, alt_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    stub_service["returns"]["get_itinerary_graph"] = GraphView(
+        itinerary=Itinerary(id=iid, title="Como"),
+        nodes=[
+            NodeOut(
+                id=root_id,
+                itinerary_id=iid,
+                parent_subgraph_id=None,
+                type=NodeType.experience,
+                status=NodeStatus.proposed,
+                title="Root",
+                source="ov",
+                source_id="t-1",
+                metadata={},
+                depth=0,
+            ),
+            NodeOut(
+                id=child_id,
+                itinerary_id=iid,
+                parent_subgraph_id=root_id,
+                type=NodeType.meal,
+                status=NodeStatus.idea,
+                title="Child",
+                source=None,
+                source_id=None,
+                metadata={},
+                depth=1,
+            ),
+        ],
+        edges=[
+            EdgeOut(
+                id=uuid.uuid4(),
+                itinerary_id=iid,
+                from_node_id=child_id,
+                to_node_id=alt_id,
+                type=EdgeType.alternative_to,
+                metadata={},
+            ),
+        ],
+    )
+    resp = client.get(f"/itinerary/{iid}", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["itinerary"]["title"] == "Como"
+    assert len(body["nodes"]) == 2
+    assert body["nodes"][0]["depth"] == 0
+    assert body["nodes"][1]["depth"] == 1
+    assert len(body["edges"]) == 1
+    assert body["edges"][0]["type"] == "alternative_to"
+
+
+def test_add_node_provenance_asymmetry_returns_400(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    stub_service["returns"]["add_node"] = ItineraryError(
+        outcome=ItineraryOutcome.INVALID_PROVENANCE,
+        detail="source and source_id must be provided together",
+    )
+    iid = uuid.uuid4()
+    resp = client.post(
+        f"/itinerary/{iid}/nodes",
+        json={"type": "experience", "source": "ov"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "source_id" in resp.json()["detail"]
+
+
+def test_add_node_invalid_parent_returns_400(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    stub_service["returns"]["add_node"] = ItineraryError(
+        outcome=ItineraryOutcome.INVALID_PARENT,
+        detail="parent_subgraph_id does not belong to this itinerary",
+    )
+    iid = uuid.uuid4()
+    resp = client.post(
+        f"/itinerary/{iid}/nodes",
+        json={
+            "type": "note",
+            "parent_subgraph_id": str(uuid.uuid4()),
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"].startswith("parent_subgraph_id")
+
+
+def test_add_node_self_loop_style_validation_returns_400(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    # Service returns a DB-sourced validation error (e.g. edges_no_self_loop
+    # bubbling up) — the router must not 500.
+    stub_service["returns"]["add_edge"] = ItineraryError(
+        outcome=ItineraryOutcome.VALIDATION_ERROR,
+        detail="edges_no_self_loop",
+    )
+    iid = uuid.uuid4()
+    same = str(uuid.uuid4())
+    resp = client.post(
+        f"/itinerary/{iid}/edges",
+        json={
+            "from_node_id": same,
+            "to_node_id": same,
+            "type": "follows",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "edges_no_self_loop"
+
+
+def test_create_node_invalid_type_returns_422(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid = uuid.uuid4()
+    resp = client.post(
+        f"/itinerary/{iid}/nodes",
+        json={"type": "not_a_valid_type"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_update_node_forbids_unknown_fields(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.patch(
+        f"/itinerary/{iid}/nodes/{nid}",
+        json={"itinerary_id": str(uuid.uuid4())},  # not in whitelist
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_delete_node_returns_204(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.delete(
+        f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers
+    )
+    assert resp.status_code == 204
+    assert resp.content == b""
+
+
+def test_delete_node_not_found_returns_404(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    stub_service["returns"]["delete_node"] = ItineraryError(
+        outcome=ItineraryOutcome.NOT_FOUND
+    )
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.delete(
+        f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
+def test_create_edge_returns_201(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid = uuid.uuid4()
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    resp = client.post(
+        f"/itinerary/{iid}/edges",
+        json={"from_node_id": a, "to_node_id": b, "type": "follows"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["from_node_id"] == a
+    assert body["to_node_id"] == b
+    assert body["type"] == "follows"
+
+
+def test_delete_edge_returns_204(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid, eid = uuid.uuid4(), uuid.uuid4()
+    resp = client.delete(
+        f"/itinerary/{iid}/edges/{eid}", headers=auth_headers
+    )
+    assert resp.status_code == 204
+
+
+def test_openapi_exposes_new_contract(client: TestClient) -> None:
+    # Slice plan Inspection Surfaces: GET /openapi.json exposes the new
+    # contract so packages/api-client regeneration is one command.
+    resp = client.get("/openapi.json")
+    assert resp.status_code == 200
+    paths = resp.json()["paths"]
+    assert "/itinerary" in paths
+    assert "/itinerary/{itinerary_id}" in paths
+    assert "/itinerary/{itinerary_id}/nodes" in paths
+    assert "/itinerary/{itinerary_id}/nodes/{node_id}" in paths
+    assert "/itinerary/{itinerary_id}/edges" in paths
+    assert "/itinerary/{itinerary_id}/edges/{edge_id}" in paths
+
+
+def test_itinerary_routes_are_behind_jwt(client: TestClient) -> None:
+    # Every route must require a JWT — the invariant is that nothing in
+    # PUBLIC_PATHS references /itinerary.
+    from app.auth import PUBLIC_PATHS
+
+    for p in PUBLIC_PATHS:
+        assert not p.startswith("/itinerary")
+
+
+# ── Integration tests (against local Supabase Postgres) ─────────────────────
+
+
+@pytest_asyncio.fixture()
+async def db_session() -> "AsyncSession":
+    engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with maker() as s:
+            yield s
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup(_session: AsyncSession, itinerary_id: uuid.UUID) -> None:
+    """Teardown using a fresh engine so rollback-wrecked sessions don't leak.
+
+    Running on a throwaway connection means an earlier integrity-error path
+    (which rolls back the per-test session) can't break our cleanup DELETEs.
+    """
+    engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("delete from public.edge_history where itinerary_id = :i"),
+                {"i": itinerary_id},
+            )
+            await conn.execute(
+                text("delete from public.node_history where itinerary_id = :i"),
+                {"i": itinerary_id},
+            )
+            await conn.execute(
+                text("delete from public.itineraries where id = :i"),
+                {"i": itinerary_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+def _actor() -> ActorContext:
+    return ActorContext(
+        user_id=None, kind=ActorKind.SYSTEM, actor_id="test-actor"
+    )
+
+
+@integration
+@pytest.mark.asyncio
+async def test_create_itinerary_persists_row(db_session: AsyncSession) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="Como trip")
+    try:
+        assert itinerary.id is not None
+        fetched = (
+            await db_session.execute(
+                select(Itinerary).where(Itinerary.id == itinerary.id)
+            )
+        ).scalar_one()
+        assert fetched.title == "Como trip"
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_add_node_writes_history_in_same_transaction(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="history test")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="Amalfi",
+            source="ov",
+            source_id="trip-42",
+        )
+        assert isinstance(node, Node)
+        rows = (
+            await db_session.execute(
+                select(NodeHistory).where(NodeHistory.node_id == node.id)
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].op == "insert"
+        assert rows[0].before is None
+        assert rows[0].after is not None
+        assert rows[0].after["title"] == "Amalfi"
+        assert rows[0].actor_kind == "system"
+        assert rows[0].actor_id == "test-actor"
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_update_node_captures_before_and_after(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="update test")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.note,
+            title="orig",
+        )
+        assert isinstance(node, Node)
+        updated = await update_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            title="new title",
+        )
+        assert isinstance(updated, Node)
+        assert updated.title == "new title"
+        rows = (
+            await db_session.execute(
+                select(NodeHistory)
+                .where(NodeHistory.node_id == node.id)
+                .order_by(NodeHistory.occurred_at)
+            )
+        ).scalars().all()
+        assert [r.op for r in rows] == ["insert", "update"]
+        assert rows[1].before["title"] == "orig"
+        assert rows[1].after["title"] == "new title"
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_delete_node_writes_before_snapshot(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="delete test")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.note,
+            title="doomed",
+        )
+        assert isinstance(node, Node)
+        node_id = node.id
+        err = await delete_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            node_id=node_id,
+        )
+        assert err is None
+        rows = (
+            await db_session.execute(
+                select(NodeHistory)
+                .where(NodeHistory.node_id == node_id)
+                .order_by(NodeHistory.occurred_at)
+            )
+        ).scalars().all()
+        assert [r.op for r in rows] == ["insert", "delete"]
+        assert rows[1].before is not None
+        assert rows[1].before["title"] == "doomed"
+        assert rows[1].after is None
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_add_edge_writes_history(db_session: AsyncSession) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="edge test")
+    try:
+        a = await add_node(
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+        )
+        b = await add_node(
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+        )
+        assert isinstance(a, Node) and isinstance(b, Node)
+        edge = await add_edge(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            from_node_id=a.id,
+            to_node_id=b.id,
+            type=EdgeType.follows,
+        )
+        assert isinstance(edge, Edge)
+        rows = (
+            await db_session.execute(
+                select(EdgeHistory).where(EdgeHistory.edge_id == edge.id)
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].op == "insert"
+        assert rows[0].after["from_node_id"] == str(a.id)
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_delete_edge_writes_before_snapshot(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="edge del")
+    try:
+        a = await add_node(
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+        )
+        b = await add_node(
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+        )
+        assert isinstance(a, Node) and isinstance(b, Node)
+        edge = await add_edge(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            from_node_id=a.id,
+            to_node_id=b.id,
+            type=EdgeType.follows,
+        )
+        assert isinstance(edge, Edge)
+        edge_id = edge.id
+        err = await delete_edge(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            edge_id=edge_id,
+        )
+        assert err is None
+        rows = (
+            await db_session.execute(
+                select(EdgeHistory)
+                .where(EdgeHistory.edge_id == edge_id)
+                .order_by(EdgeHistory.occurred_at)
+            )
+        ).scalars().all()
+        assert [r.op for r in rows] == ["insert", "delete"]
+        assert rows[1].after is None
+        assert rows[1].before is not None
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_provenance_asymmetry_rejected_by_service(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="prov")
+    itinerary_id = itinerary.id
+    try:
+        err = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary_id,
+            type=NodeType.experience,
+            source="ov",
+            source_id=None,
+        )
+        assert isinstance(err, ItineraryError)
+        assert err.outcome is ItineraryOutcome.INVALID_PROVENANCE
+    finally:
+        await _cleanup(db_session, itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_self_loop_edge_maps_to_validation_error(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="self loop")
+    # Stash the id before the integrity-error rollback expires attribute state.
+    itinerary_id = itinerary.id
+    try:
+        node = await add_node(
+            db_session, actor, itinerary_id=itinerary_id, type=NodeType.note
+        )
+        assert isinstance(node, Node)
+        result = await add_edge(
+            db_session,
+            actor,
+            itinerary_id=itinerary_id,
+            from_node_id=node.id,
+            to_node_id=node.id,
+            type=EdgeType.follows,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.outcome is ItineraryOutcome.VALIDATION_ERROR
+        assert result.detail == "edges_no_self_loop"
+    finally:
+        await _cleanup(db_session, itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cross_itinerary_parent_rejected(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itin_a = await create_itinerary(db_session, actor, title="A")
+    itin_b = await create_itinerary(db_session, actor, title="B")
+    try:
+        parent_in_b = await add_node(
+            db_session, actor, itinerary_id=itin_b.id, type=NodeType.experience
+        )
+        assert isinstance(parent_in_b, Node)
+        result = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itin_a.id,
+            type=NodeType.meal,
+            parent_subgraph_id=parent_in_b.id,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.outcome is ItineraryOutcome.INVALID_PARENT
+    finally:
+        await _cleanup(db_session, itin_a.id)
+        await _cleanup(db_session, itin_b.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_unknown_itinerary_not_found(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    result = await get_itinerary_graph(db_session, uuid.uuid4())
+    assert isinstance(result, ItineraryError)
+    assert result.outcome is ItineraryOutcome.NOT_FOUND
+
+
+@integration
+@pytest.mark.asyncio
+async def test_get_itinerary_graph_assembles_subgraph(
+    db_session: AsyncSession,
+) -> None:
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="assembly")
+    try:
+        root = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="Amalfi tour",
+            source="ov",
+            source_id="t-1",
+        )
+        assert isinstance(root, Node)
+        child = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            parent_subgraph_id=root.id,
+            type=NodeType.meal,
+            title="Lunch",
+        )
+        assert isinstance(child, Node)
+        grandchild = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            parent_subgraph_id=child.id,
+            type=NodeType.note,
+            title="Note",
+        )
+        assert isinstance(grandchild, Node)
+        edge = await add_edge(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            from_node_id=root.id,
+            to_node_id=child.id,
+            type=EdgeType.follows,
+        )
+        assert isinstance(edge, Edge)
+
+        graph = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(graph, ItineraryError)
+        assert graph.itinerary.id == itinerary.id
+        by_id = {n.id: n for n in graph.nodes}
+        assert by_id[root.id].depth == 0
+        assert by_id[child.id].depth == 1
+        assert by_id[grandchild.id].depth == 2
+        assert len(graph.edges) == 1
+        assert graph.edges[0].from_node_id == root.id
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_concurrent_updates_each_land_history_rows(
+    db_session: AsyncSession,
+) -> None:
+    """Last-writer-wins is fine for M001; the invariant we guard is that
+    BOTH writes produce a history row (audit cannot be lost).
+    """
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="concurrent")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.note,
+            title="v0",
+        )
+        assert isinstance(node, Node)
+        await update_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            title="v1",
+        )
+        await update_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            title="v2",
+        )
+        rows = (
+            await db_session.execute(
+                select(NodeHistory)
+                .where(NodeHistory.node_id == node.id)
+                .order_by(NodeHistory.occurred_at)
+            )
+        ).scalars().all()
+        assert [r.op for r in rows] == ["insert", "update", "update"]
+        assert rows[-1].after["title"] == "v2"
+    finally:
+        await _cleanup(db_session, itinerary.id)
