@@ -1,0 +1,1 @@
+"""OV Black FastAPI application."""
