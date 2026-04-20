@@ -37,8 +37,8 @@ from typing import Any, Literal
 from contextlib import aclosing
 
 import anyio
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select, text as sql_text, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.bedrock import AgentRuntimeClient, AgentRuntimeError
@@ -150,6 +150,60 @@ async def _enforce_client_access(
     return SessionOutcome.OK
 
 
+async def _jit_backfill_client_auth_user_id(
+    session: AsyncSession,
+    *,
+    client: Client,
+    user_id: uuid.UUID,
+) -> bool:
+    """Best-effort JIT populate ``clients.auth_user_id`` on first POST /sessions.
+
+    S03 creates clients with ``auth_user_id IS NULL``; after the client
+    redeems their magic-link invite they have an ``auth.users`` row but the
+    link back is not established anywhere. This helper closes that gap
+    *only* when the caller is the client themself and the Supabase
+    ``auth.users`` email for their JWT sub matches the clients row email
+    case-insensitively. On any SQL error (including a permission denial on
+    ``auth.users``) the helper fails closed — leaves ``auth_user_id`` NULL
+    and returns ``False`` so the caller collapses to the FORBIDDEN / 404
+    branch rather than crashing the request. Returns ``True`` when the
+    backfill succeeded and the in-memory ``client`` row was mutated.
+
+    No email string is ever logged or attached to this function's return.
+    """
+    try:
+        result = await session.execute(
+            sql_text("SELECT email FROM auth.users WHERE id = :user_id"),
+            {"user_id": str(user_id)},
+        )
+        row = result.first()
+    except SQLAlchemyError:
+        return False
+
+    if row is None:
+        return False
+    auth_email = row[0]
+    if not auth_email or not client.email:
+        return False
+    if auth_email.strip().lower() != client.email.strip().lower():
+        return False
+
+    try:
+        await session.execute(
+            update(Client)
+            .where(Client.id == client.id, Client.auth_user_id.is_(None))
+            .values(auth_user_id=user_id)
+        )
+        await session.commit()
+    except SQLAlchemyError:
+        await session.rollback()
+        return False
+
+    # Keep the in-memory row in sync so the subsequent access check sees it.
+    client.auth_user_id = user_id
+    return True
+
+
 async def open_or_reuse_session(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -164,11 +218,33 @@ async def open_or_reuse_session(
     *do* emit different log events so observability can tell the two apart.
     """
     async with session_factory() as session:
-        access = await _enforce_client_access(
-            session, actor=actor, client_id=client_id
-        )
-        if access is not SessionOutcome.OK:
-            return access, None
+        client = (
+            await session.execute(select(Client).where(Client.id == client_id))
+        ).scalar_one_or_none()
+        if client is None:
+            return SessionOutcome.CLIENT_NOT_FOUND, None
+
+        # JIT-backfill the client↔auth.users link on the first POST /sessions
+        # made by the client themself. Only runs when the link is missing and
+        # the caller's JWT sub points at an auth.users row whose email matches.
+        backfilled = False
+        if (
+            actor.actor_kind == "user"
+            and actor.user_id is not None
+            and client.auth_user_id is None
+        ):
+            backfilled = await _jit_backfill_client_auth_user_id(
+                session, client=client, user_id=actor.user_id
+            )
+
+        # Access check against the (possibly-updated) client row.
+        if actor.actor_kind == "advisor":
+            if actor.user_id is None or client.owner_id != actor.user_id:
+                return SessionOutcome.FORBIDDEN, None
+        elif actor.actor_kind == "user":
+            if actor.user_id is None or client.auth_user_id != actor.user_id:
+                return SessionOutcome.FORBIDDEN, None
+        # actor_kind == 'agent' is internal — no additional gate here.
 
         existing = (
             await session.execute(
@@ -179,6 +255,15 @@ async def open_or_reuse_session(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if backfilled:
+                logger.info(
+                    "agent.auth.client_backfilled",
+                    extra={
+                        "session_id": str(existing.id),
+                        "client_id": str(client_id),
+                        "user_id": str(actor.user_id),
+                    },
+                )
             logger.info(
                 "agent.session.reuse",
                 extra={
@@ -195,6 +280,15 @@ async def open_or_reuse_session(
         session.add(new)
         await session.commit()
         await session.refresh(new)
+        if backfilled:
+            logger.info(
+                "agent.auth.client_backfilled",
+                extra={
+                    "session_id": str(new.id),
+                    "client_id": str(client_id),
+                    "user_id": str(actor.user_id),
+                },
+            )
         logger.info(
             "agent.session.open",
             extra={

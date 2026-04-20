@@ -96,7 +96,7 @@ class FakeSession:
         return None
 
     async def execute(self, stmt: Any, params: Any = None) -> FakeResult:
-        return self.factory.answer(self, stmt)
+        return self.factory.answer(self, stmt, params)
 
     def add(self, obj: Any) -> None:
         # Emulate server-side default on AgentSession.id.
@@ -140,6 +140,13 @@ class FakeFactory:
     open_agent_session_on_reuse: AgentSession | None = None
     # A hook lets tests simulate IntegrityError on a specific commit.
     commit_raise_sequence: list[BaseException | None] = field(default_factory=list)
+    # JIT-backfill hooks: email the faked auth.users SELECT should return for a
+    # given user_id string (None ⇒ no matching auth.users row). ``auth_update_count``
+    # counts UPDATE clients SET auth_user_id statements issued so tests can
+    # assert the backfill did / did not run.
+    auth_users_emails: dict[str, str] = field(default_factory=dict)
+    auth_users_select_raises: BaseException | None = None
+    auth_update_count: int = 0
 
     def __call__(self) -> FakeSession:
         sess = FakeSession(factory=self)
@@ -155,7 +162,12 @@ class FakeFactory:
     def after_commit(self, session: FakeSession) -> None:
         return None
 
-    def answer(self, session: FakeSession, stmt: Any) -> FakeResult:
+    def answer(
+        self,
+        session: FakeSession,
+        stmt: Any,
+        params: Any = None,
+    ) -> FakeResult:
         """Route Select statements to the in-memory stand-in rows.
 
         We inspect the compiled SQL string to decide what the service is
@@ -167,6 +179,21 @@ class FakeFactory:
         except Exception:
             sql = ""
         sql_lower = sql.lower()
+
+        # Raw text() SELECT against auth.users for JIT backfill.
+        if "auth.users" in sql_lower and "select" in sql_lower:
+            if self.auth_users_select_raises is not None:
+                raise self.auth_users_select_raises
+            user_id = (params or {}).get("user_id") if isinstance(params, dict) else None
+            email = self.auth_users_emails.get(str(user_id)) if user_id is not None else None
+            if email is None:
+                return FakeResult(rows=[])
+            return FakeResult(rows=[(email,)])
+
+        # UPDATE clients SET auth_user_id = ... (JIT backfill write).
+        if sql_lower.startswith("update clients") and "auth_user_id" in sql_lower:
+            self.auth_update_count += 1
+            return FakeResult(rows=[])
 
         # FOR UPDATE row lock on agent_sessions.
         if "for update" in sql_lower and "agent_sessions" in sql_lower:
@@ -720,3 +747,122 @@ async def test_stream_turn_redaction_sweep_blocks_secret_leaks(
                 assert needle not in rendered, (
                     f"secret {needle!r} leaked via record.{attr_name} = {rendered!r}"
                 )
+
+
+# ── JIT auth_user_id backfill (T01) ────────────────────────────────────────
+
+
+async def test_open_or_reuse_session_jit_backfill_matching_email_populates_auth_user_id(
+    factory: FakeFactory,
+    client_row: Client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NULL auth_user_id + matching auth.users email → backfills + OK + log."""
+    # Freshly-magic-linked client: no link established yet.
+    client_row.auth_user_id = None
+    caller_user_id = uuid.uuid4()
+    # Simulate Supabase auth.users returning the same email (different case
+    # is fine — match is case-insensitive).
+    factory.auth_users_emails[str(caller_user_id)] = client_row.email.upper()
+    factory.open_agent_session_on_reuse = None
+
+    user_actor = ActorContext(
+        user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
+    )
+
+    caplog.set_level(logging.INFO, logger="ov_black.agent.service")
+    outcome, session_row = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=user_actor,
+        client_id=client_row.id,
+    )
+
+    assert outcome is SessionOutcome.OK
+    assert isinstance(session_row, AgentSession)
+    # The backfill updated both the DB (one UPDATE) and the in-memory row.
+    assert factory.auth_update_count == 1
+    assert client_row.auth_user_id == caller_user_id
+
+    # Exactly one backfill log event, carrying session_id + client_id +
+    # user_id and nothing else from the sensitive set (no email, no name).
+    backfill_records = [
+        rec for rec in caplog.records
+        if rec.message == "agent.auth.client_backfilled"
+    ]
+    assert len(backfill_records) == 1
+    rec = backfill_records[0]
+    assert getattr(rec, "session_id") == str(session_row.id)
+    assert getattr(rec, "client_id") == str(client_row.id)
+    assert getattr(rec, "user_id") == str(caller_user_id)
+    # Email MUST NEVER land on this record (redaction constraint).
+    for attr_name, attr_val in rec.__dict__.items():
+        assert client_row.email not in repr(attr_val), (
+            f"email leaked via record.{attr_name}"
+        )
+
+
+async def test_open_or_reuse_session_jit_backfill_mismatched_email_forbidden(
+    factory: FakeFactory,
+    client_row: Client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NULL auth_user_id + mismatched auth.users email → FORBIDDEN, no UPDATE, no log."""
+    client_row.auth_user_id = None
+    caller_user_id = uuid.uuid4()
+    # Different email → must NOT backfill.
+    factory.auth_users_emails[str(caller_user_id)] = "someone.else@example.com"
+    factory.open_agent_session_on_reuse = None
+
+    user_actor = ActorContext(
+        user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
+    )
+
+    caplog.set_level(logging.INFO, logger="ov_black.agent.service")
+    outcome, session_row = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=user_actor,
+        client_id=client_row.id,
+    )
+
+    assert outcome is SessionOutcome.FORBIDDEN
+    assert session_row is None
+    # No UPDATE was issued, and the in-memory row is still NULL.
+    assert factory.auth_update_count == 0
+    assert client_row.auth_user_id is None
+    # No backfill log was emitted.
+    assert not any(
+        rec.message == "agent.auth.client_backfilled" for rec in caplog.records
+    )
+
+
+async def test_open_or_reuse_session_jit_backfill_skipped_when_already_populated(
+    factory: FakeFactory,
+    client_row: Client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Already-populated auth_user_id → no UPDATE issued + no backfill log."""
+    # auth_user_id is already the caller's id (the fixture sets this) — this
+    # is the steady-state path for a client who has already had one session.
+    assert client_row.auth_user_id is not None
+    caller_user_id = client_row.auth_user_id
+    factory.open_agent_session_on_reuse = None
+
+    user_actor = ActorContext(
+        user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
+    )
+
+    caplog.set_level(logging.INFO, logger="ov_black.agent.service")
+    outcome, session_row = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=user_actor,
+        client_id=client_row.id,
+    )
+
+    assert outcome is SessionOutcome.OK
+    assert isinstance(session_row, AgentSession)
+    # No UPDATE — already populated means the backfill path is never entered.
+    assert factory.auth_update_count == 0
+    # And no backfill log event.
+    assert not any(
+        rec.message == "agent.auth.client_backfilled" for rec in caplog.records
+    )
