@@ -88,6 +88,7 @@ def test_node_type_enum_values_match_migration() -> None:
         "approved",
         "booked",
         "confirmed",
+        "discarded",
     }
     assert {m.value for m in EdgeType} == {
         "follows",
@@ -359,3 +360,82 @@ async def test_rls_enabled_on_all_graph_tables(session: AsyncSession) -> None:
         )
     ).scalar_one()
     assert count == 0, "Graph tables must ship with zero policies (deny-by-default)"
+
+
+def test_node_status_includes_discarded() -> None:
+    """S07: the discarded enum value must be present on NodeStatus so pin /
+    keep / discard can round-trip (pin → approved, keep → proposed,
+    discard → discarded). Guards the SQLAlchemy side of migration 0005.
+    """
+    assert NodeStatus.discarded == "discarded"
+    assert "discarded" in {m.value for m in NodeStatus}
+
+
+@integration
+@pytest.mark.asyncio
+async def test_update_node_discarded_round_trips_through_history(
+    session: AsyncSession,
+) -> None:
+    """S07: update_node with status=discarded must persist and land in
+    node_history with after.status == 'discarded' (no new logging surface;
+    reuses the existing itinerary.mutate op=update_node trail).
+    """
+    # Import here so the module-level collection doesn't pull service deps
+    # when the integration gate skips these tests.
+    from app.services.itineraries import (
+        ActorContext,
+        ActorKind,
+        update_node,
+    )
+
+    itinerary_id = uuid.uuid4()
+    node_id = uuid.uuid4()
+    try:
+        session.add(Itinerary(id=itinerary_id, title="S07 discarded round-trip"))
+        await session.flush()
+
+        node = Node(
+            id=node_id,
+            itinerary_id=itinerary_id,
+            type=NodeType.experience,
+            status=NodeStatus.proposed,
+            title="OV experience card",
+            source="ov",
+            source_id="exp-42",
+        )
+        session.add(node)
+        await session.commit()
+
+        actor = ActorContext(user_id=None, kind=ActorKind.AGENT, actor_id="test-agent")
+        result = await update_node(
+            session,
+            actor,
+            itinerary_id=itinerary_id,
+            node_id=node_id,
+            status=NodeStatus.discarded,
+        )
+        assert isinstance(result, Node)
+        assert result.status is NodeStatus.discarded
+
+        fetched = (
+            await session.execute(select(Node).where(Node.id == node_id))
+        ).scalar_one()
+        assert fetched.status is NodeStatus.discarded
+
+        history_rows = (
+            await session.execute(
+                select(NodeHistory)
+                .where(NodeHistory.node_id == node_id)
+                .order_by(NodeHistory.id)
+            )
+        ).scalars().all()
+        # update_node writes one history row for the status transition.
+        assert len(history_rows) == 1
+        hist = history_rows[0]
+        assert hist.op == "update"
+        assert hist.before is not None
+        assert hist.before["status"] == "proposed"
+        assert hist.after is not None
+        assert hist.after["status"] == "discarded"
+    finally:
+        await _cleanup(session, itinerary_id)

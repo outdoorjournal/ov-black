@@ -33,6 +33,7 @@ class NodeStatus(str, enum.Enum):
     approved = "approved"
     booked = "booked"
     confirmed = "confirmed"
+    discarded = "discarded"
 
 
 class EdgeType(str, enum.Enum):
