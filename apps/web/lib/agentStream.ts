@@ -20,17 +20,21 @@
 import { useCallback, useRef } from "react";
 
 import type {
+  CardFrame,
   DeltaFrame,
   DoneFrame,
   ErrorFrame,
+  ExperienceSnapshot,
   FirstTokenFrame,
   SseFrame,
 } from "./agentStream.types";
 
 export type {
+  CardFrame,
   DeltaFrame,
   DoneFrame,
   ErrorFrame,
+  ExperienceSnapshot,
   FirstTokenFrame,
   SseFrame,
 } from "./agentStream.types";
@@ -50,12 +54,33 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "delta",
   "done",
   "error",
+  "card",
 ]);
 
 function isSseFrame(value: unknown): value is SseFrame {
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
-  return typeof type === "string" && KNOWN_FRAME_TYPES.has(type as SseFrame["type"]);
+  if (typeof type !== "string") return false;
+  if (!KNOWN_FRAME_TYPES.has(type as SseFrame["type"])) return false;
+
+  // Card frames carry structured payload that downstream consumers dereference
+  // immediately (graph node id, source lookups). Missing any required field
+  // means it's not a usable CardFrame — drop it at the parser boundary rather
+  // than letting an invalid frame propagate to onCard.
+  if (type === "card") {
+    const v = value as {
+      source?: unknown;
+      source_id?: unknown;
+      node_id?: unknown;
+      snapshot?: unknown;
+    };
+    if (typeof v.source !== "string") return false;
+    if (typeof v.source_id !== "string") return false;
+    if (typeof v.node_id !== "string") return false;
+    if (!v.snapshot || typeof v.snapshot !== "object") return false;
+  }
+
+  return true;
 }
 
 /**
@@ -131,6 +156,7 @@ export type UseAgentStreamOptions = {
   onDelta?: (frame: DeltaFrame) => void;
   onDone?: (frame: DoneFrame) => void;
   onError?: (frame: ErrorFrame) => void;
+  onCard?: (frame: CardFrame) => void;
   /**
    * Caller-owned abort controller ref. The hook writes a fresh
    * AbortController into this ref at the start of every stream so the caller
@@ -250,6 +276,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
                 current.onError?.(frame);
                 terminated = true;
                 break;
+              case "card":
+                current.onCard?.(frame);
+                break;
             }
             if (terminated) break;
           }
@@ -292,6 +321,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "error":
         current.onError?.(frame);
+        break;
+      case "card":
+        current.onCard?.(frame);
         break;
     }
   }

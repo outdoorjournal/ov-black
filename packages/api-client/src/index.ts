@@ -13,15 +13,21 @@ import {
   createClientEndpointClientsPost,
   createSessionEndpointSessionsPost,
   getClientEndpointClientsClientIdGet,
+  getItineraryEndpointItineraryItineraryIdGet,
   listClientsEndpointClientsGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
   redeemInviteEndpointAuthRedeemInvitePost,
+  updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
 } from "./generated/sdk.gen.js";
 import type {
   AgentTurnSummary,
   ClientCreatePayload,
   ClientDetail,
   ClientSummary,
+  EdgeResponse,
+  ItineraryResponse,
+  NodeResponse,
+  NodeStatus,
   OpenSessionRequest,
   OpenSessionResponse,
   RedeemInviteRequest,
@@ -432,5 +438,126 @@ export async function listTurns(
 
 function parseListTurnsDetail(status: number): ListTurnsDetail {
   if (status === 404) return "session_not_found";
+  return "unknown";
+}
+
+export type GetItineraryDetail =
+  | "itinerary_not_found"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for GET /itinerary/{itinerary_id}. Collapses the
+ * generated `{ itinerary, nodes, edges }` envelope onto the flat success
+ * shape S05's wrappers use, so apps/web can hydrate the MoodBoard on the
+ * RSC path without branching on the SDK response object.
+ */
+export type GetItineraryResult =
+  | {
+      ok: true;
+      itinerary: ItineraryResponse;
+      nodes: NodeResponse[];
+      edges: EdgeResponse[];
+    }
+  | { ok: false; status: number; detail: GetItineraryDetail };
+
+/**
+ * Typed wrapper for GET /itinerary/{itinerary_id} — returns the whole
+ * assembled graph view (itinerary + nodes + edges). Used by the chat page
+ * RSC to hydrate the MoodBoard aside on a hard reload.
+ */
+export async function getItinerary(
+  client: Client,
+  itineraryId: string,
+): Promise<GetItineraryResult> {
+  try {
+    const { data, error, response } =
+      await getItineraryEndpointItineraryItineraryIdGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        itinerary: data.itinerary,
+        nodes: data.nodes,
+        edges: data.edges,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseGetItineraryDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseGetItineraryDetail(status: number): GetItineraryDetail {
+  if (status === 404) return "itinerary_not_found";
+  return "unknown";
+}
+
+export type UpdateNodeStatusDetail =
+  | "node_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for PATCH /itinerary/{itinerary_id}/nodes/{node_id}.
+ * Status transitions (pin → approved, keep → proposed, discard → discarded)
+ * all flow through this one wrapper; the UI discriminates on the NodeStatus
+ * it passed in, not on anything the wrapper surfaces.
+ */
+export type UpdateNodeResult =
+  | { ok: true; node: NodeResponse }
+  | { ok: false; status: number; detail: UpdateNodeStatusDetail };
+
+export type UpdateNodeStatusArgs = {
+  itineraryId: string;
+  nodeId: string;
+  status: NodeStatus;
+};
+
+/**
+ * Typed wrapper for PATCH /itinerary/{itinerary_id}/nodes/{node_id}.
+ *
+ * Only the `status` field is sent; other UpdateNodeRequest fields remain
+ * untouched on the server. Returns a discriminated result so the MoodBoard
+ * can optimistically update and then revert on `ok: false` without
+ * wrapping every call in try/catch.
+ */
+export async function updateNodeStatus(
+  client: Client,
+  args: UpdateNodeStatusArgs,
+): Promise<UpdateNodeResult> {
+  try {
+    const { data, error, response } =
+      await updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch({
+        client,
+        path: {
+          itinerary_id: args.itineraryId,
+          node_id: args.nodeId,
+        },
+        body: { status: args.status },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, node: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseUpdateNodeStatusDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseUpdateNodeStatusDetail(status: number): UpdateNodeStatusDetail {
+  if (status === 404) return "node_not_found";
+  if (status === 422) return "validation_error";
   return "unknown";
 }

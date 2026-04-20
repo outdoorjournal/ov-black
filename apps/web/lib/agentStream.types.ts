@@ -29,4 +29,30 @@ export type ErrorFrame = {
   reason: string;
 };
 
-export type SseFrame = FirstTokenFrame | DeltaFrame | DoneFrame | ErrorFrame;
+// Narrow, browser-side mirror of the T02 inline snapshot shape. We intentionally
+// do NOT re-import ExperienceItem from the generated SDK — that type carries
+// backend-only fields like `raw` we don't want to leak into the render path.
+export type ExperienceSnapshot = {
+  title: string;
+  cover_image?: string | null;
+  price?: string | null;
+  duration_days?: number | null;
+  difficulty?: string | null;
+  location?: string | null;
+  activities?: string[];
+};
+
+export type CardFrame = {
+  type: "card";
+  source: string;
+  source_id: string;
+  node_id: string;
+  snapshot: ExperienceSnapshot;
+};
+
+export type SseFrame =
+  | FirstTokenFrame
+  | DeltaFrame
+  | DoneFrame
+  | ErrorFrame
+  | CardFrame;
