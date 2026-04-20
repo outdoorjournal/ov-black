@@ -1,0 +1,328 @@
+# Outdoor Voyage: Black — Product Requirements Document
+
+## 1. Vision
+
+An AI-native, invitation-only travel concierge for high-net-worth individuals. OV Black combines wholesale rates, curated local expertise, and exclusive inventory to deliver bespoke travel experiences that can't be found anywhere else.
+
+**Design ethos:** Amex Black / Tesla S — clean, minimal, luxurious. The product should feel exclusive before the client ever speaks to anyone.
+
+---
+
+## 2. Target Customer
+
+- High-net-worth individuals and couples (estimated $5M+ net worth)
+- Typically travel as couples or small groups (family, close friends)
+- Accustomed to premium service; expect trust, discretion, and polish
+- Often have vague travel ideas rather than fully formed plans
+- Value authentic cultural experiences, not just luxury hotels
+
+**Example persona:** Affluent couple, art/culture/history enthusiasts, post-cruise travelers, community-active (Rotary, philanthropy). Budget ~$15K+ for a 6–10 day trip. They want a plan handed to them — validated, bookable, beautiful.
+
+---
+
+## 3. Core Concepts
+
+### 3.1 The "Voodoo Doll" (Client Profile)
+
+An AI-constructed deep profile of each client, built from:
+
+- **Open-source intelligence:** Public records, press mentions, social profiles, SEC filings, estimated net worth
+- **Stated preferences:** Preferred contact method, travel companions, group composition (solo/couple/family/friends), ages of children if applicable
+- **Psychological profile:** Motivations and triggers that drive travel decisions:
+  - FOMO
+  - Social status / peer validation
+  - Bucket list aspirations
+  - Genuine passion (art, culture, history, UNESCO sites, adventure, mountains, cuisine, etc.)
+- **Travel history:** Past trips, spend levels, what they loved vs. tolerated
+
+The Voodoo Doll is a living document — it evolves with every interaction and trip.
+
+We need methods of quickly adding to this profile over time, and using it to inform every recommendation. It’s the secret sauce for personalization at scale.
+
+### 3.2 Necessary Friction
+
+Not everything should be instant. A response that's too fast undermines trust with this clientele. The system should introduce deliberate, thoughtful pacing:
+
+- "We're having our local expert review this for you" (even if AI-generated)
+- Offer callbacks with a real person or on-the-ground contact
+- Build assurance through human touchpoints at key moments
+
+### 3.3 Trust-Building Content
+
+All recommendations must be validated with:
+
+- Links to well-known editorial publications (Condé Nast Traveler, Travel + Leisure, etc.)
+- Real photography — not stock
+- Local expert attribution
+- Real-time availability and pricing (not aspirational)
+
+---
+
+## 4. User Flow (MVP)
+
+### Phase 1: Onboarding
+1. Client receives invitation (link/code)
+2. Arrives at a minimal, elegant landing page — logo + entry point
+3. Selects preferred contact method: Email, WhatsApp, Call, iMessage, Other
+4. Brief intake: who they are, who they travel with, what excites them
+5. System begins building the Voodoo Doll (automated research + intake responses)
+
+### Phase 2: Dreaming — The Mood Board
+
+The client chats with an AI agent to explore what they want. As they talk, the UI builds a visual **mood board** in real time — a split-pane experience with conversation on one side and an evolving collection of cards on the other.
+
+**How it works:**
+1. Client starts with anything — a vague idea ("Como + Dolomites"), a bucket-list item, or just a mood ("something adventurous in Asia")
+2. The AI agent engages conversationally, drawing on the Voodoo Doll to suggest things the client might love
+3. As they chat, the UI dynamically adds **cards** to the mood board: destination photos, activity snapshots, maps, hotel options, notes, editorial links
+   - *Example:* Client mentions climbing Mt. Fuji → a card with a stunning Fuji photo, best season info, and a trail overview appears on the board
+4. The agent is **context-aware** — it knows weather, seasonality, and local constraints (e.g., no sailing in Michigan in winter, monsoon season in Southeast Asia, Japan is rainy in June) and steers accordingly
+5. The agent **proactively suggests** experiences based on the Voodoo Doll and the emerging mood board — not just responding, but inspiring
+
+**Client controls on the mood board:**
+- **Must Do** — pin a card as non-negotiable for the final itinerary
+- **Thumbs Up** — Likes the idea generally. keep it on the board as an option
+- **Not This Time** — send a card to a discard bin (still visible, recoverable)
+- Cards can be managed by interacting with the UI directly or by asking the agent ("actually, drop the Fuji idea")
+
+**Data model note:** Every card tracks who added it (client vs. agent) and its status. This is foundational for the post-MVP collaborative mood board where travel companions can be invited to contribute.
+
+**What the agent does behind the scenes:**
+- Pulls real inventory: hotels (Ratehawk), flights (Duffel), experiences (GetYourGuide, OV public API), trains
+- Cross-references availability, pricing, and editorial validation
+- Flags seasonal risks or logistical conflicts early
+- Feeds the Voodoo Doll with new preference signals from every interaction
+
+### Phase 3: The Build — Strategic Friction
+
+Once the mood board has enough signal and the user "submits it to us", the system transitions into itinerary creation. This is where **necessary friction** becomes a feature. Instead of delivering a finished plan instantly, we drip out progress over hours or days — building tension, excitement, and a sense that something bespoke is being crafted for them.
+
+**The drip cadence:**
+- **Clarifying questions** — "We found an incredible private vineyard dinner near Bellagio. Do you prefer a late evening or sunset timing?" Questions signal that real humans and local experts are involved.
+- **Progress updates** — "Our Italy specialist is reviewing hotel options in the Dolomites for your dates." Even when AI-driven, frame it as expert curation.
+- **Teaser cards** — Drop a single stunning card onto the mood board: a photo, a hotel, a hidden-gem restaurant. No full reveal yet — just enough to spark anticipation.
+- **Availability alerts** — "The suite at Villa d'Este is available for your dates, but it's the last one. Want us to hold it?" Creates urgency without pressure.
+
+**Client remains active during this phase:**
+- Can continue chatting with the agent to adjust preferences, ask questions, or refine the mood board
+- Can reprioritize cards (move items between Must Do / Maybe / Not This Time)
+- Can add new ideas that came to mind — the mood board stays alive
+- Agent adapts the emerging itinerary based on these interactions
+
+**Pacing rules:**
+- Never deliver the full itinerary in under 24 hours, even if the system could
+- Space drip touchpoints across the build period (e.g., 2–3 per day)
+- Each touchpoint should feel personal and considered, not automated
+- The final "your itinerary is ready" moment should feel like an event
+
+### Internal: The Command Center
+
+While the client sees the mood board and drip updates, the OV team operates from a **Command Center** — the internal counterpart that prioritizes function over aesthetics.
+
+**Queue & workload view:**
+- All incoming trip requests in a single dashboard, sortable by status, priority, dates, and advisor assignment
+- Each request shows: client name, Voodoo Doll summary, mood board snapshot, current phase, and assigned AI agent(s)
+- Status pipeline: New → Dreaming → Building → Review → Presented → Booking → Complete
+
+**AI-assisted itinerary assembly:**
+- AI agents work autonomously to assemble draft itineraries from mood board signals + inventory APIs
+- Advisors interact with agents via **chat / MCP** to make adjustments: *"Move that tour to later in the day to give them time to get to the restaurant"*, *"Swap the hotel — they hate modern architecture"*
+- Basic **timeline UI** for arranging itinerary cards — move, reorder, swap. Functional, not fancy. Chat/MCP remains the primary power-user interaction.
+- Agents flag issues: scheduling overlaps, unrealistic transit times, sold-out inventory, weather risks
+
+**Client interaction from Command Center:**
+- Advisors can send clarifying questions to the client (delivered as drip touchpoints in Phase 3)
+- Advisors can update the Voodoo Doll directly with new insights from conversations
+- All client-facing messages are reviewed/approved by the advisor before sending (or auto-sent within approved templates)
+
+**Voodoo Doll management:**
+- Full editable view of the client's Voodoo Doll from the Command Center
+- Advisors annotate with qualitative notes AI can't capture ("she mentioned her anniversary is in October")
+- Change history tracked so the team can see how preferences evolve
+
+### Client Vault
+
+Clients need a secure way to share sensitive documents required for booking: passport photos, visa copies, loyalty program numbers, dietary/medical notes, emergency contacts.
+
+- **Encrypted upload** — client-side encryption before upload, stored in S3 with server-side encryption (AES-256)
+- **Access-controlled** — only the client and their assigned advisor can view vault contents
+- **Document types:** Passport, visa, travel insurance, loyalty cards, other
+- **Expiry tracking** — flag documents nearing expiration (e.g., passport valid < 6 months)
+- **Reusable across trips** — upload once, use for future bookings
+
+---
+
+### Phase 4: Itinerary Presentation
+1. Deliver a polished, visual itinerary — mobile-friendly PDF or in-app experience
+2. Includes: day-by-day plan, hotel photos, editorial links, pricing, maps
+3. Options and alternatives presented (not just one path)
+4. Offer a callback with a real advisor or local contact for assurance
+
+### Phase 5: Booking & Payment
+1. Client reviews and approves the plan
+2. Intermediate deposit to lock in commitment
+3. System books inventory via APIs (Ratehawk, Duffel, etc.) with fallback handling
+4. Final payment collected via Braintree
+5. Confirmation and travel documents delivered
+
+---
+
+## 5. MVP Scope
+
+### In Scope (MVP)
+| Area | Details |
+|------|---------|
+| **Landing page** | Invitation-only entry, minimal design, contact preference selection |
+| **Voodoo Doll v1** | Automated client research (public info) + structured intake questionnaire |
+| **Mood board + chat** | Split-pane UI: AI chat on one side, visual mood board on the other. Cards (photos, maps, notes) appear as client and agent discuss. Cards can be pinned as "Must Do", kept as "Maybe", or discarded. |
+| **Itinerary generation** | AI builds itinerary from client request + Voodoo Doll, validated with real inventory |
+| **Hotel search** | Ratehawk API integration for availability and rates |
+| **Flight search** | Duffel API integration for flights |
+| **Itinerary presentation** | Mobile-friendly PDF with images, links, day-by-day plan |
+| **Payment** | Braintree integration — deposit + final payment |
+| **Advisor escalation** | Multi-advisor teams can collaborate on a trip. Hand off to human at any point. Advisors interact via Command Center. |
+| **Command Center v1** | Internal dashboard: request queue, basic timeline UI for arranging itinerary cards, chat/MCP agent interaction, Voodoo Doll editing, client messaging |
+| **Client vault** | Encrypted document upload (passports, visas, etc.) with access controls and expiry tracking |
+| **WhatsApp integration** | Clients can interact via WhatsApp in addition to in-app chat |
+
+### Out of Scope (Post-MVP)
+| Area | Details |
+|------|---------|
+| **Native mobile app** | MVP is web-only (responsive); React Native app comes later |
+| **Printed personalized magazine** | Physical mail piece based on Voodoo Doll preferences |
+| **Multi-traveler Voodoo Dolls** | Deep profiles for each member of a group (v1 focuses on primary client) |
+| **Experience booking** | GetYourGuide and other experience APIs (v1 presents options but books manually) |
+| **Train booking** | Present train options but book manually for MVP |
+| **Hotel direct-rate comparison** | Cross-referencing Ratehawk vs. hotel direct websites |
+| **AI phone calls to hotels** | Automated voice calls for availability/negotiation |
+| **WhatsApp/iMessage integration** | iMessage integration deferred; WhatsApp is in MVP |
+| **Collaborative mood board** | Invite travel companions to add/vote on cards; multi-user presence and attribution |
+| **Command Center visual UI** | Polished drag-and-drop itinerary builder, calendar view, advanced analytics, conflict auto-resolution (MVP has functional but minimal timeline) |
+
+---
+
+## 6. Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **AI** | AWS Bedrock (Claude / other foundation models) |
+| **Frontend** | Next.js (responsive web for MVP) |
+| **Mobile** | React Native (post-MVP) |
+| **Backend** | Next.js API routes on Vercel |
+| **Database** | Supabase (Postgres) |
+| **Auth** | Supabase Auth (invitation-code gated) |
+| **Payments** | Braintree (existing account) |
+| **File Storage** | AWS S3 |
+| **Hosting** | Vercel |
+| **Hotel Inventory** | Ratehawk API |
+| **Flight Inventory** | Duffel API |
+| **OV Inventory** | OutdoorVoyage.com public API |
+| **UI** | Tailwind CSS, Radix UI or similar |
+
+---
+
+## 7. Key Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| **API reliability** (Ratehawk rate-change errors, availability ghosts) | Booking failures, client frustration | Implement retry logic, hold-before-charge pattern; **advisors manually book as fallback** |
+| **Seasonal availability** (e.g., August in Italy, event conflicts) | Can't fulfill the itinerary as presented | AI flags high-risk dates; **advisors verify availability directly** before presenting to client |
+| **Trust gap** — AI-generated content feels impersonal | Client doesn't convert | Human advisors are genuinely in the loop — not theater. They review, adjust, and personally approve every itinerary |
+| **AI quality gaps** — agent produces a weak or unrealistic itinerary | Client loses confidence | **Advisors catch and fix before anything reaches the client.** AI does the heavy lifting; humans do QA. Invest in better AI later. |
+| **Scope creep on Voodoo Doll** | Over-invest in research before validating the model | V1: structured intake + basic web research. **Advisors fill gaps manually** from conversation. Deepen automation iteratively |
+| **Privacy / OSINT ethics** | Clients uncomfortable with depth of research | Transparent about what info is used; let clients review and correct their profile |
+| **Booking automation complexity** | Multi-supplier orchestration is hard to automate reliably | **MVP: advisors handle bookings manually** using AI-assembled details. Automate supplier-by-supplier as reliability is proven |
+
+**MVP philosophy:** Human advisors are the safety net. Anywhere the AI or automation isn't ready, an advisor handles it manually. This lets us ship faster and defer engineering complexity to post-MVP — the client experience stays premium regardless because a real person is always backstopping the system.
+
+---
+
+## 8. Success Metrics (MVP)
+
+- **Conversion:** % of invited clients who complete a booking
+- **Trip value:** Average booking revenue per client
+- **Time to itinerary:** Hours from request to first itinerary draft
+- **Client satisfaction:** Post-trip NPS score
+- **Rebooking rate:** % of clients who book a second trip within 12 months
+
+---
+
+## 9. Decisions
+
+1. **Chat vs. messaging:** Both. MVP ships with in-app chat AND WhatsApp integration. Meet clients where they are.
+2. **Advisor model:** Mix. A team of advisors (OV staff, contracted specialists, local contacts) may collaborate on a single trip. The Command Center supports multi-advisor assignment.
+3. **Invitation mechanism:** Personal invite from the CEO. No self-serve signup. Scale the invite list manually for now.
+4. **Voodoo Doll consent:** Implicit. We use publicly available information without explicit opt-in. Clients can review and correct their profile at any time.
+5. **Deposit structure:** Deposit of X% at commitment, remainder due Y days before departure. Exact percentages and timing TBD.
+6. **Multi-supplier booking:** Humans handle it. Advisors book manually using the details assembled by AI. The key requirement is that everything gets entered back into the **Itinerary data structure** so it remains the single source of truth.
+
+---
+
+## 10. The Itinerary Data Structure
+
+The itinerary is the **central data model** of the entire system. It is the single source of truth for the client, the advisor, the AI agents, and the booking systems. Every party sees the same data — just presented differently:
+
+- **Client** sees a polished, visual experience (mood board → PDF → in-app itinerary)
+- **Advisor** sees a functional planning view (timeline, cards, logistics, costs)
+- **AI agents** read/write structured data (via MCP/API)
+- **Booking systems** consume confirmed line items for fulfillment
+
+### Structure
+
+The itinerary is a **graph of items connected by edges**. It evolves from a loose cloud of unconnected nodes (mood board) into a fully resolved, linear path (final booked itinerary).
+
+```
+Itinerary
+├── Metadata (client, dates, status, assigned advisors, version)
+│
+├── Nodes (Items)
+│   ├── type: destination | flight | hotel | experience | meal | transit | free-time | note
+│   ├── status: idea → proposed → approved → booked → confirmed
+│   ├── time: start, end, flexible (bool), time-of-day preference
+│   ├── location: geo, address, map pin
+│   ├── content: title, description, photos, editorial links
+│   ├── booking: supplier, confirmation #, cost, payment status
+│   ├── source: who added it (client | agent | advisor), when
+│   └── priority: must-do | preferred | optional
+│
+├── Edges (Relationships between items)
+│   ├── follows        → A happens before B (temporal ordering)
+│   ├── alternative_to → A or B — pick one (or more). Forms a cluster of options.
+│   ├── connected_by   → A is linked to B via a transit node (the edge points through a transit item)
+│   ├── requires       → B depends on A (e.g., must be in Milan to do the Milan tour)
+│   ├── grouped_with   → A and B belong to the same day/location/theme (loose association)
+│   └── each edge has: source (who created it), created_at, confidence (estimated | confirmed)
+│
+└── Constraints[]
+    ├── type: weather | hours | reservation-required | visa | health | event-conflict
+    ├── applies-to: node or date range
+    └── severity: blocker | warning | info
+```
+
+**Transit is a node, not just an edge.** The Bernina Express is both a connection between Tirano and St. Moritz AND a highlight experience. It's modeled as an Item node of type `transit` with `connected_by` edges linking it to the items before and after. A 20-minute taxi ride is also a transit node — just one with less content. This keeps the model uniform.
+
+**Alternatives are edge relationships, not containers.** Instead of a separate `Branches[]` array with pre-defined branch points, alternatives are just items linked by `alternative_to` edges. Three restaurant options for dinner on day 3? Three nodes, each connected to each other by `alternative_to` edges, forming an implicit cluster. Resolution = one gets promoted to `approved`, the others get demoted or removed. This is more flexible:
+- Alternatives can exist at any granularity (hotels, restaurants, entire day plans, routes)
+- An alternative can itself have sub-items with their own edges
+- You can express conditional relationships: "if we pick hotel A, then restaurant X makes sense because it's nearby" (via a `requires` edge from X to A)
+
+### How the graph evolves
+
+| Phase | Graph state |
+|-------|-------------|
+| **Mood board** | Loose nodes, few or no edges. Just a collection of ideas. Maybe some `grouped_with` edges ("these are all Como ideas"). |
+| **Planning** | `follows` edges start forming a sequence. `alternative_to` clusters emerge. Transit nodes appear between locations. `requires` edges catch dependencies. |
+| **Review** | A primary path is traceable through the graph. Unresolved `alternative_to` clusters are flagged for client decision. Constraints validated against the path. |
+| **Finalized** | The graph resolves to a linear DAG — one clear path from start to finish. All alternatives resolved. All transit confirmed. All bookings attached. |
+
+### Key properties
+
+- **Progressive structure:** The graph doesn't demand linearity upfront. A mood board is valid with zero edges. Structure is added incrementally as the plan takes shape — by AI agents, advisors, or the client dragging cards into sequence.
+- **Transit as first-class nodes:** Getting from A to B is part of the experience, not an afterthought. Transit nodes carry mode, duration, route, cost — and can themselves be bookable and beautiful (scenic train rides, ferry crossings, private transfers).
+- **Progressive detail:** A node starts as just a title and photo ("Lake Como") and accumulates detail over time — specific hotel, room type, check-in time, confirmation number. The data model supports every stage of fidelity.
+- **Parallel paths:** Two people in the group doing different things at the same time? Two nodes at the same time slot, no `follows` edge between them. The graph handles it naturally.
+- **Append-only history:** Every change is versioned. The advisor moved dinner from 7pm to 8pm? Logged. The client removed a museum visit? Logged. This feeds the Voodoo Doll and protects against disputes.
+
+### Why this matters
+
+Without this structure, the itinerary lives in PDFs, WhatsApp messages, Google Docs, and people's heads. The data structure makes the itinerary **programmable** — AI agents can reason about it, advisors can manipulate it, and the client always sees the latest version beautifully rendered. It's also what makes automation possible post-MVP: you can't automate booking if you don't have structured, machine-readable itinerary items.
