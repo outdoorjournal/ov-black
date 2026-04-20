@@ -9,6 +9,7 @@
     "start": "next start --port 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest",
     "clean": "rm -rf .next .turbo node_modules"
   },
   "dependencies": {
@@ -31,14 +32,19 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@types/node": "22.19.17",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@vitest/ui": "^2.1.8",
     "autoprefixer": "10.5.0",
     "eslint": "9.39.4",
     "eslint-config-next": "15.5.15",
+    "jsdom": "^25.0.1",
     "postcss": "8.5.10",
     "tailwindcss": "3.4.19",
-    "typescript": "5.7.2"
+    "typescript": "5.7.2",
+    "vitest": "^2.1.8"
   }
 }
