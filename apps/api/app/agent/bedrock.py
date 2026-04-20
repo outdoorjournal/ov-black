@@ -48,6 +48,10 @@ class AgentRuntimeClient(Protocol):
       - ``{"type": "delta", "text": <str>}`` — a text chunk.
       - ``{"type": "done", ...}`` — terminal event; caller should stop
         iterating after seeing this.
+
+    ``create_event`` persists a best-effort conversation pair into the
+    AgentCore Memory scratchpad for a session. The service layer swallows
+    failures — a memory-write crash must never fail a turn.
     """
 
     def invoke_stream(
@@ -56,6 +60,16 @@ class AgentRuntimeClient(Protocol):
         agentcore_session_id: str,
         payload: dict,
     ) -> AsyncIterator[dict]:
+        ...
+
+    async def create_event(
+        self,
+        *,
+        memory_id: str,
+        agentcore_session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
         ...
 
 
@@ -175,6 +189,33 @@ class Boto3AgentRuntimeClient:
         # downstream code always sees a clean terminator.
         yield {"type": "done", "reason": "stream_closed"}
 
+    async def create_event(
+        self,
+        *,
+        memory_id: str,
+        agentcore_session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        """Best-effort AgentCore Memory CreateEvent call. Sync boto3 offloaded."""
+        client = self._ensure_client()
+        payload = [
+            {"conversational": {"content": user_text, "role": "USER"}},
+            {"conversational": {"content": assistant_text, "role": "ASSISTANT"}},
+        ]
+
+        def _create() -> Any:
+            return client.create_event(
+                memoryId=memory_id,
+                sessionId=agentcore_session_id,
+                payload=payload,
+            )
+
+        try:
+            await anyio.to_thread.run_sync(_create)
+        except Exception as exc:  # noqa: BLE001 — map to domain error for caller
+            raise AgentRuntimeError(reason=exc.__class__.__name__) from exc
+
 
 async def _aiter_lines(lines: Iterable[Any]) -> AsyncIterator[Any]:
     """Pull each ``line`` off a sync iterator inside a worker thread.
@@ -205,11 +246,32 @@ class MockAgentRuntimeClient:
     Pass a sequence of pre-built event dicts; ``invoke_stream`` yields them
     verbatim in order. The mock does NOT auto-inject a ``first_token``
     event — test authors script the exact wire trace they want to assert.
+
+    ``events`` can also be a callable returning an iterable — the callable
+    is invoked fresh on every ``invoke_stream`` call so tests can script
+    per-call scripts (e.g. first attempt raises, second attempt streams).
+    ``raise_on_invoke`` lets a test sequence exceptions across attempts.
     """
 
-    def __init__(self, events: Sequence[dict]) -> None:
-        self._events = list(events)
+    def __init__(
+        self,
+        events: Sequence[dict] | list[Sequence[dict]] | None = None,
+        *,
+        raise_on_invoke: Sequence[BaseException | None] | None = None,
+    ) -> None:
+        self._events = events or []
+        self._raises = list(raise_on_invoke) if raise_on_invoke else []
         self.calls: list[dict] = []
+        self.create_event_calls: list[dict] = []
+        self.create_event_raises: BaseException | None = None
+
+    def _script_for_call(self, attempt_index: int) -> Sequence[dict]:
+        events = self._events
+        # Per-call scripts: list of lists.
+        if events and isinstance(events[0], list):
+            idx = min(attempt_index, len(events) - 1)
+            return events[idx]
+        return events  # type: ignore[return-value]
 
     async def invoke_stream(
         self,
@@ -217,11 +279,35 @@ class MockAgentRuntimeClient:
         agentcore_session_id: str,
         payload: dict,
     ) -> AsyncIterator[dict]:
+        attempt_index = len(self.calls)
         self.calls.append(
             {
                 "agentcore_session_id": agentcore_session_id,
                 "payload": payload,
             }
         )
-        for event in self._events:
+        if attempt_index < len(self._raises):
+            exc = self._raises[attempt_index]
+            if exc is not None:
+                raise exc
+        for event in self._script_for_call(attempt_index):
             yield event
+
+    async def create_event(
+        self,
+        *,
+        memory_id: str,
+        agentcore_session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        self.create_event_calls.append(
+            {
+                "memory_id": memory_id,
+                "agentcore_session_id": agentcore_session_id,
+                "user_text": user_text,
+                "assistant_text": assistant_text,
+            }
+        )
+        if self.create_event_raises is not None:
+            raise self.create_event_raises
