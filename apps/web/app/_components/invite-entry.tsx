@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import {
+  createApiClient,
+  redeemInvite,
+  type RedeemInviteDetail,
+} from "@ov-black/api-client";
 
 type Status =
   | { kind: "idle" }
@@ -11,15 +16,18 @@ type Status =
 // Map of API detail codes (see apps/api/app/routers/auth.py) to human copy
 // that keeps the code-enumeration guarantee from D015 intact: unknown-code
 // and wrong-email must look identical to the user.
-function messageForDetail(status: number, detail: string): string {
+function messageForDetail(status: number, detail: RedeemInviteDetail): string {
   if (status === 404 && detail === "invite_not_redeemable") {
     return "That invite code isn't redeemable with this email.";
   }
   if (status === 409 && detail === "invite_already_consumed") {
     return "This invite has already been used.";
   }
-  if (status === 502) {
+  if (status === 502 || detail === "auth_upstream_unavailable") {
     return "Our concierge is stepping away for a moment. Please try again.";
+  }
+  if (detail === "network_error") {
+    return "Could not reach the server. Check your connection.";
   }
   return "Something went wrong. Please try again.";
 }
@@ -30,40 +38,29 @@ export function InviteEntry() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const apiBaseUrl = process.env["NEXT_PUBLIC_API_BASE_URL"] ?? "";
+  const client = useMemo(
+    () => createApiClient({ baseUrl: apiBaseUrl }),
+    [apiBaseUrl],
+  );
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus({ kind: "submitting" });
 
-    try {
-      const response = await fetch(`${apiBaseUrl}/auth/redeem-invite`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: code.trim(), email: email.trim() }),
-      });
+    const result = await redeemInvite(client, {
+      code: code.trim(),
+      email: email.trim(),
+    });
 
-      if (response.status === 204) {
-        setStatus({ kind: "sent" });
-        return;
-      }
-
-      let detail = "";
-      try {
-        const body = (await response.json()) as { detail?: unknown };
-        if (typeof body.detail === "string") detail = body.detail;
-      } catch {
-        // non-JSON error body — fall through to generic message
-      }
-      setStatus({
-        kind: "error",
-        message: messageForDetail(response.status, detail),
-      });
-    } catch {
-      setStatus({
-        kind: "error",
-        message: "Could not reach the server. Check your connection.",
-      });
+    if (result.ok) {
+      setStatus({ kind: "sent" });
+      return;
     }
+
+    setStatus({
+      kind: "error",
+      message: messageForDetail(result.status, result.detail),
+    });
   }
 
   if (status.kind === "sent") {

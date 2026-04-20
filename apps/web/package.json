@@ -12,6 +12,7 @@
     "clean": "rm -rf .next .turbo node_modules"
   },
   "dependencies": {
+    "@ov-black/api-client": "workspace:*",
     "@supabase/ssr": "0.10.2",
     "@supabase/supabase-js": "2.104.0",
     "next": "15.5.15",

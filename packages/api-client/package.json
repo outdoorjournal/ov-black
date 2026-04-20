@@ -1,0 +1,29 @@
+{
+  "name": "@ov-black/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OV Black typed API client generated from apps/api's OpenAPI schema (D011).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "generate": "bash scripts/generate.sh",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist .turbo src/generated"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.96.1",
+    "typescript": "5.7.2"
+  }
+}

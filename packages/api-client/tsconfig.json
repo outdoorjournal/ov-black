@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "verbatimModuleSyntax": false,
+    // @hey-api/openapi-ts emits generated code that uses `field: string | undefined`
+    // rather than optional-with-undefined. The tool explicitly documents the output
+    // as "a dependency" — so we relax exactOptionalPropertyTypes for this package only.
+    // Our hand-written surface is src/index.ts; the rest is generated.
+    "exactOptionalPropertyTypes": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
