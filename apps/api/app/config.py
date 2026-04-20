@@ -92,6 +92,46 @@ class Settings(BaseSettings):
         ),
     )
 
+    aws_region: str = Field(
+        default="us-west-2",
+        description=(
+            "AWS region for the bedrock-agentcore client. Defaults to us-west-2 "
+            "where AgentCore Runtime is early-available (S04 research)."
+        ),
+    )
+    bedrock_agentcore_runtime_arn: str = Field(
+        default="",
+        description=(
+            "Full ARN of the provisioned AgentCore Runtime agent. Empty during "
+            "local dev / tests — callers must check before invoking."
+        ),
+    )
+    agent_first_token_timeout_seconds: float = Field(
+        default=8.0,
+        ge=0.1,
+        description=(
+            "Hard ceiling on time-to-first-token before we cut the upstream "
+            "and fall into the retry envelope. Belt for the 2 s R015 target."
+        ),
+    )
+    agent_max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=5,
+        description=(
+            "Silent retry budget per turn. R018 specifies 'within one retry' "
+            "so the default is 1 (i.e. 1 original + 1 retry = 2 attempts)."
+        ),
+    )
+    bedrock_agentcore_memory_id: str = Field(
+        default="",
+        description=(
+            "AgentCore Memory id for the per-session scratchpad. Empty value "
+            "disables CreateEvent calls — the write becomes a no-op so local "
+            "runs don't require a provisioned Memory resource."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
