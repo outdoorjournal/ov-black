@@ -12,6 +12,7 @@ from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.registry import get_registry
 from app.routers.auth import router as auth_router
+from app.routers.inventory import router as inventory_router
 from app.routers.itineraries import router as itineraries_router
 
 if TYPE_CHECKING:
@@ -85,6 +86,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(itineraries_router)
+app.include_router(inventory_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
