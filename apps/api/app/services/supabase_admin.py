@@ -1,10 +1,16 @@
 """Thin client for the Supabase Auth admin API (server-side only).
 
-The only call site so far is :func:`generate_magic_link` — used by
-``POST /auth/redeem-invite`` to email a magic link to a freshly-redeemed
-invite. The service role key flows in from :class:`Settings` (Secrets
-Manager in staging/prod, ``.env`` in local dev) and MUST NEVER be logged
-or returned to the client.
+Two call sites so far:
+
+- :func:`generate_magic_link` — used by ``POST /auth/redeem-invite`` to
+  email a magic link to a freshly-redeemed invite (S01).
+- :func:`generate_invite_link` — used by ``POST /clients`` to email a
+  Supabase ``inviteUserByEmail`` magic link to a brand-new client (S03).
+
+The service role key flows in from :class:`Settings` (Secrets Manager
+in staging/prod, ``.env`` in local dev) and MUST NEVER be logged or
+returned to the client. The returned ``action_link`` MUST NEVER be
+logged either — it is a single-use credential that grants login.
 """
 
 from __future__ import annotations
@@ -102,4 +108,71 @@ async def generate_magic_link(
         raise SupabaseAdminError("supabase_admin_missing_link")
 
     logger.info("supabase_admin.magic_link_issued", extra={"email": email})
+    return MagicLinkIssued(email=email, action_link=action_link)
+
+
+async def generate_invite_link(
+    email: str,
+    redirect_to: str,
+    *,
+    settings: Settings | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> MagicLinkIssued:
+    """Ask Supabase Auth to send an invite email (``inviteUserByEmail``).
+
+    Wraps ``POST {supabase_url}/auth/v1/invite`` with the advisor's
+    configured ``redirect_to`` target. On success Supabase creates the
+    auth user (if absent), emails them a signup link, and returns the
+    ``action_link`` — we capture it for tests/observability but never
+    log it or surface it to the HTTP client.
+    """
+    settings = settings or get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        raise SupabaseAdminError("supabase_admin_not_configured")
+
+    url = f"{settings.supabase_url.rstrip('/')}/auth/v1/invite"
+    headers = {
+        "apikey": settings.supabase_service_role_key,
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {"email": email, "redirect_to": redirect_to, "data": {}}
+
+    owns_client = client is None
+    client = client or httpx.AsyncClient(timeout=10.0)
+    try:
+        try:
+            resp = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            # Never include the key, authorization header, or action_link.
+            # Email is OK per the S01 precedent.
+            logger.warning(
+                "supabase_admin.network_error",
+                extra={"email": email, "error": exc.__class__.__name__},
+            )
+            raise SupabaseAdminError("supabase_admin_unreachable") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+
+    if resp.status_code >= 400:
+        logger.warning(
+            "supabase_admin.rejected",
+            extra={"email": email, "status": resp.status_code},
+        )
+        raise SupabaseAdminError(
+            "supabase_admin_rejected",
+            status_code=resp.status_code,
+        )
+
+    body = resp.json()
+    action_link = (
+        body.get("action_link")
+        or (body.get("properties") or {}).get("action_link")
+        or ""
+    )
+    if not isinstance(action_link, str) or not action_link:
+        raise SupabaseAdminError("supabase_admin_missing_link")
+
+    logger.info("supabase_admin.invite_link_issued", extra={"email": email})
     return MagicLinkIssued(email=email, action_link=action_link)
