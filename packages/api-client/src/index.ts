@@ -15,6 +15,39 @@ import type { RedeemInviteRequest } from "./generated/types.gen.js";
 export type { RedeemInviteRequest } from "./generated/types.gen.js";
 export type { Client } from "./generated/client/types.gen.js";
 
+// Itinerary graph (S02): create + read + node/edge mutation contracts and
+// the assembled GraphResponse view consumed by apps/web.
+export type {
+  CreateItineraryRequest,
+  ItineraryResponse,
+  CreateNodeRequest,
+  UpdateNodeRequest,
+  NodeResponse,
+  CreateEdgeRequest,
+  EdgeResponse,
+  GraphResponse,
+  NodeStatus,
+  NodeType,
+  EdgeType,
+} from "./generated/types.gen.js";
+
+// Inventory (S02): the discriminated InventoryItem union and its nested
+// value types. Consumers can switch on `kind` for variant-specific UI.
+export type {
+  ExperienceItem,
+  DestinationItem,
+  HotelItem,
+  FlightItem,
+  MealItem,
+  TransitItem,
+  NoteItem,
+  Location,
+  Price,
+  Range,
+  EditorialLink,
+  SearchInventoryResponse,
+} from "./generated/types.gen.js";
+
 export interface ApiClientConfig {
   /** Base URL of the API — e.g. https://<alb-dns> or http://localhost:8000 */
   baseUrl: string;
