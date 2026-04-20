@@ -18,6 +18,7 @@ The test surface covers:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
@@ -28,6 +29,7 @@ from typing import Any
 import pytest
 
 from app.agent.bedrock import AgentRuntimeError, MockAgentRuntimeClient
+from app.agent.prompt import build_system_prompt
 from app.config import Settings
 from app.models import AgentSession, AgentTurn, Client, TurnRole, VoodooDoll
 from app.models.client import ContactChannel, GroupType
@@ -971,3 +973,81 @@ async def test_open_or_reuse_session_jit_backfill_profiles_upsert_never_downgrad
     assert factory.profile_upsert_calls == [str(caller_user_id)]
     # The critical invariant: role='advisor' is preserved.
     assert factory.profiles_existing_roles[str(caller_user_id)] == "advisor"
+
+
+# ── S07 card-proposal protocol (T02) ───────────────────────────────────────
+
+
+def test_system_prompt_includes_card_protocol() -> None:
+    """The assembled system prompt teaches the model the card event shape."""
+    prompt = build_system_prompt("CONTEXT_PLACEHOLDER")
+    # Exact protocol literal — the model must learn the raw JSON shape.
+    assert '"type": "card"' in prompt
+    # The protocol names source_id as the OV inventory reference.
+    assert "source_id" in prompt
+    # And it tells the model the frame carries source='ov'.
+    assert '"source": "ov"' in prompt
+
+
+async def test_card_event_passes_through(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """A ``card`` event from the runtime round-trips to the client verbatim.
+
+    Locks in the S07 contract that the service's pass-through seam forwards
+    unknown event kinds as raw SSE frames without mutating shape. The test
+    extracts the ``data: <json>`` line for the card frame, re-parses the
+    JSON, and asserts the full payload (including snapshot) survived.
+    """
+    card_event = {
+        "type": "card",
+        "source": "ov",
+        "source_id": "ov-123",
+        "snapshot": {
+            "title": "Heli-ski the Chugach",
+            "cover_image": "https://cdn.ov.test/chugach.jpg",
+            "price": "USD 48000",
+            "duration_days": 7,
+            "difficulty": "expert",
+            "location": "Valdez, Alaska",
+            "activities": ["heli-ski", "lodge"],
+        },
+    }
+    runtime = MockAgentRuntimeClient(
+        [
+            {"type": "delta", "text": "Here's one."},
+            card_event,
+            {"type": "done"},
+        ]
+    )
+
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="Suggest something wild.",
+            settings=settings,
+        )
+    )
+    joined = b"".join(frames)
+
+    # Pull each `data: ...` line, parse it, and find the card frame.
+    data_lines = [
+        line[len(b"data: "):]
+        for line in joined.split(b"\n")
+        if line.startswith(b"data: ")
+    ]
+    cards = [
+        json.loads(line.decode("utf-8"))
+        for line in data_lines
+        if b'"type":"card"' in line
+    ]
+    assert len(cards) == 1
+    assert cards[0] == card_event
+    # Snapshot dict MUST survive byte-for-byte — no re-keying, no stripping.
+    assert cards[0]["snapshot"]["activities"] == ["heli-ski", "lodge"]

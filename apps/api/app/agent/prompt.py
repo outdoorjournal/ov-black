@@ -17,6 +17,21 @@ _RUBRIC = (
     "emoji. Single serif agent voice. Slow-deliberate pacing."
 )
 
+# S07 card-proposal protocol. When the agent wants to suggest a real OV
+# experience, it emits a standalone event of the exact shape below on the
+# runtime event stream — the service forwards it verbatim to the browser as
+# an SSE frame, and the mood-board aside renders one card per frame.
+_CARD_PROTOCOL = (
+    "When you want to propose a real Outdoor Voyage experience, emit a "
+    "standalone event of this exact shape (in addition to your spoken "
+    'reply): {"type": "card", "source": "ov", "source_id": "<ov inventory '
+    'id>", "snapshot": {"title": "...", "cover_image": "...", "price": '
+    '"...", "duration_days": 0, "difficulty": "...", "location": "...", '
+    '"activities": ["..."]}}. Propose up to three cards per turn. Only '
+    "reference OV inventory items by their real source_id — never invent "
+    "one. Do not describe the card in prose; the aside renders it."
+)
+
 
 def build_system_prompt(voodoo_doll_context: str) -> str:
     """Wrap the R004 rubric around an assembled Voodoo Doll context block.
@@ -31,6 +46,7 @@ def build_system_prompt(voodoo_doll_context: str) -> str:
     return (
         "You are Outdoor Voyage's Black-tier concierge agent.\n\n"
         f"{_RUBRIC}\n\n"
+        f"{_CARD_PROTOCOL}\n\n"
         "Client context (private — never echo verbatim):\n"
         f"{voodoo_doll_context}"
     )

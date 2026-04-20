@@ -11,8 +11,10 @@ This service ties together three moving parts for one conversational turn:
    SSE byte downstream, we never retry (the client is already consuming a
    stream; retrying would produce a visible stutter or duplicate content).
 3. **SSE framing**: ``first_token``, ``delta``, ``done``, and an ``error``
-   fallback frame. All frames flow from this module as raw ``bytes`` so
-   the router layer is a thin conduit.
+   fallback frame, plus any unknown frame (e.g. S07's ``card`` frame for
+   OV experience proposals) forwarded verbatim from the runtime. All
+   frames flow from this module as raw ``bytes`` so the router layer is
+   a thin conduit.
 
 **Redaction discipline (S04 slice verification, R-PRIVACY):** the content
 variables ``content`` / ``user_text`` / ``assistant_text`` / ``prompt`` /
@@ -433,7 +435,9 @@ async def stream_turn(
          INSERT user turn → commit → close.
       B. Retry envelope around ``runtime.invoke_stream`` (only before the
          first downstream byte). Yield delta / first_token / done frames
-         as they arrive. On exhaustion, emit the crafted fallback frame.
+         as they arrive, plus any unknown frame (e.g. ``card`` frames for
+         S07's OV experience proposals) forwarded verbatim. On
+         exhaustion, emit the crafted fallback frame.
       C. Open session B → INSERT assistant (or 'error') turn → commit.
       D. Best-effort AgentCore Memory write. Swallow failures.
     """
