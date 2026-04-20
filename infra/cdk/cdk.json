@@ -37,12 +37,12 @@
     "env": "staging",
     "ov-black:envs": {
       "staging": {
-        "account": "",
-        "region": "us-east-1",
-        "vpcId": "",
-        "availabilityZones": [],
-        "publicSubnetIds": [],
-        "privateSubnetIds": []
+        "account": "437988666846",
+        "region": "us-east-2",
+        "vpcId": "vpc-0b7a7ad7cc2e34da2",
+        "availabilityZones": ["us-east-2a", "us-east-2b"],
+        "publicSubnetIds": ["subnet-010f2998bcd5e6bd6", "subnet-0add1b5345a58b1a1"],
+        "privateSubnetIds": ["subnet-010f2998bcd5e6bd6", "subnet-0add1b5345a58b1a1"]
       },
       "prod": {
         "account": "",
