@@ -18,6 +18,7 @@ export interface SecretsStackProps extends StackProps {
 export class SecretsStack extends Stack {
   readonly supabaseServiceRole: Secret;
   readonly supabaseJwt: Secret;
+  readonly bedrockAgentCoreRuntimeArn: Secret;
 
   constructor(scope: Construct, id: string, props: SecretsStackProps) {
     super(scope, id, props);
@@ -42,6 +43,20 @@ export class SecretsStack extends Stack {
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
+    // The Bedrock AgentCore runtime itself (the agent) is provisioned OUT OF BAND
+    // in the AWS console for M001 — CDK-managed agent provisioning is deferred
+    // until S05 stabilizes. The operator populates this Secret with the runtime
+    // ARN (`arn:aws:bedrock-agentcore:<region>:<account>:runtime/<runtime-id>`)
+    // before the API container is first exercised against staging; apps/api reads
+    // it at boot and refuses to start the Bedrock client if the value is empty.
+    this.bedrockAgentCoreRuntimeArn = new Secret(this, 'BedrockAgentCoreRuntimeArn', {
+      secretName: `${namePrefix}/bedrock-agentcore-runtime-arn`,
+      description:
+        'Bedrock AgentCore runtime ARN consumed by apps/api to InvokeAgentRuntime. Populated out-of-band by the operator after console-side agent creation.',
+      secretStringValue: SecretValue.unsafePlainText(''),
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
     new CfnOutput(this, 'SupabaseServiceRoleArn', {
       value: this.supabaseServiceRole.secretArn,
       description: 'ARN of the Supabase service-role-key secret.',
@@ -52,6 +67,12 @@ export class SecretsStack extends Stack {
       value: this.supabaseJwt.secretArn,
       description: 'ARN of the Supabase JWT issuer + JWKS URL secret.',
       exportName: `ov-black-${props.envName}-supabase-jwt-arn`,
+    });
+
+    new CfnOutput(this, 'BedrockAgentCoreRuntimeArnArn', {
+      value: this.bedrockAgentCoreRuntimeArn.secretArn,
+      description: 'ARN of the Bedrock AgentCore runtime-ARN secret (the Secret itself, not the runtime ARN value it holds).',
+      exportName: `ov-black-${props.envName}-bedrock-agentcore-runtime-arn-arn`,
     });
   }
 }

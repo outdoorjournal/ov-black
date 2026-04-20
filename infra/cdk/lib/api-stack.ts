@@ -29,6 +29,7 @@ export interface ApiStackProps extends StackProps {
   readonly privateSubnetIds: string[];
   readonly supabaseServiceRoleSecret: SmSecret;
   readonly supabaseJwtSecret: SmSecret;
+  readonly bedrockAgentCoreRuntimeArnSecret: SmSecret;
   /** Image tag to deploy. Defaults to `latest`; CI overrides via `-c imageTag=...`. */
   readonly imageTag?: string;
 }
@@ -104,7 +105,7 @@ export class ApiStack extends Stack {
     });
 
     // Task role: the role the container itself assumes. Scope secretsmanager
-    // reads to EXACTLY the two secret ARNs — no wildcard, no `*` resource.
+    // reads to EXACTLY the secret ARNs we ship — no wildcard, no `*` resource.
     taskDefinition.taskRole.addToPrincipalPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -112,7 +113,27 @@ export class ApiStack extends Stack {
         resources: [
           props.supabaseServiceRoleSecret.secretArn,
           props.supabaseJwtSecret.secretArn,
+          props.bedrockAgentCoreRuntimeArnSecret.secretArn,
         ],
+      }),
+    );
+
+    // Bedrock AgentCore invoke + memory actions. Resource is `*` because the
+    // AgentCore runtime ARN is populated out-of-band by the operator after
+    // console-side agent creation (see SecretsStack) — it is not known at CDK
+    // synth time. R017 deliberately accepts this wildcard as an M001 concession;
+    // tighten to `arn:aws:bedrock-agentcore:<region>:<account>:runtime/<runtime-id>`
+    // once S05 stabilizes enough to move agent provisioning into CDK.
+    taskDefinition.taskRole.addToPrincipalPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'bedrock-agentcore:InvokeAgentRuntime',
+          'bedrock-agentcore:CreateEvent',
+          'bedrock-agentcore:ListEvents',
+          'bedrock-agentcore:GetEvent',
+        ],
+        resources: ['*'],
       }),
     );
     // Execution role (ECR pull + CloudWatch write) is added automatically by
@@ -132,12 +153,17 @@ export class ApiStack extends Stack {
         // is the only thing that can read them.
         SUPABASE_SERVICE_ROLE_SECRET_ARN: props.supabaseServiceRoleSecret.secretArn,
         SUPABASE_JWT_SECRET_ARN: props.supabaseJwtSecret.secretArn,
+        BEDROCK_AGENTCORE_RUNTIME_ARN_SECRET_ARN:
+          props.bedrockAgentCoreRuntimeArnSecret.secretArn,
       },
       secrets: {
         // ECS also natively injects the secret values as envvars. Apps that
         // prefer SDK-side fetch can ignore these and use the ARNs above.
         SUPABASE_SERVICE_ROLE_KEY: EcsSecret.fromSecretsManager(props.supabaseServiceRoleSecret),
         SUPABASE_JWT: EcsSecret.fromSecretsManager(props.supabaseJwtSecret),
+        BEDROCK_AGENTCORE_RUNTIME_ARN: EcsSecret.fromSecretsManager(
+          props.bedrockAgentCoreRuntimeArnSecret,
+        ),
       },
       portMappings: [{ containerPort: 8000, name: 'api' }],
       essential: true,
@@ -177,6 +203,12 @@ export class ApiStack extends Stack {
       securityGroup: albSg,
       vpcSubnets: { subnetType: SubnetType.PUBLIC },
       loadBalancerName: `ov-black-api-${props.envName}`,
+      // SSE turn streams run 10–30s end-to-end; ALB's default 60s idle timeout
+      // can cut a long generation in half. 120s gives the upper bound (~90s
+      // worst case) + ~30% headroom without masking a legitimately stuck
+      // upstream. The listener inherits this from the ALB — do NOT set it on
+      // `addListener` (that property does not exist there).
+      idleTimeout: Duration.seconds(120),
     });
 
     const targetGroup = new ApplicationTargetGroup(this, 'ApiTargetGroup', {

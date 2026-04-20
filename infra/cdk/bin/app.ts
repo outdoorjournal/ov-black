@@ -24,6 +24,7 @@ const apiStack = new ApiStack(app, `OvBlackApi-${config.envName}`, {
   privateSubnetIds: config.privateSubnetIds,
   supabaseServiceRoleSecret: secretsStack.supabaseServiceRole,
   supabaseJwtSecret: secretsStack.supabaseJwt,
+  bedrockAgentCoreRuntimeArnSecret: secretsStack.bedrockAgentCoreRuntimeArn,
   ...(imageTagContext ? { imageTag: imageTagContext } : {}),
   env: awsEnv,
   description: `ov-black apps/api on ECS Fargate behind an ALB for ${config.envName} (D002).`,
