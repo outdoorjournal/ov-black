@@ -1,0 +1,1385 @@
+{
+  "bounds": {
+    "maxLat": 45.563945000000004,
+    "maxLng": 9.288558,
+    "minLat": 45.363945,
+    "minLng": 9.088558
+  },
+  "extraTrips": [
+    {
+      "activities": [
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "018f3958-16c7-7960-a6f1-e76f569afe24",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Trekking"
+        },
+        {
+          "id": "018f3958-25cd-7a54-8f09-bcd1df790070",
+          "kind": {
+            "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+            "name": "Lodging"
+          },
+          "name": "Hotel"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/covers/lS3CvSAw9zNF.jpg",
+        "id": "019daa71-79f5-7d0e-8ad0-759fea9f2046",
+        "mimeType": "image/jpeg",
+        "size": 831741
+      },
+      "description": "<p>The Annapurna Circuit in Nepal is one of the world's most spectacular long-distance treks, offering an unparalleled experience amidst subtropical nature and high-alpine solitude. The route circumnavigates the mighty Annapurna massif, leading hikers through an impressive variety of climates \u2013 from lush green rice paddies to the arctic high desert at the legendary Thorong La Pass.</p><p></p><p><strong> The highlights of the trip</strong></p><p></p><ul><li><p><strong>Thorong La Pass (5,416 m):</strong> Crossing this pass represents the physical and emotional highlight of the trek.</p></li><li><p><strong>Cultural richness:</strong> The route connects Hindu mountain villages in the lowlands with the Tibetan-influenced Buddhist cultures in Manang and Mustang.</p></li><li><p><strong>Sacred sites:</strong> Visiting the Muktinath Temple with its 108 holy springs is a profound cultural experience.</p></li><li><p><strong>Geological wonders:</strong> Hikers traverse the Kali Gandaki Gorge, the deepest gorge on Earth, located between the giants Annapurna and Dhaulagiri.</p></li></ul><hr><p><br></p>",
+      "difficulty": {
+        "max": 6,
+        "min": 6
+      },
+      "durationDays": {
+        "max": 15,
+        "min": 15
+      },
+      "id": "019daa55-898a-7cc8-8137-251dbe21e222",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/Jt0kokwpEMp0.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5b-c128-7876-be31-3f4ae19af9ae",
+          "index": 0,
+          "name": "Lodge in Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/V0MB4FYa9fjo.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5b-cb15-7462-81bf-d5a9b69fc01f",
+          "index": 1,
+          "name": "Playing with Snow in Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/kcVgInmwCZpz.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5b-d724-7537-85a4-59af3e045d32",
+          "index": 2,
+          "name": "Lake in Annapurna Circuit"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/zpMKpMaBJl1c.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5b-e5a6-7933-81d0-2c42dd43bac2",
+          "index": 3,
+          "name": "Paranomic view of Mountain range seen in Annapurna Circuit"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/s0gvfmgijWUJ.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5b-f0c4-70b8-8446-777c7366dbbc",
+          "index": 4,
+          "name": "Annapurna Trekking Route"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/9PoheHS32sQr.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5b-fc83-7947-9a2a-e48462149058",
+          "index": 5,
+          "name": "Temple in Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/jfJcbuCJBU10.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-0a5d-7716-b78f-39525eb81a44",
+          "index": 6,
+          "name": "Buddhist monastery in Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/UUXawIsVpF1L.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-15e2-73c2-9ae9-fa651ffec587",
+          "index": 7,
+          "name": "Snow covered in Annapurna Circuit"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/DcyV9zubjqnr.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-21ab-77a9-a6c4-196395b3f4d5",
+          "index": 8,
+          "name": "Best Time for Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/W6IdK6xVBnVF.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-39ae-7014-b14a-c0e9e627ac9a",
+          "index": 9,
+          "name": "Close view of Annapuran seen during Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/wqiWnRSaQWKh.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-445a-7d3f-a59d-7b6e81526564",
+          "index": 10,
+          "name": "High alitude areas of Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/7LogEpCGYDKX.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-5073-75c6-9e68-f50209ed60f8",
+          "index": 11,
+          "name": "Gate of Manang"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/dfvAwFp2Ad9L.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-5c72-753b-861c-e80d1ebb7ae8",
+          "index": 12,
+          "name": "360 view of mountain seen during Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/aAMUx4gbiYvd.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-6951-7835-ab9e-78bfd4fe1dad",
+          "index": 13,
+          "name": "Mountain cow in Annapurna Circuit"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/CGsHpOQOZtMO.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-75a2-7a66-b67b-c06a4f31802d",
+          "index": 14,
+          "name": "High altitude tea house in Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/wpChYsG6Nalh.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-8248-7326-8883-f24b9de39506",
+          "index": 15,
+          "name": "Bhote Kukur - Mountain dog"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/Xil3vhgKcZ8o.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-8f79-7f9d-a5b5-fbd0fde79eac",
+          "index": 16,
+          "name": "Suspension bridge in Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/Ly9fTu5QJ6yJ.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-9a86-75e3-af8b-64515fcb4bda",
+          "index": 17,
+          "name": "Annapurna Circuit trek in Spring"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/2v8yh8BppIxQ.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-a649-785e-90a6-6051f7bdf5fb",
+          "index": 18,
+          "name": "Sign board on The Annapurna Circuit Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/LVH0GfHZjeaJ.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-b0bc-7e28-83e4-6d6eb44a877a",
+          "index": 19,
+          "name": "Thorong Phedi"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/HFuu6PQ72xTK.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-ba9e-7493-b28d-c58748690ac3",
+          "index": 20,
+          "name": "Tea house covered in snow in Annapurna"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/UdSfCmrp33KZ.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-c810-714f-93bf-e22fdf196c5e",
+          "index": 21,
+          "name": "Taking break and posing  while heading to Thorong La Pass"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/tolEQqRG25rl.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-d1b1-7d02-853a-b39cb26afce9",
+          "index": 22,
+          "name": "Manang traditional village"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/kZrQCl1ZvL4v.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-dbc9-7872-afa4-cc9cd1a81c37",
+          "index": 23,
+          "name": "local shop in Annapurna Circuit trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/psxYHBwegxbn.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-e680-7d43-a98a-00ee8540f700",
+          "index": 24,
+          "name": "Souviner selling in Annapurna Region during Circuit trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019daa55-898a-7cc8-8137-251dbe21e222/images/aLHvtXxDB0Fb.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019daa5c-fd05-7516-8120-50cc76f6872e",
+          "index": 25,
+          "name": "traditional local house in Annapurna Region"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 27.20497,
+        "lng": 86.97454,
+        "place": "Annapurna"
+      },
+      "minPrice": {
+        "amount": 900,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "annapurna-circuit-trek-in-nepal",
+      "thumbnailImage": null,
+      "title": "Annapurna Circuit Trek in Nepal"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-0b95-7bc8-bfbd-4ae04d18cc51",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Hiking"
+        },
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Walking"
+        },
+        {
+          "id": "01999422-c62e-7651-bab2-48646c43543c",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Sightseeing"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ccc-1d3b-7cfd-9179-6c3e264b0a23/covers/yko1oAXuPegR.jpg",
+        "id": "019d5cce-dda2-7cb4-a799-8b2dba87b51e",
+        "mimeType": "image/jpeg",
+        "size": 170586
+      },
+      "description": "<p>Join on a day trip from Nagarkot to Changu Narayan, a beautiful combination of a stunning sunrise and a scenic hike through the hills of Nepal. This one-day adventure allows you to witness one of the most breathtaking sunrises over the Himalayas from Nagarkot, followed by a hike that takes you through terraced fields, charming villages, and dense forests, ultimately leading you to the ancient Changu Narayan Temple\u2014a UNESCO World Heritage Site.</p><p></p><p>Nagarkot is renowned for its panoramic mountain views, offering clear sights of the Annapurna, Langtang, and Everest ranges. After soaking in the sunrise, you\u2019ll trek through lush landscapes and traditional Nepali villages, where you can experience the local culture and enjoy views of the Kathmandu Valley below. The trek concludes with a visit to Changu Narayan, a historically significant temple dedicated to Lord Vishnu, known for its ancient architecture and intricate carvings.</p>",
+      "difficulty": {
+        "max": 2,
+        "min": 2
+      },
+      "durationDays": {
+        "max": 1,
+        "min": 1
+      },
+      "id": "019d5ccc-1d3b-7cfd-9179-6c3e264b0a23",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ccc-1d3b-7cfd-9179-6c3e264b0a23/images/e5LWeUqxAjHf.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5ccd-f085-7b12-a0c1-4a4e509a22d3",
+          "index": 0,
+          "name": "Scenic view from Nagarkot"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ccc-1d3b-7cfd-9179-6c3e264b0a23/images/jNz16XjjMi0i.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5ccd-f656-7076-84ef-0adc3ae69a6c",
+          "index": 1,
+          "name": "Changu Narayan Temple"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ccc-1d3b-7cfd-9179-6c3e264b0a23/images/GNE44yjIMeHY.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5ccd-fcad-76cc-8ff9-c57f1b67b70f",
+          "index": 2,
+          "name": "Buddhist Stupa on Changu Narayan Hiking route"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 27.718443,
+        "lng": 85.519104,
+        "place": "Nagarkot"
+      },
+      "minPrice": {
+        "amount": 65,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "1-day-nagarkot-sunrise-tour-and-hike-to-changu-narayan-temple",
+      "thumbnailImage": null,
+      "title": "1-Day Nagarkot Sunrise Tour & Hike to Changu Narayan Temple"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-0b95-7bc8-bfbd-4ae04d18cc51",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Hiking"
+        },
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Walking"
+        },
+        {
+          "id": "018f3958-16c7-7960-a6f1-e76f569afe24",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Trekking"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/covers/01HKcxeUxBuY.jpg",
+        "id": "019d5cbf-130d-73d2-bdf9-7c06b04585c2",
+        "mimeType": "image/jpeg",
+        "size": 1203766
+      },
+      "description": "<p>The <strong>Langtang Valley Trek</strong> is a perfect choice for trekkers looking for a short yet rewarding adventure in Nepal. Located just north of Kathmandu, Langtang offers stunning views of snow-capped peaks, picturesque villages, and lush forests, all within a week-long trek. This trek provides a chance to immerse yourself in the natural beauty and local culture of the region, with a manageable duration and a moderate level of difficulty, making it ideal for both novice and experienced trekkers.</p><p></p><p>With its stunning landscapes, rich Tamang culture, and breathtaking Himalayan views, the <strong>7-Day Langtang Valley Trek</strong> offers an unforgettable experience. Trekking through dense forests, beautiful terraced fields, and remote villages, you will be surrounded by the mighty peaks of Langtang Lirung, Gangchenpo, and other snow-covered summits. This trek is perfect for those seeking a blend of adventure, nature, and cultural exploration in a short timeframe.</p>",
+      "difficulty": {
+        "max": 3,
+        "min": 3
+      },
+      "durationDays": {
+        "max": 7,
+        "min": 7
+      },
+      "id": "019d5cb5-58df-75be-9e08-e0568469092f",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/csw3mqjMvg3W.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-26b8-7a41-9cbc-24fc340fe85a",
+          "index": 0,
+          "name": "Starting point of Langtang Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/5sc57D4KMdm1.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-3557-7758-a07a-7e228df8d48e",
+          "index": 1,
+          "name": "Suspension Bridge"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/u8wzlYPSuTHW.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-40a7-73b2-85e2-443bd4bec2f1",
+          "index": 2,
+          "name": "Enjoying picture in Langtang River"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/iw1LIakTYv8d.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-4b4c-7937-b603-eeca5300bb28",
+          "index": 3,
+          "name": "Langtang Khola"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/GU6X7OAFDTlo.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-5742-752b-9ab2-c75012836e80",
+          "index": 4,
+          "name": "Sign Board in Langtang Route"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/tq0zaOh73XCA.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-64b2-795c-bf29-e336ba451ace",
+          "index": 5,
+          "name": "Water fall in Langtang Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/YVMpHOcHuUKe.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-71b4-79ba-b7e9-60e2a2c3ed27",
+          "index": 6,
+          "name": "Tourist Enjoying Langtang Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/LzAdL68CCgTy.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-8066-71ca-94cd-61e2c158a778",
+          "index": 7,
+          "name": "Yoga in Langtang Trek"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/POTdJLDCdiHK.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-8bae-7f1e-a3d1-0d92da970e37",
+          "index": 8,
+          "name": "Hotel in Langtang"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/SYwiZ3mf97vb.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-9622-76c0-8139-c1888dad2059",
+          "index": 9,
+          "name": "Hiking route in Langtang"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/DxwzNmPAfN6R.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-9ffb-758d-96c4-7e0fd06ff56a",
+          "index": 10,
+          "name": "Scenery from Langtang Route"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/aSAFXp8qPAKX.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-aa36-70c0-a7ff-c38d102465e5",
+          "index": 11,
+          "name": "Langtang National Park"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/QKnMljywUIoo.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-b611-7b3b-ba7a-0d898c65f3fd",
+          "index": 12,
+          "name": "langtang Budddhist Monastery langtang"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/t3VQZOKXJonn.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-c028-7d78-ad4e-8c6ec7717858",
+          "index": 13,
+          "name": "Enjoying meals in Langtang Tea house"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/GWKPIGF5kMxT.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-c9e6-7358-9407-21e99faf8765",
+          "index": 14,
+          "name": "Monastery with himalaya backdrop"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/uJkwRwFrEpZT.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-d3ed-7e83-84bd-ef0f0e3c7692",
+          "index": 15,
+          "name": "Meditation in Ghompa"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5cb5-58df-75be-9e08-e0568469092f/images/YttMP8Jji5O1.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5cb9-de1e-76d0-9975-40139824a9e9",
+          "index": 16,
+          "name": "Sucessful Langtang Valley Trek"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 28.215755,
+        "lng": 85.50898,
+        "place": "Langtang"
+      },
+      "minPrice": {
+        "amount": 500,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "7-day-langtang-valley-trek-from-kathmandu-the-ultimate-short-trek",
+      "thumbnailImage": null,
+      "title": "7-Day Langtang Valley Trek from Kathmandu: The Ultimate Short Trek"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-0ebb-7044-bbf0-cb70a5b1b7c6",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Wildlife"
+        },
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Walking"
+        },
+        {
+          "id": "018f3958-1aca-7974-9a19-d6dad7bf5f2a",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Canyoning"
+        },
+        {
+          "id": "018f3958-25cd-7a54-8f09-bcd1df790070",
+          "kind": {
+            "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+            "name": "Lodging"
+          },
+          "name": "Hotel"
+        },
+        {
+          "id": "01999422-c62e-7651-bab2-48646c43543c",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Sightseeing"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ca3-2f18-7449-bcfb-5894a2d9af9d/covers/FmI44Si6Pp5f.jpg",
+        "id": "019d5caf-8814-7b91-bf89-3b39fc711f0b",
+        "mimeType": "image/jpeg",
+        "size": 136029
+      },
+      "description": "<p>The Chitwan National Park Safari &amp; Jungle Adventure is a thrilling 3-day package that takes you from the bustling streets of Kathmandu to the heart of Nepal\u2019s wilderness. Located in the Terai region, Chitwan National Park is a UNESCO World Heritage Site known for its diverse wildlife, including the endangered one-horned rhinoceros, Bengal tigers, and countless bird species. </p><p></p><p>Over three days, you\u2019ll enjoy a mix of exciting safari activities, including jeep safaris, canoe rides, and elephant safaris, giving you an up-close look at the park's vibrant ecosystem. Along the way, you\u2019ll also have the opportunity to experience local Tharu culture with traditional dance and music performances.</p><p></p><p>This adventure is the perfect way to immerse yourself in Nepal\u2019s natural beauty and wildlife, combining thrilling encounters with nature and enriching cultural experiences. Whether you're observing wildlife from a canoe, trekking through dense jungle trails, or learning about the indigenous Tharu people, this trip offers a well-rounded, unforgettable experience. Ideal for nature lovers, families, and adventure enthusiasts, this 3-day safari promises a refreshing and unique getaway into one of Nepal\u2019s most iconic national parks.</p>",
+      "difficulty": {
+        "max": 2,
+        "min": 2
+      },
+      "durationDays": {
+        "max": 3,
+        "min": 3
+      },
+      "id": "019d5ca3-2f18-7449-bcfb-5894a2d9af9d",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ca3-2f18-7449-bcfb-5894a2d9af9d/images/qliQjWK7cifz.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d5cac-523d-7526-b094-c47305549a11",
+          "index": 0,
+          "name": "Rapti River"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ca3-2f18-7449-bcfb-5894a2d9af9d/images/2LuJTnAAZEAT.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d5cac-5c50-705a-849e-a85bd7c9ff9a",
+          "index": 1,
+          "name": "One horned Rhino"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ca3-2f18-7449-bcfb-5894a2d9af9d/images/UnwG9kgZYDyi.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d5cac-6247-7b3f-82ce-d39263054cd1",
+          "index": 2,
+          "name": "CHitwan Jeep Safari"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ca3-2f18-7449-bcfb-5894a2d9af9d/images/AkvXWdRElNju.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d5cac-6c66-7620-9060-f64c19320b5a",
+          "index": 3,
+          "name": "Tharu Cultural Show"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5ca3-2f18-7449-bcfb-5894a2d9af9d/images/YybXo3qUhU4K.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d5cac-718f-7dce-9373-1a637ffc0a87",
+          "index": 4,
+          "name": "Mugger crocodile in Rapti River"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": false,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 27.574362,
+        "lng": 84.49334,
+        "place": "Chitwan National Park"
+      },
+      "minPrice": {
+        "amount": 100,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "chitwan-national-park-safari-and-jungle-adventure-or-3-day-package-from-kathmandu",
+      "thumbnailImage": null,
+      "title": "Chitwan National Park Safari & Jungle Adventure | 3-Day Package from Kathmandu"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "018f3958-16c7-7960-a6f1-e76f569afe24",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Trekking"
+        },
+        {
+          "id": "018f3958-25cd-7a54-8f09-bcd1df790070",
+          "kind": {
+            "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+            "name": "Lodging"
+          },
+          "name": "Hotel"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/covers/ts0JfO09LgrA.jpg",
+        "id": "019d5c98-107b-7e7e-b237-df9ec29a980d",
+        "mimeType": "image/jpeg",
+        "size": 889899
+      },
+      "description": "<p>The Annapurna Base Camp Trek is a breathtaking journey that takes you from the vibrant city of Kathmandu to the heart of the Himalayas. This iconic trek offers a perfect blend of natural beauty, cultural richness, and challenging adventure. Starting with a scenic drive or flight from Kathmandu to Pokhara, you'll be immersed in the lush landscapes of the Annapurna region, passing through picturesque villages, dense rhododendron forests, and terraced fields.</p><p></p><p>As you trek towards Annapurna Base Camp (ABC), the landscape transforms, revealing towering peaks and dramatic mountain vistas. Along the way, you'll experience the unique culture of the local Gurung and Magar communities, visit ancient monasteries, and enjoy warm hospitality. The trek takes you through the serene foothills and alpine meadows before reaching the ultimate destination \u2014 Annapurna Base Camp, where you\u2019ll be surrounded by some of the highest peaks in the world, including Annapurna I, Machapuchare, and Hiunchuli.</p><p></p><p>With each step, the beauty of the Himalayas unfolds, and the sense of achievement grows as you approach the base camp. The Annapurna Base Camp Trek is ideal for those seeking an immersive Himalayan experience, offering not only incredible views but also a chance to connect with Nepal's rich culture and the natural world. Whether you're an experienced trekker or a first-timer, this trek is sure to be an unforgettable adventure.</p>",
+      "difficulty": {
+        "max": 3,
+        "min": 3
+      },
+      "durationDays": {
+        "max": 0,
+        "min": 0
+      },
+      "id": "019d5c92-9a5f-7370-bd1e-82729b413f6b",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/images/btMvDlwr2moO.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c96-1b98-767e-adda-fb87f232815a",
+          "index": 0,
+          "name": "Machhapucchre view from Annapurna Base Camp"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/images/n3AC5kmTZ60h.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c96-245a-7024-a7a8-ddea6356a05f",
+          "index": 1,
+          "name": "Taking picutre in Machhapucchre Base Camp"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/images/FKA5hleDuT20.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c96-2dd4-7bf7-825e-98cb1b5bd176",
+          "index": 2,
+          "name": "Sunrise view on Annapurna Base Camp"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/images/WOfZXu6pXWyM.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c96-4016-7799-9a19-59a8d074a388",
+          "index": 3,
+          "name": "Annapurna base Camp Route"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/images/gnFOLrCern9e.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c96-4935-7912-a448-ce0329d186ad",
+          "index": 4,
+          "name": "Scenic view on the ABC route"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c92-9a5f-7370-bd1e-82729b413f6b/images/QIXZjNHSsmVc.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c96-5465-7c18-8ccd-aa410ed0d147",
+          "index": 5,
+          "name": "Reaching Annapurna Base Camp summit"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 28.530744,
+        "lng": 83.878085,
+        "place": "Annapurna Base Camp"
+      },
+      "minPrice": {
+        "amount": 550,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "5-days-annapurna-base-camp-trek-from-pokhara",
+      "thumbnailImage": null,
+      "title": "5 Days Annapurna Base Camp Trek from Pokhara"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Walking"
+        },
+        {
+          "id": "01999422-c62e-7651-bab2-48646c43543c",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Sightseeing"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c89-5dd3-73b2-b57e-1d6cfed81eb8/covers/ON7U6gBeeM9j.jpg",
+        "id": "019d5c8d-c2c5-7c83-b776-b017f9f72d9d",
+        "mimeType": "image/jpeg",
+        "size": 169598
+      },
+      "description": "<p>Join on a private half-day adventure to the serene Budhanilkantha Temple, home to the iconic Sleeping Vishnu statue. Nestled at the base of the Shivapuri Hills, this tranquil temple offers a peaceful escape from the bustling Kathmandu Valley. Your journey begins with a scenic drive through the lush landscapes, eventually arriving at the temple, where you'll witness the awe-inspiring 5th-century stone statue of Lord Vishnu reclining on a bed of serpents in a sacred water tank.</p><p></p><p>As you explore the temple, your guide will share fascinating insights into the history, mythology, and significance of this sacred site. You'll have the opportunity to observe local devotees performing rituals and experience the calming atmosphere of this revered pilgrimage destination. Afterward, take a quiet stroll around the surrounding area or relax and enjoy the panoramic views of the hills.</p><p></p><p>This private tour offers a unique blend of spirituality, history, and nature, providing you with a truly memorable experience. Ideal for those looking to explore a peaceful yet culturally rich destination, this tour is perfect for both first-time visitors and seasoned travelers seeking a deeper connection with Nepal\u2019s heritage.</p>",
+      "difficulty": {
+        "max": 2,
+        "min": 2
+      },
+      "durationDays": {
+        "max": 1,
+        "min": 1
+      },
+      "id": "019d5c89-5dd3-73b2-b57e-1d6cfed81eb8",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c89-5dd3-73b2-b57e-1d6cfed81eb8/images/gpReyGQJrkxR.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c8c-e518-7fb6-959a-ffdc11a91e31",
+          "index": 0,
+          "name": "Sleeping Vishnu"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c89-5dd3-73b2-b57e-1d6cfed81eb8/images/BuSqIMn70HjU.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c8c-ea5f-7693-b462-5f4b132c2441",
+          "index": 1,
+          "name": "Vishnu Statue decorated by Flower"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d5c89-5dd3-73b2-b57e-1d6cfed81eb8/images/OFmRoaFT1qQH.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5c8c-ef85-7c49-b0c2-7640e7a89662",
+          "index": 2,
+          "name": "Budhanilkatha Vishnu Temple Visit"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 27.776735,
+        "lng": 85.36209,
+        "place": "Budanilkantha"
+      },
+      "minPrice": {
+        "amount": 50,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "budhanilkantha-private-half-day-tour-to-the-sleeping-vishnu",
+      "thumbnailImage": null,
+      "title": "Budhanilkantha: Private half-day tour to the sleeping Vishnu"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "4 x 4"
+        },
+        {
+          "id": "01999422-c62e-7651-bab2-48646c43543c",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Sightseeing"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d52ed-b9ef-766e-86a1-070ac21e67f7/covers/j5lPyNLKKNcY.jpg",
+        "id": "019d5307-76bf-7087-8d18-5328b29059a1",
+        "mimeType": "image/jpeg",
+        "size": 328186
+      },
+      "description": "<p>When you think of Kathmandu, the first images that come to mind are probably the tangled streets of the Old City, the scent of incense drifting from a hilltop stupa, and the rhythmic toll of temple bells. What if you could soak up all seven UNESCO World Heritage sites that make the Kathmandu Valley a living museum\u2014without having to juggle tickets, transport, or a shaky itinerary? </p><p> </p><p>That\u2019s exactly what the \u201cKathmandu: 7 UNESCO Sites Tour with Lunch &amp; Entry\u201d promises. Curated by the locally\u2011renowned Himalayan Social Journey, this half\u2011day adventure packs centuries of art, architecture, and ritual into a smooth, guide\u2011led experience with happy travelers. </p>",
+      "difficulty": {
+        "max": 2,
+        "min": 2
+      },
+      "durationDays": {
+        "max": 1,
+        "min": 1
+      },
+      "id": "019d52ed-b9ef-766e-86a1-070ac21e67f7",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d52ed-b9ef-766e-86a1-070ac21e67f7/images/IatIZMsnBZmN.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d52ff-eeb3-7cc4-8e3d-b14755799f67",
+          "index": 0,
+          "name": "Swyambhunath Park"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d52ed-b9ef-766e-86a1-070ac21e67f7/images/NJQzmm1Uvz7M.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5301-89e1-7e24-91e1-7a868732aea3",
+          "index": 1,
+          "name": "Kathmandu Durbar Square"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d52ed-b9ef-766e-86a1-070ac21e67f7/images/GFvX3jT97nhk.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5305-42b8-7687-ac42-0ea07dea60f3",
+          "index": 2,
+          "name": "Baudhanath Stupa"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d52ed-b9ef-766e-86a1-070ac21e67f7/images/zlWK4PcbPX2V.jpg",
+          "caption": "",
+          "credit": "High Route Adventure",
+          "id": "019d5306-f10d-71ae-99d5-19311f45fad4",
+          "index": 3,
+          "name": "Pashupatinath Temple"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 27.714186,
+        "lng": 85.31094,
+        "place": "Kathmandu"
+      },
+      "minPrice": {
+        "amount": 50,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "privategroup-kathmandu-unesco-heritage-sites-tour",
+      "thumbnailImage": null,
+      "title": "Private/Group Kathmandu UNESCO Heritage Sites Tour"
+    },
+    {
+      "activities": [
+        {
+          "id": "018f3958-06a9-7518-b8db-930132b00804",
+          "kind": {
+            "id": "01902613-d02f-79dc-8ed4-1c5e72400126",
+            "name": "Water"
+          },
+          "name": "Whitewater"
+        },
+        {
+          "id": "018f3958-0db8-71f4-aa96-9e686d63f582",
+          "kind": {
+            "id": "01902613-d02f-79dc-8ed4-1c5e72400126",
+            "name": "Water"
+          },
+          "name": "Kayaking"
+        },
+        {
+          "id": "01999423-1b03-7a5e-a7a6-a2b983bdcc1c",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "Transportation"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d485e-7279-74e1-b2fe-b3177078afde/covers/faBWksah6dTm.jpg",
+        "id": "019d4866-403b-7cc4-96fa-b08ca2051d62",
+        "mimeType": "image/jpeg",
+        "size": 105054
+      },
+      "description": "<p>Experience the best of Nepal\u2019s adventure landscapes on this full-day rafting tour departing from Kathmandu. This tour combines the excitement of white-water rapids with scenic stops along the way, giving you a chance to connect with nature, capture incredible views, and experience local culture, all in one unforgettable day.</p><p></p><p>Along the route, your guide will bring the adventure to life with stories about the Trishuli River, Himalayan valleys, and local villages, sharing insights that many travelers miss. While the focus is on rafting, there are plenty of opportunities to pause, take photos, and truly appreciate the natural beauty surrounding you.</p><p></p><h2>What to Expect on This 7 Iconic Stops Tour</h2><p></p><h3>1. Kathmandu Pickup &amp; Briefing</h3><p>Start your day with a convenient pickup from your hotel or Thamel. Meet your professional rafting guide for a safety briefing and overview of the day\u2019s adventure. Get equipped with your helmet, life jacket, and paddles before heading out.</p><p></p><h3>2. Scenic Drive to Trishuli River</h3><p>Enjoy a 3\u20134 hour drive along the Prithvi Highway, passing lush valleys, terraced fields, and riverside villages. Stop at viewpoints along the way to capture classic Himalayan landscapes and watch local life unfold.</p><p></p><h3>3. Charaudi \u2013 Rafting Put-In</h3><p>Arrive at the Trishuli River starting point, the gateway to your white-water adventure. Here, you\u2019ll get a full safety briefing, test your gear, and prepare to launch into the rapids.</p><p></p><h3>4. White-Water Rafting Adventure</h3><p>Navigate Class II\u2013III rapids, enjoying both gentle stretches and thrilling waves. Along the way, take breaks for swimming, photography, or simply soaking in the stunning river valley views. Rapids like <em>Ladies\u2019 Delight</em> and <em>Twin Rocks</em> will get your adrenaline pumping!</p><p></p><h3>5. Riverside Lunch</h3><p>Pause mid-adventure to enjoy a riverside lunch, giving you time to relax and savor the scenery. Take photos, share stories, and enjoy the peaceful sound of the river flowing nearby.</p><p></p><h3>6. Rafting Take-Out Point</h3><p>Continue rafting toward the designated take-out location, experiencing more scenic stretches and rapids. Celebrate the completion of your rafting adventure with your guides and fellow travelers.</p><p></p><h3>7. Return to Kathmandu</h3><p>Drive back to Kathmandu, enjoying the valley views along the route. Arrive in the late afternoon or early evening, concluding your full-day adventure. Your guide can provide local insights, tips, and recommendations for the rest of your time in Nepal.</p>",
+      "difficulty": {
+        "max": 2,
+        "min": 2
+      },
+      "durationDays": {
+        "max": 1,
+        "min": 1
+      },
+      "id": "019d485e-7279-74e1-b2fe-b3177078afde",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d485e-7279-74e1-b2fe-b3177078afde/images/iN0iuuT3yGYF.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d4863-1779-71db-8120-8a2dbdbd5369",
+          "index": 0,
+          "name": ""
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d485e-7279-74e1-b2fe-b3177078afde/images/XdDj09T9irq1.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d4863-3a58-714f-884c-4d76bebea755",
+          "index": 1,
+          "name": ""
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d485e-7279-74e1-b2fe-b3177078afde/images/RqgrnnMcIJCW.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d4882-a845-7676-b6d5-2cc9b73b53da",
+          "index": 2,
+          "name": ""
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/adventures/019d485e-7279-74e1-b2fe-b3177078afde/images/652vvBz6fozD.jpg",
+          "caption": "",
+          "credit": "",
+          "id": "019d4882-d327-7856-860d-0a1aa834893c",
+          "index": 3,
+          "name": ""
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "NP",
+          "lat": 28,
+          "lng": 84,
+          "name": "Nepal",
+          "phonePrefix": "+977",
+          "region": "Asia",
+          "subRegion": "Southern Asia"
+        },
+        "lat": 27.7080559043166,
+        "lng": 85.288819410396,
+        "place": "Trishuli river"
+      },
+      "minPrice": {
+        "amount": 100,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019d4815-00ce-7297-a5a3-4984e5c7210e",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019d4815-00ce-7297-a5a3-4984e5c7210e/logos/Lu6qXHPuZAiP.jpg",
+        "name": "High Route Adventure",
+        "slug": "high-route-adventure"
+      },
+      "slug": "kathmandu-trishuli-rafting-1-day-adventure",
+      "thumbnailImage": null,
+      "title": "Kathmandu: Trishuli Rafting 1 Day Adventure"
+    }
+  ],
+  "extraTripsCount": 801,
+  "trips": [
+    {
+      "activities": [
+        {
+          "id": "018f3958-0b95-7bc8-bfbd-4ae04d18cc51",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Hiking"
+        },
+        {
+          "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Walking"
+        },
+        {
+          "id": "01999421-d6b5-7f99-8241-8d4b5fe2c647",
+          "kind": {
+            "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+            "name": "Lodging"
+          },
+          "name": "Boutique Hotel"
+        },
+        {
+          "id": "01999422-c62e-7651-bab2-48646c43543c",
+          "kind": {
+            "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+            "name": "Land"
+          },
+          "name": "Sightseeing"
+        },
+        {
+          "id": "01999423-1b03-7a5e-a7a6-a2b983bdcc1c",
+          "kind": {
+            "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+            "name": "Motor"
+          },
+          "name": "Transportation"
+        }
+      ],
+      "coverImage": {
+        "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019a022f-3cfa-7000-84d1-8323f507e998/adventures/019d95fe-ab9c-7a87-a5c3-4fdc42d87389/covers/UQN531YwW9Z4.jpg",
+        "id": "019d9613-0193-7e20-8341-6f7eee249409",
+        "mimeType": "image/jpeg",
+        "size": 727999
+      },
+      "description": "<p>This journey blends refined alpine luxury with immersive nature and culture across Northern Italy. Stay in a curated selection of exceptional properties, each offering its own character and connection to the surrounding landscape.</p><p>Enjoy a thoughtfully balanced experience of gentle exploration and relaxation\u2014discovering local flora and fauna, savoring regional cuisine, breathing in the crisp mountain air, and visiting UNESCO-listed sites set against the dramatic backdrop of the Dolomites.</p><p>With a private hiking guide and dedicated chauffeur throughout, every detail is seamlessly handled, allowing you to fully unwind and experience the region at your own pace.</p>",
+      "difficulty": {
+        "max": 3,
+        "min": 3
+      },
+      "durationDays": {
+        "max": 10,
+        "min": 10
+      },
+      "id": "019d95fe-ab9c-7a87-a5c3-4fdc42d87389",
+      "images": [
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019a022f-3cfa-7000-84d1-8323f507e998/adventures/019d95fe-ab9c-7a87-a5c3-4fdc42d87389/images/35bXEPrhuxjO.jpg",
+          "caption": "",
+          "credit": "Passalacqua",
+          "id": "019d9612-859a-7ad9-82be-68bc571dab51",
+          "index": 0,
+          "name": "Passalacqua Hotel"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019a022f-3cfa-7000-84d1-8323f507e998/adventures/019d95fe-ab9c-7a87-a5c3-4fdc42d87389/images/oCFqYVFzpXq3.jpg",
+          "caption": "",
+          "credit": "Passalacqua",
+          "id": "019d9612-8f07-7bae-8b53-65c570e651e9",
+          "index": 1,
+          "name": "Passalacqua Hotel"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019a022f-3cfa-7000-84d1-8323f507e998/adventures/019d95fe-ab9c-7a87-a5c3-4fdc42d87389/images/rWMrxYacrSPy.jpg",
+          "caption": "",
+          "credit": "Babak Habibi",
+          "id": "019d9617-6d2d-75b6-9bd4-e13499363955",
+          "index": 2,
+          "name": "Bolzano"
+        },
+        {
+          "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019a022f-3cfa-7000-84d1-8323f507e998/adventures/019d95fe-ab9c-7a87-a5c3-4fdc42d87389/images/tuuGsYnd8PD8.jpg",
+          "caption": "",
+          "credit": "Bernina Express",
+          "id": "019d9617-7850-78d4-87a1-704b478b8f58",
+          "index": 3,
+          "name": "Bernina Express"
+        }
+      ],
+      "isArchived": false,
+      "isPublished": true,
+      "isSubmitted": true,
+      "location": {
+        "country": {
+          "code": "IT",
+          "lat": 42.83333333,
+          "lng": 12.83333333,
+          "name": "Italy",
+          "phonePrefix": "+39",
+          "region": "Europe",
+          "subRegion": "Southern Europe"
+        },
+        "lat": 45.463945,
+        "lng": 9.188558,
+        "place": "Milano"
+      },
+      "minPrice": {
+        "amount": 11000,
+        "currency": {
+          "code": "USD",
+          "exponent": 2,
+          "name": "US Dollar",
+          "sign": "$"
+        }
+      },
+      "organization": {
+        "id": "019a022f-3cfa-7000-84d1-8323f507e998",
+        "isActive": true,
+        "kind": "operator",
+        "logoUrl": null,
+        "name": "Evan Firestone - Travel Designer",
+        "slug": "evan-firestone-travel-designer"
+      },
+      "slug": "from-dolomites-peaks-to-lake-como-a-northern-italy-escape",
+      "thumbnailImage": null,
+      "title": "From Dolomites Peaks to Lake Como: A Northern Italy Escape"
+    }
+  ],
+  "tripsTotalCount": 1
+}

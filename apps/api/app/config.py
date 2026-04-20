@@ -60,6 +60,20 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    ov_base_url: str = Field(
+        default="https://www.outdoorvoyage.com",
+        description="Base URL for the Outdoor Voyage public API (M001 default).",
+    )
+    ov_api_key: str = Field(
+        default="",
+        description=(
+            "Optional OV API key. The public search endpoint does not require "
+            "one in M001, but if set we forward it as the x-api-key header. "
+            "NEVER log this value."
+        ),
+        repr=False,
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
