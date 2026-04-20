@@ -21,7 +21,9 @@ import {
 } from "react";
 
 import { useAgentStream, type DeltaFrame, type DoneFrame, type ErrorFrame } from "@/lib/agentStream";
+import { useAtmosOverride, usePhaseShiftMood } from "@/lib/atmos/classifier";
 
+import { AtmosFrame } from "./AtmosFrame";
 import { Composer } from "./Composer";
 import { ConversationStream } from "./ConversationStream";
 import { fromSummary, type AgentTurnView, type StreamState } from "./types";
@@ -117,6 +119,10 @@ export function ChatShell({
     streaming: null,
   }));
 
+  const override = useAtmosOverride();
+  const { mood: classifiedMood, phaseCounter } = usePhaseShiftMood(state.turns);
+  const currentMood = override ?? classifiedMood;
+
   const abortRef = useRef<AbortController | null>(null);
 
   const { sendTurn } = useAgentStream({
@@ -186,7 +192,7 @@ export function ChatShell({
       data-client-id={client.id}
       data-session-id={sessionId}
     >
-      <div id="atmos-frame" className="absolute inset-0 bg-paper" aria-hidden />
+      <AtmosFrame mood={currentMood} phaseCounter={phaseCounter} />
       <div className="relative grid min-h-screen grid-cols-[1fr_minmax(0,480px)]">
         <div className="flex min-h-screen flex-col">
           <header className="flex items-baseline justify-between border-b border-ink/10 px-8 pb-6 pt-8">
