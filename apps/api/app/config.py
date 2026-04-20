@@ -60,6 +60,15 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    web_origin: str = Field(
+        default="http://localhost:3000",
+        description=(
+            "Origin of the advisor web app (e.g. https://advisor.ov.com). Used "
+            "to build invite redirect_to targets — the magic link lands here "
+            "and the client app drives the post-signup flow."
+        ),
+    )
+
     ov_base_url: str = Field(
         default="https://www.outdoorvoyage.com",
         description="Base URL for the Outdoor Voyage public API (M001 default).",

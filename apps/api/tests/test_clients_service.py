@@ -1,0 +1,231 @@
+"""Service-level coverage for ``create_client_with_voodoo_doll`` (T04).
+
+Mirrors the FakeSession + stubbed-admin pattern from ``test_invites.py``.
+No Postgres, no live Supabase — every outcome enum (OK / DUPLICATE_EMAIL
+/ UPSTREAM_UNAVAILABLE) is exercised deterministically against the
+service's control flow.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Any
+
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from app.models import Client, Invite, VoodooDoll
+from app.schemas.clients import (
+    ClientCreatePayload,
+    VoodooDollJsonb,
+    VoodooDollPayload,
+    VoodooDollTyped,
+)
+from app.services import clients as clients_service
+from app.services.clients import (
+    ClientCreateOutcome,
+    create_client_with_voodoo_doll,
+)
+from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
+
+
+# --- Fakes ------------------------------------------------------------------
+
+
+@dataclass
+class FakeSession:
+    """Minimal async-session stand-in for the clients service.
+
+    Tracks everything ``session.add``-ed so each test can inspect the three
+    rows (client / voodoo_doll / invite) the service tried to persist.
+    Optional ``flush_raises`` lets a test simulate the unique-index
+    violation from ``clients_owner_email_idx``.
+    """
+
+    added: list[Any] = field(default_factory=list)
+    commits: int = 0
+    rollbacks: int = 0
+    flushes: int = 0
+    flush_raises: IntegrityError | None = None
+    raise_on_nth_flush: int = 1
+
+    def add(self, obj: Any) -> None:
+        # Emulate the server-side default on clients.id so the service can
+        # hand the generated UUID to the voodoo_dolls row in the same txn.
+        if isinstance(obj, Client) and obj.id is None:
+            obj.id = uuid.uuid4()
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        self.flushes += 1
+        if self.flush_raises is not None and self.flushes == self.raise_on_nth_flush:
+            # Pop the offending row the way SQLAlchemy would after a flush error,
+            # so downstream assertions can tell the row was rejected.
+            raise self.flush_raises
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+def _payload(*, email: str = "new@example.com") -> ClientCreatePayload:
+    return ClientCreatePayload(
+        full_name="Jane Doe",
+        email=email,
+        voodoo_doll=VoodooDollPayload(
+            typed=VoodooDollTyped(
+                contact_preference="email",
+                group_type="family",
+                children_ages=[7, 10],
+                travel_party_notes="prefers late checkouts",
+                estimated_net_worth_usd=5_000_000,
+            ),
+            jsonb=VoodooDollJsonb(
+                passions=[{"label": "skiing"}],
+                motivations={"driver": "status"},
+                travel_history=[{"place": "Aspen", "year": 2024}],
+                triggers=[{"kind": "crowded"}],
+                constraints=[{"kind": "gluten_free"}],
+                deal_breakers=[{"kind": "long_haul"}],
+                dream_trip_signals={"tier": "ultra"},
+                osint_notes={"source": "linkedin"},
+            ),
+        ),
+    )
+
+
+def _integrity_error() -> IntegrityError:
+    return IntegrityError(
+        statement="INSERT INTO public.clients ...",
+        params={},
+        orig=Exception("duplicate key value violates unique constraint 'clients_owner_email_idx'"),
+    )
+
+
+# --- Tests ------------------------------------------------------------------
+
+
+@pytest.fixture()
+def stub_admin_ok(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Stub generate_invite_link to succeed. Captures (email, redirect_to)."""
+    calls: list[tuple[str, str]] = []
+
+    async def _fake(email: str, redirect_to: str, **_kwargs: Any) -> MagicLinkIssued:
+        calls.append((email, redirect_to))
+        return MagicLinkIssued(email=email, action_link="https://stub/invite-link")
+
+    monkeypatch.setattr(clients_service, "generate_invite_link", _fake)
+    return calls
+
+
+@pytest.fixture()
+def stub_admin_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _boom(email: str, redirect_to: str, **_kwargs: Any) -> MagicLinkIssued:
+        raise SupabaseAdminError("supabase_admin_unreachable")
+
+    monkeypatch.setattr(clients_service, "generate_invite_link", _boom)
+
+
+@pytest.mark.asyncio
+async def test_ok_path_inserts_all_three_rows_and_commits_once(
+    stub_admin_ok: list[tuple[str, str]],
+) -> None:
+    advisor_id = uuid.uuid4()
+    session = FakeSession()
+
+    result = await create_client_with_voodoo_doll(
+        session,
+        advisor_id=advisor_id,
+        payload=_payload(email="fresh@example.com"),
+    )
+
+    assert result.outcome is ClientCreateOutcome.OK
+    assert result.client_id is not None
+    assert result.issued is not None
+    assert result.issued.email == "fresh@example.com"
+
+    # Exactly one commit, no rollbacks on the happy path.
+    assert session.commits == 1
+    assert session.rollbacks == 0
+
+    # All three rows were added and the admin was called with the right redirect.
+    client_rows = [o for o in session.added if isinstance(o, Client)]
+    doll_rows = [o for o in session.added if isinstance(o, VoodooDoll)]
+    invite_rows = [o for o in session.added if isinstance(o, Invite)]
+    assert len(client_rows) == 1
+    assert len(doll_rows) == 1
+    assert len(invite_rows) == 1
+    assert client_rows[0].owner_id == advisor_id
+    assert client_rows[0].email == "fresh@example.com"
+    assert doll_rows[0].client_id == client_rows[0].id
+    assert doll_rows[0].authored_by == advisor_id
+    assert doll_rows[0].children_ages == [7, 10]
+    assert invite_rows[0].email == "fresh@example.com"
+    assert invite_rows[0].created_by == advisor_id
+    # ~22 chars for token_urlsafe(16) — validate shape, not exact value.
+    assert 20 <= len(invite_rows[0].code) <= 24
+
+    assert stub_admin_ok == [
+        ("fresh@example.com", "http://localhost:3000/auth/callback?next=/command-center"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_email_rolls_back_and_does_not_call_admin(
+    stub_admin_ok: list[tuple[str, str]],
+) -> None:
+    advisor_id = uuid.uuid4()
+    session = FakeSession(flush_raises=_integrity_error(), raise_on_nth_flush=1)
+
+    result = await create_client_with_voodoo_doll(
+        session,
+        advisor_id=advisor_id,
+        payload=_payload(email="dup@example.com"),
+    )
+
+    assert result.outcome is ClientCreateOutcome.DUPLICATE_EMAIL
+    assert result.client_id is None
+    assert result.issued is None
+    assert session.commits == 0
+    assert session.rollbacks == 1
+    # Admin was NEVER called — the unique-index violation short-circuits
+    # before the upstream email goes out.
+    assert stub_admin_ok == []
+
+
+@pytest.mark.asyncio
+async def test_upstream_failure_rolls_back_and_returns_unavailable(
+    stub_admin_unreachable: None,
+) -> None:
+    advisor_id = uuid.uuid4()
+    session = FakeSession()
+
+    result = await create_client_with_voodoo_doll(
+        session,
+        advisor_id=advisor_id,
+        payload=_payload(email="lost@example.com"),
+    )
+
+    assert result.outcome is ClientCreateOutcome.UPSTREAM_UNAVAILABLE
+    assert result.client_id is None
+    assert result.issued is None
+    assert session.commits == 0
+    # Service MUST rollback so the client + doll + invite rows do not persist
+    # when the magic-link email could not be issued.
+    assert session.rollbacks == 1
+
+
+def test_invite_code_generator_shape() -> None:
+    """``secrets.token_urlsafe(16)`` produces URL-safe ~22-char strings."""
+    codes = {clients_service._generate_invite_code() for _ in range(100)}
+    # Collision-free across 100 draws.
+    assert len(codes) == 100
+    url_safe = set(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    )
+    for code in codes:
+        assert 20 <= len(code) <= 24
+        assert set(code).issubset(url_safe)
