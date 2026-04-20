@@ -41,11 +41,12 @@ We need methods of quickly adding to this profile over time, and using it to inf
 
 ### 3.2 Necessary Friction
 
-Not everything should be instant. A response that's too fast undermines trust with this clientele. The system should introduce deliberate, thoughtful pacing:
+Not everything should be instant. A response that's too fast undermines trust with this clientele. The system introduces deliberate, thoughtful pacing — the feeling that real experts are crafting something just for you. This principle is concretely implemented in **Phase 3: The Build** (see Section 4).
 
-- "We're having our local expert review this for you" (even if AI-generated)
-- Offer callbacks with a real person or on-the-ground contact
-- Build assurance through human touchpoints at key moments
+Examples:
+- "We're having our local expert review this for you"
+- Offering a callback with a real person or on-the-ground contact
+- Progress updates that build anticipation before the final reveal
 
 ### 3.3 Trust-Building Content
 
@@ -81,7 +82,7 @@ The client chats with an AI agent to explore what they want. As they talk, the U
 
 **Client controls on the mood board:**
 - **Must Do** — pin a card as non-negotiable for the final itinerary
-- **Thumbs Up** — Likes the idea generally. keep it on the board as an option
+- **Thumbs Up** — likes the idea generally; keep it on the board as an option
 - **Not This Time** — send a card to a discard bin (still visible, recoverable)
 - Cards can be managed by interacting with the UI directly or by asking the agent ("actually, drop the Fuji idea")
 
@@ -95,7 +96,7 @@ The client chats with an AI agent to explore what they want. As they talk, the U
 
 ### Phase 3: The Build — Strategic Friction
 
-Once the mood board has enough signal and the user "submits it to us", the system transitions into itinerary creation. This is where **necessary friction** becomes a feature. Instead of delivering a finished plan instantly, we drip out progress over hours or days — building tension, excitement, and a sense that something bespoke is being crafted for them.
+Once the mood board has enough signal and the client submits it, the system transitions into itinerary creation. This is where **necessary friction** becomes a feature. Instead of delivering a finished plan instantly, we drip out progress over hours or days — building tension, excitement, and a sense that something bespoke is being crafted for them.
 
 **The drip cadence:**
 - **Clarifying questions** — "We found an incredible private vineyard dinner near Bellagio. Do you prefer a late evening or sunset timing?" Questions signal that real humans and local experts are involved.
@@ -115,9 +116,13 @@ Once the mood board has enough signal and the user "submits it to us", the syste
 - Each touchpoint should feel personal and considered, not automated
 - The final "your itinerary is ready" moment should feel like an event
 
-### Internal: The Command Center
+### Internal Systems
 
-While the client sees the mood board and drip updates, the OV team operates from a **Command Center** — the internal counterpart that prioritizes function over aesthetics.
+The following components support the client-facing flow above. They are not phases — they run continuously across the entire lifecycle of a trip.
+
+#### The Command Center
+
+The advisor-facing counterpart to the client experience. Function over aesthetics.
 
 **Queue & workload view:**
 - All incoming trip requests in a single dashboard, sortable by status, priority, dates, and advisor assignment
@@ -140,9 +145,9 @@ While the client sees the mood board and drip updates, the OV team operates from
 - Advisors annotate with qualitative notes AI can't capture ("she mentioned her anniversary is in October")
 - Change history tracked so the team can see how preferences evolve
 
-### Client Vault
+#### Client Vault
 
-Clients need a secure way to share sensitive documents required for booking: passport photos, visa copies, loyalty program numbers, dietary/medical notes, emergency contacts.
+Secure storage for sensitive documents required for booking: passport photos, visa copies, loyalty program numbers, dietary/medical notes, emergency contacts.
 
 - **Encrypted upload** — client-side encryption before upload, stored in S3 with server-side encryption (AES-256)
 - **Access-controlled** — only the client and their assigned advisor can view vault contents
@@ -153,17 +158,47 @@ Clients need a secure way to share sensitive documents required for booking: pas
 ---
 
 ### Phase 4: Itinerary Presentation
+
+The "your itinerary is ready" moment. This should feel like an event — the payoff of Phase 3's anticipation.
+
 1. Deliver a polished, visual itinerary — mobile-friendly PDF or in-app experience
-2. Includes: day-by-day plan, hotel photos, editorial links, pricing, maps
-3. Options and alternatives presented (not just one path)
-4. Offer a callback with a real advisor or local contact for assurance
+2. Day-by-day plan with hotel photos, editorial links, maps, and pricing
+3. Where the itinerary graph still has unresolved alternatives, present them as options for the client to choose
+4. Offer a callback with a real advisor or local contact to walk through the plan
+
+**Client reviews with the agent:**
+
+The client can chat with the AI agent while reviewing the itinerary. The agent has full context on the graph — not just *what* is planned, but *why*. Every node can carry reasoning: advisor notes, constraint explanations, local knowledge.
+
+- **"Why" questions** — *"Why do we leave at 8am?"* → Agent: *"In Rome on a Wednesday, the Vatican opens at 8:30 and the line builds to 2+ hours by 9am. Your advisor Evan also noted that your afternoon cooking class in Trastevere starts at 2pm, so this keeps the day from feeling rushed."*
+- **Change requests** — *"Can we push that to 10am?"* → Agent flags the downstream impact (missed Vatican window, tight on the cooking class) and either adjusts the graph or escalates to the advisor if the change cascades.
+- **Notes and preferences** — *"We want to grab espresso near the hotel before we leave"* → Agent adds a note or a new node to the graph for the advisor to see.
+- **Alternative selection** — Where branches exist, the client can ask the agent to help them decide: *"Which restaurant do you recommend for our anniversary dinner?"* → Agent draws on Voodoo Doll + editorial sources to make a personalized recommendation.
+
+All client feedback in this phase flows back to the advisor via the Command Center. The advisor decides whether to accept changes directly or follow up.
 
 ### Phase 5: Booking & Payment
-1. Client reviews and approves the plan
-2. Intermediate deposit to lock in commitment
-3. System books inventory via APIs (Ratehawk, Duffel, etc.) with fallback handling
-4. Final payment collected via Braintree
-5. Confirmation and travel documents delivered
+
+Booking is not a single moment — it's a process. Inventory can fail, prices can shift, and the itinerary graph may need to adapt.
+
+1. Client reviews and approves the final plan (all alternatives resolved)
+2. Deposit collected (X% of total) to lock in commitment
+3. Advisors begin booking inventory — manually for MVP, working through the itinerary graph node by node
+
+**When bookings fail:**
+
+Hotels get overbooked. Flights change. A rate expires between presentation and booking. This is expected, not exceptional. The system handles it the same way it handles every other itinerary change:
+
+- Advisor updates the affected node's status in the graph (e.g., `approved` → back to `proposed`)
+- AI agent suggests alternatives — new hotels, adjusted timing, rerouted transit — using the same graph-aware logic from earlier phases
+- If the change is minor (same hotel, different room type), the advisor resolves it directly
+- If the change impacts the client's experience (different hotel, different city timing), the client is notified via the same channels used in Phase 3–4 — the agent explains what happened and presents options
+- Client can chat with the agent to evaluate alternatives, just like in Phase 4
+
+All confirmations are entered back into the itinerary graph as they succeed. Each node progresses: `approved` → `booked` → `confirmed`. The client can see booking status in real time.
+
+4. Remainder due Y days before departure, collected via Braintree
+5. Final confirmation and travel documents delivered — generated from the fully confirmed graph
 
 ---
 
@@ -179,8 +214,8 @@ Clients need a secure way to share sensitive documents required for booking: pas
 | **Hotel search** | Ratehawk API integration for availability and rates |
 | **Flight search** | Duffel API integration for flights |
 | **Itinerary presentation** | Mobile-friendly PDF with images, links, day-by-day plan |
-| **Payment** | Braintree integration — deposit + final payment |
-| **Advisor escalation** | Multi-advisor teams can collaborate on a trip. Hand off to human at any point. Advisors interact via Command Center. |
+| **Payment** | Braintree integration — deposit + final payment. Client can view invoices and payment history. |
+| **Advisor team model** | Multi-advisor teams collaborate on a trip via Command Center. Humans in the loop at every stage. |
 | **Command Center v1** | Internal dashboard: request queue, basic timeline UI for arranging itinerary cards, chat/MCP agent interaction, Voodoo Doll editing, client messaging |
 | **Client vault** | Encrypted document upload (passports, visas, etc.) with access controls and expiry tracking |
 | **WhatsApp integration** | Clients can interact via WhatsApp in addition to in-app chat |
@@ -195,7 +230,7 @@ Clients need a secure way to share sensitive documents required for booking: pas
 | **Train booking** | Present train options but book manually for MVP |
 | **Hotel direct-rate comparison** | Cross-referencing Ratehawk vs. hotel direct websites |
 | **AI phone calls to hotels** | Automated voice calls for availability/negotiation |
-| **WhatsApp/iMessage integration** | iMessage integration deferred; WhatsApp is in MVP |
+| **iMessage integration** | iMessage deferred to post-MVP (WhatsApp is in MVP) |
 | **Collaborative mood board** | Invite travel companions to add/vote on cards; multi-user presence and attribution |
 | **Command Center visual UI** | Polished drag-and-drop itinerary builder, calendar view, advanced analytics, conflict auto-resolution (MVP has functional but minimal timeline) |
 
@@ -258,9 +293,9 @@ Clients need a secure way to share sensitive documents required for booking: pas
 
 ---
 
-## 10. The Itinerary Data Structure
+## 10. The Itinerary Graph
 
-The itinerary is the **central data model** of the entire system. It is the single source of truth for the client, the advisor, the AI agents, and the booking systems. Every party sees the same data — just presented differently:
+The itinerary is the **central data model** of the entire system — the single source of truth for every party. The same underlying data is rendered differently for each audience:
 
 - **Client** sees a polished, visual experience (mood board → PDF → in-app itinerary)
 - **Advisor** sees a functional planning view (timeline, cards, logistics, costs)
