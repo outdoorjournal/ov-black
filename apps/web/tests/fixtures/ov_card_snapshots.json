@@ -1,0 +1,44 @@
+[
+  {
+    "node_id": "node-ov-patagonia-01",
+    "source": "ov",
+    "source_id": "ov-exp-patagonia-torres-01",
+    "snapshot": {
+      "title": "Torres del Paine W Circuit",
+      "cover_image": "https://example.test/ov/patagonia-w/hero.jpg",
+      "price": "From $3,200",
+      "duration_days": 7,
+      "difficulty": "Moderate",
+      "location": "Patagonia, Chile",
+      "activities": ["Trekking", "Glacier Viewing", "Wildlife"]
+    }
+  },
+  {
+    "node_id": "node-ov-dolomites-01",
+    "source": "ov",
+    "source_id": "ov-exp-dolomites-sella-02",
+    "snapshot": {
+      "title": "Via Ferrata Across the Sella Massif",
+      "cover_image": "https://example.test/ov/dolomites/hero.jpg",
+      "price": "€1,850",
+      "duration_days": 4,
+      "difficulty": "Challenging",
+      "location": "Dolomites, Italy",
+      "activities": ["Via Ferrata", "Alpine Hiking"]
+    }
+  },
+  {
+    "node_id": "node-ov-kyoto-01",
+    "source": "ov",
+    "source_id": "ov-exp-kyoto-temples-03",
+    "snapshot": {
+      "title": "Kyoto Temple Gardens in Autumn",
+      "cover_image": "https://example.test/ov/kyoto/hero.jpg",
+      "price": "From $2,400",
+      "duration_days": 5,
+      "difficulty": "Easy",
+      "location": "Kyoto, Japan",
+      "activities": ["Garden Walks", "Tea Ceremony", "Calligraphy"]
+    }
+  }
+]
