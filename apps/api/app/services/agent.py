@@ -47,7 +47,18 @@ from app.agent.bedrock import AgentRuntimeClient, AgentRuntimeError
 from app.agent.prompt import build_system_prompt
 from app.agent.voodoo_doll_context import assemble_context
 from app.config import Settings, get_settings
-from app.models import AgentSession, AgentTurn, Client, TurnRole, VoodooDoll
+from app.models import (
+    AgentSession,
+    AgentTurn,
+    Client,
+    Itinerary,
+    Node,
+    NodeStatus,
+    NodeType,
+    TurnRole,
+    VoodooDoll,
+)
+from app.services import itineraries as itineraries_service
 
 logger = logging.getLogger("ov_black.agent.service")
 
@@ -405,6 +416,107 @@ async def _next_turn_index(
     return 0 if current_max is None else int(current_max) + 1
 
 
+async def _ensure_itinerary_for_client(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
+) -> uuid.UUID:
+    """Return the itinerary id for ``client_id`` — one per client.
+
+    S07 resolves the client's itinerary lazily at card-proposal time:
+    agent_sessions has no itinerary_id column, and we do not want a
+    long-lived column coupling sessions to itineraries. Idempotent:
+    SELECT first, INSERT only if absent.
+    """
+    existing = (
+        await session.execute(
+            select(Itinerary.id)
+            .where(Itinerary.client_id == client_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    itinerary = Itinerary(
+        client_id=client_id,
+        created_by=actor_user_id,
+        title="Concierge draft",
+    )
+    session.add(itinerary)
+    await session.commit()
+    await session.refresh(itinerary)
+    return itinerary.id
+
+
+async def _persist_proposed_card(
+    session: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    itinerary_id: uuid.UUID,
+    agentcore_session_id: str,
+    source: str,
+    source_id: str,
+    snapshot: dict[str, Any],
+) -> uuid.UUID | None:
+    """Insert a proposed-experience node for an agent-proposed card.
+
+    Returns the new node id on success, or None on persistence failure.
+    Failure is logged as ``agent.card.persist_failed`` WARNING with the
+    ``reason`` string only — never the snapshot. This is a non-fatal
+    path: the stream must keep flowing so the browser still sees the
+    frame even if durability failed.
+
+    Redaction: the snapshot dict lands in ``nodes.metadata`` (browser
+    fetches it back on reload) but never appears in any log line.
+    """
+    title = ""
+    raw_title = snapshot.get("title")
+    if isinstance(raw_title, str):
+        title = raw_title
+
+    card_actor = itineraries_service.ActorContext(
+        user_id=None,
+        kind=itineraries_service.ActorKind.AGENT,
+        actor_id=agentcore_session_id,
+    )
+    result = await itineraries_service.add_node(
+        session,
+        card_actor,
+        itinerary_id=itinerary_id,
+        type=NodeType.experience,
+        status=NodeStatus.proposed,
+        title=title,
+        source=source,
+        source_id=source_id,
+        metadata={"snapshot": snapshot},
+    )
+    if isinstance(result, itineraries_service.ItineraryError):
+        logger.warning(
+            "agent.card.persist_failed",
+            extra={
+                "session_id": str(session_id),
+                "source": source,
+                "source_id": source_id,
+                "reason": result.outcome.value,
+            },
+        )
+        return None
+
+    logger.info(
+        "agent.card.proposed",
+        extra={
+            "session_id": str(session_id),
+            "source": source,
+            "source_id": source_id,
+            "itinerary_id": str(itinerary_id),
+            "node_id": str(result.id),
+        },
+    )
+    return result.id
+
+
 async def _authorize_actor(
     actor: ActorContext,
     client: Client,
@@ -499,6 +611,8 @@ async def stream_turn(
         doll_context = assemble_context(doll, client_full_name=client_row.full_name)
         system_prompt = build_system_prompt(doll_context)
         agentcore_session_id = agent_session.agentcore_session_id
+        client_id = client_row.id
+        actor_user_id = actor.user_id
 
         user_turn = AgentTurn(
             session_id=session_id,
@@ -547,6 +661,7 @@ async def stream_turn(
     first_token_ms: int | None = None
     attempt_count = 0
     fallback_fired = False
+    itinerary_id_cache: uuid.UUID | None = None
 
     while True:
         got_first_byte = False
@@ -604,6 +719,62 @@ async def stream_turn(
                         yield _sse_encode({"type": "delta", "text": text_chunk})
                     elif kind == "done":
                         break
+                    elif kind == "card":
+                        # S07: persist the card as a proposed-experience node
+                        # BEFORE forwarding so a hard reload can rehydrate it.
+                        # Persistence failure is non-fatal — the frame still
+                        # flows to the browser.
+                        source = event.get("source")
+                        source_id = event.get("source_id")
+                        snapshot = event.get("snapshot")
+                        if (
+                            not isinstance(source, str)
+                            or not isinstance(source_id, str)
+                            or not isinstance(snapshot, dict)
+                        ):
+                            logger.info(
+                                "agent.card.malformed",
+                                extra={
+                                    "session_id": str(session_id),
+                                    "source": source if isinstance(source, str) else None,
+                                    "source_id": (
+                                        source_id if isinstance(source_id, str) else None
+                                    ),
+                                },
+                            )
+                            got_first_byte = True
+                            yield _sse_encode(event)
+                            continue
+
+                        node_id: uuid.UUID | None = None
+                        async with session_factory() as card_db:
+                            if itinerary_id_cache is None:
+                                itinerary_id_cache = (
+                                    await _ensure_itinerary_for_client(
+                                        card_db,
+                                        client_id=client_id,
+                                        actor_user_id=actor_user_id,
+                                    )
+                                )
+                            node_id = await _persist_proposed_card(
+                                card_db,
+                                session_id=session_id,
+                                itinerary_id=itinerary_id_cache,
+                                agentcore_session_id=agentcore_session_id,
+                                source=source,
+                                source_id=source_id,
+                                snapshot=snapshot,
+                            )
+
+                        forwarded = {
+                            "type": "card",
+                            "source": source,
+                            "source_id": source_id,
+                            "snapshot": snapshot,
+                            "node_id": str(node_id) if node_id is not None else None,
+                        }
+                        got_first_byte = True
+                        yield _sse_encode(forwarded)
                     else:
                         # Unknown event type — forward unchanged.
                         got_first_byte = True

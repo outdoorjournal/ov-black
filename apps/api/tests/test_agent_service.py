@@ -31,7 +31,18 @@ import pytest
 from app.agent.bedrock import AgentRuntimeError, MockAgentRuntimeClient
 from app.agent.prompt import build_system_prompt
 from app.config import Settings
-from app.models import AgentSession, AgentTurn, Client, TurnRole, VoodooDoll
+from app.models import (
+    AgentSession,
+    AgentTurn,
+    Client,
+    Itinerary,
+    Node,
+    NodeHistory,
+    NodeStatus,
+    NodeType,
+    TurnRole,
+    VoodooDoll,
+)
 from app.models.client import ContactChannel, GroupType
 from app.services.agent import (
     ActorContext,
@@ -40,6 +51,7 @@ from app.services.agent import (
     open_or_reuse_session,
     stream_turn,
 )
+from app.services import itineraries as itineraries_service
 
 SECRET_NETWORTH = 999999999
 SECRET_OSINT = "DO_NOT_LOG_THIS_OSINT"
@@ -106,6 +118,13 @@ class FakeSession:
             obj.id = uuid.uuid4()
         if isinstance(obj, AgentTurn) and obj.id is None:
             obj.id = uuid.uuid4()
+        # Emulate server-side default on Itinerary / Node / NodeHistory.id.
+        if isinstance(obj, Itinerary) and obj.id is None:
+            obj.id = uuid.uuid4()
+        if isinstance(obj, Node) and obj.id is None:
+            obj.id = uuid.uuid4()
+        if isinstance(obj, NodeHistory) and obj.id is None:
+            obj.id = uuid.uuid4()
         self.added.append(obj)
         self.factory.after_add(self, obj)
 
@@ -121,6 +140,11 @@ class FakeSession:
 
     async def refresh(self, obj: Any) -> None:
         self.refreshes += 1
+
+    async def flush(self) -> None:
+        # Stand-in for AsyncSession.flush — the itineraries service uses it
+        # to surface IntegrityError before commit. Tests don't simulate that.
+        return None
 
 
 @dataclass
@@ -159,6 +183,12 @@ class FakeFactory:
     # to assert role preservation.
     profile_upsert_calls: list[str] = field(default_factory=list)
     profiles_existing_roles: dict[str, str] = field(default_factory=dict)
+    # S07 T03 — itinerary state for agent-proposed card persistence. The
+    # in-memory ``itineraries`` list is indexed by client_id; ``nodes``
+    # accumulates every Node the itineraries service adds via ``session.add``.
+    itineraries: list[Itinerary] = field(default_factory=list)
+    nodes: list[Node] = field(default_factory=list)
+    node_histories: list[NodeHistory] = field(default_factory=list)
 
     def __call__(self) -> FakeSession:
         sess = FakeSession(factory=self)
@@ -170,6 +200,12 @@ class FakeFactory:
     def after_add(self, session: FakeSession, obj: Any) -> None:
         if isinstance(obj, AgentTurn):
             self.turns.append(obj)
+        elif isinstance(obj, Itinerary):
+            self.itineraries.append(obj)
+        elif isinstance(obj, Node):
+            self.nodes.append(obj)
+        elif isinstance(obj, NodeHistory):
+            self.node_histories.append(obj)
 
     def after_commit(self, session: FakeSession) -> None:
         return None
@@ -256,6 +292,41 @@ class FakeFactory:
             if self.open_agent_session_on_reuse is not None:
                 return FakeResult(rows=[self.open_agent_session_on_reuse])
             return FakeResult(rows=[])
+
+        # S07 T03 — itinerary-by-client (ensure-one-per-client helper).
+        if (
+            "itineraries" in sql_lower
+            and "itineraries.client_id" in sql_lower
+        ):
+            bound = {}
+            try:
+                bound = dict(stmt.compile().params)
+            except Exception:
+                bound = {}
+            client_id = bound.get("client_id_1")
+            match = next(
+                (it for it in self.itineraries if str(it.client_id) == str(client_id)),
+                None,
+            )
+            if match is None:
+                return FakeResult(rows=[])
+            return FakeResult(rows=[match.id])
+
+        # S07 T03 — itinerary-by-id (add_node exists-check).
+        if "itineraries" in sql_lower and "itineraries.id" in sql_lower:
+            bound = {}
+            try:
+                bound = dict(stmt.compile().params)
+            except Exception:
+                bound = {}
+            itinerary_id = bound.get("id_1")
+            match = next(
+                (it for it in self.itineraries if str(it.id) == str(itinerary_id)),
+                None,
+            )
+            if match is None:
+                return FakeResult(rows=[])
+            return FakeResult(rows=[match.id])
 
         # Plain clients lookup.
         if "clients" in sql_lower and "agent_sessions" not in sql_lower:
@@ -995,12 +1066,12 @@ async def test_card_event_passes_through(
     agent_session: AgentSession,
     settings: Settings,
 ) -> None:
-    """A ``card`` event from the runtime round-trips to the client verbatim.
+    """A ``card`` event from the runtime round-trips to the client.
 
-    Locks in the S07 contract that the service's pass-through seam forwards
-    unknown event kinds as raw SSE frames without mutating shape. The test
-    extracts the ``data: <json>`` line for the card frame, re-parses the
-    JSON, and asserts the full payload (including snapshot) survived.
+    Locks in the S07 contract that the service forwards the frame with the
+    snapshot intact; T03 additionally augments the outbound frame with a
+    ``node_id`` (the persisted experience-node id) so the client reducer can
+    key its state on a stable identifier.
     """
     card_event = {
         "type": "card",
@@ -1048,6 +1119,230 @@ async def test_card_event_passes_through(
         if b'"type":"card"' in line
     ]
     assert len(cards) == 1
-    assert cards[0] == card_event
-    # Snapshot dict MUST survive byte-for-byte — no re-keying, no stripping.
-    assert cards[0]["snapshot"]["activities"] == ["heli-ski", "lodge"]
+    forwarded = cards[0]
+    # Snapshot dict survives byte-for-byte — no re-keying, no stripping.
+    assert forwarded["type"] == "card"
+    assert forwarded["source"] == card_event["source"]
+    assert forwarded["source_id"] == card_event["source_id"]
+    assert forwarded["snapshot"] == card_event["snapshot"]
+    assert forwarded["snapshot"]["activities"] == ["heli-ski", "lodge"]
+    # T03: forwarded frame now carries node_id — uuid-string on success,
+    # None on persist failure. The fake factory persists cleanly here.
+    assert forwarded["node_id"] is not None
+    uuid.UUID(forwarded["node_id"])  # round-trips as a uuid string
+
+
+async def test_card_frame_persists_as_proposed_node(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """Card frames land as ``nodes`` rows with status=proposed BEFORE forward.
+
+    T03 durability half: even if the client closes the tab mid-stream, the
+    proposed card must survive for a reload hydration.
+    """
+    card_event = {
+        "type": "card",
+        "source": "ov",
+        "source_id": "ov-42",
+        "snapshot": {
+            "title": "Sahara glamping",
+            "cover_image": "https://cdn.ov.test/sahara.jpg",
+            "activities": ["camel", "stargaze"],
+        },
+    }
+    runtime = MockAgentRuntimeClient(
+        [
+            {"type": "delta", "text": "I've got one."},
+            card_event,
+            {"type": "done"},
+        ]
+    )
+
+    await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="Suggest something wild.",
+            settings=settings,
+        )
+    )
+
+    # Exactly one Node was persisted with the proposed-experience shape.
+    assert len(factory.nodes) == 1
+    node = factory.nodes[0]
+    assert node.type == NodeType.experience
+    assert node.status == NodeStatus.proposed
+    assert node.source == "ov"
+    assert node.source_id == "ov-42"
+    assert node.title == "Sahara glamping"
+    assert node.metadata_ == {"snapshot": card_event["snapshot"]}
+
+    # A matching node_history row was written with actor_kind='agent'.
+    assert len(factory.node_histories) == 1
+    history = factory.node_histories[0]
+    assert history.node_id == node.id
+    assert history.op == "insert"
+    assert history.actor_kind == itineraries_service.ActorKind.AGENT.value
+    assert history.actor_id == agent_session.agentcore_session_id
+
+    # And an itinerary was auto-created with title='Concierge draft'.
+    assert len(factory.itineraries) == 1
+    itinerary = factory.itineraries[0]
+    assert itinerary.client_id == agent_session.client_id
+    assert itinerary.title == "Concierge draft"
+    assert node.itinerary_id == itinerary.id
+
+
+async def test_card_frame_reuses_existing_itinerary(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """Two cards in one turn land under the same itinerary row.
+
+    Guards against the duplicate-itinerary-row bug where a naive
+    implementation would INSERT a new itinerary per card.
+    """
+    # Pre-seed an itinerary for this client.
+    existing = Itinerary(
+        client_id=agent_session.client_id,
+        title="pre-existing",
+    )
+    existing.id = uuid.uuid4()
+    factory.itineraries.append(existing)
+
+    card_a = {
+        "type": "card",
+        "source": "ov",
+        "source_id": "ov-1",
+        "snapshot": {"title": "A", "activities": []},
+    }
+    card_b = {
+        "type": "card",
+        "source": "ov",
+        "source_id": "ov-2",
+        "snapshot": {"title": "B", "activities": []},
+    }
+    runtime = MockAgentRuntimeClient(
+        [
+            card_a,
+            card_b,
+            {"type": "done"},
+        ]
+    )
+
+    await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="Pitch me two.",
+            settings=settings,
+        )
+    )
+
+    # No new itinerary was created — both nodes land under the existing one.
+    assert len(factory.itineraries) == 1
+    assert len(factory.nodes) == 2
+    assert factory.nodes[0].itinerary_id == existing.id
+    assert factory.nodes[1].itinerary_id == existing.id
+
+
+async def test_card_frame_persist_failure_is_non_fatal(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If ``add_node`` fails, the stream continues and a WARNING is logged.
+
+    Persistence failures MUST NOT block the stream — the frame still goes
+    to the browser and the subsequent ``done`` frame still reaches the
+    client. Reload hydration just won't see the lost card.
+    """
+    async def _failing_add_node(
+        session: Any,
+        actor: Any,
+        **kwargs: Any,
+    ) -> itineraries_service.ItineraryError:
+        return itineraries_service.ItineraryError(
+            outcome=itineraries_service.ItineraryOutcome.NOT_FOUND,
+            detail=None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.agent.itineraries_service.add_node",
+        _failing_add_node,
+    )
+
+    card_event = {
+        "type": "card",
+        "source": "ov",
+        "source_id": "ov-doom",
+        "snapshot": {"title": "X", "activities": []},
+    }
+    runtime = MockAgentRuntimeClient(
+        [
+            {"type": "delta", "text": "Try this."},
+            card_event,
+            {"type": "done"},
+        ]
+    )
+
+    caplog.set_level(logging.WARNING, logger="ov_black.agent.service")
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="Anything?",
+            settings=settings,
+        )
+    )
+    joined = b"".join(frames)
+
+    # The terminal ``done`` frame reaches the client — stream wasn't killed.
+    assert b'"type":"done"' in joined
+
+    # The forwarded card frame carries node_id=None because persist failed.
+    data_lines = [
+        line[len(b"data: "):]
+        for line in joined.split(b"\n")
+        if line.startswith(b"data: ")
+    ]
+    cards = [
+        json.loads(line.decode("utf-8"))
+        for line in data_lines
+        if b'"type":"card"' in line
+    ]
+    assert len(cards) == 1
+    assert cards[0]["node_id"] is None
+
+    # WARNING was emitted with the persist_failed event + carries no snapshot.
+    warns = [
+        r for r in caplog.records
+        if r.name == "ov_black.agent.service"
+        and r.levelno == logging.WARNING
+        and r.getMessage() == "agent.card.persist_failed"
+    ]
+    assert len(warns) == 1
+    record = warns[0]
+    # Required stable fields present.
+    assert getattr(record, "session_id", None) == str(agent_session.id)
+    assert getattr(record, "source", None) == "ov"
+    assert getattr(record, "source_id", None) == "ov-doom"
+    assert getattr(record, "reason", None) == "not_found"
+    # No snapshot / description / photo leaked into the log record.
+    record_blob = json.dumps(record.__dict__, default=str)
+    assert "snapshot" not in record_blob
+    assert card_event["snapshot"]["title"] not in record_blob
