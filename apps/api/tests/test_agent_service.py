@@ -147,6 +147,16 @@ class FakeFactory:
     auth_users_emails: dict[str, str] = field(default_factory=dict)
     auth_users_select_raises: BaseException | None = None
     auth_update_count: int = 0
+    # Profiles upsert tracking for T02. Each INSERT ... ON CONFLICT DO NOTHING
+    # against public.profiles appends its user_id (as str) here.
+    # ``profiles_existing_roles`` is the in-memory projection the test writes
+    # to simulate pre-existing rows: when the service issues the INSERT, we
+    # look up the row by id; present ⇒ ON CONFLICT DO NOTHING is a no-op and
+    # the stored role is left untouched; absent ⇒ the row is inserted with
+    # role='client'. Tests inspect ``profiles_existing_roles`` after the call
+    # to assert role preservation.
+    profile_upsert_calls: list[str] = field(default_factory=list)
+    profiles_existing_roles: dict[str, str] = field(default_factory=dict)
 
     def __call__(self) -> FakeSession:
         sess = FakeSession(factory=self)
@@ -193,6 +203,22 @@ class FakeFactory:
         # UPDATE clients SET auth_user_id = ... (JIT backfill write).
         if sql_lower.startswith("update clients") and "auth_user_id" in sql_lower:
             self.auth_update_count += 1
+            return FakeResult(rows=[])
+
+        # Raw text() INSERT ... ON CONFLICT DO NOTHING into public.profiles.
+        # Records the attempted user_id and simulates ON CONFLICT semantics
+        # against the in-memory ``profiles_existing_roles`` map.
+        if (
+            sql_lower.startswith("insert into public.profiles")
+            and "on conflict" in sql_lower
+        ):
+            user_id = (params or {}).get("user_id") if isinstance(params, dict) else None
+            user_id_str = str(user_id) if user_id is not None else ""
+            self.profile_upsert_calls.append(user_id_str)
+            if user_id_str and user_id_str not in self.profiles_existing_roles:
+                # First write for this user — insert with role='client'.
+                self.profiles_existing_roles[user_id_str] = "client"
+            # else: ON CONFLICT DO NOTHING — existing role preserved.
             return FakeResult(rows=[])
 
         # FOR UPDATE row lock on agent_sessions.
@@ -866,3 +892,82 @@ async def test_open_or_reuse_session_jit_backfill_skipped_when_already_populated
     assert not any(
         rec.message == "agent.auth.client_backfilled" for rec in caplog.records
     )
+
+
+# ── JIT profiles upsert (T02) ──────────────────────────────────────────────
+
+
+async def test_open_or_reuse_session_jit_backfill_profiles_upsert_inserts_client_role(
+    factory: FakeFactory,
+    client_row: Client,
+) -> None:
+    """First-ever JIT backfill for a user → profiles INSERT with role='client'.
+
+    Locks in T02's contract: the same backfill transaction that sets
+    clients.auth_user_id ALSO writes a public.profiles row (id=user_id,
+    role='client') with ON CONFLICT DO NOTHING so the auth grid stays
+    self-consistent on the very next request.
+    """
+    client_row.auth_user_id = None
+    caller_user_id = uuid.uuid4()
+    factory.auth_users_emails[str(caller_user_id)] = client_row.email
+    factory.open_agent_session_on_reuse = None
+    # No pre-existing profiles row for this user — expect INSERT path.
+    assert str(caller_user_id) not in factory.profiles_existing_roles
+
+    user_actor = ActorContext(
+        user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
+    )
+
+    outcome, session_row = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=user_actor,
+        client_id=client_row.id,
+    )
+
+    assert outcome is SessionOutcome.OK
+    assert isinstance(session_row, AgentSession)
+    # Exactly one profiles INSERT ... ON CONFLICT was issued, for the caller.
+    assert factory.profile_upsert_calls == [str(caller_user_id)]
+    # The simulated ON CONFLICT semantics wrote role='client' (no pre-existing
+    # row existed for this user).
+    assert factory.profiles_existing_roles[str(caller_user_id)] == "client"
+    # And the clients UPDATE also fired — both writes share the same txn.
+    assert factory.auth_update_count == 1
+
+
+async def test_open_or_reuse_session_jit_backfill_profiles_upsert_never_downgrades_advisor(
+    factory: FakeFactory,
+    client_row: Client,
+) -> None:
+    """Existing profiles row with role='advisor' must NEVER be downgraded.
+
+    ON CONFLICT DO NOTHING makes this structurally impossible: if the test's
+    in-memory ``profiles_existing_roles`` already carries the caller's user_id
+    mapped to 'advisor', the INSERT is a no-op and the role is preserved.
+    This test locks the contract against a future regression where someone
+    flips the statement to ON CONFLICT (id) DO UPDATE or similar.
+    """
+    client_row.auth_user_id = None
+    caller_user_id = uuid.uuid4()
+    factory.auth_users_emails[str(caller_user_id)] = client_row.email
+    factory.open_agent_session_on_reuse = None
+    # Pre-existing advisor profile row — must remain advisor after the call.
+    factory.profiles_existing_roles[str(caller_user_id)] = "advisor"
+
+    user_actor = ActorContext(
+        user_id=caller_user_id, actor_kind="user", actor_id=str(caller_user_id)
+    )
+
+    outcome, session_row = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=user_actor,
+        client_id=client_row.id,
+    )
+
+    assert outcome is SessionOutcome.OK
+    assert isinstance(session_row, AgentSession)
+    # The INSERT statement was still issued (ON CONFLICT handles the rest).
+    assert factory.profile_upsert_calls == [str(caller_user_id)]
+    # The critical invariant: role='advisor' is preserved.
+    assert factory.profiles_existing_roles[str(caller_user_id)] == "advisor"

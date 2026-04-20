@@ -523,3 +523,73 @@ def test_get_turns_wrong_caller_returns_404(
 
     assert resp.status_code == 404
     assert resp.json()["detail"] == "session_not_found"
+
+
+# ── _actor_for_user resolution after JIT profiles upsert (T02) ─────────────
+
+
+async def test_actor_for_user_resolves_user_with_populated_user_id_after_profile_upsert() -> None:
+    """After the T02 profiles upsert writes role='client', a subsequent turn
+    request MUST resolve ``_actor_for_user`` to ``actor_kind='user'`` with a
+    populated ``user_id`` — not the ``user_id=None`` collapse path.
+
+    Locks in the router-side contract: the T02 upsert closes a gap where a
+    client with a backfilled ``clients.auth_user_id`` but no profiles row
+    would still surface through _actor_for_user with ``user_id=None`` (safe
+    but inconsistent with the rest of the auth grid).
+    """
+    from app.models import Profile, UserRole
+    from app.routers.agent import _actor_for_user
+
+    caller_sub = uuid.uuid4()
+    # Profile row exists post-upsert with role='client'.
+    profile_row = Profile(id=caller_sub, role=UserRole.client)
+
+    class _ProfileSession:
+        """Returns the scripted Profile on the router's Profile SELECT."""
+
+        async def execute(self, _stmt: Any, _params: Any = None) -> _NoopResult:
+            return _NoopResult([profile_row])
+
+    user = AuthenticatedUser(
+        sub=str(caller_sub),
+        email="client@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    actor = await _actor_for_user(user, _ProfileSession())
+
+    assert actor.actor_kind == "user"
+    # Critical invariant: user_id is populated, NOT None.
+    assert actor.user_id == caller_sub
+    assert actor.actor_id == str(caller_sub)
+
+
+async def test_actor_for_user_missing_profile_row_still_returns_populated_user_id() -> None:
+    """Targeted regression guard: even WITHOUT a profiles row (the
+    pre-backfill steady state), a valid sub UUID must still populate
+    ``user_id`` on the resulting ActorContext. The T02 plan explicitly calls
+    out that today's behavior does this for all users — this test locks it
+    so a future refactor cannot silently regress to ``user_id=None``.
+    """
+    from app.routers.agent import _actor_for_user
+
+    caller_sub = uuid.uuid4()
+
+    class _EmptyProfileSession:
+        async def execute(self, _stmt: Any, _params: Any = None) -> _NoopResult:
+            return _NoopResult([])  # No profile row.
+
+    user = AuthenticatedUser(
+        sub=str(caller_sub),
+        email="client@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    actor = await _actor_for_user(user, _EmptyProfileSession())
+
+    assert actor.actor_kind == "user"
+    assert actor.user_id == caller_sub
+    assert actor.actor_id == str(caller_sub)

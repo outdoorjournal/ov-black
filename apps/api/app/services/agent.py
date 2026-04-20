@@ -194,6 +194,19 @@ async def _jit_backfill_client_auth_user_id(
             .where(Client.id == client.id, Client.auth_user_id.is_(None))
             .values(auth_user_id=user_id)
         )
+        # Same-transaction profiles upsert: keep the auth grid self-consistent
+        # by ensuring a profiles row with role='client' exists for this user.
+        # ON CONFLICT DO NOTHING makes this a no-op when a row already exists
+        # (even if it's an advisor row — we MUST NOT downgrade an existing
+        # profile). If this INSERT fails the whole transaction rolls back so
+        # clients.auth_user_id stays NULL and the caller collapses to FORBIDDEN.
+        await session.execute(
+            sql_text(
+                "INSERT INTO public.profiles (id, role) "
+                "VALUES (:user_id, 'client') ON CONFLICT (id) DO NOTHING"
+            ),
+            {"user_id": str(user_id)},
+        )
         await session.commit()
     except SQLAlchemyError:
         await session.rollback()
