@@ -13,6 +13,11 @@ class Base(DeclarativeBase):
     """Project-wide declarative base. Bind nothing — engine lives in app.db."""
 
 
+from app.models.client import (  # noqa: E402,F401  (re-exported)
+    Client,
+    ContactChannel,
+    GroupType,
+)
 from app.models.invite import Invite  # noqa: E402,F401  (re-exported)
 from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     Edge,
@@ -25,12 +30,16 @@ from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     NodeType,
 )
 from app.models.profile import Profile, UserRole  # noqa: E402,F401  (re-exported)
+from app.models.voodoo_doll import VoodooDoll  # noqa: E402,F401  (re-exported)
 
 __all__ = [
     "Base",
+    "Client",
+    "ContactChannel",
     "Edge",
     "EdgeHistory",
     "EdgeType",
+    "GroupType",
     "Invite",
     "Itinerary",
     "Node",
@@ -39,4 +48,5 @@ __all__ = [
     "NodeType",
     "Profile",
     "UserRole",
+    "VoodooDoll",
 ]
