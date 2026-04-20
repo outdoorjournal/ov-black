@@ -318,7 +318,8 @@ Itinerary
 │   ├── content: title, description, photos, editorial links
 │   ├── booking: supplier, confirmation #, cost, payment status
 │   ├── source: who added it (client | agent | advisor), when
-│   └── priority: must-do | preferred | optional
+│   ├── priority: must-do | preferred | optional
+│   └── subgraph: optional nested graph (own nodes + edges) for self-contained experiences
 │
 ├── Edges (Relationships between items)
 │   ├── follows        → A happens before B (temporal ordering)
@@ -340,6 +341,14 @@ Itinerary
 - Alternatives can exist at any granularity (hotels, restaurants, entire day plans, routes)
 - An alternative can itself have sub-items with their own edges
 - You can express conditional relationships: "if we pick hotel A, then restaurant X makes sense because it's nearby" (via a `requires` edge from X to A)
+
+**Subgraphs for self-contained experiences.** Some itinerary items are atomic from a scheduling perspective but have rich internal structure. A guided Amalfi Coast tour is a single block on the day's timeline, but inside it there's a boat ride, a stop in Positano, a hike along the Path of the Gods, lunch at a cliffside restaurant, and a return ferry. A node can contain a **subgraph** — its own set of nodes and edges — that tells the full story without cluttering the top-level itinerary.
+
+- The parent node owns the time slot and booking. The subgraph owns the narrative.
+- The client sees the subgraph as an expandable detail view: collapse it and it's "Amalfi Coast Tour, 8am–5pm"; expand it and they see every stop, photo, and waypoint.
+- Subgraphs can come pre-built from tour operators or OV's own inventory — a reusable template that gets dropped into any itinerary.
+- Advisors and AI agents can edit inside the subgraph independently of the parent itinerary (e.g., swap the lunch spot, adjust a waypoint).
+- Subgraphs use the same node/edge model as the top-level graph. It's graphs all the way down — though in practice, one level of nesting is usually sufficient.
 
 ### How the graph evolves
 
