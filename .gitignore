@@ -27,3 +27,16 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# ── Monorepo tooling ──
+.turbo/
+*.tsbuildinfo
+.pnpm-store/
+pnpm-debug.log*
+
+# ── CDK ──
+cdk.out/
+
+# ── Next.js / Vercel ──
+next-env.d.ts
+.vercel/
