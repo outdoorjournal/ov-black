@@ -10,6 +10,8 @@ Two halves:
   per S03 research §Voodoo Doll schema volatility, so pinning tight
   shapes here would force a migration on every product tweak.
 - :class:`ClientCreateResponse` — what the HTTP layer returns on success.
+- :class:`ClientSummary` / :class:`ClientDetail` — read-through shapes for
+  ``GET /clients`` (list) and ``GET /clients/{id}`` (full join).
 
 Nothing in this module touches SQLAlchemy; the service layer translates
 between the Pydantic payload and the ORM rows.
@@ -18,7 +20,8 @@ between the Pydantic payload and the ORM rows.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, conint, conlist
 
@@ -90,3 +93,56 @@ class ClientCreateResponse(BaseModel):
 
     client_id: uuid.UUID
     invite_email: EmailStr
+
+
+InviteStatus = Literal["pending", "consumed"]
+
+
+class ClientSummary(BaseModel):
+    """Row shape for ``GET /clients``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    full_name: str
+    email: EmailStr
+    has_voodoo_doll: bool
+    invite_status: InviteStatus
+    created_at: datetime
+
+
+class VoodooDollDetail(BaseModel):
+    """Full Voodoo Doll shape for ``GET /clients/{id}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    contact_preference: ContactChannel
+    group_type: GroupType
+    children_ages: list[int]
+    travel_party_notes: str
+    estimated_net_worth_usd: int | None
+    passions: list[dict[str, Any]]
+    motivations: dict[str, Any]
+    travel_history: list[dict[str, Any]]
+    triggers: list[dict[str, Any]]
+    constraints: list[dict[str, Any]]
+    deal_breakers: list[dict[str, Any]]
+    dream_trip_signals: dict[str, Any]
+    osint_notes: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClientDetail(BaseModel):
+    """Full client + voodoo_doll payload for ``GET /clients/{id}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    full_name: str
+    email: EmailStr
+    invite_status: InviteStatus
+    created_at: datetime
+    updated_at: datetime
+    voodoo_doll: VoodooDollDetail | None
