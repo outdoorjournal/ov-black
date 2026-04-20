@@ -5,9 +5,10 @@ from typing import TYPE_CHECKING
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
-from app.auth import AuthenticatedUser, JWTAuthMiddleware, require_user
+from app.auth import PUBLIC_PATHS, AuthenticatedUser, JWTAuthMiddleware, require_user
 from app.config import get_settings
 from app.db import dispose_engine
+from app.routers.auth import router as auth_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -46,8 +47,15 @@ app = FastAPI(
 )
 
 # Enforce Supabase JWT validation on every route except the public whitelist
-# (health probe + OpenAPI surfaces). R017.
-app.add_middleware(JWTAuthMiddleware)
+# (health probe, OpenAPI surfaces, and the invite-redeem entry point). R017.
+# /auth/redeem-invite is intentionally public — it's the front door of the
+# auth flow and has no token yet to validate.
+app.add_middleware(
+    JWTAuthMiddleware,
+    public_paths=PUBLIC_PATHS | {"/auth/redeem-invite"},
+)
+
+app.include_router(auth_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
