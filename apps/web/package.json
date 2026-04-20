@@ -1,0 +1,32 @@
+{
+  "name": "@ov-black/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OV Black web surface: invite entry, magic-link callback, and the advisor Command Center.",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .next .turbo node_modules"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.10.2",
+    "@supabase/supabase-js": "2.104.0",
+    "next": "15.5.15",
+    "react": "19.1.6",
+    "react-dom": "19.1.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.17",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "autoprefixer": "10.5.0",
+    "eslint": "9.39.4",
+    "eslint-config-next": "15.5.15",
+    "postcss": "8.5.10",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.7.2"
+  }
+}
