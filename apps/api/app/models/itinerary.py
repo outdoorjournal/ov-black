@@ -46,6 +46,13 @@ class EdgeType(str, enum.Enum):
     grouped_with = "grouped_with"
 
 
+class ItineraryStatus(str, enum.Enum):
+    """Mirrors the public.itinerary_status Postgres enum (0006)."""
+
+    draft = "draft"
+    approved = "approved"
+
+
 # Reuse the Postgres-side enum types — SQLAlchemy must not try to CREATE TYPE,
 # the migration owns that. postgresql.ENUM surfaces create_type as a real
 # attribute (the generic sqlalchemy.Enum silently drops it), so tests can
@@ -69,6 +76,14 @@ node_status_enum = PGEnum(
 edge_type_enum = PGEnum(
     EdgeType,
     name="edge_type",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
+itinerary_status_enum = PGEnum(
+    ItineraryStatus,
+    name="itinerary_status",
     schema="public",
     create_type=False,
     values_callable=lambda e: [m.value for m in e],
@@ -99,6 +114,20 @@ class Itinerary(Base):
         nullable=True,
     )
     locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    status: Mapped[ItineraryStatus] = mapped_column(
+        itinerary_status_enum,
+        nullable=False,
+        default=ItineraryStatus.draft,
+        server_default=text("'draft'::public.itinerary_status"),
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -27,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import AuthenticatedUser, require_user
 from app.db import get_session
-from app.models import EdgeType, NodeStatus, NodeType
+from app.models import EdgeType, ItineraryStatus, NodeStatus, NodeType
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
@@ -64,6 +65,9 @@ class ItineraryResponse(BaseModel):
     title: str
     client_id: uuid.UUID | None
     created_by: uuid.UUID | None
+    status: ItineraryStatus = ItineraryStatus.draft
+    approved_by: uuid.UUID | None = None
+    approved_at: datetime | None = None
 
 
 class CreateNodeRequest(BaseModel):
@@ -200,6 +204,9 @@ async def create_itinerary_endpoint(
         title=itinerary.title,
         client_id=itinerary.client_id,
         created_by=itinerary.created_by,
+        status=itinerary.status or ItineraryStatus.draft,
+        approved_by=itinerary.approved_by,
+        approved_at=itinerary.approved_at,
     )
 
 
@@ -223,6 +230,9 @@ async def get_itinerary_endpoint(
             title=result.itinerary.title,
             client_id=result.itinerary.client_id,
             created_by=result.itinerary.created_by,
+            status=result.itinerary.status or ItineraryStatus.draft,
+            approved_by=result.itinerary.approved_by,
+            approved_at=result.itinerary.approved_at,
         ),
         nodes=[
             NodeResponse(
