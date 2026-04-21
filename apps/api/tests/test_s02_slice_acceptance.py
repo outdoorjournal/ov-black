@@ -144,20 +144,38 @@ def client(overrides) -> Iterator[TestClient]:
 
 
 @pytest.fixture()
-def auth_headers(make_token) -> dict[str, str]:
-    """Real JWT minted by the conftest factory.
+def auth_headers(make_token) -> Iterator[dict[str, str]]:
+    """Real JWT minted by the conftest factory against a seeded auth user.
 
-    Uses a non-UUID ``sub`` on purpose: the router parses ``sub`` as a
-    UUID for the ``created_by`` FK to ``auth.users`` and falls back to
-    ``user_id=None`` when parsing fails. A non-UUID sub keeps the FK
-    happy without us needing to provision an auth.users row in
-    Supabase. The ``actor_id`` string is still recorded on every
-    history row, so the audit invariant the slice cares about is
-    exercised.
+    The S08 draft-read gate requires ``actor.user_id == created_by`` for
+    a caller to read back their own draft. We mint a random UUID sub and
+    seed the matching ``auth.users`` row so ``itineraries.created_by``'s
+    FK to ``auth.users(id)`` is satisfied. The row is torn down on
+    teardown.
     """
-    return {
-        "Authorization": f"Bearer {make_token(sub='s02-acceptance-actor')}"
-    }
+    user_id = uuid.uuid4()
+
+    async def _seed(eng: Any) -> None:
+        async with eng.begin() as conn:
+            await conn.execute(
+                text(
+                    "insert into auth.users (id, email, is_sso_user, is_anonymous) "
+                    "values (:id, :email, false, false)"
+                ),
+                {"id": user_id, "email": f"s02-{user_id}@test.local"},
+            )
+
+    async def _drop(eng: Any) -> None:
+        async with eng.begin() as conn:
+            await conn.execute(
+                text("delete from auth.users where id = :i"), {"i": user_id}
+            )
+
+    _run_with_engine(_seed)
+    try:
+        yield {"Authorization": f"Bearer {make_token(sub=str(user_id))}"}
+    finally:
+        _run_with_engine(_drop)
 
 
 # ── DB-side helpers (run via asyncio.run() so each gets a fresh loop) ──────

@@ -10,13 +10,17 @@
 import { createClient } from "./generated/client/client.gen.js";
 import type { Client } from "./generated/client/types.gen.js";
 import {
+  approveItineraryEndpointItineraryItineraryIdApprovePost,
+  assembleItineraryEndpointItineraryItineraryIdAssemblePost,
   createClientEndpointClientsPost,
   createSessionEndpointSessionsPost,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
   listClientsEndpointClientsGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
+  lockItineraryEndpointItineraryItineraryIdLockPost,
   redeemInviteEndpointAuthRedeemInvitePost,
+  releaseItineraryEndpointItineraryItineraryIdReleasePost,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
 } from "./generated/sdk.gen.js";
 import type {
@@ -25,6 +29,7 @@ import type {
   ClientDetail,
   ClientSummary,
   EdgeResponse,
+  GraphResponse,
   ItineraryResponse,
   NodeResponse,
   NodeStatus,
@@ -451,6 +456,7 @@ function parseListTurnsDetail(status: number): ListTurnsDetail {
 
 export type GetItineraryDetail =
   | "itinerary_not_found"
+  | "forbidden"
   | "network_error"
   | "unknown";
 
@@ -504,6 +510,7 @@ export async function getItinerary(
 
 function parseGetItineraryDetail(status: number): GetItineraryDetail {
   if (status === 404) return "itinerary_not_found";
+  if (status === 403) return "forbidden";
   return "unknown";
 }
 
@@ -566,6 +573,214 @@ export async function updateNodeStatus(
 
 function parseUpdateNodeStatusDetail(status: number): UpdateNodeStatusDetail {
   if (status === 404) return "node_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type AcquireLockDetail =
+  | "already_locked"
+  | "advisor_only"
+  | "itinerary_not_found"
+  | "network_error"
+  | "unknown";
+
+export type AcquireLockResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: AcquireLockDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/lock (S08). Advisor-only;
+ * 200 returns the updated itinerary carrying the new locked_by/locked_at,
+ * 409 collapses to `already_locked`.
+ */
+export async function acquireItineraryLock(
+  client: Client,
+  itineraryId: string,
+): Promise<AcquireLockResult> {
+  try {
+    const { data, error, response } =
+      await lockItineraryEndpointItineraryItineraryIdLockPost({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseAcquireLockDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseAcquireLockDetail(status: number): AcquireLockDetail {
+  if (status === 409) return "already_locked";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "itinerary_not_found";
+  return "unknown";
+}
+
+export type ReleaseLockDetail =
+  | "advisor_only"
+  | "itinerary_not_found"
+  | "network_error"
+  | "unknown";
+
+export type ReleaseLockResult =
+  | {
+      ok: true;
+      itinerary: ItineraryResponse;
+      replayed_count: number;
+    }
+  | { ok: false; status: number; detail: ReleaseLockDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/release (S08). Clears
+ * the advisor lock and drains any queued agent mutations; `replayed_count`
+ * tells the UI how many queued writes were applied before returning.
+ */
+export async function releaseItineraryLock(
+  client: Client,
+  itineraryId: string,
+): Promise<ReleaseLockResult> {
+  try {
+    const { data, error, response } =
+      await releaseItineraryEndpointItineraryItineraryIdReleasePost({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        itinerary: data.itinerary,
+        replayed_count: data.replayed_count,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseReleaseLockDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseReleaseLockDetail(status: number): ReleaseLockDetail {
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "itinerary_not_found";
+  return "unknown";
+}
+
+export type ApproveItineraryDetail =
+  | "already_approved"
+  | "advisor_only"
+  | "itinerary_not_found"
+  | "network_error"
+  | "unknown";
+
+export type ApproveItineraryResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: ApproveItineraryDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/approve (S08). Advisor-
+ * only; 409 collapses to `already_approved` when status is already
+ * 'approved'.
+ */
+export async function approveItinerary(
+  client: Client,
+  itineraryId: string,
+): Promise<ApproveItineraryResult> {
+  try {
+    const { data, error, response } =
+      await approveItineraryEndpointItineraryItineraryIdApprovePost({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseApproveItineraryDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseApproveItineraryDetail(status: number): ApproveItineraryDetail {
+  if (status === 409) return "already_approved";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "itinerary_not_found";
+  return "unknown";
+}
+
+export type AssembleDraftDetail =
+  | "itinerary_not_found"
+  | "already_locked"
+  | "node_not_in_itinerary"
+  | "node_not_proposed"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type AssembleDraftResult =
+  | { ok: true; graph: GraphResponse }
+  | { ok: false; status: number; detail: AssembleDraftDetail };
+
+export type AssembleDraftDaySlot = {
+  day_index: number;
+  node_ids_in_order: string[];
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/assemble (S08). Accepts
+ * an ordered per-day plan; the service layer promotes the caller to an
+ * advisor actor when appropriate. 409 → `already_locked`, 400 →
+ * `node_not_in_itinerary` / `node_not_proposed`, 422 → `validation_error`.
+ */
+export async function assembleInitialDraft(
+  client: Client,
+  itineraryId: string,
+  day_plan: AssembleDraftDaySlot[],
+): Promise<AssembleDraftResult> {
+  try {
+    const { data, error, response } =
+      await assembleItineraryEndpointItineraryItineraryIdAssemblePost({
+        client,
+        path: { itinerary_id: itineraryId },
+        body: { day_plan },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, graph: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseAssembleDraftDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseAssembleDraftDetail(
+  status: number,
+  error: unknown,
+): AssembleDraftDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "already_locked") return "already_locked";
+  if (raw === "node_not_in_itinerary") return "node_not_in_itinerary";
+  if (raw === "node_not_proposed") return "node_not_proposed";
+  if (status === 409) return "already_locked";
+  if (status === 404) return "itinerary_not_found";
   if (status === 422) return "validation_error";
   return "unknown";
 }

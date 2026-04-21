@@ -20,7 +20,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypedDict
 
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -116,6 +116,18 @@ class GraphView(NamedTuple):
     itinerary: Itinerary
     nodes: list[NodeOut]
     edges: list[EdgeOut]
+
+
+class DaySlot(TypedDict):
+    """One day's worth of ordered node ids for :func:`assemble_initial_draft`.
+
+    ``day_index`` is preserved only so the caller can provide ordering across
+    days; the service itself only emits ``follows`` edges within a single
+    slot (consecutive node pairs).
+    """
+
+    day_index: int
+    node_ids_in_order: list[uuid.UUID]
 
 
 # ── Snapshot helpers ────────────────────────────────────────────────────────
@@ -797,6 +809,121 @@ async def release_lock(
         },
     )
     return row
+
+
+async def assemble_initial_draft(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+    day_plan: list[DaySlot],
+) -> GraphView | ItineraryError:
+    """Wire the ordered ``follows`` edges between proposed nodes of an itinerary.
+
+    Pre-conditions enforced here:
+      1. The itinerary row exists (NOT_FOUND otherwise).
+      2. Every ``node_id`` referenced across the day_plan belongs to
+         ``itinerary_id`` AND currently has ``status='proposed'``. A stray
+         ``status='discarded'`` or cross-itinerary id collapses the whole
+         call to VALIDATION_ERROR — we do not partially assemble.
+
+    Effect: within each ``DaySlot`` we append a ``follows`` edge between each
+    consecutive pair of node ids. Slots of length 0 or 1 are a no-op.
+    Nodes keep their ``proposed`` status; the advisor approve step (a
+    separate call) is what flips the itinerary-level status.
+
+    Returns a fresh :class:`GraphView` assembled via
+    :func:`get_itinerary_graph` so the caller can hand it straight to the
+    router layer.
+    """
+    itinerary_exists = (
+        await session.execute(
+            select(Itinerary.id).where(Itinerary.id == itinerary_id)
+        )
+    ).scalar_one_or_none()
+    if itinerary_exists is None:
+        return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+
+    lock_err = await _check_lock(session, itinerary_id, actor)
+    if lock_err is not None:
+        return lock_err
+
+    referenced_ids: list[uuid.UUID] = []
+    for slot in day_plan:
+        referenced_ids.extend(slot["node_ids_in_order"])
+
+    if referenced_ids:
+        rows = (
+            await session.execute(
+                select(Node.id, Node.itinerary_id, Node.status).where(
+                    Node.id.in_(referenced_ids)
+                )
+            )
+        ).all()
+        by_id = {row.id: row for row in rows}
+        for nid in referenced_ids:
+            row = by_id.get(nid)
+            if row is None or row.itinerary_id != itinerary_id:
+                return ItineraryError(
+                    outcome=ItineraryOutcome.VALIDATION_ERROR,
+                    detail="node_not_in_itinerary",
+                )
+            if row.status != NodeStatus.proposed:
+                return ItineraryError(
+                    outcome=ItineraryOutcome.VALIDATION_ERROR,
+                    detail="node_not_proposed",
+                )
+
+    edge_count = 0
+    for slot in day_plan:
+        ordered = slot["node_ids_in_order"]
+        for left, right in zip(ordered, ordered[1:]):
+            edge = Edge(
+                itinerary_id=itinerary_id,
+                from_node_id=left,
+                to_node_id=right,
+                type=EdgeType.follows,
+                metadata_={},
+            )
+            session.add(edge)
+            try:
+                await session.flush()
+            except IntegrityError as exc:
+                await session.rollback()
+                logger.info(
+                    "itinerary.mutate.integrity_error",
+                    extra={"op": "assemble_edge", "reason": str(exc.orig)},
+                )
+                return ItineraryError(
+                    outcome=ItineraryOutcome.VALIDATION_ERROR,
+                    detail=_integrity_detail(exc),
+                )
+            await _write_edge_history(
+                session,
+                edge_id=edge.id,
+                itinerary_id=itinerary_id,
+                op="insert",
+                actor=actor,
+                before=None,
+                after=_snapshot_edge(edge),
+            )
+            edge_count += 1
+
+    await session.commit()
+
+    view = await get_itinerary_graph(session, itinerary_id)
+    if isinstance(view, ItineraryError):
+        return view
+
+    logger.info(
+        "itinerary.assemble_initial_draft",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "node_count": len(view.nodes),
+            "edge_count": edge_count,
+        },
+    )
+    return view
 
 
 async def approve_itinerary(

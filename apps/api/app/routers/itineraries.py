@@ -25,21 +25,35 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from app.auth import AuthenticatedUser, require_user
-from app.db import get_session
-from app.models import EdgeType, ItineraryStatus, NodeStatus, NodeType
+from app.auth_guards import require_advisor
+from app.db import get_session, get_sessionmaker
+from app.models import (
+    EdgeType,
+    ItineraryStatus,
+    NodeStatus,
+    NodeType,
+    Profile,
+    UserRole,
+)
+from app.services.agent import drain_queue
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
     ItineraryError,
     ItineraryOutcome,
+    acquire_lock,
     add_edge,
     add_node,
+    approve_itinerary,
+    assemble_initial_draft,
     create_itinerary,
     delete_edge,
     delete_node,
     get_itinerary_graph,
+    release_lock,
     update_node,
 )
 
@@ -132,6 +146,26 @@ class GraphResponse(BaseModel):
     edges: list[EdgeResponse]
 
 
+class ReleaseLockResponse(BaseModel):
+    itinerary: ItineraryResponse
+    replayed_count: int
+
+
+class DaySlotPayload(BaseModel):
+    """One day's ordered node ids for the assemble_initial_draft route."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    day_index: int
+    node_ids_in_order: list[uuid.UUID]
+
+
+class AssembleDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day_plan: list[DaySlotPayload] = Field(default_factory=list)
+
+
 # ── Actor resolution ────────────────────────────────────────────────────────
 
 
@@ -148,6 +182,44 @@ def _actor_from_user(user: AuthenticatedUser) -> ActorContext:
     except (ValueError, AttributeError):
         user_uuid = None
     return ActorContext(user_id=user_uuid, kind=ActorKind.USER, actor_id=user.sub)
+
+
+def _advisor_actor_from_user(user: AuthenticatedUser) -> ActorContext:
+    """Same as :func:`_actor_from_user` but stamps ``kind=ADVISOR``.
+
+    Used from the lock / release / approve / assemble routes, which are
+    already gated by ``require_advisor``. Writing AGENT-layer history rows
+    from these handlers would be a lie — the caller is an advisor, and the
+    service layer uses the actor kind to decide whether to bypass the lock
+    gate.
+    """
+    try:
+        user_uuid = uuid.UUID(user.sub)
+    except (ValueError, AttributeError):
+        user_uuid = None
+    return ActorContext(
+        user_id=user_uuid, kind=ActorKind.ADVISOR, actor_id=user.sub
+    )
+
+
+async def _is_requester_advisor(
+    session: "AsyncSession", user_uuid: uuid.UUID | None
+) -> bool:
+    """One-shot profile lookup used by the draft-read gate.
+
+    Returns ``True`` iff ``user_uuid`` is non-null and the profiles row for
+    that id carries ``role = 'advisor'``. Low-RPS by design — the itinerary
+    read endpoint lives off the hot path, so a single SELECT per call is
+    cheap next to the recursive graph CTE.
+    """
+    if user_uuid is None:
+        return False
+    row = (
+        await session.execute(
+            select(Profile.role).where(Profile.id == user_uuid)
+        )
+    ).scalar_one_or_none()
+    return row is UserRole.advisor
 
 
 # ── Outcome mapping ────────────────────────────────────────────────────────
@@ -174,6 +246,8 @@ def _raise_for_error(err: ItineraryError) -> None:
         )
     if err.outcome is ItineraryOutcome.FORBIDDEN:
         raise HTTPException(status_code=403, detail=err.detail or "forbidden")
+    if err.outcome is ItineraryOutcome.LOCKED:
+        raise HTTPException(status_code=409, detail=err.detail or "already_locked")
     # Defensive — every enum value is mapped above.
     logger.error(
         "itinerary.router.unhandled_outcome", extra={"outcome": err.outcome.value}
@@ -217,12 +291,40 @@ async def create_itinerary_endpoint(
 )
 async def get_itinerary_endpoint(
     itinerary_id: uuid.UUID,
-    _user: AuthenticatedUser = Depends(require_user),
+    user: AuthenticatedUser = Depends(require_user),
     session: "AsyncSession" = Depends(get_session),
 ) -> GraphResponse:
     result = await get_itinerary_graph(session, itinerary_id)
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
+    # Draft-read gate: on status='draft', only advisors, the owning client,
+    # or the creator of the itinerary may read the graph. Everyone else
+    # gets a 403 with detail='forbidden' so the client-side SDK can
+    # discriminate deterministically.
+    itinerary_row = result.itinerary
+    if itinerary_row.status is ItineraryStatus.draft:
+        actor = _actor_from_user(user)
+        is_owner = (
+            actor.user_id is not None
+            and itinerary_row.client_id is not None
+            and actor.user_id == itinerary_row.client_id
+        )
+        is_creator = (
+            actor.user_id is not None
+            and itinerary_row.created_by is not None
+            and actor.user_id == itinerary_row.created_by
+        )
+        if not (is_owner or is_creator):
+            is_advisor = await _is_requester_advisor(session, actor.user_id)
+            if not is_advisor:
+                logger.info(
+                    "itinerary.draft_access_denied",
+                    extra={
+                        "sub_hint": (user.sub or "")[:8],
+                        "itinerary_id": str(itinerary_id),
+                    },
+                )
+                raise HTTPException(status_code=403, detail="forbidden")
     # mypy: result is GraphView past this point
     return GraphResponse(
         itinerary=ItineraryResponse(
@@ -355,6 +457,147 @@ async def delete_node_endpoint(
     if err is not None:
         _raise_for_error(err)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
+    return ItineraryResponse(
+        id=itinerary.id,
+        title=itinerary.title,
+        client_id=itinerary.client_id,
+        created_by=itinerary.created_by,
+        status=itinerary.status or ItineraryStatus.draft,
+        approved_by=itinerary.approved_by,
+        approved_at=itinerary.approved_at,
+    )
+
+
+@router.post(
+    "/{itinerary_id}/lock",
+    response_model=ItineraryResponse,
+    summary="Acquire the advisor editor lock on an itinerary.",
+)
+async def lock_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> ItineraryResponse:
+    actor = _advisor_actor_from_user(user)
+    result = await acquire_lock(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{itinerary_id}/release",
+    response_model=ReleaseLockResponse,
+    summary="Release the advisor editor lock and drain the agent write queue.",
+)
+async def release_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> ReleaseLockResponse:
+    actor = _advisor_actor_from_user(user)
+    result = await release_lock(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    # Drain happens after the lock row has been cleared. The agent queue
+    # lives in-process (D008), so we grab the same sessionmaker the request
+    # uses; each queued entry opens a fresh session for its replay.
+    replayed = await drain_queue(get_sessionmaker(), itinerary_id)
+    return ReleaseLockResponse(
+        itinerary=_itinerary_to_response(result),
+        replayed_count=replayed,
+    )
+
+
+@router.post(
+    "/{itinerary_id}/approve",
+    response_model=ItineraryResponse,
+    summary="Approve the itinerary — flips status draft→approved.",
+)
+async def approve_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> ItineraryResponse:
+    actor = _advisor_actor_from_user(user)
+    result = await approve_itinerary(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        # VALIDATION_ERROR with detail='already_approved' should surface as 409
+        # per the slice contract, not the generic 400.
+        if (
+            result.outcome is ItineraryOutcome.VALIDATION_ERROR
+            and result.detail == "already_approved"
+        ):
+            raise HTTPException(status_code=409, detail="already_approved")
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{itinerary_id}/assemble",
+    response_model=GraphResponse,
+    summary="Assemble the initial draft by wiring follows edges across days.",
+)
+async def assemble_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: AssembleDraftRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> GraphResponse:
+    # Gate by role: advisors stamp ADVISOR, anyone else stamps USER. The
+    # service layer's lock gate admits both ADVISOR (always) and the lock
+    # holder (same user_id), so an advisor-assembled draft during their own
+    # lock still goes through without queueing.
+    actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
+    day_plan = [
+        {
+            "day_index": slot.day_index,
+            "node_ids_in_order": slot.node_ids_in_order,
+        }
+        for slot in payload.day_plan
+    ]
+    result = await assemble_initial_draft(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        day_plan=day_plan,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return GraphResponse(
+        itinerary=_itinerary_to_response(result.itinerary),
+        nodes=[
+            NodeResponse(
+                id=n.id,
+                itinerary_id=n.itinerary_id,
+                parent_subgraph_id=n.parent_subgraph_id,
+                type=n.type,
+                status=n.status,
+                title=n.title,
+                source=n.source,
+                source_id=n.source_id,
+                metadata=n.metadata,
+                depth=n.depth,
+            )
+            for n in result.nodes
+        ],
+        edges=[
+            EdgeResponse(
+                id=e.id,
+                itinerary_id=e.itinerary_id,
+                from_node_id=e.from_node_id,
+                to_node_id=e.to_node_id,
+                type=e.type,
+                metadata=e.metadata,
+            )
+            for e in result.edges
+        ],
+    )
 
 
 @router.post(
