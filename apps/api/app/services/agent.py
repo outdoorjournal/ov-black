@@ -34,6 +34,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from contextlib import aclosing
@@ -466,6 +467,107 @@ async def _ensure_itinerary_for_client(
     return itinerary.id
 
 
+# ── Agent write queue (S08 T03) ────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedMutation:
+    """One agent-initiated write stalled behind an active advisor lock.
+
+    Shape is intentionally flat: the drain path opens a fresh DB session
+    per entry and calls ``add_node`` with the stored payload, so nothing
+    in here references a live session or transaction. ``actor`` carries
+    the original AGENT ActorContext so the replayed history row still
+    attributes provenance correctly.
+    """
+
+    itinerary_id: uuid.UUID
+    session_id: uuid.UUID
+    op: str  # M001 scope: only 'add_node' ever lands here.
+    payload: dict[str, Any]
+    actor: itineraries_service.ActorContext
+    queued_at: datetime
+
+
+# Module-level singleton keyed on itinerary_id. D008 accepts in-memory-only
+# durability for M001 — advisor sessions span a single API process, and the
+# window between ``acquire_lock`` and ``release_lock`` is bounded (minutes).
+# A follow-up milestone can back this with a ``pending_agent_writes`` table
+# for cross-process durability without changing the call signatures below.
+_agent_write_queue: dict[uuid.UUID, list[QueuedMutation]] = {}
+
+
+def queue_depth(itinerary_id: uuid.UUID) -> int:
+    """Return the number of queued agent mutations for ``itinerary_id``.
+
+    Test-only helper — production paths never need to inspect depth.
+    Returns 0 for any itinerary with no entries (including ones that were
+    fully drained; ``drain_queue`` deletes the key on exit).
+    """
+    return len(_agent_write_queue.get(itinerary_id, ()))
+
+
+async def drain_queue(
+    session_factory: async_sessionmaker[AsyncSession],
+    itinerary_id: uuid.UUID,
+) -> int:
+    """Replay every queued mutation for ``itinerary_id`` in FIFO order.
+
+    Called from the release-lock route handler after ``locked_by`` has been
+    cleared, so the natural ``_check_lock`` pass now admits agent writes.
+    Each entry gets a fresh session — isolating one replay's rollback
+    from the next. Per-entry failures are logged and dropped so a single
+    bad payload never blocks the rest of the queue or the release path.
+
+    Returns the count of successfully-replayed entries.
+    """
+    pending = _agent_write_queue.pop(itinerary_id, None)
+    if not pending:
+        return 0
+
+    replayed = 0
+    for entry in pending:
+        try:
+            async with session_factory() as db:
+                result = await itineraries_service.add_node(
+                    db,
+                    entry.actor,
+                    itinerary_id=entry.itinerary_id,
+                    **entry.payload,
+                )
+            if isinstance(result, itineraries_service.ItineraryError):
+                logger.warning(
+                    "itinerary.agent_write_replay_failed",
+                    extra={
+                        "session_id": str(entry.session_id),
+                        "itinerary_id": str(entry.itinerary_id),
+                        "reason": result.outcome.value,
+                    },
+                )
+                continue
+            logger.info(
+                "itinerary.agent_write_replayed",
+                extra={
+                    "session_id": str(entry.session_id),
+                    "itinerary_id": str(entry.itinerary_id),
+                    "op": entry.op,
+                    "node_id": str(result.id),
+                },
+            )
+            replayed += 1
+        except Exception as exc:  # noqa: BLE001 — per-entry isolation
+            logger.warning(
+                "itinerary.agent_write_replay_failed",
+                extra={
+                    "session_id": str(entry.session_id),
+                    "itinerary_id": str(entry.itinerary_id),
+                    "reason": exc.__class__.__name__,
+                },
+            )
+            continue
+    return replayed
+
+
 async def _persist_proposed_card(
     session: AsyncSession,
     *,
@@ -478,11 +580,11 @@ async def _persist_proposed_card(
 ) -> uuid.UUID | None:
     """Insert a proposed-experience node for an agent-proposed card.
 
-    Returns the new node id on success, or None on persistence failure.
-    Failure is logged as ``agent.card.persist_failed`` WARNING with the
-    ``reason`` string only — never the snapshot. This is a non-fatal
-    path: the stream must keep flowing so the browser still sees the
-    frame even if durability failed.
+    Returns the new node id on success, None on persistence failure, and
+    None after queueing when an advisor currently holds the lock. The
+    SSE forwarder emits the card frame with ``node_id=None`` either way —
+    a hard reload re-fetches the itinerary after drain, so the client
+    stays consistent.
 
     Redaction: the snapshot dict lands in ``nodes.metadata`` (browser
     fetches it back on reload) but never appears in any log line.
@@ -497,6 +599,45 @@ async def _persist_proposed_card(
         kind=itineraries_service.ActorKind.AGENT,
         actor_id=agentcore_session_id,
     )
+
+    # Lock gate: if an advisor holds the lock, queue the mutation and bail
+    # before ``add_node`` so no partial state leaks to the DB. The helper is
+    # side-effect-free so reading it mid-transaction is safe.
+    lock_err = await itineraries_service._check_lock(
+        session, itinerary_id, card_actor
+    )
+    if (
+        lock_err is not None
+        and lock_err.outcome is itineraries_service.ItineraryOutcome.LOCKED
+    ):
+        payload: dict[str, Any] = {
+            "type": NodeType.experience,
+            "status": NodeStatus.proposed,
+            "title": title,
+            "source": source,
+            "source_id": source_id,
+            "metadata": {"snapshot": snapshot},
+        }
+        _agent_write_queue.setdefault(itinerary_id, []).append(
+            QueuedMutation(
+                itinerary_id=itinerary_id,
+                session_id=session_id,
+                op="add_node",
+                payload=payload,
+                actor=card_actor,
+                queued_at=datetime.now(timezone.utc),
+            )
+        )
+        logger.info(
+            "itinerary.agent_write_queued",
+            extra={
+                "session_id": str(session_id),
+                "itinerary_id": str(itinerary_id),
+                "op": "add_node",
+            },
+        )
+        return None
+
     result = await itineraries_service.add_node(
         session,
         card_actor,
