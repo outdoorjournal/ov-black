@@ -312,6 +312,13 @@ class FakeFactory:
                 return FakeResult(rows=[])
             return FakeResult(rows=[match.id])
 
+        # S08 T02 — locked_by lookup for the _check_lock gate. Must precede
+        # the generic itineraries-by-id branch because the SQL also contains
+        # ``itineraries.id``. None itineraries are locked in agent-service
+        # tests, so always return NULL.
+        if "itineraries.locked_by" in sql_lower and "itineraries.id" in sql_lower:
+            return FakeResult(rows=[None])
+
         # S07 T03 — itinerary-by-id (add_node exists-check).
         if "itineraries" in sql_lower and "itineraries.id" in sql_lower:
             bound = {}

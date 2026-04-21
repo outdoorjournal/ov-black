@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ from app.models import (
     EdgeHistory,
     EdgeType,
     Itinerary,
+    ItineraryStatus,
     Node,
     NodeHistory,
     NodeStatus,
@@ -49,6 +50,7 @@ class ItineraryOutcome(str, enum.Enum):
     INVALID_PROVENANCE = "invalid_provenance"
     VALIDATION_ERROR = "validation_error"
     FORBIDDEN = "forbidden"
+    LOCKED = "locked"
 
 
 class ActorKind(str, enum.Enum):
@@ -220,6 +222,39 @@ def _check_provenance(
     return None
 
 
+# ── Lock gate ───────────────────────────────────────────────────────────────
+
+
+async def _check_lock(
+    session: AsyncSession,
+    itinerary_id: uuid.UUID,
+    actor: ActorContext,
+) -> ItineraryError | None:
+    """Reject non-advisor writes to an itinerary locked by a different user.
+
+    Advisors always bypass — they hold the lock during their editing session
+    and the advisor guard at the router layer is the authoritative gate.
+    A null ``locked_by`` means the itinerary is unlocked and any actor may
+    write. A ``locked_by`` that matches ``actor.user_id`` means the caller
+    owns the lock (same advisor re-entering).
+    """
+    if actor.kind is ActorKind.ADVISOR:
+        return None
+    row = (
+        await session.execute(
+            select(Itinerary.locked_by).where(Itinerary.id == itinerary_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    if actor.user_id is not None and row == actor.user_id:
+        return None
+    return ItineraryError(
+        outcome=ItineraryOutcome.LOCKED,
+        detail="locked_by_advisor",
+    )
+
+
 # ── Public service surface ──────────────────────────────────────────────────
 
 
@@ -240,6 +275,7 @@ async def create_itinerary(
         title=title,
         client_id=client_id,
         created_by=actor.user_id,
+        status=ItineraryStatus.draft,
     )
     session.add(itinerary)
     await session.flush()
@@ -362,6 +398,10 @@ async def add_node(
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
+    lock_err = await _check_lock(session, itinerary_id, actor)
+    if lock_err is not None:
+        return lock_err
+
     if parent_subgraph_id is not None:
         parent = (
             await session.execute(
@@ -444,6 +484,10 @@ async def update_node(
     if node is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
+    lock_err = await _check_lock(session, itinerary_id, actor)
+    if lock_err is not None:
+        return lock_err
+
     allowed = {"type", "status", "title", "source", "source_id", "metadata"}
     updates: dict[str, Any] = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -516,6 +560,10 @@ async def delete_node(
     if node is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
+    lock_err = await _check_lock(session, itinerary_id, actor)
+    if lock_err is not None:
+        return lock_err
+
     before = _snapshot_node(node)
     await session.delete(node)
     await session.flush()
@@ -559,6 +607,10 @@ async def add_edge(
     ).scalar_one_or_none()
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+
+    lock_err = await _check_lock(session, itinerary_id, actor)
+    if lock_err is not None:
+        return lock_err
 
     edge = Edge(
         itinerary_id=itinerary_id,
@@ -621,6 +673,10 @@ async def delete_edge(
     if edge is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
+    lock_err = await _check_lock(session, itinerary_id, actor)
+    if lock_err is not None:
+        return lock_err
+
     before = _snapshot_edge(edge)
     # Use a Core delete so we don't need to load relationships.
     await session.execute(delete(Edge).where(Edge.id == edge_id))
@@ -645,6 +701,153 @@ async def delete_edge(
         },
     )
     return None
+
+
+async def acquire_lock(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+) -> Itinerary | ItineraryError:
+    """Take the editor-session lock for ``itinerary_id``.
+
+    Succeeds if the itinerary is either unlocked or already locked by the
+    same user (same-user re-acquire is idempotent). Advisor-only — the
+    router layer enforces that guard before calling here.
+    """
+    stmt = (
+        update(Itinerary)
+        .where(
+            Itinerary.id == itinerary_id,
+            or_(
+                Itinerary.locked_by.is_(None),
+                Itinerary.locked_by == actor.user_id,
+            ),
+        )
+        .values(locked_by=actor.user_id, locked_at=func.now())
+        .returning(Itinerary)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        logger.info(
+            "itinerary.lock.rejected",
+            extra={
+                "itinerary_id": str(itinerary_id),
+                "sub_hint": (actor.actor_id or "")[:8],
+            },
+        )
+        return ItineraryError(
+            outcome=ItineraryOutcome.LOCKED,
+            detail="already_locked",
+        )
+    await session.commit()
+    await session.refresh(row)
+    logger.info(
+        "itinerary.lock.acquired",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "user_id": str(actor.user_id) if actor.user_id else None,
+        },
+    )
+    return row
+
+
+async def release_lock(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+) -> Itinerary | ItineraryError:
+    """Release the editor-session lock held by ``actor``.
+
+    Idempotent: if the caller doesn't hold the lock (including the already-
+    unlocked case), returns the current row unchanged — not an error.
+    """
+    stmt = (
+        update(Itinerary)
+        .where(
+            Itinerary.id == itinerary_id,
+            Itinerary.locked_by == actor.user_id,
+        )
+        .values(locked_by=None, locked_at=None)
+        .returning(Itinerary)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        current = (
+            await session.execute(
+                select(Itinerary).where(Itinerary.id == itinerary_id)
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+        return current
+    await session.commit()
+    await session.refresh(row)
+    logger.info(
+        "itinerary.lock.released",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "queue_depth_drained": 0,
+        },
+    )
+    return row
+
+
+async def approve_itinerary(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+) -> Itinerary | ItineraryError:
+    """Flip an itinerary from ``draft`` to ``approved``.
+
+    Returns ``VALIDATION_ERROR`` (detail ``already_approved``) if the row is
+    not currently in ``draft`` state.
+    """
+    stmt = (
+        update(Itinerary)
+        .where(
+            Itinerary.id == itinerary_id,
+            Itinerary.status == ItineraryStatus.draft,
+        )
+        .values(
+            status=ItineraryStatus.approved,
+            approved_by=actor.user_id,
+            approved_at=func.now(),
+        )
+        .returning(Itinerary)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="already_approved",
+        )
+    await session.commit()
+    await session.refresh(row)
+    node_count = (
+        await session.execute(
+            select(func.count(Node.id)).where(Node.itinerary_id == itinerary_id)
+        )
+    ).scalar_one()
+    logger.info(
+        "itinerary.approved",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "user_id": str(actor.user_id) if actor.user_id else None,
+            "node_count": int(node_count),
+        },
+    )
+    return row
 
 
 def _integrity_detail(exc: IntegrityError) -> str:
