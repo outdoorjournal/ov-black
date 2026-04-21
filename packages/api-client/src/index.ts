@@ -46,6 +46,7 @@ export type { Client } from "./generated/client/types.gen.js";
 export type {
   CreateItineraryRequest,
   ItineraryResponse,
+  ItineraryStatus,
   CreateNodeRequest,
   UpdateNodeRequest,
   NodeResponse,
@@ -575,6 +576,53 @@ function parseUpdateNodeStatusDetail(status: number): UpdateNodeStatusDetail {
   if (status === 404) return "node_not_found";
   if (status === 422) return "validation_error";
   return "unknown";
+}
+
+export type UpdateNodePatch = {
+  title?: string | null;
+  source?: string | null;
+  source_id?: string | null;
+  status?: NodeStatus | null;
+};
+
+export type UpdateNodeArgs = {
+  itineraryId: string;
+  nodeId: string;
+  patch: UpdateNodePatch;
+};
+
+/**
+ * Typed wrapper for PATCH /itinerary/{itinerary_id}/nodes/{node_id} that
+ * accepts an arbitrary partial update (title / source / source_id / status).
+ * S08 consumes this from the advisor draft-editor surface to persist inline
+ * node edits (e.g. hotel swaps). Status-only transitions should continue to
+ * use ``updateNodeStatus`` — both wrappers share the same error-detail map.
+ */
+export async function updateNode(
+  client: Client,
+  args: UpdateNodeArgs,
+): Promise<UpdateNodeResult> {
+  try {
+    const { data, error, response } =
+      await updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch({
+        client,
+        path: {
+          itinerary_id: args.itineraryId,
+          node_id: args.nodeId,
+        },
+        body: args.patch,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, node: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseUpdateNodeStatusDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }
 
 export type AcquireLockDetail =

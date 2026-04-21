@@ -876,6 +876,116 @@ async def stream_turn(
                         yield _sse_encode({"type": "delta", "text": text_chunk})
                     elif kind == "done":
                         break
+                    elif kind == "assemble_draft":
+                        # S08: the agent has proposed a day-by-day ordering of
+                        # previously-proposed card nodes. Promote the actor to
+                        # AGENT and call the thick composite. Forward the event
+                        # with an ``edges_created`` field — the browser doesn't
+                        # do anything with it today, but the advisor surface
+                        # can surface a count-to-Approve progress cue later.
+                        raw_day_plan = event.get("day_plan")
+                        edges_created = 0
+                        forwarded_plan: list[dict[str, Any]] = []
+                        malformed = False
+                        parsed_plan: list[itineraries_service.DaySlot] = []
+                        if not isinstance(raw_day_plan, list):
+                            malformed = True
+                        else:
+                            for slot in raw_day_plan:
+                                if not isinstance(slot, dict):
+                                    malformed = True
+                                    break
+                                day_index = slot.get("day_index")
+                                node_ids_raw = slot.get("node_ids_in_order")
+                                if (
+                                    not isinstance(day_index, int)
+                                    or not isinstance(node_ids_raw, list)
+                                ):
+                                    malformed = True
+                                    break
+                                parsed_ids: list[uuid.UUID] = []
+                                id_strs: list[str] = []
+                                for nid in node_ids_raw:
+                                    if not isinstance(nid, str):
+                                        malformed = True
+                                        break
+                                    try:
+                                        parsed_ids.append(uuid.UUID(nid))
+                                    except (TypeError, ValueError):
+                                        malformed = True
+                                        break
+                                    id_strs.append(nid)
+                                if malformed:
+                                    break
+                                parsed_plan.append(
+                                    {
+                                        "day_index": day_index,
+                                        "node_ids_in_order": parsed_ids,
+                                    }
+                                )
+                                forwarded_plan.append(
+                                    {
+                                        "day_index": day_index,
+                                        "node_ids_in_order": id_strs,
+                                    }
+                                )
+
+                        if malformed:
+                            logger.info(
+                                "agent.assemble_draft.malformed",
+                                extra={"session_id": str(session_id)},
+                            )
+                            got_first_byte = True
+                            yield _sse_encode(
+                                {
+                                    "type": "assemble_draft",
+                                    "day_plan": forwarded_plan,
+                                    "edges_created": 0,
+                                }
+                            )
+                            continue
+
+                        async with session_factory() as card_db:
+                            if itinerary_id_cache is None:
+                                itinerary_id_cache = (
+                                    await _ensure_itinerary_for_client(
+                                        card_db,
+                                        client_id=client_id,
+                                        actor_user_id=actor_user_id,
+                                    )
+                                )
+                            assemble_actor = itineraries_service.ActorContext(
+                                user_id=None,
+                                kind=itineraries_service.ActorKind.AGENT,
+                                actor_id=agentcore_session_id,
+                            )
+                            result = await itineraries_service.assemble_initial_draft(
+                                card_db,
+                                assemble_actor,
+                                itinerary_id=itinerary_id_cache,
+                                day_plan=parsed_plan,
+                            )
+                            if isinstance(result, itineraries_service.ItineraryError):
+                                logger.info(
+                                    "agent.assemble_draft.failed",
+                                    extra={
+                                        "session_id": str(session_id),
+                                        "itinerary_id": str(itinerary_id_cache),
+                                        "reason": result.outcome.value,
+                                    },
+                                )
+                                edges_created = 0
+                            else:
+                                edges_created = len(result.edges)
+
+                        got_first_byte = True
+                        yield _sse_encode(
+                            {
+                                "type": "assemble_draft",
+                                "day_plan": forwarded_plan,
+                                "edges_created": edges_created,
+                            }
+                        )
                     elif kind == "card":
                         # S07: persist the card as a proposed-experience node
                         # BEFORE forwarding so a hard reload can rehydrate it.

@@ -32,6 +32,22 @@ _CARD_PROTOCOL = (
     "one. Do not describe the card in prose; the aside renders it."
 )
 
+# S08 assemble-draft protocol. When the client has agreed to a set of
+# proposed cards and the agent is ready to sketch a day-by-day ordering,
+# emit one standalone event carrying the per-day ordered node ids. The
+# service writes the ``follows`` edges and forwards the event to the
+# browser with an ``edges_created`` field so the advisor surface can
+# reflect assembly progress without a separate fetch.
+_ASSEMBLE_PROTOCOL = (
+    "When you are ready to propose a day-by-day ordering of cards the "
+    "client has agreed to, emit a standalone event of this exact shape "
+    "(in addition to any prose): "
+    '{"type": "assemble_draft", "day_plan": [{"day_index": 0, '
+    '"node_ids_in_order": ["<node uuid>", "<node uuid>"]}]}. Reference '
+    "only node ids that were returned on prior card frames this session. "
+    "Emit assemble_draft at most once per turn."
+)
+
 
 def build_system_prompt(voodoo_doll_context: str) -> str:
     """Wrap the R004 rubric around an assembled Voodoo Doll context block.
@@ -47,6 +63,7 @@ def build_system_prompt(voodoo_doll_context: str) -> str:
         "You are Outdoor Voyage's Black-tier concierge agent.\n\n"
         f"{_RUBRIC}\n\n"
         f"{_CARD_PROTOCOL}\n\n"
+        f"{_ASSEMBLE_PROTOCOL}\n\n"
         "Client context (private — never echo verbatim):\n"
         f"{voodoo_doll_context}"
     )
