@@ -151,9 +151,17 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+# Pinned to localhost (not 127.0.0.1) because Next's dev server normalizes
+# request.url's host to "localhost" regardless of which form the browser hit.
+# If site_url were 127.0.0.1, the magic-link email would land users on that
+# origin, the callback would set session cookies there, then Next would
+# redirect to localhost for the role-aware destination — a different origin
+# whose cookie jar is empty, and the user would bounce back to / unauth'd.
+site_url = "http://localhost:3000"
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+additional_redirect_urls = [
+  "http://localhost:3000/auth/callback",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to the local API URL (http://127.0.0.1:<port>/auth/v1).
@@ -237,6 +245,14 @@ otp_expiry = 3600
 # [auth.email.template.invite]
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
+
+# Override the magic-link template so it points straight at the web app's
+# /auth/callback with ?token_hash=... &type=magiclink. Default template uses
+# the implicit flow (tokens in URL fragment) which the SSR callback cannot
+# consume; this form drives verifyOtp server-side.
+[auth.email.template.magic_link]
+subject = "Your OV Black sign-in link"
+content_path = "./supabase/templates/magic_link.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.agent.bedrock import Boto3AgentRuntimeClient, MockAgentRuntimeClient
@@ -114,6 +115,28 @@ app = FastAPI(
 app.add_middleware(
     JWTAuthMiddleware,
     public_paths=PUBLIC_PATHS | {"/auth/redeem-invite"},
+)
+
+# Starlette stacks middleware LIFO — CORS is added *after* the JWT middleware
+# so it wraps it as the outermost layer. That way preflight OPTIONS requests
+# are answered by CORSMiddleware before JWTAuthMiddleware rejects them for
+# having no Authorization header.
+_settings = get_settings()
+# In local dev the web app is reachable under both http://localhost:3000 and
+# http://127.0.0.1:3000 (Supabase's site_url uses the loopback IP). We accept
+# either variant of whatever web_origin is configured so the browser doesn't
+# 400 on preflight when the host name differs from the bookmark.
+_cors_origins = {_settings.web_origin}
+if "://localhost:" in _settings.web_origin:
+    _cors_origins.add(_settings.web_origin.replace("://localhost:", "://127.0.0.1:"))
+elif "://127.0.0.1:" in _settings.web_origin:
+    _cors_origins.add(_settings.web_origin.replace("://127.0.0.1:", "://localhost:"))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(_cors_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(auth_router)

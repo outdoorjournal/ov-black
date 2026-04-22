@@ -1,0 +1,18 @@
+<!--
+  Magic-link email template override.
+
+  GoTrue's default template points at /auth/v1/verify which 302s into the
+  implicit flow (tokens in the URL fragment) and the SSR callback route does
+  not read fragments. Overriding the template to hit our callback directly
+  with {{ .TokenHash }} + type=magiclink lets the route's OTP branch
+  (verifyOtp) finalize the session server-side.
+-->
+<h2>Your sign-in link</h2>
+
+<p>Click the link below to sign in to OV Black. This link is single-use and expires shortly.</p>
+
+<p>
+  <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=magiclink">Sign in</a>
+</p>
+
+<p>If you didn't request this, you can safely ignore this email.</p>
