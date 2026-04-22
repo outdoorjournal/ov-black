@@ -25,11 +25,17 @@ export class SecretsStack extends Stack {
 
     const namePrefix = `ov-black/${props.envName}`;
 
+    // Secrets Manager rejects empty SecretString values on create, so we seed
+    // with a recognizable REPLACE_ME sentinel. apps/api treats any non-real
+    // value as unset and fails fast on first use (invite redemption,
+    // AgentCore InvokeAgentRuntime).
+    const PLACEHOLDER = 'REPLACE_ME';
+
     this.supabaseServiceRole = new Secret(this, 'SupabaseServiceRole', {
       secretName: `${namePrefix}/supabase-service-role`,
       description:
         'Supabase service role key used by apps/api to sign/verify server-to-server calls (invite redemption, magic-link emit).',
-      secretStringValue: SecretValue.unsafePlainText(''),
+      secretStringValue: SecretValue.unsafePlainText(PLACEHOLDER),
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
@@ -53,7 +59,7 @@ export class SecretsStack extends Stack {
       secretName: `${namePrefix}/bedrock-agentcore-runtime-arn`,
       description:
         'Bedrock AgentCore runtime ARN consumed by apps/api to InvokeAgentRuntime. Populated out-of-band by the operator after console-side agent creation.',
-      secretStringValue: SecretValue.unsafePlainText(''),
+      secretStringValue: SecretValue.unsafePlainText(PLACEHOLDER),
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 

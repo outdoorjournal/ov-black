@@ -139,9 +139,19 @@ export class ApiStack extends Stack {
     // Execution role (ECR pull + CloudWatch write) is added automatically by
     // the FargateTaskDefinition L2 when we attach the image and log driver.
 
+    // Image selection: when CI (or a manual deploy) passes `-c imageTag=<sha>`
+    // we pull that tag from the stack's ECR repo. With no imageTag, the repo
+    // may be empty (first-ever deploy, or staging reset), so fall back to the
+    // public App Runner hello-world image just to get the stack green. Any CI
+    // deploy that forgets imageTag will visibly ship hello-world — that is the
+    // signal, not a silent regression onto an old apps/api tag.
+    const image = props.imageTag
+      ? ContainerImage.fromEcrRepository(repository, props.imageTag)
+      : ContainerImage.fromRegistry('public.ecr.aws/aws-containers/hello-app-runner:latest');
+
     taskDefinition.addContainer('api', {
       containerName: 'api',
-      image: ContainerImage.fromEcrRepository(repository, props.imageTag ?? 'latest'),
+      image,
       logging: LogDriver.awsLogs({
         logGroup,
         streamPrefix: 'api',
@@ -172,16 +182,23 @@ export class ApiStack extends Stack {
     // ── Service security group ───────────────────────────────────────────────
     const serviceSg = new SecurityGroup(this, 'ApiServiceSg', {
       vpc,
-      description: 'ov-black apps/api Fargate service — only accepts traffic from its ALB.',
+      description: 'ov-black apps/api Fargate service - only accepts traffic from its ALB.',
       allowAllOutbound: true,
     });
 
+    // Staging runs the service in public subnets with a public IP so tasks can
+    // reach ECR / Secrets Manager / CloudWatch directly via the IGW (the VPC has
+    // only an S3 gateway endpoint — no interface endpoints, no NAT for a private
+    // subnet path). Prod keeps the private-subnet posture.
+    const isStaging = props.envName === 'staging';
     const service = new FargateService(this, 'ApiService', {
       cluster,
       taskDefinition,
       desiredCount: 1,
-      assignPublicIp: false,
-      vpcSubnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS },
+      assignPublicIp: isStaging,
+      vpcSubnets: {
+        subnetType: isStaging ? SubnetType.PUBLIC : SubnetType.PRIVATE_WITH_EGRESS,
+      },
       securityGroups: [serviceSg],
       circuitBreaker: { rollback: true },
       healthCheckGracePeriod: Duration.seconds(60),
@@ -192,7 +209,7 @@ export class ApiStack extends Stack {
     // ── ALB (public) ─────────────────────────────────────────────────────────
     const albSg = new SecurityGroup(this, 'ApiAlbSg', {
       vpc,
-      description: 'ov-black apps/api ALB — public HTTP ingress for M001 staging (no TLS yet).',
+      description: 'ov-black apps/api ALB - public HTTP ingress for M001 staging (no TLS yet).',
       allowAllOutbound: true,
     });
     albSg.addIngressRule(Peer.anyIpv4(), Port.tcp(80), 'HTTP from Internet (M001 staging).');
@@ -217,7 +234,8 @@ export class ApiStack extends Stack {
       protocol: ApplicationProtocol.HTTP,
       targetType: TargetType.IP,
       healthCheck: {
-        path: '/health',
+        // apps/api exposes /health; hello-world fallback only answers on /.
+        path: props.imageTag ? '/health' : '/',
         healthyHttpCodes: '200',
         interval: Duration.seconds(30),
         timeout: Duration.seconds(5),
@@ -232,7 +250,7 @@ export class ApiStack extends Stack {
     serviceSg.addIngressRule(
       albSg,
       Port.tcp(8000),
-      'ALB → Fargate task on container port 8000.',
+      'ALB to Fargate task on container port 8000.',
     );
     targetGroup.addTarget(service);
 
