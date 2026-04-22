@@ -1,7 +1,8 @@
 """Supabase JWT validation for FastAPI (R017).
 
-Validates RS256-signed tokens issued by Supabase Auth via its JWKS endpoint,
-caches keys in-process with a short TTL, and exposes:
+Validates asymmetrically-signed tokens (RS256 or ES256) issued by Supabase
+Auth via its JWKS endpoint, caches keys in-process with a short TTL, and
+exposes:
 
 - ``verify_jwt_from_header`` — pure function used by the middleware and tests.
 - ``jwt_auth_middleware`` — ASGI middleware that enforces auth on every
@@ -20,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import jwt
 from fastapi import Request
-from jwt.algorithms import RSAAlgorithm
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -94,10 +94,12 @@ class JWKSCache:
         except httpx.HTTPError as exc:
             raise AuthError("jwks_fetch_failed") from exc
         keys = payload.get("keys") or []
+        # PyJWK handles any key type (RSA, EC, OKP) and exposes the algorithm
+        # via ``.algorithm_name`` — Supabase projects provisioned after 2025
+        # sign with ES256, older ones with RS256, and a project can hold both
+        # during rotation.
         self._keys_by_kid = {
-            key["kid"]: RSAAlgorithm.from_jwk(key)
-            for key in keys
-            if "kid" in key
+            key["kid"]: jwt.PyJWK(key) for key in keys if "kid" in key
         }
         self._fetched_at = time.monotonic()
 
@@ -159,12 +161,12 @@ def verify_token(
         raise AuthError("missing_kid")
 
     try:
-        signing_key = jwks.get_key(kid)
+        signing_jwk = jwks.get_key(kid)
     except AuthError:
         raise
 
     decode_kwargs: dict[str, Any] = {
-        "algorithms": ["RS256"],
+        "algorithms": [signing_jwk.algorithm_name],
         "issuer": settings.supabase_jwt_issuer or None,
         "options": {
             "require": ["exp", "iat", "sub"],
@@ -176,7 +178,7 @@ def verify_token(
         decode_kwargs.pop("issuer")
 
     try:
-        claims = jwt.decode(token, signing_key, **decode_kwargs)
+        claims = jwt.decode(token, signing_jwk.key, **decode_kwargs)
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("token_expired") from exc
     except jwt.InvalidIssuerError as exc:

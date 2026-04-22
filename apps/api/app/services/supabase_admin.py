@@ -38,8 +38,11 @@ class SupabaseAdminError(Exception):
 class MagicLinkIssued:
     """Result of a successful magic-link issuance.
 
-    ``action_link`` is intentionally kept server-side — the caller returns
-    204 No Content to avoid leaking it to unauthenticated clients.
+    ``action_link`` is kept for callers that need it (e.g. ``generate_invite_link``
+    below, which hits ``/auth/v1/invite`` and gets one back). The magic-link
+    path hits ``/auth/v1/otp``, which delivers the link by email and returns
+    an empty body — so ``action_link`` is the empty string on that path. It
+    MUST NEVER be logged or surfaced to an unauthenticated client.
     """
 
     email: str
@@ -52,31 +55,43 @@ async def generate_magic_link(
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> MagicLinkIssued:
-    """Ask Supabase Auth to issue a magic link for ``email``.
+    """Ask Supabase Auth to email a magic link to ``email``.
 
-    Wraps ``POST {supabase_url}/auth/v1/admin/generate_link`` with
-    ``type=magiclink``. Supabase will deliver the email via its configured
-    SMTP (mailpit/inbucket in local dev, the project's SMTP in staging/prod)
-    and also return the ``action_link`` in the response body — we capture it
-    for tests/observability but never surface it to the HTTP client.
+    Wraps ``POST {supabase_url}/auth/v1/otp`` with ``type=magiclink`` (the
+    default) and ``create_user=true`` so a first-time redeemer gets an auth
+    row created on their behalf. Unlike ``/admin/generate_link`` (which only
+    *generates* a link and returns it), ``/otp`` *delivers* the link via the
+    configured SMTP — inbucket/mailpit in local dev, the project's SMTP in
+    staging/prod — and returns an empty body.
+
+    ``options.email_redirect_to`` is set to ``<web_origin>/auth/callback`` so
+    the link lands on the SSR callback route that finalizes the session. The
+    target must be in Supabase's allow-list (``site_url`` or
+    ``additional_redirect_urls``) or Supabase silently falls back to
+    ``site_url``.
     """
     settings = settings or get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise SupabaseAdminError("supabase_admin_not_configured")
 
-    url = f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/generate_link"
+    # GoTrue's /otp endpoint honors redirect_to only when passed as a query
+    # param; a body ``options.email_redirect_to`` is silently ignored and the
+    # emailed link falls back to site_url. So the final /auth/callback target
+    # rides the URL, not the JSON body.
+    url = f"{settings.supabase_url.rstrip('/')}/auth/v1/otp"
     headers = {
         "apikey": settings.supabase_service_role_key,
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
         "Content-Type": "application/json",
     }
-    payload = {"type": "magiclink", "email": email}
+    params = {"redirect_to": f"{settings.web_origin.rstrip('/')}/auth/callback"}
+    payload: dict[str, object] = {"email": email, "create_user": True}
 
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=10.0)
     try:
         try:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await client.post(url, params=params, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             # Never include the key or payload in the log — email is OK.
             logger.warning(
@@ -98,17 +113,8 @@ async def generate_magic_link(
             status_code=resp.status_code,
         )
 
-    body = resp.json()
-    action_link = (
-        body.get("action_link")
-        or (body.get("properties") or {}).get("action_link")
-        or ""
-    )
-    if not isinstance(action_link, str) or not action_link:
-        raise SupabaseAdminError("supabase_admin_missing_link")
-
     logger.info("supabase_admin.magic_link_issued", extra={"email": email})
-    return MagicLinkIssued(email=email, action_link=action_link)
+    return MagicLinkIssued(email=email, action_link="")
 
 
 async def generate_invite_link(
@@ -122,9 +128,12 @@ async def generate_invite_link(
 
     Wraps ``POST {supabase_url}/auth/v1/invite`` with the advisor's
     configured ``redirect_to`` target. On success Supabase creates the
-    auth user (if absent), emails them a signup link, and returns the
-    ``action_link`` — we capture it for tests/observability but never
-    log it or surface it to the HTTP client.
+    auth user (if absent) and emails them a signup link via the
+    configured SMTP; the response body carries the created user but
+    does not include an ``action_link`` (only ``/admin/generate_link``
+    does). We opportunistically capture an ``action_link`` if the
+    deployment's GoTrue returns one, but treat its absence as success
+    — the email is what matters.
     """
     settings = settings or get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -165,14 +174,16 @@ async def generate_invite_link(
             status_code=resp.status_code,
         )
 
-    body = resp.json()
-    action_link = (
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    raw_link = (
         body.get("action_link")
         or (body.get("properties") or {}).get("action_link")
         or ""
     )
-    if not isinstance(action_link, str) or not action_link:
-        raise SupabaseAdminError("supabase_admin_missing_link")
+    action_link = raw_link if isinstance(raw_link, str) else ""
 
     logger.info("supabase_admin.invite_link_issued", extra={"email": email})
     return MagicLinkIssued(email=email, action_link=action_link)

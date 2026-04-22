@@ -12,6 +12,8 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+import json
+
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -35,12 +37,12 @@ def rsa_keypair() -> tuple[Any, Any]:
 
 @pytest.fixture(scope="session")
 def jwk_public(rsa_keypair: tuple[Any, Any]) -> Any:
-    """Return the PyJWT-ready public key object for the test keypair."""
+    """Return the PyJWK the JWKS cache stores for the test keypair."""
     _, public_key = rsa_keypair
-    # Produce a JWK dict then rehydrate it through RSAAlgorithm so the object
-    # matches exactly what ``JWKSCache`` stores for a real Supabase key.
-    jwk_json = RSAAlgorithm.to_jwk(public_key)
-    return RSAAlgorithm.from_jwk(jwk_json)
+    jwk_dict = json.loads(RSAAlgorithm.to_jwk(public_key))
+    jwk_dict["kid"] = TEST_KID
+    jwk_dict.setdefault("alg", "RS256")
+    return jwt.PyJWK(jwk_dict)
 
 
 @pytest.fixture(autouse=True)

@@ -212,19 +212,22 @@ async def test_generate_invite_link_requires_service_role_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_invite_link_missing_action_link_raises() -> None:
+async def test_generate_invite_link_accepts_response_without_action_link() -> None:
+    # Current Supabase GoTrue's /auth/v1/invite returns the created user
+    # object with no action_link — the email is delivered via SMTP and the
+    # link itself never crosses the wire. We treat that as success.
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"msg": "no link here"})
+        return httpx.Response(200, json={"id": "user-1", "email": "a@b.com"})
 
     async with _mock_client(handler) as client:
-        with pytest.raises(SupabaseAdminError) as exc_info:
-            await generate_invite_link(
-                "a@b.com",
-                "https://app/callback",
-                settings=_settings(),
-                client=client,
-            )
-    assert exc_info.value.reason == "supabase_admin_missing_link"
+        result = await generate_invite_link(
+            "a@b.com",
+            "https://app/callback",
+            settings=_settings(),
+            client=client,
+        )
+    assert result.email == "a@b.com"
+    assert result.action_link == ""
 
 
 # --- Redaction --------------------------------------------------------------
