@@ -21,18 +21,18 @@ export default async function NewClientPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-10 px-6 py-16">
-      <header className="flex items-end justify-between gap-6">
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-6 py-12 sm:px-10 sm:py-16">
+      <header className="flex flex-col gap-6 border-b border-ink/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-5xl tracking-tight text-ink">
-            New Client
-          </h1>
-          <p className="mt-3 font-sans text-xs uppercase tracking-[0.3em] text-ink/60">
+          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-ink/55">
             Voodoo Doll &amp; invite
           </p>
+          <h1 className="mt-4 font-serif text-5xl tracking-tight text-ink sm:text-6xl">
+            New Client
+          </h1>
         </div>
         <Button asChild variant="outline">
-          <Link href="/command-center">Back</Link>
+          <Link href="/command-center/clients">Back</Link>
         </Button>
       </header>
 

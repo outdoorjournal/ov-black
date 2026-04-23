@@ -65,6 +65,7 @@ export async function reissueInviteAction(
     return { ok: false, error: REISSUE_COPY[detail] ?? REISSUE_COPY["unknown"] };
   }
   revalidatePath("/command-center");
+  revalidatePath("/command-center/clients");
   return { ok: true };
 }
 
@@ -81,5 +82,6 @@ export async function cancelInviteAction(
     return { ok: false, error: CANCEL_COPY[detail] ?? CANCEL_COPY["unknown"] };
   }
   revalidatePath("/command-center");
+  revalidatePath("/command-center/clients");
   return { ok: true };
 }

@@ -20,6 +20,7 @@ import {
   listClientsEndpointClientsGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
   lockItineraryEndpointItineraryItineraryIdLockPost,
+  loginEndpointAuthLoginPost,
   redeemInviteEndpointAuthRedeemInvitePost,
   reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
@@ -33,6 +34,7 @@ import type {
   EdgeResponse,
   GraphResponse,
   ItineraryResponse,
+  LoginRequest,
   NodeResponse,
   NodeStatus,
   OpenSessionRequest,
@@ -40,7 +42,7 @@ import type {
   RedeemInviteRequest,
 } from "./generated/types.gen.js";
 
-export type { RedeemInviteRequest } from "./generated/types.gen.js";
+export type { LoginRequest, RedeemInviteRequest } from "./generated/types.gen.js";
 export type { Client } from "./generated/client/types.gen.js";
 
 // Itinerary graph (S02): create + read + node/edge mutation contracts and
@@ -202,6 +204,62 @@ function parseRedeemDetail(error: unknown): RedeemInviteDetail {
   if (raw === "invite_already_consumed") return "invite_already_consumed";
   if (raw === "auth_upstream_unavailable") return "auth_upstream_unavailable";
   if (raw === "internal_error") return "internal_error";
+  return "unknown";
+}
+
+export type RequestLoginDetail =
+  | "auth_upstream_unavailable"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for POST /auth/login. By design the server
+ * collapses both "magic link sent" and "no account for this email"
+ * into 204 (D015 enumeration guarantee), so `ok: true` here does not
+ * prove an account exists — only that the UI should tell the user to
+ * check their inbox.
+ */
+export type RequestLoginResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: RequestLoginDetail };
+
+/**
+ * Typed wrapper for POST /auth/login. Asks the backend to email a
+ * sign-in magic link for an existing account. Returns a result so
+ * components can branch on `result.ok` without a try/catch.
+ */
+export async function requestLogin(
+  client: Client,
+  body: LoginRequest,
+): Promise<RequestLoginResult> {
+  try {
+    const { error, response } = await loginEndpointAuthLoginPost({
+      client,
+      body,
+    });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseRequestLoginDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseRequestLoginDetail(
+  status: number,
+  error: unknown,
+): RequestLoginDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "auth_upstream_unavailable") return "auth_upstream_unavailable";
+  if (status === 422) return "validation_error";
+  if (status === 502) return "auth_upstream_unavailable";
   return "unknown";
 }
 

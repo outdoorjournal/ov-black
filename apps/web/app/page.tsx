@@ -1,4 +1,5 @@
 import { InviteEntry } from "./_components/invite-entry";
+import { SignInEntry } from "./_components/sign-in-entry";
 
 export default function HomePage() {
   return (
@@ -49,17 +50,34 @@ export default function HomePage() {
           </p>
         </div>
 
-        <div className="w-full max-w-md">
+        <div className="flex w-full max-w-md flex-col gap-6">
           <div className="rounded-sm bg-paper p-8 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] sm:p-10">
-            <h2 className="font-serif text-3xl tracking-tight">Claim your invitation</h2>
+            <h2 className="font-serif text-3xl tracking-tight">Sign in</h2>
+            <p className="mt-2 text-[11px] uppercase tracking-[0.3em] text-ink/55">
+              Returning members
+            </p>
+            <div className="mt-8">
+              <SignInEntry />
+            </div>
+
+            <div className="my-8 flex items-center gap-3 text-[10px] uppercase tracking-[0.3em] text-ink/40">
+              <span className="h-px flex-1 bg-ink/10" />
+              <span>New here</span>
+              <span className="h-px flex-1 bg-ink/10" />
+            </div>
+
+            <h3 className="font-serif text-2xl tracking-tight">
+              Claim your invitation
+            </h3>
             <p className="mt-2 text-[11px] uppercase tracking-[0.3em] text-ink/55">
               Enter the code you were given
             </p>
-            <div className="mt-8">
+            <div className="mt-6">
               <InviteEntry />
             </div>
           </div>
-          <p className="mt-6 text-center text-[11px] uppercase tracking-[0.3em] text-paper/50">
+
+          <p className="text-center text-[11px] uppercase tracking-[0.3em] text-paper/50">
             Membership is extended by referral
           </p>
         </div>

@@ -63,15 +63,15 @@ export default async function DraftItineraryPage({ params }: PageProps) {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-10 px-6 py-12">
-      <header className="flex items-end justify-between gap-6">
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-6 py-12 sm:px-10 sm:py-16">
+      <header className="flex flex-col gap-6 border-b border-ink/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-4xl tracking-tight text-ink">
-            {result.itinerary.title || "Concierge draft"}
-          </h1>
-          <p className="mt-2 font-sans text-xs uppercase tracking-[0.3em] text-ink/60">
+          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-ink/55">
             Draft itinerary
           </p>
+          <h1 className="mt-4 font-serif text-4xl tracking-tight text-ink sm:text-5xl">
+            {result.itinerary.title || "Concierge draft"}
+          </h1>
         </div>
       </header>
 

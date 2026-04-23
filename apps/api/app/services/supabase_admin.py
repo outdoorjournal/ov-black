@@ -52,17 +52,22 @@ class MagicLinkIssued:
 async def generate_magic_link(
     email: str,
     *,
+    create_user: bool = True,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> MagicLinkIssued:
     """Ask Supabase Auth to email a magic link to ``email``.
 
     Wraps ``POST {supabase_url}/auth/v1/otp`` with ``type=magiclink`` (the
-    default) and ``create_user=true`` so a first-time redeemer gets an auth
-    row created on their behalf. Unlike ``/admin/generate_link`` (which only
-    *generates* a link and returns it), ``/otp`` *delivers* the link via the
-    configured SMTP — inbucket/mailpit in local dev, the project's SMTP in
-    staging/prod — and returns an empty body.
+    default). The invite-redemption path passes ``create_user=True`` so a
+    first-time redeemer gets an auth row created on their behalf; the
+    sign-in path (``POST /auth/login``) passes ``create_user=False`` so an
+    unknown email does not silently provision an account without an invite.
+
+    Unlike ``/admin/generate_link`` (which only *generates* a link and
+    returns it), ``/otp`` *delivers* the link via the configured SMTP —
+    inbucket/mailpit in local dev, the project's SMTP in staging/prod —
+    and returns an empty body.
 
     ``options.email_redirect_to`` is set to ``<web_origin>/auth/callback`` so
     the link lands on the SSR callback route that finalizes the session. The
@@ -85,7 +90,7 @@ async def generate_magic_link(
         "Content-Type": "application/json",
     }
     params = {"redirect_to": f"{settings.web_origin.rstrip('/')}/auth/callback"}
-    payload: dict[str, object] = {"email": email, "create_user": True}
+    payload: dict[str, object] = {"email": email, "create_user": create_user}
 
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=10.0)

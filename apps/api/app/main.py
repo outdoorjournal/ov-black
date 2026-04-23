@@ -110,12 +110,12 @@ app = FastAPI(
 )
 
 # Enforce Supabase JWT validation on every route except the public whitelist
-# (health probe, OpenAPI surfaces, and the invite-redeem entry point). R017.
-# /auth/redeem-invite is intentionally public — it's the front door of the
-# auth flow and has no token yet to validate.
+# (health probe, OpenAPI surfaces, and the two auth front doors). R017.
+# Both /auth/redeem-invite and /auth/login are intentionally public — they
+# issue tokens rather than consume them, so there is no JWT yet to validate.
 app.add_middleware(
     JWTAuthMiddleware,
-    public_paths=PUBLIC_PATHS | {"/auth/redeem-invite"},
+    public_paths=PUBLIC_PATHS | {"/auth/redeem-invite", "/auth/login"},
 )
 
 # Starlette stacks middleware LIFO — CORS is added *after* the JWT middleware

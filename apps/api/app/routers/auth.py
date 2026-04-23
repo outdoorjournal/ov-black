@@ -1,10 +1,17 @@
-"""Public auth surface — invite redemption and magic-link issuance.
+"""Public auth surface — invite redemption and sign-in magic links.
 
-The one route mounted here, ``POST /auth/redeem-invite``, closes the S01
-auth loop: advisor hands out an invite code, user submits it with their
-email, the endpoint consumes the invite and asks Supabase to email a
-magic link. We intentionally return ``204 No Content`` on success — the
-link itself never crosses this boundary.
+Two routes mounted here, both public (no JWT required — these are the
+front doors of the auth loop):
+
+- ``POST /auth/redeem-invite`` — invite code + email; consumes the
+  invite and asks Supabase to email a first-time magic link.
+- ``POST /auth/login`` — email only; asks Supabase to email a magic
+  link to an *existing* account. Unknown emails are collapsed into the
+  same 204 response so the endpoint cannot be used to enumerate who
+  has an account.
+
+Both routes return ``204 No Content`` on success — the link itself
+never crosses this boundary.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from app.db import get_session
 from app.services.invites import RedeemOutcome, redeem_invite
+from app.services.login import LoginOutcome, request_login_link
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,4 +90,51 @@ async def redeem_invite_endpoint(
         raise HTTPException(status_code=502, detail="auth_upstream_unavailable")
     # Defensive — every enum value is handled above.
     logger.error("invite.redeem.unhandled_outcome", extra={"outcome": result.outcome.value})
+    raise HTTPException(status_code=500, detail="internal_error")
+
+
+class LoginRequest(BaseModel):
+    """Payload for ``POST /auth/login``."""
+
+    email: EmailStr
+
+
+async def rate_limit_login() -> None:
+    """Rate-limit stub for sign-in requests.
+
+    Mirror of ``rate_limit_redeem`` — the dependency is wired from day
+    one so enforcement can land later without touching the route.
+    """
+    return None
+
+
+@router.post(
+    "/login",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={
+        204: {
+            "description": (
+                "Magic link sent, or silently treated as sent when no account "
+                "matches the email (D015 enumeration guarantee)."
+            )
+        },
+        502: {"description": "Supabase Auth admin API is unavailable."},
+    },
+    summary="Request a sign-in magic link for an existing account.",
+)
+async def login_endpoint(
+    payload: LoginRequest,
+    _rl: None = Depends(rate_limit_login),
+) -> Response:
+    result = await request_login_link(str(payload.email))
+
+    if result.outcome in (LoginOutcome.OK, LoginOutcome.NO_ACCOUNT):
+        # Collapse success and unknown-email into the same response so this
+        # endpoint cannot be used to enumerate account existence.
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if result.outcome is LoginOutcome.UPSTREAM_UNAVAILABLE:
+        raise HTTPException(status_code=502, detail="auth_upstream_unavailable")
+    # Defensive — every enum value handled above.
+    logger.error("login.unhandled_outcome", extra={"outcome": result.outcome.value})
     raise HTTPException(status_code=500, detail="internal_error")

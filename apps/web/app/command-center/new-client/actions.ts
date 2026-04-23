@@ -57,9 +57,11 @@ export async function createClientAction(
     return { error: ERROR_COPY[detail] ?? ERROR_COPY["unknown"] };
   }
 
-  // New client row is visible on the list view — bust the cache, then
-  // push the advisor back to the command center where the invite state
-  // renders alongside the fresh row.
+  // New client row shows up on the /clients list and shifts the
+  // dashboard's "Recent" and "Needs attention" panes. Bust both paths,
+  // then push the advisor back to the list where the fresh row renders
+  // alongside its invite state.
   revalidatePath("/command-center");
-  redirect("/command-center");
+  revalidatePath("/command-center/clients");
+  redirect("/command-center/clients");
 }
