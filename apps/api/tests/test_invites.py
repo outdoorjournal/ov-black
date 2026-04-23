@@ -82,7 +82,12 @@ class FakeSession:
 
         if compiled.lstrip().upper().startswith("UPDATE"):
             invite = self.invites.get(code)
-            if invite is None or invite.consumed_at is not None:
+            if (
+                invite is None
+                or invite.consumed_at is not None
+                or invite.cancelled_at is not None
+                or invite.superseded_at is not None
+            ):
                 return _ExecResult(None)
             if self.race_losing_code == code:
                 # Simulate a concurrent redeemer — the row now looks consumed.
@@ -100,7 +105,14 @@ class FakeSession:
         self.rollbacks += 1
 
 
-def _invite(code: str, *, email: str | None = None, consumed: bool = False) -> Invite:
+def _invite(
+    code: str,
+    *,
+    email: str | None = None,
+    consumed: bool = False,
+    cancelled: bool = False,
+    superseded: bool = False,
+) -> Invite:
     inv = Invite(
         code=code,
         role=UserRole.advisor,
@@ -109,6 +121,10 @@ def _invite(code: str, *, email: str | None = None, consumed: bool = False) -> I
     )
     if consumed:
         inv.consumed_at = datetime.now(timezone.utc)
+    if cancelled:
+        inv.cancelled_at = datetime.now(timezone.utc)
+    if superseded:
+        inv.superseded_at = datetime.now(timezone.utc)
     return inv
 
 
@@ -211,6 +227,41 @@ def test_redeem_invite_already_consumed_returns_409(
     )
     assert resp.status_code == 409
     assert resp.json()["detail"] == "invite_already_consumed"
+    assert stub_magic_link == []
+
+
+def test_redeem_invite_cancelled_collapses_to_404(
+    client: TestClient,
+    override_session: FakeSession,
+    stub_magic_link: list[str],
+) -> None:
+    # Cancelled rows must not be distinguishable from invented codes —
+    # otherwise an attacker could probe the cancellation surface.
+    override_session.invites["INV-CXL"] = _invite("INV-CXL", cancelled=True)
+    resp = client.post(
+        "/auth/redeem-invite",
+        json={"code": "INV-CXL", "email": "user@example.com"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "invite_not_redeemable"
+    assert stub_magic_link == []
+
+
+def test_redeem_invite_superseded_collapses_to_404(
+    client: TestClient,
+    override_session: FakeSession,
+    stub_magic_link: list[str],
+) -> None:
+    # The advisor resent — this code is stale. Same collapsed shape so the
+    # user is funnelled toward the latest email rather than learning the
+    # old code is "out of date".
+    override_session.invites["INV-OLD"] = _invite("INV-OLD", superseded=True)
+    resp = client.post(
+        "/auth/redeem-invite",
+        json={"code": "INV-OLD", "email": "user@example.com"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "invite_not_redeemable"
     assert stub_magic_link == []
 
 

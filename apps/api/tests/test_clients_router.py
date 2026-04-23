@@ -59,6 +59,13 @@ class _ExecResult:
     def all(self) -> list[Any]:
         return list(self.rows)
 
+    def scalars(self) -> list[Any]:
+        # The router's invite reads now consume the result with .scalars()
+        # since multiple rows per (email, advisor) are expected once an
+        # advisor has resent at least once. The fake just hands back the
+        # underlying list — order is preserved by caller-side fixtures.
+        return list(self.rows)
+
 
 @dataclass
 class FakeSession:
@@ -79,12 +86,12 @@ class FakeSession:
         params = compiled.params
         sql = str(compiled).lower()
 
-        # ── LIST /clients — joined SELECT on clients + voodoo_dolls + invites ──
+        # ── LIST /clients — JOIN with voodoo_dolls only (invites fetched separately) ──
         if "from clients" in sql and "join" in sql:
             advisor_id = next(
                 (v for v in params.values() if isinstance(v, uuid.UUID)), None
             )
-            rows: list[tuple[Client, uuid.UUID | None, Invite | None]] = []
+            rows: list[tuple[Client, uuid.UUID | None]] = []
             owned = [
                 c
                 for c in self.clients_by_id.values()
@@ -93,17 +100,7 @@ class FakeSession:
             owned.sort(key=lambda c: c.created_at, reverse=True)
             for client in owned:
                 doll = self.dolls_by_client.get(client.id)
-                invite = next(
-                    (
-                        i
-                        for i in self.invites
-                        if i.email == client.email
-                        and i.role is UserRole.client
-                        and i.created_by == advisor_id
-                    ),
-                    None,
-                )
-                rows.append((client, doll.id if doll else None, invite))
+                rows.append((client, doll.id if doll else None))
             return _ExecResult(rows)
 
         # ── GET /clients/{id} — single client scoped to owner ──
@@ -130,28 +127,26 @@ class FakeSession:
             doll = self.dolls_by_client.get(client_id)
             return _ExecResult([doll] if doll is not None else [])
 
-        # ── Invite lookup by (email, role, created_by) ──
+        # ── Invite lookup ──
+        # Two callers: the list endpoint fetches every advisor invite and
+        # groups in Python (no email param); the detail endpoint scopes to
+        # one client (email param present). We branch on the email param.
         if "from invites" in sql:
             email = next(
                 (v for v in params.values() if isinstance(v, str) and "@" in v),
                 None,
             )
-            created_by = None
-            for v in params.values():
-                if isinstance(v, uuid.UUID):
-                    created_by = v
-                    break
-            invite = next(
-                (
-                    i
-                    for i in self.invites
-                    if i.email == email
-                    and i.role is UserRole.client
-                    and i.created_by == created_by
-                ),
-                None,
+            created_by = next(
+                (v for v in params.values() if isinstance(v, uuid.UUID)), None
             )
-            return _ExecResult([invite] if invite is not None else [])
+            matches = [
+                i
+                for i in self.invites
+                if i.role is UserRole.client
+                and i.created_by == created_by
+                and (email is None or i.email == email)
+            ]
+            return _ExecResult(matches)
 
         raise AssertionError(f"unexpected statement: {sql}")
 
@@ -321,15 +316,28 @@ def _doll_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> VoodooDoll:
     return doll
 
 
-def _invite_for(email: str, created_by: uuid.UUID, *, consumed: bool = False) -> Invite:
+def _invite_for(
+    email: str,
+    created_by: uuid.UUID,
+    *,
+    consumed: bool = False,
+    cancelled: bool = False,
+    superseded: bool = False,
+    created_at: datetime | None = None,
+) -> Invite:
     inv = Invite(
         code=f"INV-{uuid.uuid4().hex[:8]}",
         role=UserRole.client,
         email=email,
         created_by=created_by,
     )
+    inv.created_at = created_at or datetime.now(timezone.utc)
     if consumed:
         inv.consumed_at = datetime.now(timezone.utc)
+    if cancelled:
+        inv.cancelled_at = datetime.now(timezone.utc)
+    if superseded:
+        inv.superseded_at = datetime.now(timezone.utc)
     return inv
 
 

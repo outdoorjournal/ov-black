@@ -87,6 +87,17 @@ async def redeem_invite(
         logger.info("invite.redeem.already_consumed", extra={"code_hint": normalized_code[:4]})
         return RedeemResult(RedeemOutcome.ALREADY_CONSUMED)
 
+    # Cancelled and superseded both mean "this specific code is no longer
+    # live" — collapse them into UNKNOWN_CODE so the public response is
+    # indistinguishable from an invented code. Advisors manage lifecycle;
+    # redeemers should look at their latest email.
+    if invite.cancelled_at is not None:
+        logger.info("invite.redeem.cancelled", extra={"code_hint": normalized_code[:4]})
+        return RedeemResult(RedeemOutcome.UNKNOWN_CODE)
+    if invite.superseded_at is not None:
+        logger.info("invite.redeem.superseded", extra={"code_hint": normalized_code[:4]})
+        return RedeemResult(RedeemOutcome.UNKNOWN_CODE)
+
     if not _emails_match(invite.email, email):
         logger.info("invite.redeem.wrong_email", extra={"code_hint": normalized_code[:4]})
         return RedeemResult(RedeemOutcome.WRONG_EMAIL)
@@ -94,7 +105,12 @@ async def redeem_invite(
     now = datetime.now(timezone.utc)
     consumed = await session.execute(
         update(Invite)
-        .where(Invite.code == normalized_code, Invite.consumed_at.is_(None))
+        .where(
+            Invite.code == normalized_code,
+            Invite.consumed_at.is_(None),
+            Invite.cancelled_at.is_(None),
+            Invite.superseded_at.is_(None),
+        )
         .values(consumed_at=now)
         .returning(Invite.code)
     )

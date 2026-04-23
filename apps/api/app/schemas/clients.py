@@ -95,7 +95,25 @@ class ClientCreateResponse(BaseModel):
     invite_email: EmailStr
 
 
-InviteStatus = Literal["pending", "consumed"]
+InviteStatus = Literal["pending", "consumed", "cancelled", "none"]
+InviteEventStatus = Literal["active", "consumed", "cancelled", "superseded"]
+
+
+class InviteEvent(BaseModel):
+    """A single invite send — one row in the invite history for a client.
+
+    The raw ``code`` is deliberately omitted. Codes are bearer credentials;
+    the advisor UI needs timestamps + lifecycle state to render the history,
+    not the codes themselves.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    created_at: datetime
+    consumed_at: datetime | None
+    cancelled_at: datetime | None
+    superseded_at: datetime | None
+    status: InviteEventStatus
 
 
 class ClientSummary(BaseModel):
@@ -135,7 +153,14 @@ class VoodooDollDetail(BaseModel):
 
 
 class ClientDetail(BaseModel):
-    """Full client + voodoo_doll payload for ``GET /clients/{id}``."""
+    """Full client + voodoo_doll payload for ``GET /clients/{id}``.
+
+    ``invite_history`` lists every send for this client, newest first, so
+    the advisor can see when they resent and when each send was superseded
+    or cancelled. ``invite_status`` is the derived current state and
+    duplicates what the top of ``invite_history`` implies — consumers can
+    read either.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -143,6 +168,7 @@ class ClientDetail(BaseModel):
     full_name: str
     email: EmailStr
     invite_status: InviteStatus
+    invite_history: list[InviteEvent]
     created_at: datetime
     updated_at: datetime
     voodoo_doll: VoodooDollDetail | None

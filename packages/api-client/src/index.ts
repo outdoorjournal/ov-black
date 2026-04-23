@@ -12,6 +12,7 @@ import type { Client } from "./generated/client/types.gen.js";
 import {
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
+  cancelClientInviteEndpointClientsClientIdInviteCancelPost,
   createClientEndpointClientsPost,
   createSessionEndpointSessionsPost,
   getClientEndpointClientsClientIdGet,
@@ -20,6 +21,7 @@ import {
   listTurnsEndpointSessionsSessionIdTurnsGet,
   lockItineraryEndpointItineraryItineraryIdLockPost,
   redeemInviteEndpointAuthRedeemInvitePost,
+  reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
 } from "./generated/sdk.gen.js";
@@ -83,6 +85,7 @@ export type {
   ClientCreateResponse,
   ClientSummary,
   ClientDetail,
+  InviteEvent,
   VoodooDollPayload,
   VoodooDollDetail,
   VoodooDollTyped,
@@ -90,6 +93,16 @@ export type {
   ContactChannel,
   GroupType,
 } from "./generated/types.gen.js";
+
+// Pydantic inlines these Literal unions into ClientSummary / InviteEvent
+// rather than emitting them as named types; expose them so apps/web can
+// match on string values without re-typing.
+export type InviteStatus = "pending" | "consumed" | "cancelled" | "none";
+export type InviteEventStatus =
+  | "active"
+  | "consumed"
+  | "cancelled"
+  | "superseded";
 
 // Agent sessions (S04): POST /sessions request/response + the replay shape
 // for GET /sessions/{id}/turns. The SSE stream for /turn is consumed by a
@@ -830,5 +843,126 @@ function parseAssembleDraftDetail(
   if (status === 409) return "already_locked";
   if (status === 404) return "itinerary_not_found";
   if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type ReissueInviteDetail =
+  | "client_not_found"
+  | "advisor_only"
+  | "invite_already_redeemed"
+  | "auth_upstream_unavailable"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for POST /clients/{client_id}/invite/reissue. The
+ * server returns 204 on success; this wrapper turns that into `ok: true`
+ * with no payload, mirroring the redeem-invite shape.
+ */
+export type ReissueInviteResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: ReissueInviteDetail };
+
+/**
+ * Typed wrapper for POST /clients/{client_id}/invite/reissue.
+ *
+ * Supersedes any active invite for the client and emails a fresh link.
+ * The server refuses with 409 (`invite_already_redeemed`) if the client
+ * has already accepted a prior invite — at that point the magic-link flow
+ * is the right path, not another invite.
+ */
+export async function reissueClientInvite(
+  client: Client,
+  clientId: string,
+): Promise<ReissueInviteResult> {
+  try {
+    const { error, response } =
+      await reissueClientInviteEndpointClientsClientIdInviteReissuePost({
+        client,
+        path: { client_id: clientId },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseReissueInviteDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseReissueInviteDetail(
+  status: number,
+  error: unknown,
+): ReissueInviteDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "client_not_found") return "client_not_found";
+  if (raw === "invite_already_redeemed") return "invite_already_redeemed";
+  if (raw === "auth_upstream_unavailable") return "auth_upstream_unavailable";
+  if (raw === "advisor_only") return "advisor_only";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "client_not_found";
+  if (status === 502) return "auth_upstream_unavailable";
+  return "unknown";
+}
+
+export type CancelInviteDetail =
+  | "client_not_found"
+  | "advisor_only"
+  | "no_active_invite"
+  | "network_error"
+  | "unknown";
+
+export type CancelInviteResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: CancelInviteDetail };
+
+/**
+ * Typed wrapper for POST /clients/{client_id}/invite/cancel.
+ *
+ * Marks the active invite cancelled with no email sent. Returns 409
+ * (`no_active_invite`) when there's nothing to cancel — either the
+ * client has already redeemed or the outstanding invite was already
+ * cancelled / superseded.
+ */
+export async function cancelClientInvite(
+  client: Client,
+  clientId: string,
+): Promise<CancelInviteResult> {
+  try {
+    const { error, response } =
+      await cancelClientInviteEndpointClientsClientIdInviteCancelPost({
+        client,
+        path: { client_id: clientId },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseCancelInviteDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseCancelInviteDetail(
+  status: number,
+  error: unknown,
+): CancelInviteDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "client_not_found") return "client_not_found";
+  if (raw === "no_active_invite") return "no_active_invite";
+  if (raw === "advisor_only") return "advisor_only";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "client_not_found";
+  if (status === 409) return "no_active_invite";
   return "unknown";
 }

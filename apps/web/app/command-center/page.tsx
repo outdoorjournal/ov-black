@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { createApiClient, listClients } from "@ov-black/api-client";
+import {
+  createApiClient,
+  type InviteStatus,
+  listClients,
+} from "@ov-black/api-client";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +17,8 @@ import {
 } from "@/components/ui/card";
 import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase";
+
+import { InviteActions } from "./_components/invite-actions";
 
 // Always render per-request — this page gates on the current user session
 // and reads the advisor's client list, which must never be cached.
@@ -74,6 +80,19 @@ export default async function CommandCenterPage() {
   );
 }
 
+function inviteBadgeCopy(status: InviteStatus): string {
+  switch (status) {
+    case "consumed":
+      return "Invite accepted";
+    case "pending":
+      return "Invite pending";
+    case "cancelled":
+      return "Invite cancelled";
+    case "none":
+      return "No invite";
+  }
+}
+
 function ClientList({
   clients,
 }: {
@@ -82,7 +101,7 @@ function ClientList({
     full_name: string;
     email: string;
     has_voodoo_doll: boolean;
-    invite_status: "pending" | "consumed";
+    invite_status: InviteStatus;
     created_at: string;
   }>;
 }) {
@@ -115,11 +134,15 @@ function ClientList({
                     {c.email}
                   </CardDescription>
                 </div>
-                <span className="whitespace-nowrap font-sans text-[11px] uppercase tracking-[0.2em] text-ink/60">
-                  {c.invite_status === "consumed"
-                    ? "Invite accepted"
-                    : "Invite pending"}
-                </span>
+                <div className="flex flex-col items-end gap-3">
+                  <span className="whitespace-nowrap font-sans text-[11px] uppercase tracking-[0.2em] text-ink/60">
+                    {inviteBadgeCopy(c.invite_status)}
+                  </span>
+                  <InviteActions
+                    clientId={c.id}
+                    inviteStatus={c.invite_status}
+                  />
+                </div>
               </div>
             </CardHeader>
             <CardContent className="font-sans text-sm text-ink/70">

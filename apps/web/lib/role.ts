@@ -8,6 +8,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { publicEnv } from "./env";
+
 export type UserRole = "advisor" | "client" | "unknown";
 
 export async function resolveUserRole(
@@ -34,26 +36,36 @@ export async function resolveUserRole(
   return data.role === "advisor" ? "advisor" : "client";
 }
 
+// Delegates to GET /me/client on the API. RLS on public.clients only allows
+// advisors to select their own rows, so a freshly magic-linked invitee cannot
+// answer "which client row am I?" against Supabase directly. The API endpoint
+// runs under service_role and additionally JIT-backfills clients.auth_user_id
+// on first hit (email match against the Supabase user's email), which is why
+// the callback route calls this exactly once after verifyOtp — subsequent
+// visits can hit the fast path.
 export async function resolveClientIdForUser(
   supabase: SupabaseClient,
 ): Promise<string | null> {
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
+  if (!accessToken) {
     return null;
   }
 
-  const { data, error } = await supabase
-    .from("clients")
-    .select("id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
-
-  if (error || !data) {
+  const { apiBaseUrl } = publicEnv();
+  try {
+    const res = await fetch(`${apiBaseUrl}/me/client`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return null;
+    }
+    const body = (await res.json()) as { client_id?: unknown };
+    return typeof body.client_id === "string" ? body.client_id : null;
+  } catch {
     return null;
   }
-
-  return data.id as string;
 }
