@@ -27,26 +27,33 @@ from app.models import TurnRole
 
 
 class OpenSessionRequest(BaseModel):
-    """Payload for ``POST /sessions``."""
+    """Payload for ``POST /sessions``.
+
+    ``itinerary_id`` is optional: pin the session to a specific draft for
+    planning mode, or omit for a general session (onboarding / Q&A). A
+    session pinned to an approved itinerary serves as a trip-scoped Q&A.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     client_id: uuid.UUID
+    itinerary_id: uuid.UUID | None = None
 
 
 class OpenSessionResponse(BaseModel):
-    """Response for ``POST /sessions`` — returned on both create and reuse."""
+    """Response for ``POST /sessions`` — returned on both create and reuse.
+
+    ``itinerary_id`` reflects the session's current pin. ``None`` means the
+    session is unpinned — the browser's mood-board aside can either stay
+    empty (onboarding / Q&A) or hydrate after the first ``card_proposed``
+    frame auto-creates one.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     session_id: uuid.UUID
     agentcore_session_id: str
-    # S07 T05: exposed so the RSC chat page can call GET /itinerary/{id} to
-    # rehydrate proposed cards on a hard reload without round-tripping through
-    # a separate lookup. One-itinerary-per-client is ensured at session-open
-    # time (open_or_reuse_session) and reused lazily when stream_turn persists
-    # agent-proposed cards.
-    itinerary_id: uuid.UUID
+    itinerary_id: uuid.UUID | None
 
 
 class TurnRequest(BaseModel):

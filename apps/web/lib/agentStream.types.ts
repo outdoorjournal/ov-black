@@ -42,6 +42,9 @@ export type ExperienceSnapshot = {
   activities?: string[];
 };
 
+// Legacy frame, emitted by the pre-agent-workspace runtime + FastAPI's
+// stream_turn dispatch. Will be removed once the new runtime is the only
+// path in staging/prod.
 export type CardFrame = {
   type: "card";
   source: string;
@@ -50,9 +53,41 @@ export type CardFrame = {
   snapshot: ExperienceSnapshot;
 };
 
+// A node pushed into the itinerary by the agent runtime (new shape).
+// Shape matches the API's NodeResponse — id + itinerary_id + type + status
+// + title + source + source_id + metadata.
+export type AgentNode = {
+  id: string;
+  itinerary_id: string;
+  type: string;
+  status: string;
+  title: string;
+  source: string | null;
+  source_id: string | null;
+  metadata: Record<string, unknown> & { snapshot?: ExperienceSnapshot };
+};
+
+export type CardProposedFrame = {
+  type: "card_proposed";
+  node: AgentNode;
+};
+
+export type DraftAssembledFrame = {
+  type: "draft_assembled";
+  edges_created: number;
+};
+
+export type NodeUpdatedFrame = {
+  type: "node_updated";
+  node: AgentNode;
+};
+
 export type SseFrame =
   | FirstTokenFrame
   | DeltaFrame
   | DoneFrame
   | ErrorFrame
-  | CardFrame;
+  | CardFrame
+  | CardProposedFrame
+  | DraftAssembledFrame
+  | NodeUpdatedFrame;

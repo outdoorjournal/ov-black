@@ -125,6 +125,12 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         calls["is_requester_advisor"].append({"user_uuid": user_uuid})
         return bool(returns.get("is_requester_advisor", False))
 
+    async def _resolve_auth(_s: Any, client_id: uuid.UUID) -> uuid.UUID | None:
+        calls.setdefault("resolve_client_auth_user_id", []).append(
+            {"client_id": client_id}
+        )
+        return returns.get("resolve_client_auth_user_id")
+
     monkeypatch.setattr(routers_itineraries, "acquire_lock", _acquire)
     monkeypatch.setattr(routers_itineraries, "release_lock", _release)
     monkeypatch.setattr(routers_itineraries, "approve_itinerary", _approve)
@@ -135,6 +141,9 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _graph)
     monkeypatch.setattr(
         routers_itineraries, "_is_requester_advisor", _is_advisor
+    )
+    monkeypatch.setattr(
+        routers_itineraries, "_resolve_client_auth_user_id", _resolve_auth
     )
 
     async def _session_dep() -> Iterator[object]:
@@ -481,12 +490,19 @@ def test_get_draft_as_owning_client_200(
     stub_routes: dict[str, Any],
     make_token: "Callable[..., str]",
 ) -> None:
-    owner_id = uuid.uuid4()
+    # clients.id and auth.users.id live in different UUID namespaces, so
+    # the test distinguishes them. The owning-client path passes when
+    # ``_resolve_client_auth_user_id(client_id)`` returns the caller's sub.
+    client_row_id = uuid.uuid4()
+    caller_auth_user_id = uuid.uuid4()
     iid = uuid.uuid4()
     stub_routes["returns"]["get_itinerary_graph"] = _graph_with_client(
-        iid, client_id=owner_id, status=ItineraryStatus.draft
+        iid, client_id=client_row_id, status=ItineraryStatus.draft
     )
-    headers = {"Authorization": f"Bearer {make_token(sub=str(owner_id))}"}
+    stub_routes["returns"]["resolve_client_auth_user_id"] = caller_auth_user_id
+    headers = {
+        "Authorization": f"Bearer {make_token(sub=str(caller_auth_user_id))}"
+    }
     resp = client.get(f"/itinerary/{iid}", headers=headers)
     assert resp.status_code == 200
     # No advisor lookup needed — we matched on owning client path.
@@ -498,14 +514,19 @@ def test_get_draft_as_non_owning_non_advisor_403(
     stub_routes: dict[str, Any],
     make_token: "Callable[..., str]",
 ) -> None:
-    owner_id = uuid.uuid4()
-    other_id = uuid.uuid4()
+    client_row_id = uuid.uuid4()
+    caller_auth_user_id = uuid.uuid4()
+    different_auth_user_id = uuid.uuid4()
     iid = uuid.uuid4()
     stub_routes["returns"]["get_itinerary_graph"] = _graph_with_client(
-        iid, client_id=owner_id, status=ItineraryStatus.draft
+        iid, client_id=client_row_id, status=ItineraryStatus.draft
     )
+    # The clients row's auth_user_id is some OTHER user, not our caller.
+    stub_routes["returns"]["resolve_client_auth_user_id"] = different_auth_user_id
     stub_routes["returns"]["is_requester_advisor"] = False
-    headers = {"Authorization": f"Bearer {make_token(sub=str(other_id))}"}
+    headers = {
+        "Authorization": f"Bearer {make_token(sub=str(caller_auth_user_id))}"
+    }
     resp = client.get(f"/itinerary/{iid}", headers=headers)
     assert resp.status_code == 403
     assert resp.json()["detail"] == "forbidden"
@@ -516,12 +537,14 @@ def test_get_draft_as_advisor_200(
     stub_routes: dict[str, Any],
     make_token: "Callable[..., str]",
 ) -> None:
-    owner_id = uuid.uuid4()
+    client_row_id = uuid.uuid4()
     advisor_id = uuid.uuid4()
     iid = uuid.uuid4()
     stub_routes["returns"]["get_itinerary_graph"] = _graph_with_client(
-        iid, client_id=owner_id, status=ItineraryStatus.draft
+        iid, client_id=client_row_id, status=ItineraryStatus.draft
     )
+    # Advisor isn't the owning client — owner lookup returns None / mismatch.
+    stub_routes["returns"]["resolve_client_auth_user_id"] = None
     stub_routes["returns"]["is_requester_advisor"] = True
     headers = {"Authorization": f"Bearer {make_token(sub=str(advisor_id))}"}
     resp = client.get(f"/itinerary/{iid}", headers=headers)

@@ -62,6 +62,15 @@ class AgentSession(Base):
         ForeignKey("clients.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # Optional planning-mode pin. NULL means the session is unpinned — either
+    # onboarding (client has no itineraries yet) or general Q&A (agent queries
+    # across all the client's itineraries). ON DELETE SET NULL keeps the
+    # session row alive if the referenced itinerary is removed.
+    itinerary_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("itineraries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     agentcore_session_id: Mapped[str] = mapped_column(nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

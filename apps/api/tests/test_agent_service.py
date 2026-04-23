@@ -732,9 +732,10 @@ async def test_open_or_reuse_session_returns_existing_open_session(
     )
     assert outcome is SessionOutcome.OK
     assert session_row is agent_session
-    # S07 T05: open_or_reuse_session now ensures a one-per-client itinerary
-    # and returns its id so the RSC chat page can hydrate the MoodBoard.
-    assert itinerary_id is not None
+    # S11: sessions are no longer auto-pinned to an itinerary at open
+    # time. An existing unpinned session stays unpinned; the agent
+    # auto-creates + pins on the first ``propose_card`` tool call.
+    assert itinerary_id == agent_session.itinerary_id
     # No new AgentSession was added to any FakeSession.
     assert all(
         not isinstance(obj, AgentSession)
@@ -759,9 +760,10 @@ async def test_open_or_reuse_session_inserts_when_none_exists(
     assert isinstance(session_row, AgentSession)
     # The inserted row uses a real UUID for agentcore_session_id.
     uuid.UUID(session_row.agentcore_session_id)
-    # And an itinerary was ensured for the client at session-open time.
-    assert itinerary_id is not None
-    assert any(str(it.id) == str(itinerary_id) for it in factory.itineraries)
+    # S11: unpinned session starts with itinerary_id = None. The agent
+    # auto-creates + pins on the first ``propose_card``.
+    assert itinerary_id is None
+    assert session_row.itinerary_id is None
 
 
 async def test_stream_turn_turn_index_monotonically_increases(
@@ -1064,15 +1066,21 @@ async def test_open_or_reuse_session_jit_backfill_profiles_upsert_never_downgrad
 # ── S07 card-proposal protocol (T02) ───────────────────────────────────────
 
 
-def test_system_prompt_includes_card_protocol() -> None:
-    """The assembled system prompt teaches the model the card event shape."""
+def test_system_prompt_voice_and_context_present() -> None:
+    """S11: prompt now carries only voice preamble + Voodoo Doll context.
+
+    The card/assemble protocol moved to the apps/agent runtime's
+    per-mode rubric (see apps/agent/src/agent/prompts/). Runtime-side
+    tests in apps/agent assert the protocol text lives there; this
+    API-side test only guards the voice + context assembly contract.
+    """
     prompt = build_system_prompt("CONTEXT_PLACEHOLDER")
-    # Exact protocol literal — the model must learn the raw JSON shape.
-    assert '"type": "card"' in prompt
-    # The protocol names source_id as the OV inventory reference.
-    assert "source_id" in prompt
-    # And it tells the model the frame carries source='ov'.
-    assert '"source": "ov"' in prompt
+    # Voice preamble — shared with the runtime's fallback; drift here
+    # would split the concierge voice across surfaces.
+    assert "concierge agent" in prompt
+    # The context block is labelled and carries the passed-in string.
+    assert "Client context" in prompt
+    assert "CONTEXT_PLACEHOLDER" in prompt
 
 
 async def test_card_event_passes_through(

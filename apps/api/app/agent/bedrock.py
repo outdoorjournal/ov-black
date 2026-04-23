@@ -240,6 +240,81 @@ async def _aiter_lines(lines: Iterable[Any]) -> AsyncIterator[Any]:
         yield value
 
 
+class LocalAgentRuntimeClient:
+    """HTTP-backed AgentRuntimeClient that talks to a local ``apps/agent``.
+
+    Used for local development: set ``AGENT_LOCAL_URL`` (e.g.
+    ``http://localhost:8080``) and the FastAPI lifespan wires this
+    client instead of Boto3 or the mock. It POSTs to ``/invocations``
+    with the payload and parses the ``data: ...\\n\\n`` SSE body the
+    runtime emits.
+
+    No AWS dependency. Honors the same event shape as the real
+    AgentCore runtime, so downstream dispatch logic in stream_turn is
+    unchanged.
+    """
+
+    def __init__(self, *, base_url: str, timeout: float = 120.0) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    async def invoke_stream(
+        self,
+        *,
+        agentcore_session_id: str,
+        payload: dict,
+    ) -> AsyncIterator[dict]:
+        import httpx
+
+        started = time.monotonic()
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            # BedrockAgentCoreApp reads this header to resolve the session.
+            "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": agentcore_session_id,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self._base_url}/invocations",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    if response.status_code >= 400:
+                        raise AgentRuntimeError(
+                            reason=f"http_{response.status_code}"
+                        )
+                    first_token_emitted = False
+                    async for line in response.aiter_lines():
+                        parsed = _parse_sse_line(line.encode("utf-8"))
+                        if parsed is None:
+                            continue
+                        kind = parsed.get("type")
+                        if kind == "delta" and not first_token_emitted:
+                            first_token_emitted = True
+                            elapsed_ms = int((time.monotonic() - started) * 1000)
+                            yield {"type": "first_token", "ms": elapsed_ms}
+                        yield parsed
+                        if kind == "done":
+                            return
+        except httpx.HTTPError as exc:
+            raise AgentRuntimeError(reason=exc.__class__.__name__) from exc
+
+        yield {"type": "done", "reason": "stream_closed"}
+
+    async def create_event(
+        self,
+        *,
+        memory_id: str,
+        agentcore_session_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        """No-op — local runtime has no AgentCore Memory backend."""
+        return None
+
+
 class MockAgentRuntimeClient:
     """Scripted ``AgentRuntimeClient`` for unit tests.
 

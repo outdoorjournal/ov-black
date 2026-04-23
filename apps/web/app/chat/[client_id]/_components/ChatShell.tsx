@@ -20,7 +20,14 @@ import {
   type Dispatch,
 } from "react";
 
-import { useAgentStream, type CardFrame, type DeltaFrame, type DoneFrame, type ErrorFrame } from "@/lib/agentStream";
+import {
+  useAgentStream,
+  type AgentNode,
+  type CardFrame,
+  type DeltaFrame,
+  type DoneFrame,
+  type ErrorFrame,
+} from "@/lib/agentStream";
 import { useAtmosOverride, usePhaseShiftMood } from "@/lib/atmos/classifier";
 
 import { AtmosFrame } from "./AtmosFrame";
@@ -215,7 +222,45 @@ export function ChatShell({
       dispatch({ type: "error", frame });
     },
     onCard: (frame: CardFrame) => {
+      // Legacy path: pre-agent-workspace runtime. Persistence happens on
+      // the API side; the frame already carries node_id + snapshot.
       dispatch({ type: "card_proposed", frame });
+    },
+    onCardProposed: (node: AgentNode) => {
+      // New path: apps/agent runtime. ``node`` is the persisted row from
+      // POST /itinerary/{id}/nodes. Lift the snapshot out of metadata
+      // and rebuild the legacy frame shape the reducer already handles.
+      const snapshot = (node.metadata?.snapshot ?? {
+        title: node.title,
+      }) as CardFrame["snapshot"];
+      const frame: CardFrame = {
+        type: "card",
+        source: node.source ?? "",
+        source_id: node.source_id ?? "",
+        node_id: node.id,
+        snapshot,
+      };
+      dispatch({ type: "card_proposed", frame });
+    },
+    onNodeUpdated: (node: AgentNode) => {
+      // Advisor adjustment landed — replay as a card_action for the reducer.
+      // Known statuses map cleanly; anything else is ignored (the status
+      // literal must match NodeStatus in the api-client types).
+      const allowed: readonly NodeStatus[] = [
+        "idea",
+        "proposed",
+        "approved",
+        "booked",
+        "confirmed",
+        "discarded",
+      ];
+      if (allowed.includes(node.status as NodeStatus)) {
+        dispatch({
+          type: "card_action",
+          nodeId: node.id,
+          nextStatus: node.status as NodeStatus,
+        });
+      }
     },
   });
 

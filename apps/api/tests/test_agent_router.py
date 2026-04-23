@@ -196,12 +196,18 @@ def test_post_sessions_advisor_owned_client_returns_201(
         agentcore_session_id="ac-sess-owned",
     )
 
+    expected_itinerary_id = itinerary_id
+
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID
+        _factory: Any,
+        *,
+        actor: ActorContext,
+        client_id: uuid.UUID,  # noqa: ARG001
+        itinerary_id: uuid.UUID | None = None,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         assert actor.actor_kind == "advisor"
         assert actor.user_id == advisor
-        return SessionOutcome.OK, agent_sess, itinerary_id
+        return SessionOutcome.OK, agent_sess, expected_itinerary_id
 
     monkeypatch.setattr(agent_router_module, "open_or_reuse_session", _fake_open)
 
@@ -215,7 +221,7 @@ def test_post_sessions_advisor_owned_client_returns_201(
     body = resp.json()
     assert body["session_id"] == str(session_id)
     assert body["agentcore_session_id"] == "ac-sess-owned"
-    assert body["itinerary_id"] == str(itinerary_id)
+    assert body["itinerary_id"] == str(expected_itinerary_id)
 
 
 def test_post_sessions_cross_advisor_returns_404(
@@ -229,7 +235,7 @@ def test_post_sessions_cross_advisor_returns_404(
     other_client_id = uuid.uuid4()
 
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID
+        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         return SessionOutcome.FORBIDDEN, None, None
 
@@ -265,7 +271,7 @@ def test_post_sessions_is_idempotent_on_reopen(
     call_count = {"n": 0}
 
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID
+        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         call_count["n"] += 1
         return SessionOutcome.OK, agent_sess, itinerary_id
@@ -316,6 +322,7 @@ def test_post_turn_happy_path_streams_sse_frames_in_order(
         actor: ActorContext,
         session_id: uuid.UUID,
         content: str,
+        auth_bearer: str | None = None,
     ) -> AsyncIterator[bytes]:
         assert actor.actor_kind == "advisor"
         assert content == "Plan me a trip."

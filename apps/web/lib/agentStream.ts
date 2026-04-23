@@ -20,22 +20,30 @@
 import { useCallback, useRef } from "react";
 
 import type {
+  AgentNode,
   CardFrame,
+  CardProposedFrame,
   DeltaFrame,
   DoneFrame,
+  DraftAssembledFrame,
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  NodeUpdatedFrame,
   SseFrame,
 } from "./agentStream.types";
 
 export type {
+  AgentNode,
   CardFrame,
+  CardProposedFrame,
   DeltaFrame,
   DoneFrame,
+  DraftAssembledFrame,
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  NodeUpdatedFrame,
   SseFrame,
 } from "./agentStream.types";
 
@@ -55,6 +63,9 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "done",
   "error",
   "card",
+  "card_proposed",
+  "draft_assembled",
+  "node_updated",
 ]);
 
 function isSseFrame(value: unknown): value is SseFrame {
@@ -65,8 +76,7 @@ function isSseFrame(value: unknown): value is SseFrame {
 
   // Card frames carry structured payload that downstream consumers dereference
   // immediately (graph node id, source lookups). Missing any required field
-  // means it's not a usable CardFrame — drop it at the parser boundary rather
-  // than letting an invalid frame propagate to onCard.
+  // means it's not a usable frame — drop at the parser boundary.
   if (type === "card") {
     const v = value as {
       source?: unknown;
@@ -78,6 +88,16 @@ function isSseFrame(value: unknown): value is SseFrame {
     if (typeof v.source_id !== "string") return false;
     if (typeof v.node_id !== "string") return false;
     if (!v.snapshot || typeof v.snapshot !== "object") return false;
+  }
+  if (type === "card_proposed" || type === "node_updated") {
+    const node = (value as { node?: unknown }).node;
+    if (!node || typeof node !== "object") return false;
+    const n = node as { id?: unknown; itinerary_id?: unknown };
+    if (typeof n.id !== "string" || typeof n.itinerary_id !== "string") return false;
+  }
+  if (type === "draft_assembled") {
+    const v = value as { edges_created?: unknown };
+    if (typeof v.edges_created !== "number") return false;
   }
 
   return true;
@@ -156,7 +176,22 @@ export type UseAgentStreamOptions = {
   onDelta?: (frame: DeltaFrame) => void;
   onDone?: (frame: DoneFrame) => void;
   onError?: (frame: ErrorFrame) => void;
+  /**
+   * Legacy handler — fires for the ``card`` SSE frame emitted by the
+   * pre-agent-workspace runtime path in FastAPI's stream_turn. Kept for
+   * back-compat while the new runtime rolls out; once the legacy
+   * dispatch is deleted this handler should be removed alongside the
+   * old frame type.
+   */
   onCard?: (frame: CardFrame) => void;
+  /**
+   * New handler — fires for ``card_proposed`` frames emitted by the
+   * apps/agent runtime after a ``propose_card`` tool call persists a
+   * node. The payload is the full persisted node.
+   */
+  onCardProposed?: (node: AgentNode) => void;
+  onDraftAssembled?: (frame: DraftAssembledFrame) => void;
+  onNodeUpdated?: (node: AgentNode) => void;
   /**
    * Caller-owned abort controller ref. The hook writes a fresh
    * AbortController into this ref at the start of every stream so the caller
@@ -279,6 +314,15 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "card":
                 current.onCard?.(frame);
                 break;
+              case "card_proposed":
+                current.onCardProposed?.(frame.node);
+                break;
+              case "draft_assembled":
+                current.onDraftAssembled?.(frame);
+                break;
+              case "node_updated":
+                current.onNodeUpdated?.(frame.node);
+                break;
             }
             if (terminated) break;
           }
@@ -324,6 +368,15 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "card":
         current.onCard?.(frame);
+        break;
+      case "card_proposed":
+        current.onCardProposed?.(frame.node);
+        break;
+      case "draft_assembled":
+        current.onDraftAssembled?.(frame);
+        break;
+      case "node_updated":
+        current.onNodeUpdated?.(frame.node);
         break;
     }
   }

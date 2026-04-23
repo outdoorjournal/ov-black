@@ -31,6 +31,7 @@ from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
 from app.db import get_session, get_sessionmaker
 from app.models import (
+    Client,
     EdgeType,
     ItineraryStatus,
     NodeStatus,
@@ -202,6 +203,21 @@ def _advisor_actor_from_user(user: AuthenticatedUser) -> ActorContext:
     )
 
 
+async def _resolve_client_auth_user_id(
+    session: "AsyncSession", client_id: uuid.UUID
+) -> uuid.UUID | None:
+    """Return the ``auth.users.id`` for the client, or None if missing.
+
+    Extracted as a helper so the owner check on the draft-read gate can
+    be monkey-patched by route-level tests that stub the DB session.
+    """
+    return (
+        await session.execute(
+            select(Client.auth_user_id).where(Client.id == client_id)
+        )
+    ).scalar_one_or_none()
+
+
 async def _is_requester_advisor(
     session: "AsyncSession", user_uuid: uuid.UUID | None
 ) -> bool:
@@ -300,15 +316,25 @@ async def get_itinerary_endpoint(
     # Draft-read gate: on status='draft', only advisors, the owning client,
     # or the creator of the itinerary may read the graph. Everyone else
     # gets a 403 with detail='forbidden' so the client-side SDK can
-    # discriminate deterministically.
+    # discriminate deterministically. The agent acting on the client's
+    # behalf carries the client's JWT, so the same ``is_owner`` branch
+    # admits it without a separate actor_kind check.
     itinerary_row = result.itinerary
     if itinerary_row.status is ItineraryStatus.draft:
         actor = _actor_from_user(user)
-        is_owner = (
-            actor.user_id is not None
-            and itinerary_row.client_id is not None
-            and actor.user_id == itinerary_row.client_id
-        )
+        # ``is_owner`` compares the caller's auth.users id against the
+        # clients row linked to this itinerary — clients.id and
+        # auth.users.id live in different UUID namespaces, so resolve via
+        # clients.auth_user_id rather than comparing directly.
+        is_owner = False
+        if actor.user_id is not None and itinerary_row.client_id is not None:
+            owning_auth_user_id = await _resolve_client_auth_user_id(
+                session, itinerary_row.client_id
+            )
+            is_owner = (
+                owning_auth_user_id is not None
+                and owning_auth_user_id == actor.user_id
+            )
         is_creator = (
             actor.user_id is not None
             and itinerary_row.created_by is not None

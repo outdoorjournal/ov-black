@@ -131,6 +131,14 @@ class Settings(BaseSettings):
             "runs don't require a provisioned Memory resource."
         ),
     )
+    agent_local_url: str = Field(
+        default="",
+        description=(
+            "When set (e.g. ``http://localhost:8080``), the FastAPI lifespan "
+            "wires LocalAgentRuntimeClient instead of Boto3 — lets local dev "
+            "exercise the ``apps/agent`` runtime over HTTP without AWS creds."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

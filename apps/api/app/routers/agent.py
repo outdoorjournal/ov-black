@@ -122,12 +122,9 @@ async def create_session_endpoint(
         get_sessionmaker(),
         actor=actor,
         client_id=payload.client_id,
+        itinerary_id=payload.itinerary_id,
     )
-    if (
-        outcome is not SessionOutcome.OK
-        or agent_session is None
-        or itinerary_id is None
-    ):
+    if outcome is not SessionOutcome.OK or agent_session is None:
         # Collapsed 404 shape (D015) — FORBIDDEN and CLIENT_NOT_FOUND both
         # land here so a caller cannot probe existence of a client_id.
         raise HTTPException(status_code=404, detail="client_not_found")
@@ -209,12 +206,20 @@ async def turn_endpoint(
         raise HTTPException(status_code=404, detail="session_not_found")
 
     runtime = get_agent_runtime(request)
+    # Forward the raw Bearer token so the agent runtime can set
+    # Authorization on its tool callbacks. Middleware has already
+    # validated the JWT once; we simply strip the scheme here.
+    raw_auth = request.headers.get("authorization", "")
+    auth_bearer = (
+        raw_auth.split(" ", 1)[1] if raw_auth.lower().startswith("bearer ") else ""
+    )
     body_stream = stream_turn(
         get_sessionmaker(),
         runtime,
         actor=actor,
         session_id=session_id,
         content=payload.content,
+        auth_bearer=auth_bearer,
     )
     return StreamingResponse(
         content=body_stream,

@@ -1,0 +1,41 @@
+default_agent: ov_black_agent
+agents:
+  ov_black_agent:
+    name: ov_black_agent
+    entrypoint: /Users/cmyers/personal/ov-black/apps/agent/src/agent/app.py
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: /Users/cmyers/personal/ov-black/apps/agent/src/agent
+    aws:
+      execution_role: arn:aws:iam::437988666846:role/AmazonBedrockAgentCoreSDKRuntime-us-west-2-0d4a33a60f
+      execution_role_auto_create: false
+      account: '437988666846'
+      region: us-west-2
+      ecr_repository: 437988666846.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-ov_black_agent
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: ov_black_agent-2MIh7P5XKv
+      agent_arn: arn:aws:bedrock-agentcore:us-west-2:437988666846:runtime/ov_black_agent-2MIh7P5XKv
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-ov_black_agent-builder
+      execution_role: arn:aws:iam::437988666846:role/AmazonBedrockAgentCoreSDKCodeBuild-us-west-2-0d4a33a60f
+      source_bucket: bedrock-agentcore-codebuild-sources-437988666846-us-west-2
+    memory:
+      mode: STM_ONLY
+      memory_id: ov_black_agent_mem-K3FhVV5vR3
+      memory_arn: arn:aws:bedrock-agentcore:us-west-2:437988666846:memory/ov_black_agent_mem-K3FhVV5vR3
+      memory_name: ov_black_agent_mem
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: true
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null

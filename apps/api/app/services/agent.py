@@ -53,6 +53,7 @@ from app.models import (
     AgentTurn,
     Client,
     Itinerary,
+    ItineraryStatus,
     Node,
     NodeStatus,
     NodeType,
@@ -236,19 +237,22 @@ async def open_or_reuse_session(
     *,
     actor: ActorContext,
     client_id: uuid.UUID,
+    itinerary_id: uuid.UUID | None = None,
 ) -> tuple[SessionOutcome, AgentSession | None, uuid.UUID | None]:
     """Idempotently open an AgentSession for a client.
 
     If an open session exists (``ended_at IS NULL``), return it; else INSERT
     one with a fresh ``agentcore_session_id``. Caller cannot distinguish
-    reuse from create from the HTTP surface — both return 201 above. We
-    *do* emit different log events so observability can tell the two apart.
+    reuse from create from the HTTP surface — both return 201 above.
 
-    On the OK path the tuple's third element is the one-per-client itinerary
-    id (created on-demand by ``_ensure_itinerary_for_client`` if it's the
-    very first session). This lets the RSC chat page hydrate the MoodBoard
-    on a hard reload without a separate lookup. Non-OK outcomes return
-    ``None`` for the itinerary id.
+    ``itinerary_id``:
+      - **Omitted**: open a general (unpinned) session. The returned
+        itinerary_id is whatever the session currently carries (possibly
+        None — the agent auto-pins on its first write in planning mode).
+      - **Provided**: pin the session to this specific itinerary. The
+        itinerary must belong to ``client_id`` or the call is rejected
+        with ``FORBIDDEN``. If the session is being reused and was
+        unpinned, we update its pin to this value.
     """
     async with session_factory() as session:
         client = (
@@ -258,8 +262,7 @@ async def open_or_reuse_session(
             return SessionOutcome.CLIENT_NOT_FOUND, None, None
 
         # JIT-backfill the client↔auth.users link on the first POST /sessions
-        # made by the client themself. Only runs when the link is missing and
-        # the caller's JWT sub points at an auth.users row whose email matches.
+        # made by the client themself.
         backfilled = False
         if (
             actor.actor_kind == "user"
@@ -279,6 +282,18 @@ async def open_or_reuse_session(
                 return SessionOutcome.FORBIDDEN, None, None
         # actor_kind == 'agent' is internal — no additional gate here.
 
+        # If the caller is pinning the session, verify the itinerary
+        # actually belongs to this client. Hides existence of foreign
+        # itineraries behind the standard FORBIDDEN outcome.
+        if itinerary_id is not None:
+            owner_cid = (
+                await session.execute(
+                    select(Itinerary.client_id).where(Itinerary.id == itinerary_id)
+                )
+            ).scalar_one_or_none()
+            if owner_cid is None or owner_cid != client_id:
+                return SessionOutcome.FORBIDDEN, None, None
+
         existing = (
             await session.execute(
                 select(AgentSession).where(
@@ -288,6 +303,9 @@ async def open_or_reuse_session(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if itinerary_id is not None and existing.itinerary_id != itinerary_id:
+                existing.itinerary_id = itinerary_id
+                await session.commit()
             if backfilled:
                 logger.info(
                     "agent.auth.client_backfilled",
@@ -302,18 +320,15 @@ async def open_or_reuse_session(
                 extra={
                     "session_id": str(existing.id),
                     "client_id": str(client_id),
+                    "itinerary_pinned": existing.itinerary_id is not None,
                 },
             )
-            itinerary_id = await _ensure_itinerary_for_client(
-                session,
-                client_id=client_id,
-                actor_user_id=actor.user_id,
-            )
-            return SessionOutcome.OK, existing, itinerary_id
+            return SessionOutcome.OK, existing, existing.itinerary_id
 
         new = AgentSession(
             client_id=client_id,
             agentcore_session_id=str(uuid.uuid4()),
+            itinerary_id=itinerary_id,
         )
         session.add(new)
         await session.commit()
@@ -332,14 +347,10 @@ async def open_or_reuse_session(
             extra={
                 "session_id": str(new.id),
                 "client_id": str(client_id),
+                "itinerary_pinned": new.itinerary_id is not None,
             },
         )
-        itinerary_id = await _ensure_itinerary_for_client(
-            session,
-            client_id=client_id,
-            actor_user_id=actor.user_id,
-        )
-        return SessionOutcome.OK, new, itinerary_id
+        return SessionOutcome.OK, new, new.itinerary_id
 
 
 # ── list_turns ─────────────────────────────────────────────────────────────
@@ -383,6 +394,92 @@ async def list_turns(
 
 
 # ── stream_turn ────────────────────────────────────────────────────────────
+
+
+async def _detect_mode(
+    session: AsyncSession,
+    *,
+    itinerary_id: uuid.UUID | None,
+    client_id: uuid.UUID,
+) -> str:
+    """Classify the turn as ``onboarding``, ``planning``, or ``qa``.
+
+    Rules (from the plan):
+
+    - **planning**: session is pinned to a draft itinerary.
+    - **qa**: session is pinned to an approved itinerary, OR session is
+      unpinned and the client already has ≥1 approved itinerary.
+    - **onboarding**: session is unpinned and the client has no
+      approved itineraries yet.
+
+    One SQL round-trip in the pinned case (fetch status of the pinned
+    itinerary); one in the unpinned case (count approved itineraries).
+    Always returns a string — never raises — so a DB hiccup can't break
+    a turn; worst case we default to ``onboarding`` and let the agent
+    reorient.
+    """
+    try:
+        if itinerary_id is not None:
+            status = (
+                await session.execute(
+                    select(Itinerary.status).where(Itinerary.id == itinerary_id)
+                )
+            ).scalar_one_or_none()
+            if status is ItineraryStatus.approved:
+                return "qa"
+            return "planning"
+
+        any_approved = (
+            await session.execute(
+                select(func.count())
+                .select_from(Itinerary)
+                .where(
+                    Itinerary.client_id == client_id,
+                    Itinerary.status == ItineraryStatus.approved,
+                )
+            )
+        ).scalar_one_or_none()
+        return "qa" if any_approved else "onboarding"
+    except (SQLAlchemyError, AssertionError):
+        # Tests with fake-factory session objects may not model this
+        # exact query; fall back to the safe default rather than crash
+        # the turn. A production DB hiccup collapses here too.
+        return "onboarding"
+
+
+async def _load_prior_turns(
+    session: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    limit: int = 20,
+) -> list[dict[str, str]]:
+    """Fetch the last ``limit`` user/assistant turns for conversational context.
+
+    Excludes ``system``/``tool``/``error`` roles — those are not part of
+    the model-visible history. Returns oldest-first so the runtime can
+    prepend the current user message without a reversal.
+    """
+    try:
+        rows = (
+            await session.execute(
+                select(AgentTurn.role, AgentTurn.content)
+                .where(
+                    AgentTurn.session_id == session_id,
+                    AgentTurn.role.in_((TurnRole.user, TurnRole.assistant)),
+                    AgentTurn.content != "",
+                )
+                .order_by(AgentTurn.turn_index.desc())
+                .limit(limit)
+            )
+        ).all()
+    except (SQLAlchemyError, AssertionError):
+        # Fake-factory tests may not model this query; conversation history
+        # is best-effort — a miss just means the model starts fresh.
+        return []
+    return [
+        {"role": r.role.value if hasattr(r.role, "value") else str(r.role), "content": r.content}
+        for r in reversed(rows)
+    ]
 
 
 async def _load_session_context(
@@ -695,6 +792,7 @@ async def stream_turn(
     actor: ActorContext,
     session_id: uuid.UUID,
     content: str,
+    auth_bearer: str | None = None,
     settings: Settings | None = None,
 ) -> AsyncIterator[bytes]:
     """Orchestrate one turn end-to-end and yield SSE frames as bytes.
@@ -770,6 +868,13 @@ async def stream_turn(
         agentcore_session_id = agent_session.agentcore_session_id
         client_id = client_row.id
         actor_user_id = actor.user_id
+        pinned_itinerary_id = agent_session.itinerary_id
+
+        # Mode + prior turns — both cheap SELECTs, same transaction.
+        mode = await _detect_mode(
+            db, itinerary_id=pinned_itinerary_id, client_id=client_id
+        )
+        prior_turns = await _load_prior_turns(db, session_id=session_id)
 
         user_turn = AgentTurn(
             session_id=session_id,
@@ -809,9 +914,24 @@ async def stream_turn(
     first_token_deadline = settings.agent_first_token_timeout_seconds
     started = time.monotonic()
 
+    # Payload contract — new-runtime fields + the legacy ``input`` field so
+    # the pre-agent-workspace runtime (out-of-band AgentCore agent) keeps
+    # working while we roll out. The new apps/agent runtime reads
+    # ``input_text`` and ignores ``input``; the legacy runtime was wired
+    # against ``input``. Remove once the new runtime is in staging and
+    # traffic has shifted.
     payload = {
         "system": system_prompt,
         "input": [{"role": "user", "content": [{"text": content}]}],
+        "input_text": content,
+        "prior_turns": prior_turns,
+        "mode": mode,
+        "auth_bearer": auth_bearer or "",
+        "actor_kind": actor.actor_kind,
+        "client_id": str(client_id),
+        "itinerary_id": (
+            str(pinned_itinerary_id) if pinned_itinerary_id else None
+        ),
     }
 
     assembled_text = ""

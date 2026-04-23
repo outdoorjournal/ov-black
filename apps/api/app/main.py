@@ -6,7 +6,11 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.agent.bedrock import Boto3AgentRuntimeClient, MockAgentRuntimeClient
+from app.agent.bedrock import (
+    Boto3AgentRuntimeClient,
+    LocalAgentRuntimeClient,
+    MockAgentRuntimeClient,
+)
 from app.auth import PUBLIC_PATHS, AuthenticatedUser, JWTAuthMiddleware, require_user
 from app.config import get_settings
 from app.db import dispose_engine
@@ -72,7 +76,15 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
     # resolve it through the get_agent_runtime dependency. In local dev with
     # an unset ARN we install a canned mock so `uv run pytest` and
     # `uvicorn --reload` work without AWS creds.
-    if settings.env == "local" and not settings.bedrock_agentcore_runtime_arn:
+    if settings.agent_local_url:
+        _app.state.agent_runtime = LocalAgentRuntimeClient(
+            base_url=settings.agent_local_url,
+        )
+        logger.info(
+            "agent.runtime.configured",
+            extra={"arn_tail": None, "mode": "local_http"},
+        )
+    elif settings.env == "local" and not settings.bedrock_agentcore_runtime_arn:
         _app.state.agent_runtime = MockAgentRuntimeClient(
             events=[
                 {"type": "delta", "text": "Hello, I'm your AgentCore scratchpad."},
