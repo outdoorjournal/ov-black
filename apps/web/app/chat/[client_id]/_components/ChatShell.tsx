@@ -15,6 +15,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useRef,
   type Dispatch,
@@ -29,6 +30,7 @@ import {
   type ErrorFrame,
 } from "@/lib/agentStream";
 import { useAtmosOverride, usePhaseShiftMood } from "@/lib/atmos/classifier";
+import { createBrowserSupabase } from "@/lib/supabase";
 
 import { AtmosFrame } from "./AtmosFrame";
 import type { CardActionKind } from "./Card";
@@ -203,9 +205,34 @@ export function ChatShell({
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // Build a per-call token provider. The browser Supabase client is
+  // configured by @supabase/ssr to auto-refresh the session, so its
+  // getSession() returns a freshly-minted access token when the previous one
+  // expired while the user was idle. We fall back to the initial SSR-passed
+  // `accessToken` prop only when the browser client has no session at all —
+  // that path is exercised by unit tests (jsdom, no NEXT_PUBLIC_ env) and by
+  // a race window right after hydration before the session rehydrates.
+  const getAccessToken = useMemo<() => Promise<string | null>>(() => {
+    let supabase: ReturnType<typeof createBrowserSupabase> | null = null;
+    try {
+      supabase = createBrowserSupabase();
+    } catch {
+      supabase = null;
+    }
+    return async () => {
+      if (supabase) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.access_token) return session.access_token;
+      }
+      return accessToken ?? null;
+    };
+  }, [accessToken]);
+
   const { sendTurn } = useAgentStream({
     sessionId,
-    accessToken,
+    getAccessToken,
     apiBaseUrl,
     abortRef,
     onFirstToken: () => {
@@ -281,18 +308,24 @@ export function ChatShell({
       if (card.status === nextStatus) return;
       const previousStatus = card.status;
       dispatch({ type: "card_action", nodeId, nextStatus });
-      const api = createApiClient({ baseUrl: apiBaseUrl, accessToken });
-      void updateNodeStatus(api, {
-        itineraryId,
-        nodeId,
-        status: nextStatus,
-      }).then((result) => {
+      void (async () => {
+        const token = await getAccessToken();
+        if (!token) {
+          dispatch({ type: "card_action_reverted", nodeId, previousStatus });
+          return;
+        }
+        const api = createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
+        const result = await updateNodeStatus(api, {
+          itineraryId,
+          nodeId,
+          status: nextStatus,
+        });
         if (!result.ok) {
           dispatch({ type: "card_action_reverted", nodeId, previousStatus });
         }
-      });
+      })();
     },
-    [accessToken, apiBaseUrl, itineraryId, state.cards],
+    [apiBaseUrl, getAccessToken, itineraryId, state.cards],
   );
 
   const submit = useCallback(

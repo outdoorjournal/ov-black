@@ -170,7 +170,12 @@ export function parseFrames(buffer: string): ParseResult {
 
 export type UseAgentStreamOptions = {
   sessionId: string;
-  accessToken: string;
+  // Called immediately before each fetch so we pick up a token refreshed by
+  // @supabase/ssr since the last turn. Returning null aborts the turn with the
+  // same `upstream_unavailable` surface as a network failure — the user is
+  // logged out or cookies are gone, and the page should bounce back through
+  // /auth on next nav anyway.
+  getAccessToken: () => Promise<string | null>;
   apiBaseUrl: string;
   onFirstToken?: (frame: FirstTokenFrame) => void;
   onDelta?: (frame: DeltaFrame) => void;
@@ -227,8 +232,7 @@ function isAbortError(err: unknown): boolean {
  * downstream UI code only handles one error path.
  */
 export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamResult {
-  const { sessionId, accessToken, apiBaseUrl, onFirstToken, onDelta, onDone, onError, abortRef } =
-    options;
+  const { abortRef } = options;
 
   // Hold the latest options in a ref so sendTurn's identity is stable across
   // renders without stale-closure issues when the consumer re-renders with
@@ -247,12 +251,23 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
       const url = `${current.apiBaseUrl}/sessions/${current.sessionId}/turn`;
       const pathForLog = `/sessions/${current.sessionId}/turn`;
 
+      // Pull the freshest token right before the fetch. @supabase/ssr's
+      // browser client keeps the in-memory session auto-refreshed, so this
+      // returns a newly-minted JWT when the previous one expired while the
+      // user was idle between turns.
+      const token = await current.getAccessToken();
+      if (!token) {
+        console.error("[agentStream] no access token available", { path: pathForLog });
+        current.onError?.({ type: "error", reason: "upstream_unavailable" });
+        return;
+      }
+
       let response: Response;
       try {
         response = await fetch(url, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${current.accessToken}`,
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
             Accept: "text/event-stream",
           },
@@ -342,9 +357,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
         }
       }
     },
-    // onFirstToken/onDelta/onDone/onError/sessionId/accessToken/apiBaseUrl
-    // are all read off optsRef.current at call time, so sendTurn's identity
-    // only needs to change when abortRef swaps.
+    // All options (callbacks, sessionId, getAccessToken, apiBaseUrl) are read
+    // off optsRef.current at call time, so sendTurn's identity only needs to
+    // change when abortRef swaps.
     [abortRef],
   );
 

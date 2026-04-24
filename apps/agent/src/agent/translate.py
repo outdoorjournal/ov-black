@@ -35,15 +35,22 @@ _TOOL_FRAME_TYPES = {
 
 def _extract_delta_text(event: dict) -> str | None:
     """Pull text from a Strands/Bedrock delta envelope in a version-tolerant way."""
-    # Strands-native shape used by recent releases:
+    # Current Strands shape: {"data": "<text>", "delta": {"text": "<text>"}, ...}
+    data = event.get("data")
+    if isinstance(data, str) and data:
+        return data
+    # Older Strands shape: delta as a plain string.
     if isinstance(event.get("delta"), str):
         return event["delta"] or None
-    # Some releases expose data at the top level with type hints.
+    # Type-hinted releases.
     if event.get("type") in {"delta", "text_delta"}:
         text = event.get("text")
         if isinstance(text, str):
             return text or None
-    # Bedrock Converse stream-through exposes the tuple under contentBlockDelta.
+    # Bedrock Converse raw top-level envelope (very old Strands). The
+    # current SDK wraps these in {"event": {...}} AND re-emits a
+    # {"data": "..."} frame — we pick the normalized one above to avoid
+    # double-emitting, so this path only catches legacy top-level shapes.
     block = event.get("contentBlockDelta") or event.get("content_block_delta")
     if isinstance(block, dict):
         d = block.get("delta")

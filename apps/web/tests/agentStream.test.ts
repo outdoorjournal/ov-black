@@ -144,7 +144,7 @@ describe("useAgentStream (onCard dispatch)", () => {
     const { result } = renderHook(() =>
       useAgentStream({
         sessionId: "sess-1",
-        accessToken: "tok",
+        getAccessToken: async () => "tok",
         apiBaseUrl: "http://api.test",
         onCard,
         onDone,

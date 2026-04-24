@@ -29,11 +29,11 @@ class Settings(BaseSettings):
         description="AWS region for Bedrock model invocations.",
     )
     bedrock_model_id: str = Field(
-        default="anthropic.claude-sonnet-4-5-20250929-v1:0",
+        default="us.anthropic.claude-sonnet-4-6",
         description=(
-            "Foundation model id for Bedrock. Claude Sonnet 4.5 is the "
-            "concierge-voice balance point; swap to Opus for slower, "
-            "more-considered planning sessions if needed."
+            "Bedrock inference profile id (cross-region routing). Claude 4.x "
+            "Sonnet/Opus do not support on-demand throughput against raw model "
+            "ids — must be an inference profile."
         ),
     )
 

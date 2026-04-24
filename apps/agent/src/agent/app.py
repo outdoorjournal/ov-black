@@ -85,12 +85,12 @@ async def invoke(payload, context=None):  # type: ignore[no-untyped-def]
 
     try:
         agent = build_agent(_model, req)
-        messages: list[dict] = []
-        for turn in prior:
-            messages.append({"role": turn.role, "content": turn.content})
-        messages.append({"role": "user", "content": req.input_text})
+        agent.messages = [
+            {"role": turn.role, "content": [{"text": turn.content}]}
+            for turn in prior
+        ]
 
-        async for ev in agent.stream_async(messages):
+        async for ev in agent.stream_async(req.input_text):
             if not isinstance(ev, dict):
                 continue
             for frame in translate_event(ev):
