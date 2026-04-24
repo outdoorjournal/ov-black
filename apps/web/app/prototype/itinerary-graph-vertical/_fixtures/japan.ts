@@ -1,0 +1,1538 @@
+import type {
+  EdgeResponse,
+  NodeResponse,
+  VerticalTimeline,
+  NodeType,
+  VerticalNodeMeta,
+  NodeStatus,
+} from "../_lib/types";
+import { endOf, isoTokyo, makeEdge, makeItinerary, makeNode, resetCounters } from "./builders";
+
+const ITINERARY_ID = "it-japan-2024";
+
+interface Item {
+  idHint: string;
+  type: NodeType;
+  title: string;
+  start: string;
+  durationMinutes: number;
+  location?: { lat: number; lng: number; label?: string };
+  ambient_image?: string;
+  description?: string;
+  body?: string;
+  time_of_day?: VerticalNodeMeta["time_of_day"];
+  mode?: string;
+  flight_code?: string;
+  iata_from?: string;
+  iata_to?: string;
+  snapshot?: {
+    title: string;
+    cover_image?: string;
+    price?: string;
+    location?: string;
+    activities?: string[];
+  };
+  alt_group?: string;
+  night_bar?: boolean;
+  source_id?: string;
+  status?: NodeStatus;
+}
+
+interface DayData {
+  date: string;
+  weather_emoji?: string;
+  items: Item[];
+  grouped_with?: string[][];
+  alternative_groups?: string[][];
+}
+
+const DAYS: DayData[] = [
+  {
+    date: "2024-06-20",
+    weather_emoji: "☁",
+    items: [
+      {
+        idHint: "day01-arrival",
+        type: "flight",
+        title: "Arrive Haneda — Delta DL275",
+        start: isoTokyo("2024-06-20", "16:10"),
+        durationMinutes: 30,
+        flight_code: "DL275",
+        iata_from: "LAX",
+        iata_to: "HND",
+        location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
+        ambient_image: "/japan/day01_passport_stamp_example.jpg",
+        description:
+          "Use Visit Japan Web, then go through a staffed counter so you get the Temporary Visitor entry stamp needed for the JR Pass.",
+      },
+      {
+        idHint: "day01-assistant",
+        type: "note",
+        title: "Meet airport assistant at arrivals",
+        start: isoTokyo("2024-06-20", "16:40"),
+        durationMinutes: 20,
+        body: "Mr. Takebayashi Kei · 080-3094-0463. Shows you the IC card, validates the JR Pass, escorts you to the apartment.",
+      },
+      {
+        idHint: "day01-train",
+        type: "transit",
+        title: "Keikyu Airport Line Express → Shin-Nakano",
+        start: isoTokyo("2024-06-20", "17:00"),
+        durationMinutes: 79,
+        mode: "Keikyu Airport Line Express · IC card",
+        location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano" },
+      },
+      {
+        idHint: "day01-checkin",
+        type: "note",
+        title: "Apartment self-check-in",
+        start: isoTokyo("2024-06-20", "18:30"),
+        durationMinutes: 30,
+        body: "Assistant helps with self-check-in, then service ends. Dinner excluded.",
+      },
+      {
+        idHint: "day01-apt",
+        type: "hotel",
+        title: "Apartment in Shin-Nakano · Night 1 of 4",
+        start: isoTokyo("2024-06-20", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "shin-nakano",
+        location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano, Tokyo" },
+        ambient_image: "/japan/day01_apartment_shin_nakano.jpg",
+        snapshot: {
+          title: "Apartment in Shin-Nakano",
+          cover_image: "/japan/day01_apartment_shin_nakano.jpg",
+          location: "Nakano-ku, Tokyo",
+          activities: ["2 double beds", "One-bedroom unit"],
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-06-21",
+    weather_emoji: "☀",
+    items: [
+      {
+        idHint: "day02-guide",
+        type: "note",
+        title: "Guide meets you at the apartment",
+        start: isoTokyo("2024-06-21", "07:40"),
+        durationMinutes: 25,
+        body: "Mr. Takebayashi Kei · 080-3094-0463",
+      },
+      {
+        idHint: "day02-train-tsukiji",
+        type: "transit",
+        title: "Local train → Tsukijishijo",
+        start: isoTokyo("2024-06-21", "08:08"),
+        durationMinutes: 22,
+        mode: "Tokyo Metro · IC card",
+        location: { lat: 35.6646, lng: 139.7709 },
+      },
+      {
+        idHint: "day02-tsukiji",
+        type: "experience",
+        title: "Tsukiji Outer Market food tour",
+        start: isoTokyo("2024-06-21", "08:30"),
+        durationMinutes: 90,
+        location: { lat: 35.6654, lng: 139.7707, label: "Tsukiji Outer Market" },
+        ambient_image: "/japan/day02_tsukiji_market.jpg",
+        description: "Tasting of traditional Japanese breakfast fare with an expert guide.",
+        snapshot: {
+          title: "Tsukiji Outer Market food tour",
+          cover_image: "/japan/day02_tsukiji_market.jpg",
+          location: "Chuo-ku, Tokyo",
+          activities: ["Tamagoyaki", "Tuna cuts", "Matcha"],
+        },
+      },
+      {
+        idHint: "day02-subway-asakusa",
+        type: "transit",
+        title: "Subway → Asakusa",
+        start: isoTokyo("2024-06-21", "10:00"),
+        durationMinutes: 16,
+        mode: "Tokyo Metro · IC card",
+      },
+      {
+        idHint: "day02-sensoji",
+        type: "experience",
+        title: "Sensō-ji & Nakamise-dori",
+        start: isoTokyo("2024-06-21", "10:16"),
+        durationMinutes: 90,
+        location: { lat: 35.7148, lng: 139.7967, label: "Sensō-ji Temple" },
+        ambient_image: "/japan/day02_sensoji_asakusa.jpg",
+        description: "Kaminarimon gate · Nakamise Street · imo-kintsuba & ningyō-yaki.",
+        snapshot: {
+          title: "Sensō-ji",
+          cover_image: "/japan/day02_sensoji_asakusa.jpg",
+          location: "Asakusa, Taito-ku",
+          activities: ["Kaminarimon", "Nakamise street snacks"],
+        },
+      },
+      {
+        idHint: "day02-sumo",
+        type: "meal",
+        title: "Asakusa Sumo Club — chanko lunch + show",
+        start: isoTokyo("2024-06-21", "12:00"),
+        durationMinutes: 120,
+        time_of_day: "lunch",
+        location: { lat: 35.7166, lng: 139.7978 },
+        ambient_image: "/japan/day02_asakusa_sumo_stable.jpg",
+        description: "Chanko-nabe with retired sumo wrestlers plus a live show.",
+        snapshot: {
+          title: "Asakusa Sumo Club",
+          cover_image: "/japan/day02_asakusa_sumo_stable.jpg",
+          price: "Included",
+          location: "Asakusa",
+        },
+      },
+      {
+        idHint: "day02-return-asakusa",
+        type: "transit",
+        title: "Back to Asakusa",
+        start: isoTokyo("2024-06-21", "15:00"),
+        durationMinutes: 45,
+        mode: "IC card",
+      },
+      {
+        idHint: "day02-samurai",
+        type: "experience",
+        title: "Samurai Sword & Ninja Experience",
+        start: isoTokyo("2024-06-21", "16:00"),
+        durationMinutes: 75,
+        location: { lat: 35.7104, lng: 139.7970 },
+        ambient_image: "/japan/day02_samurai_ninja_experience.jpg",
+        description: "Order #S535502 · dress in samurai attire, katana handling, ninja demo.",
+        snapshot: {
+          title: "Samurai & Ninja Experience",
+          cover_image: "/japan/day02_samurai_ninja_experience.jpg",
+          location: "Asakusa",
+          activities: ["Katana handling", "Ninja demo", "Samurai attire"],
+        },
+      },
+      {
+        idHint: "day02-return",
+        type: "transit",
+        title: "Return to apartment with guide",
+        start: isoTokyo("2024-06-21", "17:30"),
+        durationMinutes: 30,
+      },
+      {
+        idHint: "day02-apt",
+        type: "hotel",
+        title: "Apartment in Shin-Nakano · Night 2 of 4",
+        start: isoTokyo("2024-06-21", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "shin-nakano",
+        location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano, Tokyo" },
+        ambient_image: "/japan/day02_apartment_shin_nakano.jpg",
+        snapshot: {
+          title: "Apartment in Shin-Nakano",
+          cover_image: "/japan/day02_apartment_shin_nakano.jpg",
+          location: "Nakano-ku, Tokyo",
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-06-22",
+    weather_emoji: "🌤",
+    items: [
+      {
+        idHint: "day03-metro",
+        type: "transit",
+        title: "Marunouchi line → Shinjuku-Sanchome",
+        start: isoTokyo("2024-06-22", "10:00"),
+        durationMinutes: 12,
+        mode: "Tokyo Metro · IC card",
+        location: { lat: 35.6917, lng: 139.7052 },
+      },
+      {
+        idHint: "day03-mocha",
+        type: "experience",
+        title: "MOCHA Lounge — Shinjuku cat café",
+        start: isoTokyo("2024-06-22", "10:30"),
+        durationMinutes: 60,
+        location: { lat: 35.6910, lng: 139.7052, label: "Shinjuku Pegasus Building 6F" },
+        ambient_image: "/japan/day03_mocha_cat_cafe.jpg",
+        description: "Walk-in cat café, ¥200 / 10 min / person.",
+        alt_group: "day03-suggestions",
+        snapshot: {
+          title: "MOCHA Lounge",
+          cover_image: "/japan/day03_mocha_cat_cafe.jpg",
+          location: "Shinjuku",
+          activities: ["Cats", "Coffee"],
+        },
+      },
+      {
+        idHint: "day03-artnia",
+        type: "experience",
+        title: "Artnia — Square Enix café",
+        start: isoTokyo("2024-06-22", "12:00"),
+        durationMinutes: 90,
+        location: { lat: 35.6934, lng: 139.7098 },
+        ambient_image: "/japan/day03_artnia_square_enix.jpg",
+        description: "Square Enix shop & café — book a time slot yourself.",
+        alt_group: "day03-suggestions",
+        snapshot: {
+          title: "Artnia",
+          cover_image: "/japan/day03_artnia_square_enix.jpg",
+          location: "Shinjuku East Side Square",
+          activities: ["Themed menu", "FF/Dragon Quest merch"],
+        },
+      },
+      {
+        idHint: "day03-namco",
+        type: "experience",
+        title: "Namco TOKYO — Kabukicho Tower",
+        start: isoTokyo("2024-06-22", "14:00"),
+        durationMinutes: 90,
+        location: { lat: 35.6950, lng: 139.7019 },
+        ambient_image: "/japan/day03_namco_tokyo_shinjuku.jpg",
+        description: "3F arcade with a 3.3 m 'Big Crane' machine.",
+        alt_group: "day03-suggestions",
+        snapshot: {
+          title: "Namco TOKYO",
+          cover_image: "/japan/day03_namco_tokyo_shinjuku.jpg",
+          location: "Kabukicho",
+          activities: ["Arcade", "Big Crane"],
+        },
+      },
+      {
+        idHint: "day03-animate",
+        type: "experience",
+        title: "Animate Ikebukuro Main Store",
+        start: isoTokyo("2024-06-22", "16:00"),
+        durationMinutes: 120,
+        location: { lat: 35.7312, lng: 139.7167 },
+        ambient_image: "/japan/day03_animate_ikebukuro.jpg",
+        description: "9-story anime/manga flagship, renovated 2023.",
+        alt_group: "day03-suggestions",
+        snapshot: {
+          title: "Animate Ikebukuro",
+          cover_image: "/japan/day03_animate_ikebukuro.jpg",
+          location: "Higashi-Ikebukuro",
+          activities: ["Manga", "Figures", "Signed goods"],
+        },
+      },
+      {
+        idHint: "day03-apt",
+        type: "hotel",
+        title: "Apartment in Shin-Nakano · Night 3 of 4",
+        start: isoTokyo("2024-06-22", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "shin-nakano",
+        location: { lat: 35.6930, lng: 139.6662 },
+        ambient_image: "/japan/day03_apartment_shin_nakano.jpg",
+      },
+    ],
+    grouped_with: [
+      ["day03-mocha", "day03-artnia", "day03-namco", "day03-animate"],
+    ],
+  },
+  {
+    date: "2024-06-23",
+    weather_emoji: "⛅",
+    items: [
+      {
+        idHint: "day04-guide",
+        type: "note",
+        title: "Guide meets at apartment",
+        start: isoTokyo("2024-06-23", "07:50"),
+        durationMinutes: 10,
+        body: "Mr. Kei Takebayashi · 080-3094-0463",
+      },
+      {
+        idHint: "day04-train-teamlab",
+        type: "transit",
+        title: "Train → teamLab Planets",
+        start: isoTokyo("2024-06-23", "08:00"),
+        durationMinutes: 60,
+        mode: "IC card · ≈1h",
+      },
+      {
+        idHint: "day04-teamlab",
+        type: "experience",
+        title: "teamLab Planets TOKYO DMM",
+        start: isoTokyo("2024-06-23", "09:00"),
+        durationMinutes: 120,
+        location: { lat: 35.6498, lng: 139.7920, label: "Toyosu" },
+        ambient_image: "/japan/day04_teamlab_planets.jpg",
+        description: "Immersive, full-body digital art — you will get wet (towels provided).",
+        snapshot: {
+          title: "teamLab Planets",
+          cover_image: "/japan/day04_teamlab_planets.jpg",
+          location: "Toyosu, Koto-ku",
+          activities: ["Water rooms", "Infinite crystal universe"],
+        },
+      },
+      {
+        idHint: "day04-train-dome",
+        type: "transit",
+        title: "Train → Tokyo Dome",
+        start: isoTokyo("2024-06-23", "11:00"),
+        durationMinutes: 40,
+        mode: "IC card · ≈40 min",
+      },
+      {
+        idHint: "day04-dome",
+        type: "experience",
+        title: "Arrive Tokyo Dome",
+        start: isoTokyo("2024-06-23", "12:00"),
+        durationMinutes: 120,
+        location: { lat: 35.7056, lng: 139.7519 },
+        ambient_image: "/japan/day04_tokyo_dome_exterior.jpg",
+        description: "The 'Big Egg' — 1-3-61 Koraku, Bunkyo-ku.",
+      },
+      {
+        idHint: "day04-baseball",
+        type: "experience",
+        title: "Baseball: Giants vs Swallows",
+        start: isoTokyo("2024-06-23", "14:00"),
+        durationMinutes: 210,
+        location: { lat: 35.7056, lng: 139.7519 },
+        ambient_image: "/japan/day04_tokyo_dome_baseball.jpg",
+        description: "NPB Central League at Tokyo Dome.",
+        snapshot: {
+          title: "Giants vs Swallows",
+          cover_image: "/japan/day04_tokyo_dome_baseball.jpg",
+          location: "Tokyo Dome",
+          activities: ["Beer lady service", "Oendan chants"],
+        },
+      },
+      {
+        idHint: "day04-apt",
+        type: "hotel",
+        title: "Apartment in Shin-Nakano · Night 4 of 4",
+        start: isoTokyo("2024-06-23", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "shin-nakano",
+        location: { lat: 35.6930, lng: 139.6662 },
+        ambient_image: "/japan/day04_apartment_shin_nakano.jpg",
+      },
+    ],
+  },
+  {
+    date: "2024-06-24",
+    weather_emoji: "🌦",
+    items: [
+      {
+        idHint: "day05-metro-shinagawa",
+        type: "transit",
+        title: "Check out; metro → Shinagawa",
+        start: isoTokyo("2024-06-24", "07:30"),
+        durationMinutes: 40,
+        mode: "IC + JR Yamanote · JR Pass",
+        location: { lat: 35.6285, lng: 139.7387 },
+      },
+      {
+        idHint: "day05-shinkansen",
+        type: "transit",
+        title: "Shinkansen Hikari #635 → Kyoto",
+        start: isoTokyo("2024-06-24", "08:40"),
+        durationMinutes: 153,
+        mode: "JR Pass · reserved seats",
+        description: "Hikari is covered by JR Pass; Nozomi/Mizuho are not.",
+      },
+      {
+        idHint: "day05-arrive-kyoto",
+        type: "note",
+        title: "Arrive Kyoto Station",
+        start: isoTokyo("2024-06-24", "11:13"),
+        durationMinutes: 20,
+        location: { lat: 34.9859, lng: 135.7585 },
+      },
+      {
+        idHint: "day05-resistay-drop",
+        type: "note",
+        title: "Drop bags at RESI STAY Reception",
+        start: isoTokyo("2024-06-24", "11:35"),
+        durationMinutes: 25,
+        location: { lat: 34.9873, lng: 135.7589 },
+        ambient_image: "/japan/day05_resi_stay_reception.jpg",
+        body: "Open 08:00–20:00. Apartment check-in begins 15:00.",
+      },
+      {
+        idHint: "day05-bamboo",
+        type: "experience",
+        title: "Arashiyama Bamboo Grove",
+        start: isoTokyo("2024-06-24", "12:30"),
+        durationMinutes: 90,
+        location: { lat: 35.0170, lng: 135.6717 },
+        ambient_image: "/japan/day05_arashiyama_bamboo_grove.jpg",
+        description: "JR Sagano Line to Saga-Arashiyama, then walk.",
+        snapshot: {
+          title: "Arashiyama Bamboo Grove",
+          cover_image: "/japan/day05_arashiyama_bamboo_grove.jpg",
+          location: "Ukyo-ku, Kyoto",
+        },
+      },
+      {
+        idHint: "day05-monkey",
+        type: "experience",
+        title: "Arashiyama Monkey Park Iwatayama",
+        start: isoTokyo("2024-06-24", "14:30"),
+        durationMinutes: 120,
+        location: { lat: 35.0105, lng: 135.6758 },
+        ambient_image: "/japan/day05_arashiyama_monkey_park.jpg",
+        description: "~120 wild Japanese macaques; adult ¥600.",
+        snapshot: {
+          title: "Iwatayama Monkey Park",
+          cover_image: "/japan/day05_arashiyama_monkey_park.jpg",
+          location: "Nishikyo-ku, Kyoto",
+        },
+      },
+      {
+        idHint: "day05-return",
+        type: "transit",
+        title: "JR back to Kyoto; pick up luggage",
+        start: isoTokyo("2024-06-24", "16:30"),
+        durationMinutes: 60,
+        mode: "JR Pass",
+      },
+      {
+        idHint: "day05-apt",
+        type: "hotel",
+        title: "RESI STAY Apartment Kyoto · Night 1 of 2",
+        start: isoTokyo("2024-06-24", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "resistay-kyoto",
+        location: { lat: 34.9889, lng: 135.7575 },
+        ambient_image: "/japan/day05_apartment_kyoto_resistay.jpg",
+        snapshot: {
+          title: "RESI STAY Kyoto",
+          cover_image: "/japan/day05_apartment_kyoto_resistay.jpg",
+          location: "Shimogyō-ku, Kyoto",
+          activities: ["2 double beds", "Sofa bed"],
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-06-25",
+    weather_emoji: "☀",
+    items: [
+      {
+        idHint: "day06-fushimi",
+        type: "experience",
+        title: "Fushimi Inari Taisha — Senbon Torii",
+        start: isoTokyo("2024-06-25", "07:00"),
+        durationMinutes: 120,
+        location: { lat: 34.9671, lng: 135.7727 },
+        ambient_image: "/japan/day06_fushimi_inari_taisha.jpg",
+        description: "~4 km circuit up Mt. Inari (233 m).",
+        snapshot: {
+          title: "Fushimi Inari Taisha",
+          cover_image: "/japan/day06_fushimi_inari_taisha.jpg",
+          location: "Fushimi-ku, Kyoto",
+          activities: ["Senbon Torii", "Mt Inari summit"],
+        },
+      },
+      {
+        idHint: "day06-train-nara",
+        type: "transit",
+        title: "Kintetsu train → Nara",
+        start: isoTokyo("2024-06-25", "09:25"),
+        durationMinutes: 46,
+        mode: "Kintetsu Line · IC card (not JR)",
+      },
+      {
+        idHint: "day06-nara-park",
+        type: "experience",
+        title: "Nara Park — free-roaming deer",
+        start: isoTokyo("2024-06-25", "11:00"),
+        durationMinutes: 75,
+        location: { lat: 34.6851, lng: 135.8430 },
+        ambient_image: "/japan/day06_nara_park_deer.jpg",
+        alt_group: "day06-nara-suggestions",
+        snapshot: {
+          title: "Nara Park",
+          cover_image: "/japan/day06_nara_park_deer.jpg",
+          location: "Nara",
+        },
+      },
+      {
+        idHint: "day06-todaiji",
+        type: "experience",
+        title: "Tōdai-ji & Great Buddha Hall",
+        start: isoTokyo("2024-06-25", "12:30"),
+        durationMinutes: 75,
+        location: { lat: 34.6889, lng: 135.8398 },
+        ambient_image: "/japan/day06_todaiji_great_buddha.jpg",
+        alt_group: "day06-nara-suggestions",
+        snapshot: {
+          title: "Tōdai-ji",
+          cover_image: "/japan/day06_todaiji_great_buddha.jpg",
+          location: "Zoshicho, Nara",
+        },
+      },
+      {
+        idHint: "day06-naramachi",
+        type: "meal",
+        title: "Light meal in Naramachi old town",
+        start: isoTokyo("2024-06-25", "14:00"),
+        durationMinutes: 75,
+        time_of_day: "lunch",
+        location: { lat: 34.6780, lng: 135.8289 },
+        ambient_image: "/japan/day06_naramachi.jpg",
+        alt_group: "day06-nara-suggestions",
+        snapshot: {
+          title: "Naramachi",
+          cover_image: "/japan/day06_naramachi.jpg",
+          location: "Nara",
+        },
+      },
+      {
+        idHint: "day06-sumi",
+        type: "experience",
+        title: "Gripped Sumi ink experience · Kinkōen",
+        start: isoTokyo("2024-06-25", "17:00"),
+        durationMinutes: 60,
+        location: { lat: 34.6825, lng: 135.8290 },
+        ambient_image: "/japan/day06_kinkoen_sumi_ink.jpg",
+        description: "Hand-kneading raw Nara sumi ink — feel the warmth of fresh ink.",
+        snapshot: {
+          title: "Gripped Sumi at Kinkōen",
+          cover_image: "/japan/day06_kinkoen_sumi_ink.jpg",
+          location: "Sanjo-cho, Nara",
+          activities: ["Hand-knead", "Ink stick keepsake"],
+        },
+      },
+      {
+        idHint: "day06-return",
+        type: "transit",
+        title: "JR back to Kyoto",
+        start: isoTokyo("2024-06-25", "18:15"),
+        durationMinutes: 60,
+        mode: "JR Pass / IC card",
+      },
+      {
+        idHint: "day06-apt",
+        type: "hotel",
+        title: "RESI STAY Apartment Kyoto · Night 2 of 2",
+        start: isoTokyo("2024-06-25", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "resistay-kyoto",
+        location: { lat: 34.9889, lng: 135.7575 },
+        ambient_image: "/japan/day06_apartment_kyoto_resistay.jpg",
+      },
+    ],
+    grouped_with: [
+      ["day06-nara-park", "day06-todaiji", "day06-naramachi"],
+    ],
+  },
+  {
+    date: "2024-06-26",
+    weather_emoji: "🌧",
+    items: [
+      {
+        idHint: "day07-taxi",
+        type: "transit",
+        title: "Check out Kyoto apartment; taxi → Kyoto Station",
+        start: isoTokyo("2024-06-26", "07:40"),
+        durationMinutes: 20,
+        mode: "Taxi · pay on site",
+      },
+      {
+        idHint: "day07-shinkansen",
+        type: "transit",
+        title: "Shinkansen Hikari #535 → Hiroshima",
+        start: isoTokyo("2024-06-26", "08:29"),
+        durationMinutes: 124,
+        mode: "JR Pass · reserved seats",
+      },
+      {
+        idHint: "day07-arrive-hiro",
+        type: "note",
+        title: "Arrive Hiroshima Station — drop bags at Crosta",
+        start: isoTokyo("2024-06-26", "10:33"),
+        durationMinutes: 30,
+        location: { lat: 34.3979, lng: 132.4750 },
+        ambient_image: "/japan/day07_hiroshima_station_map.jpg",
+        body: "Crosta Hiroshima 1F · next to coin lockers.",
+      },
+      {
+        idHint: "day07-peace-park",
+        type: "note",
+        title: "Transfer to Peace Memorial Park Rest House",
+        start: isoTokyo("2024-06-26", "14:00"),
+        durationMinutes: 60,
+        location: { lat: 34.3932, lng: 132.4527 },
+        ambient_image: "/japan/day07_peace_memorial_rest_house.jpg",
+      },
+      {
+        idHint: "day07-cycling",
+        type: "experience",
+        title: "sokoiko! Hiroshima Peace Ride — cycling tour",
+        start: isoTokyo("2024-06-26", "15:00"),
+        durationMinutes: 120,
+        location: { lat: 34.3932, lng: 132.4527 },
+        ambient_image: "/japan/day07_sokoiko_cycling_tour.jpg",
+        description: "E-bike tour with an English guide: A-Bomb Dome, Peace Park, war sites.",
+        snapshot: {
+          title: "sokoiko! Peace Ride",
+          cover_image: "/japan/day07_sokoiko_cycling_tour.jpg",
+          location: "Naka-ku, Hiroshima",
+          activities: ["E-bike", "A-Bomb Dome", "Local narrative"],
+        },
+      },
+      {
+        idHint: "day07-tram-back",
+        type: "transit",
+        title: "Hiroden tram back to Hiroshima Station",
+        start: isoTokyo("2024-06-26", "17:30"),
+        durationMinutes: 40,
+        mode: "Hiroshima Electric Railway · IC card",
+        ambient_image: "/japan/day07_hiroshima_tram.jpg",
+      },
+      {
+        idHint: "day07-apt",
+        type: "hotel",
+        title: "Apartment Hiroshima · Night 1 of 3",
+        start: isoTokyo("2024-06-26", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "apt-hiroshima",
+        location: { lat: 34.3953, lng: 132.4638 },
+        ambient_image: "/japan/day07_apartment_hiroshima.jpg",
+        snapshot: {
+          title: "Apartment Hiroshima",
+          cover_image: "/japan/day07_apartment_hiroshima.jpg",
+          location: "Hatchōbori, Naka-ku",
+          activities: ["3 queen beds", "1 double", "1 single"],
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-06-27",
+    weather_emoji: "☀",
+    items: [
+      {
+        idHint: "day08-guide",
+        type: "note",
+        title: "Guide meets at apartment",
+        start: isoTokyo("2024-06-27", "10:40"),
+        durationMinutes: 16,
+        body: "Mr. Eijiro Kurisaka · 090-6832-1953",
+      },
+      {
+        idHint: "day08-tram",
+        type: "transit",
+        title: "Hiroden tram → Nishi-Hiroshima",
+        start: isoTokyo("2024-06-27", "10:56"),
+        durationMinutes: 28,
+        mode: "Hiroden · IC card",
+      },
+      {
+        idHint: "day08-jr",
+        type: "transit",
+        title: "JR → Miyajimaguchi",
+        start: isoTokyo("2024-06-27", "11:15"),
+        durationMinutes: 26,
+        mode: "JR Pass",
+      },
+      {
+        idHint: "day08-ferry",
+        type: "transit",
+        title: "JR ferry → Miyajima",
+        start: isoTokyo("2024-06-27", "12:55"),
+        durationMinutes: 10,
+        mode: "JR Pass · Miyajimaguchi Port",
+        location: { lat: 34.3083, lng: 132.3021 },
+      },
+      {
+        idHint: "day08-kayak",
+        type: "experience",
+        title: "Miyajima Sea Kayak — Nagahama Shrine Torii",
+        start: isoTokyo("2024-06-27", "13:30"),
+        durationMinutes: 150,
+        location: { lat: 34.2990, lng: 132.3165 },
+        ambient_image: "/japan/day08_miyajima_sea_kayak.jpg",
+        description: "2.5h sea kayak; insurance, paddle, jacket, water shoes included.",
+        snapshot: {
+          title: "Miyajima Sea Kayak",
+          cover_image: "/japan/day08_miyajima_sea_kayak.jpg",
+          location: "Hatsukaichi, Hiroshima",
+          activities: ["Coastal paddling", "Torii from water"],
+        },
+      },
+      {
+        idHint: "day08-itsukushima",
+        type: "experience",
+        title: "Itsukushima Shrine — great torii",
+        start: isoTokyo("2024-06-27", "16:30"),
+        durationMinutes: 70,
+        location: { lat: 34.2960, lng: 132.3199 },
+        ambient_image: "/japan/day08_itsukushima_shrine_torii.jpg",
+        description: "UNESCO-listed shrine built over the sea (1996).",
+        snapshot: {
+          title: "Itsukushima Shrine",
+          cover_image: "/japan/day08_itsukushima_shrine_torii.jpg",
+          location: "Miyajima",
+          activities: ["Great torii", "Shrine walk"],
+        },
+      },
+      {
+        idHint: "day08-return-ferry",
+        type: "transit",
+        title: "Ferry → Miyajimaguchi",
+        start: isoTokyo("2024-06-27", "17:40"),
+        durationMinutes: 10,
+        mode: "JR Pass",
+      },
+      {
+        idHint: "day08-tram-back",
+        type: "transit",
+        title: "Hiroden tram → Hatchobori",
+        start: isoTokyo("2024-06-27", "17:54"),
+        durationMinutes: 62,
+        mode: "IC card",
+      },
+      {
+        idHint: "day08-okonomi",
+        type: "meal",
+        title: "Okonomimura — Hiroshima-style okonomiyaki",
+        start: isoTokyo("2024-06-27", "19:30"),
+        durationMinutes: 90,
+        time_of_day: "evening",
+        location: { lat: 34.3929, lng: 132.4618 },
+        ambient_image: "/japan/day08_hiroshima_okonomiyaki.jpg",
+        description: "23 okonomiyaki stalls across 4 floors (present building opened 1992).",
+        snapshot: {
+          title: "Okonomimura",
+          cover_image: "/japan/day08_hiroshima_okonomiyaki.jpg",
+          location: "Naka-ku, Hiroshima",
+        },
+      },
+      {
+        idHint: "day08-apt",
+        type: "hotel",
+        title: "Apartment Hiroshima · Night 2 of 3",
+        start: isoTokyo("2024-06-27", "22:00"),
+        durationMinutes: 480,
+        night_bar: true,
+        source_id: "apt-hiroshima",
+        location: { lat: 34.3953, lng: 132.4638 },
+        ambient_image: "/japan/day08_apartment_hiroshima.jpg",
+      },
+    ],
+  },
+  {
+    date: "2024-06-28",
+    weather_emoji: "🌤",
+    items: [
+      {
+        idHint: "day09-assistant",
+        type: "note",
+        title: "Meet assistant at apartment",
+        start: isoTokyo("2024-06-28", "08:40"),
+        durationMinutes: 25,
+        body: "Ms. Twombly Mika · 050-1808-2269",
+      },
+      {
+        idHint: "day09-bus",
+        type: "transit",
+        title: "Highway bus Hatchobori → Tadanoumi Station",
+        start: isoTokyo("2024-06-28", "09:05"),
+        durationMinutes: 97,
+        mode: "Highway bus · IC card",
+        ambient_image: "/japan/day09_highway_bus.jpg",
+      },
+      {
+        idHint: "day09-arrive-tadanoumi",
+        type: "note",
+        title: "Arrive Tadanoumi · meet guide",
+        start: isoTokyo("2024-06-28", "10:42"),
+        durationMinutes: 78,
+        location: { lat: 34.3425, lng: 132.9432 },
+        body: "Meet Ms. Junko Mills · 090-6960-2158",
+      },
+      {
+        idHint: "day09-ferry-out",
+        type: "transit",
+        title: "Ferry → Okunoshima",
+        start: isoTokyo("2024-06-28", "12:00"),
+        durationMinutes: 15,
+        mode: "Ferry · guide pays",
+        ambient_image: "/japan/day09_okunoshima_ferry.jpg",
+      },
+      {
+        idHint: "day09-okunoshima",
+        type: "experience",
+        title: "Okunoshima — Rabbit Island & WWII ruins",
+        start: isoTokyo("2024-06-28", "12:15"),
+        durationMinutes: 93,
+        location: { lat: 34.3102, lng: 132.9845 },
+        ambient_image: "/japan/day09_okunoshima_rabbits.jpg",
+        description: "700+ wild rabbits · former poison-gas plant ruins.",
+        snapshot: {
+          title: "Okunoshima",
+          cover_image: "/japan/day09_okunoshima_rabbits.jpg",
+          location: "Takehara, Hiroshima",
+          activities: ["Rabbit feeding", "WWII ruins walk"],
+        },
+      },
+      {
+        idHint: "day09-ferry-back",
+        type: "transit",
+        title: "Ferry → Tadanoumi",
+        start: isoTokyo("2024-06-28", "13:48"),
+        durationMinutes: 15,
+        mode: "Ferry",
+      },
+      {
+        idHint: "day09-takehara",
+        type: "experience",
+        title: "Takehara old town — Little Kyoto of Hiroshima",
+        start: isoTokyo("2024-06-28", "14:15"),
+        durationMinutes: 120,
+        location: { lat: 34.3416, lng: 132.9080 },
+        ambient_image: "/japan/day09_takehara_old_town.jpg",
+        description: "Edo-period sake breweries and salt merchant houses.",
+        snapshot: {
+          title: "Takehara",
+          cover_image: "/japan/day09_takehara_old_town.jpg",
+          location: "Hiroshima",
+          activities: ["Sake brewery", "Bamboo workshop"],
+        },
+      },
+      {
+        idHint: "day09-bus-back",
+        type: "transit",
+        title: "Express bus → Hatchobori",
+        start: isoTokyo("2024-06-28", "16:34"),
+        durationMinutes: 101,
+        mode: "Express bus · IC card",
+      },
+      {
+        idHint: "day09-apt",
+        type: "hotel",
+        title: "Apartment Hiroshima · Night 3 of 3",
+        start: isoTokyo("2024-06-28", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "apt-hiroshima",
+        location: { lat: 34.3953, lng: 132.4638 },
+        ambient_image: "/japan/day09_apartment_hiroshima.jpg",
+      },
+    ],
+  },
+  {
+    date: "2024-06-29",
+    weather_emoji: "☀",
+    items: [
+      {
+        idHint: "day10-tram",
+        type: "transit",
+        title: "Tram Hatchobori → Hiroshima Station",
+        start: isoTokyo("2024-06-29", "09:35"),
+        durationMinutes: 13,
+        mode: "Hiroden · IC card",
+      },
+      {
+        idHint: "day10-shinkansen",
+        type: "transit",
+        title: "Shinkansen Sakura #544 → Shin-Osaka",
+        start: isoTokyo("2024-06-29", "10:33"),
+        durationMinutes: 86,
+        mode: "JR Pass · reserved",
+      },
+      {
+        idHint: "day10-subway",
+        type: "transit",
+        title: "Subway → Shitennoji-mae; drop bags at Shukubo",
+        start: isoTokyo("2024-06-29", "12:14"),
+        durationMinutes: 45,
+        mode: "JR + Tanimachi Line · IC",
+        location: { lat: 34.6546, lng: 135.5187 },
+      },
+      {
+        idHint: "day10-castle",
+        type: "experience",
+        title: "Osaka Castle",
+        start: isoTokyo("2024-06-29", "13:30"),
+        durationMinutes: 120,
+        location: { lat: 34.6873, lng: 135.5259 },
+        ambient_image: "/japan/day10_osaka_castle.jpg",
+        snapshot: {
+          title: "Osaka Castle",
+          cover_image: "/japan/day10_osaka_castle.jpg",
+          location: "Chuo-ku, Osaka",
+        },
+      },
+      {
+        idHint: "day10-shinsekai",
+        type: "experience",
+        title: "Shinsekai & Tsutenkaku Tower",
+        start: isoTokyo("2024-06-29", "16:00"),
+        durationMinutes: 90,
+        location: { lat: 34.6525, lng: 135.5063 },
+        ambient_image: "/japan/day10_shinsekai_tsutenkaku.jpg",
+        snapshot: {
+          title: "Shinsekai",
+          cover_image: "/japan/day10_shinsekai_tsutenkaku.jpg",
+          location: "Naniwa-ku, Osaka",
+        },
+      },
+      {
+        idHint: "day10-kushikatsu",
+        type: "meal",
+        title: "Kushikatsu dinner (don't double-dip)",
+        start: isoTokyo("2024-06-29", "17:30"),
+        durationMinutes: 75,
+        time_of_day: "evening",
+        location: { lat: 34.6525, lng: 135.5063 },
+        ambient_image: "/japan/day10_kushi_katsu.jpg",
+      },
+      {
+        idHint: "day10-dotonbori",
+        type: "experience",
+        title: "Dotonbori — neon stroll",
+        start: isoTokyo("2024-06-29", "19:00"),
+        durationMinutes: 75,
+        location: { lat: 34.6686, lng: 135.5016 },
+        ambient_image: "/japan/day10_dotonbori.jpg",
+      },
+      {
+        idHint: "day10-zazen",
+        type: "experience",
+        title: "Zazen meditation — Waqoo Shitaderamachi",
+        start: isoTokyo("2024-06-29", "20:30"),
+        durationMinutes: 60,
+        location: { lat: 34.6584, lng: 135.5178 },
+        ambient_image: "/japan/day10_zen_meditation_posture.jpg",
+        description: "Shared, included. Meet at front desk 20:20; instruction by visiting priest.",
+        snapshot: {
+          title: "Zazen at Waqoo",
+          cover_image: "/japan/day10_zen_meditation_room.jpg",
+          location: "Tennoji-ku, Osaka",
+          activities: ["Posture instruction", "Silent sitting"],
+        },
+      },
+      {
+        idHint: "day10-shukubo",
+        type: "hotel",
+        title: "Waqoo Shitaderamachi · Shukubo",
+        start: isoTokyo("2024-06-29", "22:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "waqoo-shukubo",
+        location: { lat: 34.6584, lng: 135.5178 },
+        ambient_image: "/japan/day10_waqoo_shitaderamachi_room.jpg",
+        snapshot: {
+          title: "Waqoo Shitaderamachi",
+          cover_image: "/japan/day10_waqoo_shitaderamachi_room.jpg",
+          location: "Tennoji-ku, Osaka",
+          activities: ["Superior twin", "Shukubo stay"],
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-06-30",
+    weather_emoji: "☀",
+    items: [
+      {
+        idHint: "day11-breakfast",
+        type: "meal",
+        title: "Breakfast at the Shukubo",
+        start: isoTokyo("2024-06-30", "08:00"),
+        durationMinutes: 40,
+        time_of_day: "morning",
+      },
+      {
+        idHint: "day11-subway-umeda",
+        type: "transit",
+        title: "Check out; subway → Higashi-Umeda",
+        start: isoTokyo("2024-06-30", "08:59"),
+        durationMinutes: 12,
+        mode: "IC card",
+      },
+      {
+        idHint: "day11-crosta-drop",
+        type: "note",
+        title: "Drop bags at Crosta Osaka",
+        start: isoTokyo("2024-06-30", "09:20"),
+        durationMinutes: 20,
+        location: { lat: 34.7024, lng: 135.4959 },
+        ambient_image: "/japan/day11_crosta_osaka_baggage.jpg",
+        body: "Inside Osaka Station 1F · open 08:00–20:00.",
+      },
+      {
+        idHint: "day11-train-usj",
+        type: "transit",
+        title: "JR Osaka → Universal City",
+        start: isoTokyo("2024-06-30", "09:46"),
+        durationMinutes: 11,
+        mode: "JR Pass",
+        location: { lat: 34.6671, lng: 135.4415 },
+      },
+      {
+        idHint: "day11-usj",
+        type: "experience",
+        title: "Universal Studios Japan (USJ)",
+        start: isoTokyo("2024-06-30", "09:58"),
+        durationMinutes: 540,
+        location: { lat: 34.6657, lng: 135.4324 },
+        ambient_image: "/japan/day11_usj_entrance.jpg",
+        description: "1-day + Express Pass. Super Nintendo World, Wizarding World.",
+        snapshot: {
+          title: "USJ",
+          cover_image: "/japan/day11_usj_entrance.jpg",
+          location: "Konohana Ward, Osaka",
+          activities: ["Super Nintendo World", "Harry Potter"],
+        },
+      },
+      {
+        idHint: "day11-train-back",
+        type: "transit",
+        title: "JR Universal City → Osaka",
+        start: isoTokyo("2024-06-30", "19:08"),
+        durationMinutes: 11,
+        mode: "JR Pass",
+      },
+      {
+        idHint: "day11-subway-daikoku",
+        type: "transit",
+        title: "Subway Umeda → Daikokucho; walk to apartment",
+        start: isoTokyo("2024-06-30", "19:41"),
+        durationMinutes: 16,
+        mode: "Midosuji · IC card",
+        location: { lat: 34.6616, lng: 135.5002 },
+      },
+      {
+        idHint: "day11-apt",
+        type: "hotel",
+        title: "Apartment in Osaka · one night",
+        start: isoTokyo("2024-06-30", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "apt-osaka",
+        location: { lat: 34.6488, lng: 135.4913 },
+        ambient_image: "/japan/day11_apartment_osaka.jpg",
+        snapshot: {
+          title: "Apartment in Osaka",
+          cover_image: "/japan/day11_apartment_osaka.jpg",
+          location: "Naniwa-ku, Osaka",
+          activities: ["2-bedroom", "4 double + 1 single"],
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-07-01",
+    weather_emoji: "🌦",
+    items: [
+      {
+        idHint: "day12-subway",
+        type: "transit",
+        title: "Midosuji subway → Shin-Osaka",
+        start: isoTokyo("2024-07-01", "08:40"),
+        durationMinutes: 19,
+        mode: "IC card",
+      },
+      {
+        idHint: "day12-ship",
+        type: "note",
+        title: "TA-Q-BIN luggage → Yamato Seijo Office (Tokyo)",
+        start: isoTokyo("2024-07-01", "09:05"),
+        durationMinutes: 40,
+        ambient_image: "/japan/day12_crosta_shin_osaka.jpg",
+        body: "Specify arrival 2 July, AM or 14:00–16:00. Pack a 1-night bag for Fuji.",
+      },
+      {
+        idHint: "day12-shinkansen",
+        type: "transit",
+        title: "Shinkansen Hikari #502 → Mishima",
+        start: isoTokyo("2024-07-01", "09:48"),
+        durationMinutes: 129,
+        mode: "JR Pass · reserved",
+      },
+      {
+        idHint: "day12-mishima",
+        type: "note",
+        title: "Arrive Mishima · buy climbing food",
+        start: isoTokyo("2024-07-01", "11:57"),
+        durationMinutes: 83,
+        location: { lat: 35.1266, lng: 138.9115 },
+        body: "Most 5th-station shops close at 17:00 — buy provisions here.",
+      },
+      {
+        idHint: "day12-bus-kawaguchi",
+        type: "transit",
+        title: "Highway bus Mishima → Kawaguchiko",
+        start: isoTokyo("2024-07-01", "13:20"),
+        durationMinutes: 90,
+        mode: "Reservation WR0000090250 · Bus #0013 · Platform 2",
+      },
+      {
+        idHint: "day12-kawaguchi",
+        type: "note",
+        title: "Arrive Kawaguchiko Station",
+        start: isoTokyo("2024-07-01", "14:50"),
+        durationMinutes: 40,
+        location: { lat: 35.5024, lng: 138.7528 },
+      },
+      {
+        idHint: "day12-bus-fuji",
+        type: "transit",
+        title: "Local bus → Fuji Subaru Line 5th Station",
+        start: isoTokyo("2024-07-01", "15:30"),
+        durationMinutes: 55,
+        mode: "Local bus · IC card",
+        ambient_image: "/japan/day12_kawaguchiko_local_bus.jpg",
+      },
+      {
+        idHint: "day12-5th-station",
+        type: "note",
+        title: "Fuji 5th Station — check in at Unjokaku",
+        start: isoTokyo("2024-07-01", "16:25"),
+        durationMinutes: 200,
+        location: { lat: 35.3965, lng: 138.7325 },
+        ambient_image: "/japan/day12_fuji_5th_station_admin.jpg",
+        body: "Show QR + Unjokaku reservation at the General Admin Center. Receive wristband for descent.",
+      },
+      {
+        idHint: "day12-climb",
+        type: "experience",
+        title: "Begin night climb · Yoshida Trail",
+        start: isoTokyo("2024-07-01", "21:00"),
+        durationMinutes: 300,
+        location: { lat: 35.3965, lng: 138.7325 },
+        ambient_image: "/japan/day12_road_to_fuji_5th_station.jpg",
+        description: "~6–8h to summit; aim for sunrise at ~04:30.",
+        snapshot: {
+          title: "Fuji Yoshida Trail",
+          cover_image: "/japan/day12_road_to_fuji_5th_station.jpg",
+          location: "Mt Fuji · 3,776 m",
+          activities: ["Night ascent", "Sunrise target"],
+        },
+      },
+      {
+        idHint: "day12-unjokaku",
+        type: "hotel",
+        title: "Fujikyu Unjokaku · capsule lodge",
+        start: isoTokyo("2024-07-01", "17:00"),
+        durationMinutes: 240,
+        source_id: "unjokaku",
+        location: { lat: 35.3967, lng: 138.7326 },
+        ambient_image: "/japan/day12_fujikyu_unjokaku_capsule.jpg",
+        snapshot: {
+          title: "Fujikyu Unjokaku",
+          cover_image: "/japan/day12_fujikyu_unjokaku_capsule.jpg",
+          location: "Fuji 5th Station",
+          activities: ["Capsule", "Coin showers"],
+        },
+      },
+    ],
+  },
+  {
+    date: "2024-07-02",
+    weather_emoji: "🌤",
+    items: [
+      {
+        idHint: "day13-summit",
+        type: "experience",
+        title: "Summit Kengamine (3,776 m)",
+        start: isoTokyo("2024-07-02", "04:30"),
+        durationMinutes: 120,
+        location: { lat: 35.3606, lng: 138.7274 },
+        ambient_image: "/japan/day13_mount_fuji_summit.jpg",
+        description: "Highest peak of Mt Fuji — sunrise around 04:30.",
+        snapshot: {
+          title: "Fuji Summit — Kengamine",
+          cover_image: "/japan/day13_mount_fuji_summit.jpg",
+          location: "Mt Fuji summit",
+          activities: ["Goraiko sunrise", "Crater rim"],
+        },
+      },
+      {
+        idHint: "day13-descent",
+        type: "experience",
+        title: "Descend to 5th Station",
+        start: isoTokyo("2024-07-02", "06:30"),
+        durationMinutes: 210,
+        description: "3–5h descent via Yoshida route.",
+      },
+      {
+        idHint: "day13-bus-1",
+        type: "transit",
+        title: "Highway bus 5th Station → Shinjuku · ①",
+        start: isoTokyo("2024-07-02", "12:00"),
+        durationMinutes: 155,
+        mode: "Reserved",
+        alt_group: "day13-bus-slots",
+      },
+      {
+        idHint: "day13-bus-2",
+        type: "transit",
+        title: "Highway bus 5th Station → Shinjuku · ②",
+        start: isoTokyo("2024-07-02", "12:30"),
+        durationMinutes: 155,
+        mode: "Reserved",
+        alt_group: "day13-bus-slots",
+      },
+      {
+        idHint: "day13-bus-3",
+        type: "transit",
+        title: "Highway bus 5th Station → Shinjuku · ③",
+        start: isoTokyo("2024-07-02", "13:00"),
+        durationMinutes: 155,
+        mode: "Reserved",
+        alt_group: "day13-bus-slots",
+      },
+      {
+        idHint: "day13-bus-4",
+        type: "transit",
+        title: "Highway bus 5th Station → Shinjuku · ④",
+        start: isoTokyo("2024-07-02", "14:00"),
+        durationMinutes: 155,
+        mode: "Reserved",
+        alt_group: "day13-bus-slots",
+      },
+      {
+        idHint: "day13-bus-5",
+        type: "transit",
+        title: "Highway bus 5th Station → Shinjuku · ⑤",
+        start: isoTokyo("2024-07-02", "15:00"),
+        durationMinutes: 155,
+        mode: "Reserved",
+        alt_group: "day13-bus-slots",
+      },
+      {
+        idHint: "day13-bus-6",
+        type: "transit",
+        title: "Highway bus 5th Station → Shinjuku · ⑥",
+        start: isoTokyo("2024-07-02", "16:00"),
+        durationMinutes: 155,
+        mode: "Reserved",
+        alt_group: "day13-bus-slots",
+      },
+      {
+        idHint: "day13-odakyu",
+        type: "transit",
+        title: "Odakyu Shinjuku → Soshigaya-Okura",
+        start: isoTokyo("2024-07-02", "17:30"),
+        durationMinutes: 21,
+        mode: "Odakyu Line · IC card",
+        location: { lat: 35.6502, lng: 139.5975 },
+      },
+      {
+        idHint: "day13-taxi-pickup",
+        type: "transit",
+        title: "Taxi → Yamato Seijo · pick up luggage",
+        start: isoTokyo("2024-07-02", "18:00"),
+        durationMinutes: 40,
+        mode: "Taxi · pay on site",
+        location: { lat: 35.6475, lng: 139.6039 },
+      },
+      {
+        idHint: "day13-apt",
+        type: "hotel",
+        title: "Apartment in Setagaya · Night 1 of 2",
+        start: isoTokyo("2024-07-02", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "setagaya",
+        location: { lat: 35.6487, lng: 139.5950 },
+        ambient_image: "/japan/day13_apartment_setagaya.jpg",
+        snapshot: {
+          title: "Apartment in Setagaya",
+          cover_image: "/japan/day13_apartment_setagaya.jpg",
+          location: "Soshigaya, Setagaya-ku",
+          activities: ["1 double", "2 singles", "1 futon"],
+        },
+      },
+    ],
+    alternative_groups: [
+      [
+        "day13-bus-1",
+        "day13-bus-2",
+        "day13-bus-3",
+        "day13-bus-4",
+        "day13-bus-5",
+        "day13-bus-6",
+      ],
+    ],
+  },
+  {
+    date: "2024-07-03",
+    items: [
+      {
+        idHint: "day14-free",
+        type: "free_time",
+        title: "Tokyo free day — explore, eat, reflect",
+        start: isoTokyo("2024-07-03", "10:00"),
+        durationMinutes: 480,
+        body: "Unstructured. Breakfast/Lunch/Dinner excluded.",
+      },
+      {
+        idHint: "day14-apt",
+        type: "hotel",
+        title: "Apartment in Setagaya · Night 2 of 2",
+        start: isoTokyo("2024-07-03", "21:00"),
+        durationMinutes: 540,
+        night_bar: true,
+        source_id: "setagaya",
+        location: { lat: 35.6487, lng: 139.5950 },
+        ambient_image: "/japan/day14_apartment_setagaya.jpg",
+      },
+    ],
+  },
+  {
+    date: "2024-07-04",
+    weather_emoji: "☁",
+    items: [
+      {
+        idHint: "day15-checkout",
+        type: "note",
+        title: "Check out of Setagaya apartment",
+        start: isoTokyo("2024-07-04", "10:00"),
+        durationMinutes: 60,
+      },
+      {
+        idHint: "day15-train",
+        type: "transit",
+        title: "Train → Haneda Airport",
+        start: isoTokyo("2024-07-04", "11:30"),
+        durationMinutes: 75,
+        mode: "IC card · no JR Pass on final day",
+        location: { lat: 35.5494, lng: 139.7798 },
+      },
+      {
+        idHint: "day15-departure",
+        type: "flight",
+        title: "Depart Haneda · Delta DL276",
+        start: isoTokyo("2024-07-04", "15:25"),
+        durationMinutes: 30,
+        flight_code: "DL276",
+        iata_from: "HND",
+        iata_to: "LAX",
+        location: { lat: 35.5494, lng: 139.7798 },
+      },
+    ],
+  },
+];
+
+export function buildJapan(): VerticalTimeline {
+  resetCounters();
+  const itinerary = makeItinerary(ITINERARY_ID, "Japan · 15 days");
+
+  const nodes: NodeResponse[] = [];
+  const edges: EdgeResponse[] = [];
+  const idByHint = new Map<string, string>();
+
+  for (const day of DAYS) {
+    for (const item of day.items) {
+      const meta: VerticalNodeMeta = {
+        start_time: item.start,
+        duration_minutes: item.durationMinutes,
+      };
+      if (item.location) meta.location = item.location;
+      if (item.ambient_image) meta.ambient_image = item.ambient_image;
+      if (item.description) meta.description = item.description;
+      if (item.body) meta.body = item.body;
+      if (item.time_of_day) meta.time_of_day = item.time_of_day;
+      if (item.mode) meta.mode = item.mode;
+      if (item.flight_code) meta.flight_code = item.flight_code;
+      if (item.iata_from) meta.iata_from = item.iata_from;
+      if (item.iata_to) meta.iata_to = item.iata_to;
+      if (item.snapshot) meta.snapshot = item.snapshot;
+      if (item.night_bar) meta.night_bar = true;
+      if (item.alt_group) meta.alt_group = item.alt_group;
+      if (day.weather_emoji) meta.weather_emoji = day.weather_emoji;
+
+      const nodeInput = {
+        type: item.type,
+        title: item.title,
+        meta,
+        ...(item.status ? { status: item.status } : {}),
+        ...(item.source_id ? { source_id: item.source_id } : {}),
+      };
+      const node = makeNode(ITINERARY_ID, nodeInput);
+      idByHint.set(item.idHint, node.id);
+      nodes.push(node);
+    }
+
+    // follows edges within a day, in the items' declared order,
+    // skipping nodes that are alternatives (they attach to their canonical separately).
+    const dayIds = day.items
+      .filter((it) => !it.alt_group || day.alternative_groups?.some((g) => g[0] === it.idHint) === true)
+      .map((it) => idByHint.get(it.idHint))
+      .filter((id): id is string => typeof id === "string");
+
+    for (let i = 0; i + 1 < dayIds.length; i++) {
+      const from = dayIds[i];
+      const to = dayIds[i + 1];
+      if (from && to) edges.push(makeEdge(ITINERARY_ID, from, to, "follows"));
+    }
+
+    // grouped_with edges
+    if (day.grouped_with) {
+      for (const group of day.grouped_with) {
+        for (let i = 0; i + 1 < group.length; i++) {
+          const a = idByHint.get(group[i] ?? "");
+          const b = idByHint.get(group[i + 1] ?? "");
+          if (a && b) edges.push(makeEdge(ITINERARY_ID, a, b, "grouped_with"));
+        }
+      }
+    }
+
+    // alternative_to edges: first item is canonical, rest are alternatives of it
+    if (day.alternative_groups) {
+      for (const group of day.alternative_groups) {
+        const canonical = idByHint.get(group[0] ?? "");
+        if (!canonical) continue;
+        for (let i = 1; i < group.length; i++) {
+          const alt = idByHint.get(group[i] ?? "");
+          if (alt) edges.push(makeEdge(ITINERARY_ID, alt, canonical, "alternative_to"));
+        }
+      }
+    }
+  }
+
+  // day-to-day bridge: last node of day N → first of day N+1 (only if both exist)
+  for (let i = 0; i + 1 < DAYS.length; i++) {
+    const cur = DAYS[i];
+    const nxt = DAYS[i + 1];
+    if (!cur || !nxt) continue;
+    const lastHint = cur.items[cur.items.length - 1]?.idHint;
+    const firstHint = nxt.items[0]?.idHint;
+    if (!lastHint || !firstHint) continue;
+    const from = idByHint.get(lastHint);
+    const to = idByHint.get(firstHint);
+    if (from && to) edges.push(makeEdge(ITINERARY_ID, from, to, "follows"));
+  }
+
+  // Mark endOf used to keep import non-dead.
+  void endOf;
+
+  const days = DAYS.map((d) => {
+    const date = d.date;
+    const label = `Day ${DAYS.indexOf(d) + 1}`;
+    return d.weather_emoji
+      ? { date, label, weather_emoji: d.weather_emoji }
+      : { date, label };
+  });
+
+  return {
+    id: "japan-2024",
+    label: "Japan · 15 days",
+    subtitle: "Tokyo → Kyoto → Hiroshima → Osaka → Mt Fuji → Tokyo",
+    mood: "tidal",
+    timezoneOffsetHours: 9,
+    windowStart: isoTokyo("2024-06-20", "00:00"),
+    windowEnd: isoTokyo("2024-07-05", "00:00"),
+    days,
+    itinerary,
+    nodes,
+    edges,
+  };
+}
