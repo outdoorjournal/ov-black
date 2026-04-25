@@ -12,6 +12,7 @@ interface ChatPanelProps {
   onAccept: (id: string) => void;
   onDismiss: (id: string) => void;
   onSubmit: (text: string) => void;
+  onScrollToNode?: (id: string) => void;
   disabled?: boolean;
 }
 
@@ -21,6 +22,7 @@ export function ChatPanel({
   onAccept,
   onDismiss,
   onSubmit,
+  onScrollToNode,
   disabled = false,
 }: ChatPanelProps) {
   const [text, setText] = useState("");
@@ -62,7 +64,20 @@ export function ChatPanel({
               <div className="text-[10px] uppercase tracking-[0.18em] text-ink/55">
                 Proposed · {p.type}
               </div>
-              <div className="mt-0.5 font-serif text-[15px] text-ink">{p.title}</div>
+              <div className="mt-0.5 flex items-start justify-between gap-2">
+                <div className="font-serif text-[15px] text-ink">{p.title}</div>
+                {onScrollToNode ? (
+                  <button
+                    type="button"
+                    onClick={() => onScrollToNode(p.id)}
+                    title="Show on timeline"
+                    aria-label="Show on timeline"
+                    className="shrink-0 rounded-md border border-ink/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-ink/65 hover:border-ink/40 hover:text-ink"
+                  >
+                    Show ↗
+                  </button>
+                ) : null}
+              </div>
               <div className="mt-2 flex gap-1.5">
                 <button
                   type="button"

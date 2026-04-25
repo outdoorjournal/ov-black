@@ -1,6 +1,7 @@
 import type { EdgeResponse, NodeResponse } from "../_lib/types";
 import { getVerticalMeta } from "../_lib/types";
 import {
+  formatClock,
   minutesBetween,
   minutesSince,
   startOfDayIso,
@@ -44,6 +45,12 @@ export interface PositionedVNode {
   dayKey: string;
 }
 
+export interface TimeMarker {
+  y: number;
+  label: string;
+  count: number;
+}
+
 export interface LayoutResultV {
   positions: Map<string, PositionedVNode>;
   days: Array<{ date: string; y: number; height: number }>;
@@ -53,6 +60,7 @@ export interface LayoutResultV {
   windowStart: string;
   tzOffsetHours: number;
   altGroups: Map<string, string[]>;
+  timeMarkers: TimeMarker[];
 }
 
 interface LayoutArgs {
@@ -63,6 +71,9 @@ interface LayoutArgs {
   windowEnd: string;
   tzOffsetHours: number;
   daysMeta: Array<{ date: string }>;
+  // Measured card heights keyed by node id. Falls back to CARD_HEIGHT when a
+  // card hasn't reported its rendered height yet (first frame).
+  cardHeights?: Map<string, number>;
 }
 
 function buildSegments(
@@ -165,6 +176,7 @@ export function computeVerticalLayout(args: LayoutArgs): LayoutResultV {
     windowEnd,
     tzOffsetHours,
     daysMeta,
+    cardHeights,
   } = args;
 
   const positions = new Map<string, PositionedVNode>();
@@ -191,17 +203,26 @@ export function computeVerticalLayout(args: LayoutArgs): LayoutResultV {
 
   const segments = buildSegments(nodes, pxPerMinute, windowStart, windowEnd);
 
-  // Days collapse with the same mapping.
-  const days = daysMeta.map((d) => {
-    const dayStartIso = startOfDayIso(d.date, tzOffsetHours);
-    const dayStartMin = Math.max(0, minutesSince(windowStart, dayStartIso));
-    const dayEndMin = dayStartMin + 24 * 60;
-    const yStart = mapMinuteToY(dayStartMin, segments);
-    const yEnd = mapMinuteToY(dayEndMin, segments);
-    return { date: d.date, y: yStart, height: Math.max(0, yEnd - yStart) };
-  });
+  // Lane assignment is purely time-based: two events share lane 0 unless their
+  // [start, start+duration) intervals genuinely overlap. Visual card height is
+  // ignored here — that's a zoom/rendering concern, not a scheduling one.
+  const laneEndMinByDay = new Map<string, number[]>();
 
-  const laneEndYByDay = new Map<string, number[]>();
+  // Stretch points are local injections of extra pixels at specific minute
+  // boundaries. They make the timeline piecewise-linear (constant pxPerMinute
+  // within a stretch-free region, with a one-time jump at each stretch atMin)
+  // so two cards in the same lane never visually overlap even when their time
+  // gap is shorter than the card height at the current zoom.
+  const stretchPoints: Array<{ atMin: number; px: number }> = [];
+  const stretchBefore = (min: number): number => {
+    let total = 0;
+    for (const s of stretchPoints) {
+      if (s.atMin <= min) total += s.px;
+    }
+    return total;
+  };
+  const laneLastBottom = new Map<number, number>();
+  const VERTICAL_PAD = 8;
 
   const withTimes = nodes
     .map((n) => {
@@ -216,10 +237,7 @@ export function computeVerticalLayout(args: LayoutArgs): LayoutResultV {
     const dayKey = tzDayKey(start, tzOffsetHours);
     const startMin = minutesSince(windowStart, start);
     const dur = typeof meta.duration_minutes === "number" ? meta.duration_minutes : 30;
-    const y = mapMinuteToY(startMin, segments);
-    const yEnd = mapMinuteToY(startMin + dur, segments);
     const cardH = CARD_HEIGHT;
-    const barH = Math.max(cardH, yEnd - y);
 
     const group = altGroupByNode.get(node.id);
     let lane = 0;
@@ -237,27 +255,51 @@ export function computeVerticalLayout(args: LayoutArgs): LayoutResultV {
       lane = orderedMembers.findIndex((n) => n.id === node.id);
       if (lane < 0) lane = 0;
     } else {
-      const endYs = laneEndYByDay.get(dayKey) ?? [];
-      const PAD = 4;
+      const eventEndMin = startMin + dur;
+      const laneEndMins = laneEndMinByDay.get(dayKey) ?? [];
       let assigned = -1;
-      for (let i = 0; i < endYs.length; i++) {
-        const endY = endYs[i] ?? 0;
-        if (endY <= y - PAD) {
+      for (let i = 0; i < laneEndMins.length; i++) {
+        const endMin = laneEndMins[i] ?? 0;
+        if (endMin <= startMin) {
           assigned = i;
           break;
         }
       }
       if (assigned === -1) {
-        assigned = endYs.length;
-        endYs.push(0);
+        assigned = laneEndMins.length;
+        laneEndMins.push(0);
       }
-      endYs[assigned] = y + barH + PAD;
-      laneEndYByDay.set(dayKey, endYs);
+      laneEndMins[assigned] = eventEndMin;
+      laneEndMinByDay.set(dayKey, laneEndMins);
       lane = assigned;
     }
 
     const isNightBar = Boolean(meta.night_bar);
     const effLane = isNightBar ? -1 : lane;
+
+    // Measured height beats the static CARD_HEIGHT estimate — experience cards
+    // with cover images can be ~200px while a transit card is ~80px. Without
+    // measurement, the static estimate undershoots and adjacent cards overlap.
+    const measuredH = cardHeights?.get(node.id);
+    const effectiveH = typeof measuredH === "number" && measuredH > 0
+      ? measuredH
+      : cardH;
+
+    let y = mapMinuteToY(startMin, segments) + stretchBefore(startMin);
+    if (!isNightBar) {
+      const lastBottom = laneLastBottom.get(effLane) ?? Number.NEGATIVE_INFINITY;
+      const minY = lastBottom + VERTICAL_PAD;
+      if (y < minY) {
+        const extra = minY - y;
+        stretchPoints.push({ atMin: startMin, px: extra });
+        y += extra;
+      }
+      laneLastBottom.set(effLane, y + effectiveH);
+    }
+
+    const yEnd = mapMinuteToY(startMin + dur, segments) + stretchBefore(startMin + dur);
+    const barH = Math.max(cardH, yEnd - y);
+
     const x = isNightBar
       ? LEFT_GUTTER
       : LEFT_GUTTER + NIGHT_BAR_WIDTH + NIGHT_BAR_GAP + effLane * LANE_WIDTH;
@@ -281,11 +323,48 @@ export function computeVerticalLayout(args: LayoutArgs): LayoutResultV {
     positions.set(node.id, positioned);
   }
 
+  // Bake stretches into segments so the gradient + tick layer + mapMinuteToY
+  // (used by ghost proposals) all see the same stretched mapping. Each segment
+  // pushes its boundaries by the cumulative stretch up to that minute; stretches
+  // landing inside a segment get absorbed into its [yStart, yEnd] span (the
+  // gradient interpolates linearly through them, which is fine for soft sun
+  // tints).
+  for (const seg of segments) {
+    seg.yStart += stretchBefore(seg.startMin);
+    seg.yEnd += stretchBefore(seg.endMin);
+  }
+
+  // Days computed against stretched segments so day tiles ride the same axis.
+  const days = daysMeta.map((d) => {
+    const dayStartIso = startOfDayIso(d.date, tzOffsetHours);
+    const dayStartMin = Math.max(0, minutesSince(windowStart, dayStartIso));
+    const dayEndMin = dayStartMin + 24 * 60;
+    const yStart = mapMinuteToY(dayStartMin, segments);
+    const yEnd = mapMinuteToY(dayEndMin, segments);
+    return { date: d.date, y: yStart, height: Math.max(0, yEnd - yStart) };
+  });
+
   let totalHeight = segments.reduce((m, s) => Math.max(m, s.yEnd), 0);
   for (const p of positions.values()) {
     totalHeight = Math.max(totalHeight, p.y + p.barH);
   }
   totalHeight += 240;
+
+  const markerMap = new Map<string, TimeMarker>();
+  for (const p of positions.values()) {
+    if (p.nightBar) continue;
+    const startIso = getVerticalMeta(p.node).start_time;
+    if (!startIso) continue;
+    const label = formatClock(startIso, tzOffsetHours);
+    const existing = markerMap.get(label);
+    if (existing) {
+      existing.count += 1;
+      existing.y = Math.min(existing.y, p.y);
+    } else {
+      markerMap.set(label, { y: p.y, label, count: 1 });
+    }
+  }
+  const timeMarkers = Array.from(markerMap.values()).sort((a, b) => a.y - b.y);
 
   return {
     positions,
@@ -296,5 +375,6 @@ export function computeVerticalLayout(args: LayoutArgs): LayoutResultV {
     windowStart,
     tzOffsetHours,
     altGroups,
+    timeMarkers,
   };
 }

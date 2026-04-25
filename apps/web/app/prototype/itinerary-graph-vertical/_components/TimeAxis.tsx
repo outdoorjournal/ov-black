@@ -2,7 +2,7 @@
 
 import { sunStopsForDay } from "../_lib/sun";
 import { formatDayTile, formatDuration } from "../_lib/time";
-import type { TimelineSegment } from "../_state/layout";
+import type { TimeMarker, TimelineSegment } from "../_state/layout";
 
 interface TimeAxisProps {
   days: Array<{
@@ -15,36 +15,58 @@ interface TimeAxisProps {
   segments: TimelineSegment[];
   pxPerMinute: number;
   totalHeight: number;
+  timeMarkers: TimeMarker[];
 }
+
+const MARKER_MIN_GAP_PX = 14;
 
 export function TimeAxis({
   days,
   segments,
   pxPerMinute,
   totalHeight,
+  timeMarkers,
 }: TimeAxisProps) {
   const minor = pxPerMinute > 3.0 ? 15 : pxPerMinute > 1.5 ? 30 : 60;
-  const major = pxPerMinute > 3.0 ? 60 : pxPerMinute > 1.5 ? 180 : 360;
 
   return (
     <div
       className="relative w-[110px] shrink-0 border-r border-ink/10 bg-paper/80 backdrop-blur-sm"
       style={{ minHeight: totalHeight }}
     >
-      {/* Sun gradient + hash marks per live segment */}
+      {/* Sun gradient + minor hash marks per live segment */}
       {segments.map((seg, i) =>
         seg.type === "live" ? (
           <LiveSegmentLayer
             key={`live-${i}`}
             seg={seg}
             minorMin={minor}
-            majorMin={major}
             pxPerMinute={pxPerMinute}
           />
         ) : (
           <ElideBand key={`elide-${i}`} seg={seg} />
         ),
       )}
+
+      {/* Per-item time labels — one per unique HH:MM, so alt-choices and
+          simultaneous cards share a single label while close-but-distinct
+          times stay separate at their own y. */}
+      {dedupeMarkersByGap(timeMarkers, MARKER_MIN_GAP_PX).map((m) => (
+        <div
+          key={`marker-${m.label}-${m.y}`}
+          className="pointer-events-none absolute right-0 flex items-center gap-1.5"
+          style={{ top: m.y - 6 }}
+        >
+          <span className="font-mono text-[10px] tracking-[0.1em] text-ink/70">
+            {m.label}
+          </span>
+          <span
+            aria-hidden
+            className="h-px w-3 bg-ink/40"
+            style={{ opacity: 0.7 }}
+          />
+        </div>
+      ))}
 
       {/* Day tiles render at their mapped y positions */}
       {days.map((d) => (
@@ -60,25 +82,37 @@ export function TimeAxis({
   );
 }
 
+// When two items have distinct HH:MM but end up rendered within a few pixels
+// of each other at the current zoom, nudging the lower one down keeps both
+// readable rather than letting them overlap.
+function dedupeMarkersByGap(markers: TimeMarker[], minGap: number): TimeMarker[] {
+  if (markers.length === 0) return markers;
+  const out: TimeMarker[] = [];
+  let lastY = Number.NEGATIVE_INFINITY;
+  for (const m of markers) {
+    const y = Math.max(m.y, lastY + minGap);
+    out.push({ ...m, y });
+    lastY = y;
+  }
+  return out;
+}
+
 function LiveSegmentLayer({
   seg,
   minorMin,
-  majorMin,
   pxPerMinute,
 }: {
   seg: TimelineSegment;
   minorMin: number;
-  majorMin: number;
   pxPerMinute: number;
 }) {
   const heightPx = seg.yEnd - seg.yStart;
   const sunCss = sunGradientForSegment(seg);
 
-  // First minor tick at or after seg.startMin
   const firstMinor = Math.ceil(seg.startMin / minorMin) * minorMin;
-  const ticks: Array<{ minute: number; major: boolean }> = [];
+  const ticks: number[] = [];
   for (let m = firstMinor; m <= seg.endMin; m += minorMin) {
-    ticks.push({ minute: m, major: m % majorMin === 0 });
+    ticks.push(m);
   }
 
   return (
@@ -94,38 +128,22 @@ function LiveSegmentLayer({
           mixBlendMode: "multiply",
         }}
       />
-      {ticks.map((t) => {
-        const offsetMin = t.minute - seg.startMin;
-        const top = seg.yStart + offsetMin * pxPerMinute;
-        const hh = Math.floor((t.minute % (24 * 60)) / 60);
-        const mm = (t.minute % 60 + 60) % 60;
-        const timeLabel = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+      {ticks.map((minute) => {
+        const top = seg.yStart + (minute - seg.startMin) * pxPerMinute;
         return (
           <div
-            key={`${seg.yStart}-${t.minute}`}
-            className="absolute left-0 right-0"
-            style={{ top }}
-          >
-            <div
-              className="absolute"
-              style={{
-                right: 0,
-                top: -0.5,
-                width: t.major ? 16 : 6,
-                height: 1,
-                backgroundColor: "rgba(10,10,10,0.35)",
-                opacity: t.major ? 0.6 : 0.35,
-              }}
-            />
-            {t.major ? (
-              <span
-                className="absolute text-[9px] tracking-[0.1em] text-ink/55"
-                style={{ right: 20, top: -6 }}
-              >
-                {timeLabel}
-              </span>
-            ) : null}
-          </div>
+            key={`${seg.yStart}-${minute}`}
+            aria-hidden
+            className="absolute"
+            style={{
+              right: 0,
+              top: top - 0.5,
+              width: 6,
+              height: 1,
+              backgroundColor: "rgba(10,10,10,0.35)",
+              opacity: 0.35,
+            }}
+          />
         );
       })}
     </>

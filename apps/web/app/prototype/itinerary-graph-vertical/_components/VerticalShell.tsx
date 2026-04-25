@@ -31,6 +31,18 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
   });
   const [sweptIds, setSweptIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [cardHeights, setCardHeights] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+
+  const handleMeasureCard = useCallback((id: string, height: number) => {
+    setCardHeights((prev) => {
+      if (prev.get(id) === height) return prev;
+      const next = new Map(prev);
+      next.set(id, height);
+      return next;
+    });
+  }, []);
 
   const layout = useMemo(
     () =>
@@ -42,6 +54,7 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
         windowEnd: timeline.windowEnd,
         tzOffsetHours: timeline.timezoneOffsetHours,
         daysMeta: timeline.days,
+        cardHeights,
       }),
     [
       state.nodes,
@@ -49,8 +62,44 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
       state.edges,
       zoom.pxPerMinute,
       timeline,
+      cardHeights,
     ],
   );
+
+  const scrollToNode = useCallback(
+    (id: string, behavior: ScrollBehavior = "smooth") => {
+      const container = scrollRef.current;
+      const pos = layout.positions.get(id);
+      if (!container || !pos) return;
+      const target = pos.y - container.clientHeight * 0.3;
+      container.scrollTo({ top: Math.max(0, target), behavior });
+    },
+    [layout],
+  );
+
+  // Auto-scroll the timeline to newly arrived proposals so the user sees
+  // them land. The chat exposes a per-card "Show" button to jump back.
+  const prevPendingIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const currentIds = state.pendingProposals.map((p) => p.id);
+    const newOnes = currentIds.filter((id) => !prevPendingIds.current.has(id));
+    prevPendingIds.current = new Set(currentIds);
+    if (newOnes.length === 0) return;
+    const target = newOnes[newOnes.length - 1];
+    if (!target) return;
+    const t = setTimeout(() => scrollToNode(target), 120);
+    return () => clearTimeout(t);
+  }, [state.pendingProposals, scrollToNode]);
+
+  // Auto-scroll on flash (UPDATE_NODE / ACCEPT_PROPOSAL) so swaps are visible.
+  const prevFlashId = useRef<string | null>(null);
+  useEffect(() => {
+    const id = state.flashNodeId;
+    if (!id || id === prevFlashId.current) return;
+    prevFlashId.current = id;
+    const t = setTimeout(() => scrollToNode(id), 80);
+    return () => clearTimeout(t);
+  }, [state.flashNodeId, scrollToNode]);
 
   // Scroll anchoring: before zoom changes, remember the card closest to center.
   const prevPxPerMinute = useRef(zoom.pxPerMinute);
@@ -123,15 +172,6 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
     );
   }, [state.focusedNodeId, state.nodes, state.pendingProposals]);
 
-  const ambientImage = useMemo(() => {
-    if (!focusedNode) return null;
-    const m = getVerticalMeta(focusedNode);
-    if (m.ambient_image) return m.ambient_image;
-    const snap = m.snapshot;
-    if (snap && typeof snap.cover_image === "string") return snap.cover_image;
-    return null;
-  }, [focusedNode]);
-
   const focusCoords = useMemo(() => {
     if (!focusedNode) return null;
     const loc = getVerticalMeta(focusedNode).location;
@@ -139,6 +179,43 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
     const base = { lat: loc.lat, lng: loc.lng };
     return loc.label ? { ...base, label: loc.label } : base;
   }, [focusedNode]);
+
+  // For travel cards (flights, transit), compute the great-circle endpoints.
+  // Flights typically carry explicit from/to in metadata; trains/transit
+  // inherit "from" from the previous node's location (sorted by start_time).
+  const focusArc = useMemo(() => {
+    if (!focusedNode) return null;
+    if (focusedNode.type !== "flight" && focusedNode.type !== "transit")
+      return null;
+    const meta = getVerticalMeta(focusedNode);
+    let from = meta.from_location ?? null;
+    const to =
+      meta.to_location ?? (meta.location ? meta.location : null);
+    if (!from) {
+      const sorted = [...state.nodes].sort((a, b) => {
+        const sa = new Date(getVerticalMeta(a).start_time ?? "").getTime();
+        const sb = new Date(getVerticalMeta(b).start_time ?? "").getTime();
+        return sa - sb;
+      });
+      const idx = sorted.findIndex((n) => n.id === focusedNode.id);
+      for (let i = idx - 1; i >= 0; i--) {
+        const prevNode = sorted[i];
+        if (!prevNode) continue;
+        const prev = getVerticalMeta(prevNode);
+        const prevLoc = prev.to_location ?? prev.location;
+        if (prevLoc) {
+          from = prevLoc;
+          break;
+        }
+      }
+    }
+    if (!from || !to) return null;
+    if (from.lat === to.lat && from.lng === to.lng) return null;
+    return {
+      from: [from.lng, from.lat] as [number, number],
+      to: [to.lng, to.lat] as [number, number],
+    };
+  }, [focusedNode, state.nodes]);
 
   // Preload images so hover cross-fades are smooth.
   useEffect(() => {
@@ -221,7 +298,7 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
       className="relative flex h-screen w-screen flex-col bg-paper text-ink"
       style={{ isolation: "isolate" }}
     >
-      <AmbientBackdrop imageSrc={ambientImage} focus={focusCoords} />
+      <AmbientBackdrop focus={focusCoords} arc={focusArc} />
 
       <header className="relative z-20 flex items-center justify-between gap-4 border-b border-ink/10 bg-paper/80 px-4 py-2 backdrop-blur-sm">
         <div>
@@ -255,11 +332,11 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
               segments={layout.segments}
               pxPerMinute={zoom.pxPerMinute}
               totalHeight={layout.totalHeight}
+              timeMarkers={layout.timeMarkers}
             />
             <TimelineColumn
               layout={layout}
               mood={timeline.mood}
-              tzOffsetHours={timeline.timezoneOffsetHours}
               pendingProposals={state.pendingProposals}
               flashNodeId={state.flashNodeId}
               sweptIds={sweptIds}
@@ -274,6 +351,7 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
               onDismissProposal={(id) =>
                 dispatch({ type: "DISMISS_PROPOSAL", id })
               }
+              onMeasureCard={handleMeasureCard}
             />
           </div>
         </div>
@@ -284,6 +362,7 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
             onAccept={(id) => dispatch({ type: "ACCEPT_PROPOSAL", id })}
             onDismiss={(id) => dispatch({ type: "DISMISS_PROPOSAL", id })}
             onSubmit={handleChatSubmit}
+            onScrollToNode={scrollToNode}
           />
         </aside>
       </div>

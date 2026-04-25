@@ -17,6 +17,8 @@ interface Item {
   start: string;
   durationMinutes: number;
   location?: { lat: number; lng: number; label?: string };
+  from_location?: { lat: number; lng: number; label?: string };
+  to_location?: { lat: number; lng: number; label?: string };
   ambient_image?: string;
   description?: string;
   body?: string;
@@ -61,6 +63,8 @@ const DAYS: DayData[] = [
         iata_from: "LAX",
         iata_to: "HND",
         location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
+        from_location: { lat: 33.9416, lng: -118.4085, label: "LAX" },
+        to_location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
         ambient_image: "/japan/day01_passport_stamp_example.jpg",
         description:
           "Use Visit Japan Web, then go through a staffed counter so you get the Temporary Visitor entry stamp needed for the JR Pass.",
@@ -1416,6 +1420,8 @@ const DAYS: DayData[] = [
         iata_from: "HND",
         iata_to: "LAX",
         location: { lat: 35.5494, lng: 139.7798 },
+        from_location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
+        to_location: { lat: 33.9416, lng: -118.4085, label: "LAX" },
       },
     ],
   },
@@ -1436,6 +1442,8 @@ export function buildJapan(): VerticalTimeline {
         duration_minutes: item.durationMinutes,
       };
       if (item.location) meta.location = item.location;
+      if (item.from_location) meta.from_location = item.from_location;
+      if (item.to_location) meta.to_location = item.to_location;
       if (item.ambient_image) meta.ambient_image = item.ambient_image;
       if (item.description) meta.description = item.description;
       if (item.body) meta.body = item.body;

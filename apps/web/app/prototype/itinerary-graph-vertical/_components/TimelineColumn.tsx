@@ -1,11 +1,11 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { Card } from "../../itinerary-graph/_components/Card";
 import { GhostCard } from "../../itinerary-graph/_components/GhostCard";
 import type { MoodId, NodeResponse } from "../_lib/types";
-import { formatClock } from "../_lib/time";
 import type { LayoutResultV, PositionedVNode } from "../_state/layout";
 import {
   CARD_WIDTH,
@@ -22,7 +22,6 @@ import { DurationBar } from "./DurationBar";
 interface TimelineColumnProps {
   layout: LayoutResultV;
   mood: MoodId;
-  tzOffsetHours: number;
   pendingProposals: NodeResponse[];
   flashNodeId: string | null;
   sweptIds: Set<string>;
@@ -31,13 +30,38 @@ interface TimelineColumnProps {
   onClickNode: (id: string) => void;
   onAcceptProposal: (id: string) => void;
   onDismissProposal: (id: string) => void;
+  onMeasureCard: (id: string, height: number) => void;
+}
+
+function MeasuredCard({
+  id,
+  onMeasure,
+  children,
+}: {
+  id: string;
+  onMeasure: (id: string, height: number) => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const h = Math.round(entry.contentRect.height);
+      if (h > 0) onMeasure(id, h);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [id, onMeasure]);
+  return <div ref={ref}>{children}</div>;
 }
 
 export function TimelineColumn(props: TimelineColumnProps) {
   const {
     layout,
     mood,
-    tzOffsetHours,
     pendingProposals,
     flashNodeId,
     sweptIds,
@@ -46,6 +70,7 @@ export function TimelineColumn(props: TimelineColumnProps) {
     onClickNode,
     onAcceptProposal,
     onDismissProposal,
+    onMeasureCard,
   } = props;
 
   const positioned = Array.from(layout.positions.values());
@@ -150,7 +175,6 @@ export function TimelineColumn(props: TimelineColumnProps) {
       {nonNightBar.map((p) => {
         const meta = p.node.metadata as {
           duration_minutes?: number;
-          start_time?: string;
         };
         const dur =
           typeof meta.duration_minutes === "number" ? meta.duration_minutes : 30;
@@ -178,25 +202,22 @@ export function TimelineColumn(props: TimelineColumnProps) {
             {...motionExtras}
           >
             <DurationBar type={p.node.type} barH={p.barH} durationMinutes={dur} />
-            {meta.start_time ? (
-              <div className="pointer-events-none absolute -left-12 top-1 font-mono text-[10px] tracking-[0.1em] text-ink/55">
-                {formatClock(meta.start_time, tzOffsetHours)}
-              </div>
-            ) : null}
             <div className="pl-4">
               {expandedId === p.node.id ? (
                 <div style={{ visibility: "hidden" }}>
                   <Card node={p.node} mood={mood} />
                 </div>
               ) : (
-                <motion.div layoutId={`card-${p.node.id}`}>
-                  <Card
-                    node={p.node}
-                    mood={mood}
-                    onClick={() => onClickNode(p.node.id)}
-                    {...(flashing ? { flash: true } : {})}
-                  />
-                </motion.div>
+                <MeasuredCard id={p.node.id} onMeasure={onMeasureCard}>
+                  <motion.div layoutId={`card-${p.node.id}`}>
+                    <Card
+                      node={p.node}
+                      mood={mood}
+                      onClick={() => onClickNode(p.node.id)}
+                      {...(flashing ? { flash: true } : {})}
+                    />
+                  </motion.div>
+                </MeasuredCard>
               )}
             </div>
           </motion.div>
