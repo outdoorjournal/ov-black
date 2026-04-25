@@ -14,9 +14,9 @@ const ORDER: StatusKind[] = [
 
 export function StatusShowcase() {
   return (
-    <div className="flex flex-wrap items-end gap-4">
+    <div className="flex flex-wrap items-end gap-4 print:break-inside-avoid">
       {ORDER.map((s) => (
-        <div key={s} className="flex flex-col items-center gap-2">
+        <div key={s} className="flex flex-col items-center gap-2 print:break-inside-avoid">
           <ExperienceGlance status={s} />
           <p className="text-[10px] uppercase tracking-[0.2em] text-ink/55">
             {s.replace("_", " ")}

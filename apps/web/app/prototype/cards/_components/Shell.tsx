@@ -20,14 +20,16 @@ import {
   StatusLegend,
   TaxonomyGrid,
 } from "./Sections";
+import { StatusAlternatives } from "./StatusAlternatives";
 import { StatusShowcase } from "./StatusShowcase";
 import { SubwayGlance, SubwayZoom } from "./SubwayCard";
 import { TrainGlance, TrainZoom } from "./TrainCard";
 
 export function Shell() {
   return (
-    <div className="min-h-screen bg-paper text-ink">
-      <div className="mx-auto max-w-6xl px-6 py-12 sm:px-10 sm:py-16">
+    <div className="min-h-screen bg-paper text-ink print:bg-white">
+      <PrintRules />
+      <div className="mx-auto max-w-6xl px-6 py-12 sm:px-10 sm:py-16 print:max-w-full print:p-0">
         <Header />
 
         <Section
@@ -48,13 +50,30 @@ export function Shell() {
           title="Status states"
           blurb="One card across its lifecycle. Each status pairs color with a non-color cue so it reads identically to color-blind users."
           notes={[
-            "Idea → dashed border, italic title, ~70% opacity.",
-            "Approved/Booked/Confirmed escalate from a check, to a lock, to a double-border.",
-            "Discarded is grayscale but kept on the page so it can be restored.",
+            "Goal of the alternatives below: make booked/confirmed feel weighty, hard-to-move, and ceremonial. Confirmed especially.",
+            "All four alternatives also relocate the status mark off the card body — fixing the bottom-right overlap on the existing treatment.",
+            "Pick one (or a hybrid) and we'll roll it through every section.",
           ]}
         >
           <StatusLegend />
-          <StatusShowcase />
+          <div>
+            <p className="mb-3 text-[10px] uppercase tracking-[0.2em] text-ink/45">
+              Current treatment (for reference)
+            </p>
+            <StatusShowcase />
+          </div>
+          <div className="border-t border-ink/15 pt-8">
+            <p className="mb-2 text-[10px] uppercase tracking-[0.2em] text-ink/45">
+              Alternatives — escalating weight toward Confirmed
+            </p>
+            <p className="mb-6 max-w-3xl text-[12px] leading-relaxed text-ink/70">
+              The current bottom-right badge overlaps card content and treats
+              Confirmed like a slightly louder Booked. These four directions
+              relocate the indicator and make Confirmed feel like a different
+              object — sealed, heavier, harder to move.
+            </p>
+            <StatusAlternatives />
+          </div>
         </Section>
 
         <Section
@@ -250,11 +269,18 @@ function Header() {
         labels so the system reads to color-blind users.
       </p>
       <p className="mt-3 text-[12px] italic leading-relaxed text-ink/60">
-        Source notes:{" "}
+        Conceptual root:{" "}
         <code className="font-mono text-[11px]">
           apps/agent/src/agent/ai/Itinerary_Planning_System.md
         </code>{" "}
-        — the original notebook on travel graphs, cards, and timelines.
+        — original travel-graph notebook.
+      </p>
+      <p className="mt-1 text-[12px] italic leading-relaxed text-ink/60">
+        Rules for use:{" "}
+        <code className="font-mono text-[11px]">
+          apps/agent/src/agent/ai/Cards_Style_Guide.md
+        </code>{" "}
+        — when to use each type, required fields, status transitions. This page is the visual canon; that doc is the rulebook.
       </p>
     </header>
   );
@@ -262,12 +288,32 @@ function Header() {
 
 function Footer() {
   return (
-    <footer className="mt-16 border-t border-ink/10 pt-6 text-[11px] text-ink/55">
+    <footer className="mt-16 border-t border-ink/10 pt-6 text-[11px] text-ink/55 print:hidden">
       <p>
         Iteration cues: tell the agent which section to expand, what to
         rearrange, or which detail to add — the cards are intentionally cheap
         to redraw.
       </p>
+      <p className="mt-2 text-ink/45">
+        Printing: each numbered section breaks to a new page. Enable
+        “Background graphics” in the print dialog to keep the cream paper,
+        accents, and ink footer bands.
+      </p>
     </footer>
+  );
+}
+
+function PrintRules() {
+  return (
+    <style>{`
+      @media print {
+        @page { size: letter; margin: 0.5in; }
+        html, body { background: #ffffff !important; }
+        * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+      }
+    `}</style>
   );
 }

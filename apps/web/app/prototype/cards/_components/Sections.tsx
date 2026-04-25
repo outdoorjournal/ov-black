@@ -23,8 +23,8 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="border-t border-ink/10 pt-10">
-      <header className="mb-6 flex items-baseline gap-4">
+    <section className="border-t border-ink/10 pt-10 print:break-before-page print:border-t-0 print:pt-0">
+      <header className="mb-6 flex items-baseline gap-4 print:break-after-avoid">
         <span className="font-mono text-[11px] uppercase tracking-[0.3em] text-ink/40">
           {index}
         </span>
@@ -36,10 +36,10 @@ export function Section({
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_240px]">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_240px] print:grid-cols-1">
         <div className="space-y-8">{children}</div>
         {notes ? (
-          <aside className="rounded-md border border-ink/10 bg-paper/60 p-4">
+          <aside className="rounded-md border border-ink/10 bg-paper/60 p-4 print:break-inside-avoid">
             <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">
               Design notes
             </p>
@@ -63,8 +63,8 @@ export function Row({
   children: ReactNode;
 }) {
   return (
-    <div>
-      <p className="mb-3 text-[10px] uppercase tracking-[0.2em] text-ink/45">{label}</p>
+    <div className="print:break-inside-avoid">
+      <p className="mb-3 text-[10px] uppercase tracking-[0.2em] text-ink/45 print:break-after-avoid">{label}</p>
       <div className="flex flex-wrap items-start gap-4">{children}</div>
     </div>
   );
