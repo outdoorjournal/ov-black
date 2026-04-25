@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 
-import { createServerSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 /**
  * Clears the Supabase session cookies and returns the user to the

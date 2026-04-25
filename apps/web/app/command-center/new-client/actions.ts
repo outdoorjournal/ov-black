@@ -10,7 +10,7 @@ import {
 } from "@ov-black/api-client";
 
 import { publicEnv } from "@/lib/env";
-import { createServerSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 export type CreateClientActionResult = { error: string } | { ok: true };
 

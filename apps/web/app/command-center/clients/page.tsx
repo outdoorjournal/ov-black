@@ -16,7 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { publicEnv } from "@/lib/env";
-import { createServerSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 import { InviteActions } from "../_components/invite-actions";
 

@@ -13,7 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { resolveClientIdForUser, resolveUserRole } from "@/lib/role";
-import { createServerSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function errorRedirect(origin: string, reason: string): NextResponse {

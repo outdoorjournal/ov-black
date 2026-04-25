@@ -23,7 +23,7 @@ import {
   type ErrorFrame,
 } from "@/lib/agentStream";
 import { useAtmosOverride, usePhaseShiftMood } from "@/lib/atmos/classifier";
-import { createBrowserSupabase } from "@/lib/supabase";
+import { createBrowserSupabase } from "@/lib/supabase/client";
 
 import { AtmosFrame } from "./AtmosFrame";
 import type { CardActionKind } from "./Card";

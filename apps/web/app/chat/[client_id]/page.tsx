@@ -31,7 +31,7 @@ import {
 } from "@ov-black/api-client";
 
 import { publicEnv } from "@/lib/env";
-import { createServerSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 import { ChatShell } from "./_components/ChatShell";
 import { cardFromNode, type InitialCardPayload } from "./_components/types";

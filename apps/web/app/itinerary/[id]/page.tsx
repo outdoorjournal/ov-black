@@ -15,7 +15,7 @@ import { notFound, redirect } from "next/navigation";
 import { createApiClient, getItinerary } from "@ov-black/api-client";
 
 import { publicEnv } from "@/lib/env";
-import { createServerSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 import { FinalItineraryView } from "./_components/FinalItineraryView";
 
