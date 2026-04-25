@@ -14,11 +14,13 @@
 // submit, with seeded_opener attached so the agent's directive lands on
 // turn 0 and its first streamed line is the opener verbatim.
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   createApiClient,
   createSessionEndpoint,
+  dismissOnboarding,
   type OnboardingOpenerResponse,
 } from "@ov-black/api-client";
 
@@ -95,10 +97,13 @@ function SinglePromptInner({
   const currentMood = basecampChatStore.useStore((s) => s.currentMood);
   const storeApi = basecampChatStore.useStoreApi();
 
+  const router = useRouter();
+
   const [engaged, setEngaged] = useState(false);
   const [draft, setDraft] = useState("");
   const [openingError, setOpeningError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const moodPhaseRef = useRef(0);
@@ -219,6 +224,30 @@ function SinglePromptInner({
     [submit],
   );
 
+  // Skip (variant a) / Close (variant b): cancel any in-flight stream,
+  // call POST /onboarding/dismiss, then refresh the route. The server
+  // re-renders with `has_prior_session=true`, swapping basecamp into
+  // post_first_touch which mounts RightRailChat and unmounts this card.
+  const dismiss = useCallback(async () => {
+    if (dismissing) return;
+    setDismissing(true);
+    abortRef.current?.abort();
+    const token = await getAccessToken();
+    if (!token) {
+      setDismissing(false);
+      setOpeningError("upstream_unavailable");
+      return;
+    }
+    const api = createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
+    const result = await dismissOnboarding(api);
+    if (!result.ok) {
+      setDismissing(false);
+      setOpeningError(result.detail);
+      return;
+    }
+    router.refresh();
+  }, [apiBaseUrl, dismissing, getAccessToken, router]);
+
   // Cancel any in-flight stream on unmount.
   useEffect(() => {
     const ref = abortRef;
@@ -276,6 +305,14 @@ function SinglePromptInner({
               <span className="text-[10px] uppercase tracking-[0.4em] text-paper/45">
                 Press Enter to begin
               </span>
+              <button
+                type="button"
+                onClick={() => void dismiss()}
+                disabled={dismissing || opening}
+                className="text-[10px] uppercase tracking-[0.4em] text-paper/45 transition hover:text-paper/80 disabled:opacity-40"
+              >
+                {dismissing ? "Closing…" : "Not now"}
+              </button>
             </div>
             {openingError ? (
               <p className="text-sm text-paper/60">
@@ -284,7 +321,16 @@ function SinglePromptInner({
             ) : null}
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-sm bg-paper text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]">
+          <div className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-sm bg-paper text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]">
+            <button
+              type="button"
+              onClick={() => void dismiss()}
+              disabled={dismissing}
+              aria-label="Close conversation"
+              className="absolute right-4 top-4 z-10 rounded-sm px-2 py-1 font-sans text-[10px] uppercase tracking-[0.4em] text-ink/45 transition hover:text-ink/80 disabled:opacity-40"
+            >
+              {dismissing ? "Closing…" : "Close"}
+            </button>
             <div className="min-h-0 flex-1 [&>section]:h-full">
               <ConversationStream turns={turns} streaming={streaming} />
             </div>

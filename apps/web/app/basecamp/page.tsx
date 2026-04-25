@@ -65,12 +65,21 @@ export default async function BasecampPage() {
 
   const onboarding: MyOnboardingSessionResponse = onboardingResult.ok
     ? onboardingResult.session
-    : { session_id: null, turn_count: 0, last_turn_at: null, seeded_opener: null };
+    : {
+        session_id: null,
+        turn_count: 0,
+        last_turn_at: null,
+        seeded_opener: null,
+        has_prior_session: false,
+      };
   const itineraries: MyItinerarySummary[] = itinerariesResult.ok
     ? itinerariesResult.itineraries
     : [];
 
-  const hasPriorTurns = onboarding.turn_count > 0;
+  // Gate first-prompt on "any session ever exists" rather than turn_count > 0
+  // so a Skip / Close click (which ends the session via /onboarding/dismiss
+  // but may produce zero user/assistant turns) is not re-prompted on reload.
+  const hasPriorSession = onboarding.has_prior_session || onboarding.turn_count > 0;
   const hasItineraries = itineraries.length > 0;
 
   // Only fetch an opener when we're going to render the single-prompt UI —
@@ -78,7 +87,7 @@ export default async function BasecampPage() {
   // verification confirms it skips on returning visits.
   let opener: OnboardingOpenerResponse | null = null;
   let priorTurns: AgentTurnSummary[] = [];
-  if (!hasPriorTurns && !hasItineraries) {
+  if (!hasPriorSession && !hasItineraries) {
     const openerResult = await pickRandomOpener(api);
     if (openerResult.ok) {
       opener = openerResult.opener;
@@ -90,7 +99,7 @@ export default async function BasecampPage() {
     }
   }
 
-  const variant: BasecampVariant = !hasPriorTurns && !hasItineraries
+  const variant: BasecampVariant = !hasPriorSession && !hasItineraries
     ? "first_prompt"
     : hasItineraries
     ? "with_itineraries"

@@ -234,6 +234,76 @@ async def _jit_backfill_client_auth_user_id(
     return True
 
 
+async def dismiss_onboarding(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    actor: ActorContext,
+    client_id: uuid.UUID,
+) -> SessionOutcome:
+    """Mark the calling client's onboarding "dismissed".
+
+    Side effects (one transaction):
+      - Sets ``ended_at = NOW()`` on every active session for the client.
+      - If no session row has ever existed for the client, inserts a
+        marker session (no opener) with ``ended_at = NOW()`` so the
+        ``has_prior_session`` gate flips to true on the next page load.
+
+    Idempotent: calling twice is harmless. Returns ``OK`` on success,
+    ``CLIENT_NOT_FOUND`` / ``FORBIDDEN`` to mirror the access posture of
+    :func:`open_or_reuse_session`.
+    """
+    async with session_factory() as session:
+        client = (
+            await session.execute(select(Client).where(Client.id == client_id))
+        ).scalar_one_or_none()
+        if client is None:
+            return SessionOutcome.CLIENT_NOT_FOUND
+        if actor.actor_kind == "advisor":
+            if actor.user_id is None or client.owner_id != actor.user_id:
+                return SessionOutcome.FORBIDDEN
+        elif actor.actor_kind == "user":
+            if actor.user_id is None or client.auth_user_id != actor.user_id:
+                return SessionOutcome.FORBIDDEN
+
+        now = datetime.now(timezone.utc)
+        result = await session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.client_id == client_id,
+                AgentSession.ended_at.is_(None),
+            )
+            .values(ended_at=now)
+        )
+        ended_count = int(result.rowcount or 0)
+
+        if ended_count == 0:
+            any_existing = (
+                await session.execute(
+                    select(AgentSession.id)
+                    .where(AgentSession.client_id == client_id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if any_existing is None:
+                marker = AgentSession(
+                    client_id=client_id,
+                    agentcore_session_id=str(uuid.uuid4()),
+                    ended_at=now,
+                )
+                session.add(marker)
+
+        await session.commit()
+
+    logger.info(
+        "agent.session.dismiss",
+        extra={
+            "client_id": str(client_id),
+            "ended_count": ended_count,
+        },
+    )
+    return SessionOutcome.OK
+
+
 async def open_or_reuse_session(
     session_factory: async_sessionmaker[AsyncSession],
     *,

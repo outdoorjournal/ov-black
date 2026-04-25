@@ -71,16 +71,17 @@ class MyItinerariesResponse(BaseModel):
 
 
 class MyOnboardingSessionResponse(BaseModel):
-    """Summary of the calling client's most-recent agent session.
+    """Summary of the calling client's most-recent ACTIVE agent session.
 
-    Returned shape is intentionally a "session metadata" object rather
-    than a single ``has_prior`` boolean — basecamp derives whether to
-    show the single-prompt opener UI from ``turn_count > 0``, and the
-    same payload can later drive surfaces like "23 messages with your
-    concierge" or "last spoke 4 days ago" without a new endpoint.
+    ``session_id`` (and the dependent fields ``turn_count``,
+    ``last_turn_at``, ``seeded_opener``) describe the current ongoing
+    session — i.e. ``ended_at IS NULL``. ``has_prior_session`` is true
+    iff the client has any session row at all, ended or not. Basecamp
+    uses ``has_prior_session`` (rather than ``turn_count > 0``) to gate
+    the first-prompt opener UI so a user who clicks Skip / Close is not
+    re-shown the opener on the next page load.
 
-    All fields are null when the client has never opened a session
-    (typical brand-new invitee landing on /basecamp for the first time).
+    All session-scoped fields are null when no active session exists.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -89,6 +90,7 @@ class MyOnboardingSessionResponse(BaseModel):
     turn_count: int
     last_turn_at: datetime | None
     seeded_opener: str | None
+    has_prior_session: bool
 
 
 @router.get(
@@ -178,6 +180,7 @@ async def get_my_onboarding_session_endpoint(
         turn_count=0,
         last_turn_at=None,
         seeded_opener=None,
+        has_prior_session=False,
     )
     try:
         user_id = uuid.UUID(user.sub)
@@ -190,16 +193,38 @@ async def get_my_onboarding_session_endpoint(
     if client is None:
         return empty
 
+    # Has-prior is independent of active/ended status — it gates the
+    # first-prompt opener UI so a Skip / Close click is not re-prompted
+    # on the next basecamp visit.
+    has_prior_session = bool(
+        (
+            await session.execute(
+                select(func.count(AgentSession.id)).where(
+                    AgentSession.client_id == client.id
+                )
+            )
+        ).scalar_one()
+    )
+
     agent_session = (
         await session.execute(
             select(AgentSession)
-            .where(AgentSession.client_id == client.id)
+            .where(
+                AgentSession.client_id == client.id,
+                AgentSession.ended_at.is_(None),
+            )
             .order_by(AgentSession.started_at.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
     if agent_session is None:
-        return empty
+        return MyOnboardingSessionResponse(
+            session_id=None,
+            turn_count=0,
+            last_turn_at=None,
+            seeded_opener=None,
+            has_prior_session=has_prior_session,
+        )
 
     summary = (
         await session.execute(
@@ -220,4 +245,5 @@ async def get_my_onboarding_session_endpoint(
         turn_count=turn_count,
         last_turn_at=last_turn_at,
         seeded_opener=agent_session.seeded_opener,
+        has_prior_session=has_prior_session,
     )

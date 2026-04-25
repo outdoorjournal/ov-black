@@ -20,6 +20,7 @@ import {
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
   deleteClientContactEndpointClientsClientIdContactsContactIdDelete,
+  dismissOnboardingEndpointOnboardingDismissPost,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
@@ -1151,6 +1152,35 @@ export async function getMyOnboardingSession(
       await getMyOnboardingSessionEndpointMeOnboardingSessionGet({ client });
     if (error === undefined && data !== undefined) {
       return { ok: true, session: data };
+    }
+    return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type DismissOnboardingResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: "client_not_found" | "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for POST /onboarding/dismiss.
+ *
+ * Closes any active agent session for the calling client and ensures
+ * `has_prior_session` is true on the next page load so basecamp's
+ * single-prompt opener UI is not re-shown. Idempotent.
+ */
+export async function dismissOnboarding(
+  client: Client,
+): Promise<DismissOnboardingResult> {
+  try {
+    const { error, response } =
+      await dismissOnboardingEndpointOnboardingDismissPost({ client });
+    if (error === undefined && response.status === 204) {
+      return { ok: true };
+    }
+    if (response.status === 404) {
+      return { ok: false, status: 404, detail: "client_not_found" };
     }
     return { ok: false, status: response.status, detail: "unknown" };
   } catch {
