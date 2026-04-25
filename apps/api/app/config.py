@@ -139,6 +139,30 @@ class Settings(BaseSettings):
             "exercise the ``apps/agent`` runtime over HTTP without AWS creds."
         ),
     )
+    agent_token_signing_secret: str = Field(
+        default="",
+        description=(
+            "HS256 signing key for per-session agent tokens minted at "
+            "POST /sessions. The token authenticates the agent runtime to "
+            "backend-only /agent/* endpoints (Dossier + Profile + OSINT "
+            "context, private fact writes) — those routes must never accept "
+            "a Supabase client JWT. Empty value disables minting; verify "
+            "fails closed. Use a random 32+ byte value in staging/prod."
+        ),
+        repr=False,
+    )
+    agent_token_ttl_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=43200,
+        description=(
+            "Lifetime of a freshly minted per-session agent token. 15 min "
+            "default keeps the blast radius small if the token leaks. The "
+            "agent runtime must not require a longer-lived token because "
+            "POST /sessions is called for every fresh session — and "
+            "long-running sessions can ask for a refresh in a later slice."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

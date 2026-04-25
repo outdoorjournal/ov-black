@@ -23,8 +23,13 @@ from app.models.client import (  # noqa: E402,F401  (re-exported)
     ContactChannel,
     GroupType,
 )
+from app.models.dossier import Dossier  # noqa: E402,F401  (re-exported)
+from app.models.dossier_fact import (  # noqa: E402,F401  (re-exported)
+    DossierFact,
+    DossierFactKind,
+    FactSourceKind,
+)
 from app.models.invite import Invite  # noqa: E402,F401  (re-exported)
-from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
 from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     Edge,
     EdgeHistory,
@@ -36,8 +41,16 @@ from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     NodeStatus,
     NodeType,
 )
+from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
+from app.models.osint_fact import (  # noqa: E402,F401  (re-exported)
+    OsintFact,
+    OsintFactKind,
+)
 from app.models.profile import Profile, UserRole  # noqa: E402,F401  (re-exported)
-from app.models.voodoo_doll import VoodooDoll  # noqa: E402,F401  (re-exported)
+from app.models.profile_fact import (  # noqa: E402,F401  (re-exported)
+    ProfileFact,
+    ProfileFactKind,
+)
 
 __all__ = [
     "AgentSession",
@@ -45,9 +58,13 @@ __all__ = [
     "Base",
     "Client",
     "ContactChannel",
+    "Dossier",
+    "DossierFact",
+    "DossierFactKind",
     "Edge",
     "EdgeHistory",
     "EdgeType",
+    "FactSourceKind",
     "GroupType",
     "Invite",
     "Itinerary",
@@ -57,8 +74,11 @@ __all__ = [
     "NodeStatus",
     "NodeType",
     "OnboardingOpener",
+    "OsintFact",
+    "OsintFactKind",
     "Profile",
+    "ProfileFact",
+    "ProfileFactKind",
     "TurnRole",
     "UserRole",
-    "VoodooDoll",
 ]

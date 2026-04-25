@@ -30,6 +30,7 @@ export interface ApiStackProps extends StackProps {
   readonly supabaseServiceRoleSecret: SmSecret;
   readonly supabaseJwtSecret: SmSecret;
   readonly bedrockAgentCoreRuntimeArnSecret: SmSecret;
+  readonly agentTokenSigningSecret: SmSecret;
   /** Image tag to deploy. Defaults to `latest`; CI overrides via `-c imageTag=...`. */
   readonly imageTag?: string;
 }
@@ -114,6 +115,7 @@ export class ApiStack extends Stack {
           props.supabaseServiceRoleSecret.secretArn,
           props.supabaseJwtSecret.secretArn,
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
+          props.agentTokenSigningSecret.secretArn,
         ],
       }),
     );
@@ -165,6 +167,7 @@ export class ApiStack extends Stack {
         SUPABASE_JWT_SECRET_ARN: props.supabaseJwtSecret.secretArn,
         BEDROCK_AGENTCORE_RUNTIME_ARN_SECRET_ARN:
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
+        AGENT_TOKEN_SIGNING_SECRET_ARN: props.agentTokenSigningSecret.secretArn,
       },
       secrets: {
         // ECS also natively injects the secret values as envvars. Apps that
@@ -173,6 +176,9 @@ export class ApiStack extends Stack {
         SUPABASE_JWT: EcsSecret.fromSecretsManager(props.supabaseJwtSecret),
         BEDROCK_AGENTCORE_RUNTIME_ARN: EcsSecret.fromSecretsManager(
           props.bedrockAgentCoreRuntimeArnSecret,
+        ),
+        AGENT_TOKEN_SIGNING_SECRET: EcsSecret.fromSecretsManager(
+          props.agentTokenSigningSecret,
         ),
       },
       portMappings: [{ containerPort: 8000, name: 'api' }],

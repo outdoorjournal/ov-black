@@ -1,17 +1,13 @@
 """Request/response payloads for the advisor-facing clients surface.
 
-Two halves:
-
 - :class:`ClientCreatePayload` — what the advisor POSTs when creating a
-  new client + Voodoo Doll. The typed core mirrors the migration columns
-  exactly (EmailStr, constrained enums, bounded int lists); the JSONB
-  long-tail (``VoodooDollJsonb``) accepts ``dict``/``list`` with shallow
-  validation only — the Voodoo Doll schema is intentionally evolvable
-  per S03 research §Voodoo Doll schema volatility, so pinning tight
-  shapes here would force a migration on every product tweak.
+  new client + Dossier. The typed core mirrors the migration columns
+  exactly. Optional ``dossier_facts`` lets the onboarding form seed an
+  initial set of long-tail facts atomically with the client + dossier.
 - :class:`ClientCreateResponse` — what the HTTP layer returns on success.
 - :class:`ClientSummary` / :class:`ClientDetail` — read-through shapes for
-  ``GET /clients`` (list) and ``GET /clients/{id}`` (full join).
+  ``GET /clients`` (list) and ``GET /clients/{id}`` (full join, including
+  active facts in all three tiers).
 
 Nothing in this module touches SQLAlchemy; the service layer translates
 between the Pydantic payload and the ORM rows.
@@ -21,65 +17,33 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, conint, conlist
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.models.client import ContactChannel, GroupType
-
-
-class VoodooDollTyped(BaseModel):
-    """Typed core of the Voodoo Doll — stable signals with a fixed shape."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    contact_preference: ContactChannel
-    group_type: GroupType
-    children_ages: conlist(conint(ge=0, le=25), max_length=12) = Field(  # type: ignore[valid-type]
-        default_factory=list,
-    )
-    travel_party_notes: str = Field(default="", max_length=2000)
-    estimated_net_worth_usd: int | None = Field(default=None, ge=0)
-
-
-class VoodooDollJsonb(BaseModel):
-    """Evolving long-tail — JSONB columns kept shallow on purpose.
-
-    Every field defaults to its migration default so the payload can omit
-    whatever the advisor has not filled in yet. Shape-wise, ``dict``/``list``
-    is all we enforce here; detailed structure will harden once S04's agent
-    starts grounding on these fields.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    passions: list[dict[str, Any]] = Field(default_factory=list)
-    motivations: dict[str, Any] = Field(default_factory=dict)
-    travel_history: list[dict[str, Any]] = Field(default_factory=list)
-    triggers: list[dict[str, Any]] = Field(default_factory=list)
-    constraints: list[dict[str, Any]] = Field(default_factory=list)
-    deal_breakers: list[dict[str, Any]] = Field(default_factory=list)
-    dream_trip_signals: dict[str, Any] = Field(default_factory=dict)
-    osint_notes: dict[str, Any] = Field(default_factory=dict)
-
-
-class VoodooDollPayload(BaseModel):
-    """Full Voodoo Doll — typed core + JSONB long-tail, both present."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    typed: VoodooDollTyped
-    jsonb: VoodooDollJsonb = Field(default_factory=VoodooDollJsonb)
+from app.schemas.dossier import DossierDetail, DossierPayload
+from app.schemas.facts import (
+    DossierFactCreate,
+    DossierFactDetail,
+    OsintFactDetail,
+    ProfileFactDetail,
+)
 
 
 class ClientCreatePayload(BaseModel):
-    """Payload for ``POST /clients``: a new client + their Voodoo Doll."""
+    """Payload for ``POST /clients``: a new client + their Dossier.
+
+    ``dossier_facts`` is an optional initial seed of long-tail facts
+    (passions, motivations, …) — written in the same atomic transaction
+    as the client + dossier rows so onboarding stays one round-trip.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     full_name: str = Field(min_length=1, max_length=200)
     email: EmailStr
-    voodoo_doll: VoodooDollPayload
+    dossier: DossierPayload
+    dossier_facts: list[DossierFactCreate] = Field(default_factory=list)
 
 
 class ClientCreateResponse(BaseModel):
@@ -124,42 +88,21 @@ class ClientSummary(BaseModel):
     id: uuid.UUID
     full_name: str
     email: EmailStr
-    has_voodoo_doll: bool
+    has_dossier: bool
     invite_status: InviteStatus
     created_at: datetime
 
 
-class VoodooDollDetail(BaseModel):
-    """Full Voodoo Doll shape for ``GET /clients/{id}``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: uuid.UUID
-    contact_preference: ContactChannel
-    group_type: GroupType
-    children_ages: list[int]
-    travel_party_notes: str
-    estimated_net_worth_usd: int | None
-    passions: list[dict[str, Any]]
-    motivations: dict[str, Any]
-    travel_history: list[dict[str, Any]]
-    triggers: list[dict[str, Any]]
-    constraints: list[dict[str, Any]]
-    deal_breakers: list[dict[str, Any]]
-    dream_trip_signals: dict[str, Any]
-    osint_notes: dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
-
-
 class ClientDetail(BaseModel):
-    """Full client + voodoo_doll payload for ``GET /clients/{id}``.
+    """Full client + dossier + per-tier fact lists for ``GET /clients/{id}``.
 
-    ``invite_history`` lists every send for this client, newest first, so
-    the advisor can see when they resent and when each send was superseded
-    or cancelled. ``invite_status`` is the derived current state and
-    duplicates what the top of ``invite_history`` implies — consumers can
-    read either.
+    ``invite_history`` lists every send for this client, newest first.
+    ``invite_status`` is the derived current state and duplicates what
+    the top of ``invite_history`` implies — consumers can read either.
+
+    Fact lists default to active rows only (``redacted_at IS NULL``);
+    advisors who want to see redacted history can pass
+    ``?include_redacted=1`` on the request.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -171,4 +114,7 @@ class ClientDetail(BaseModel):
     invite_history: list[InviteEvent]
     created_at: datetime
     updated_at: datetime
-    voodoo_doll: VoodooDollDetail | None
+    dossier: DossierDetail | None
+    dossier_facts: list[DossierFactDetail] = Field(default_factory=list)
+    profile_facts: list[ProfileFactDetail] = Field(default_factory=list)
+    osint_facts: list[OsintFactDetail] = Field(default_factory=list)

@@ -19,6 +19,7 @@ export class SecretsStack extends Stack {
   readonly supabaseServiceRole: Secret;
   readonly supabaseJwt: Secret;
   readonly bedrockAgentCoreRuntimeArn: Secret;
+  readonly agentTokenSigningSecret: Secret;
 
   constructor(scope: Construct, id: string, props: SecretsStackProps) {
     super(scope, id, props);
@@ -63,6 +64,21 @@ export class SecretsStack extends Stack {
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
+    // HS256 key apps/api uses to sign per-session "agent tokens" minted at
+    // POST /sessions. The token authenticates the agent runtime to the
+    // backend-only /agent/* endpoints (Dossier + Profile + OSINT context,
+    // private fact writes) — surfaces that must never accept a Supabase
+    // client JWT. Operator rotates this by overwriting the secret value;
+    // apps/api re-reads it on next process start. Use a random 32+ byte
+    // value (e.g. `openssl rand -base64 48`).
+    this.agentTokenSigningSecret = new Secret(this, 'AgentTokenSigningSecret', {
+      secretName: `${namePrefix}/agent-token-signing-secret`,
+      description:
+        'HS256 signing key for per-session agent tokens. Authenticates the agent runtime to backend-only /agent/* endpoints. NEVER log this value.',
+      secretStringValue: SecretValue.unsafePlainText(PLACEHOLDER),
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
     new CfnOutput(this, 'SupabaseServiceRoleArn', {
       value: this.supabaseServiceRole.secretArn,
       description: 'ARN of the Supabase service-role-key secret.',
@@ -79,6 +95,12 @@ export class SecretsStack extends Stack {
       value: this.bedrockAgentCoreRuntimeArn.secretArn,
       description: 'ARN of the Bedrock AgentCore runtime-ARN secret (the Secret itself, not the runtime ARN value it holds).',
       exportName: `ov-black-${props.envName}-bedrock-agentcore-runtime-arn-arn`,
+    });
+
+    new CfnOutput(this, 'AgentTokenSigningSecretArn', {
+      value: this.agentTokenSigningSecret.secretArn,
+      description: 'ARN of the agent-token signing-key secret.',
+      exportName: `ov-black-${props.envName}-agent-token-signing-secret-arn`,
     });
   }
 }
