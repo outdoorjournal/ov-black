@@ -113,16 +113,18 @@ class Seed:
     client_id: uuid.UUID
 
 
-def _seed_advisor_client_doll(
+def _seed_advisor_client_dossier(
     *,
     passions: list,
     estimated_net_worth_usd: int | None = None,
     osint_notes: dict | None = None,
 ) -> Seed:
-    """Seed one advisor + profile + client + voodoo_doll row set.
+    """Seed one advisor + profile + client + dossier (+ dossier/osint facts).
 
-    Returns the generated advisor_id + client_id. Callers are responsible
-    for calling ``_cleanup_seed`` with the advisor_id once the test is done.
+    Returns the generated advisor_id + client_id. Passions become
+    ``dossier_facts`` rows with ``kind=passion``; ``osint_notes`` keys
+    each become an ``osint_facts`` row. Callers are responsible for
+    calling ``_cleanup_seed`` with the advisor_id once the test is done.
     """
     advisor_id = uuid.uuid4()
     client_id = uuid.uuid4()
@@ -132,13 +134,6 @@ def _seed_advisor_client_doll(
     async def _do(eng) -> None:
         async with eng.begin() as conn:
             await _insert_auth_user(conn, advisor_id, advisor_email)
-            # S07 T05: open_or_reuse_session now eagerly ensures a one-per-client
-            # itinerary at session-open time, and itineraries.client_id is FK-bound
-            # to auth.users(id). public.clients.id is a generated uuid that is NOT
-            # in auth.users, so we seed an auth.users row under the SAME id used as
-            # public.clients.id — i.e., the seeded "client" is an identity reused
-            # as both the public.clients PK and its matching auth.users row. This
-            # mirrors the steady-state post-JIT-backfill shape in production.
             await _insert_auth_user(conn, client_id, client_email)
             await conn.execute(
                 text(
@@ -163,23 +158,58 @@ def _seed_advisor_client_doll(
             await conn.execute(
                 text(
                     """
-                    insert into public.voodoo_dolls (
+                    insert into public.dossiers (
                       client_id, authored_by, contact_preference, group_type,
-                      passions, estimated_net_worth_usd, osint_notes
+                      estimated_net_worth_usd
                     ) values (
-                      :client_id, :authored_by, 'email', 'couple',
-                      cast(:passions as jsonb), :net_worth, cast(:osint as jsonb)
+                      :client_id, :authored_by, 'email', 'couple', :net_worth
                     )
                     """
                 ),
                 {
                     "client_id": client_id,
                     "authored_by": advisor_id,
-                    "passions": json.dumps(passions),
                     "net_worth": estimated_net_worth_usd,
-                    "osint": json.dumps(osint_notes or {}),
                 },
             )
+            for passion_label in passions:
+                await conn.execute(
+                    text(
+                        """
+                        insert into public.dossier_facts
+                          (client_id, kind, text, source_kind, recorded_by)
+                        values
+                          (:client_id, 'passion', :text, 'advisor', :recorded_by)
+                        """
+                    ),
+                    {
+                        "client_id": client_id,
+                        "text": passion_label,
+                        "recorded_by": advisor_id,
+                    },
+                )
+            for key, value in (osint_notes or {}).items():
+                kind = key if key in (
+                    "linkedin", "facebook", "instagram", "press", "company", "public_record"
+                ) else "other"
+                await conn.execute(
+                    text(
+                        """
+                        insert into public.osint_facts
+                          (client_id, kind, text, source_kind, recorded_by, source_ref)
+                        values
+                          (:client_id, :kind, :text, 'advisor', :recorded_by,
+                           cast(:source_ref as jsonb))
+                        """
+                    ),
+                    {
+                        "client_id": client_id,
+                        "kind": kind,
+                        "text": value if isinstance(value, str) else json.dumps(value),
+                        "recorded_by": advisor_id,
+                        "source_ref": json.dumps({"key": key}),
+                    },
+                )
 
     _run_with_engine(_do)
     return Seed(advisor_id=advisor_id, client_id=client_id)
@@ -187,7 +217,7 @@ def _seed_advisor_client_doll(
 
 def _cleanup_seed(advisor_id: uuid.UUID, client_id: uuid.UUID | None = None) -> None:
     """Delete any agent state + the seeded identities. ON DELETE CASCADE
-    handles public.voodoo_dolls and public.agent_sessions/turns.
+    handles public.dossiers + per-fact tables and public.agent_sessions/turns.
 
     S07 T05: ``client_id`` is optional to keep backward compatibility with
     existing callers; when provided, the matching auth.users row seeded for
@@ -197,8 +227,8 @@ def _cleanup_seed(advisor_id: uuid.UUID, client_id: uuid.UUID | None = None) -> 
 
     async def _do(eng) -> None:
         async with eng.begin() as conn:
-            # auth.users cascade → clients cascade → voodoo_dolls,
-            # agent_sessions, agent_turns. Profile also cascades.
+            # auth.users cascade → clients cascade → dossiers + per-fact
+            # tables, agent_sessions, agent_turns. Profile also cascades.
             await conn.execute(
                 text("delete from public.profiles where id = :id"),
                 {"id": advisor_id},
@@ -372,16 +402,16 @@ def _open_session(
     return uuid.UUID(body["session_id"]), body["agentcore_session_id"]
 
 
-# ── Test 1: seeded Voodoo Doll loads into the first turn's prompt ──────────
+# ── Test 1: seeded dossier_facts load into the first turn's prompt ─────────
 
 
-def test_seeded_voodoo_doll_loads_into_first_turn(
+def test_seeded_dossier_facts_load_into_first_turn(
     client: TestClient,
     runtime_slot: dict[str, Any],
     make_token,
 ) -> None:
-    """Demo bullet 1: the agent's system prompt is grounded on the doll."""
-    seed = _seed_advisor_client_doll(passions=["high-altitude walking"])
+    """Demo bullet 1: the agent's system prompt is grounded on the dossier."""
+    seed = _seed_advisor_client_dossier(passions=["high-altitude walking"])
     headers = _auth_headers(make_token, seed.advisor_id)
 
     runtime = MockAgentRuntimeClient([_happy_script("Hi.")])
@@ -406,7 +436,7 @@ def test_seeded_voodoo_doll_loads_into_first_turn(
         payload = runtime.calls[0]["payload"]
         system_prompt = payload.get("system", "")
         assert "high-altitude walking" in system_prompt, (
-            "Voodoo Doll passion did not reach the system prompt"
+            "Dossier passion fact did not reach the system prompt"
         )
     finally:
         _cleanup_seed(seed.advisor_id, seed.client_id)
@@ -422,7 +452,7 @@ def test_scripted_five_turn_onboarding_persists_all_turns(
 ) -> None:
     """Demo bullet 2: 5 POSTs → 10 rows (5 user + 5 assistant) at indices
     0..9, runtimeSessionId stable across every call."""
-    seed = _seed_advisor_client_doll(passions=["slow travel"])
+    seed = _seed_advisor_client_dossier(passions=["slow travel"])
     headers = _auth_headers(make_token, seed.advisor_id)
 
     assistant_texts = [
@@ -502,7 +532,7 @@ def test_first_token_ms_recorded_under_budget(
     make_token,
 ) -> None:
     """Demo bullet 3: R015's measurement surface is wired end-to-end."""
-    seed = _seed_advisor_client_doll(passions=["photography"])
+    seed = _seed_advisor_client_dossier(passions=["photography"])
     headers = _auth_headers(make_token, seed.advisor_id)
 
     # Scripted first_token event declares ms=100; the service also
@@ -560,7 +590,7 @@ def test_throttling_on_turn_3_triggers_silent_retry_without_frame_loss(
     make_token,
 ) -> None:
     """Demo bullet 4: R018 silent-retry is invisible to the caller."""
-    seed = _seed_advisor_client_doll(passions=["polar expeditions"])
+    seed = _seed_advisor_client_dossier(passions=["polar expeditions"])
     headers = _auth_headers(make_token, seed.advisor_id)
 
     # Six total invoke_stream calls across the 5 turns: turn 3 retries
@@ -647,7 +677,7 @@ def test_retries_exhausted_surfaces_crafted_fallback(
     make_token,
 ) -> None:
     """Demo bullet 5: R018 crafted-fallback lands when retries exhaust."""
-    seed = _seed_advisor_client_doll(passions=["culinary tours"])
+    seed = _seed_advisor_client_dossier(passions=["culinary tours"])
     headers = _auth_headers(make_token, seed.advisor_id)
 
     runtime = MockAgentRuntimeClient(
@@ -722,14 +752,14 @@ def _record_leaks(record: logging.LogRecord, needle: str) -> bool:
     return False
 
 
-def test_voodoo_doll_context_never_appears_in_logs(
+def test_traveler_context_never_appears_in_logs(
     client: TestClient,
     runtime_slot: dict[str, Any],
     make_token,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Demo bullet 6: sensitive context never leaks into any log record."""
-    seed = _seed_advisor_client_doll(
+    seed = _seed_advisor_client_dossier(
         passions=["off-grid"],
         estimated_net_worth_usd=_SENSITIVE_NETWORTH,
         osint_notes={"private": _SENSITIVE_OSINT_TOKEN},
@@ -760,7 +790,7 @@ def test_voodoo_doll_context_never_appears_in_logs(
                 f"{record.name} {record.getMessage()!r}"
             )
             assert not _record_leaks(record, osint_str), (
-                "osint_notes leaked into log record: "
+                "osint fact text leaked into log record: "
                 f"{record.name} {record.getMessage()!r}"
             )
     finally:

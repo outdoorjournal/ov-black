@@ -42,34 +42,35 @@ class TurnPayload(BaseModel):
 
     Every field is load-bearing:
 
-    - ``system`` — voice preamble + Voodoo Doll context, assembled on the
-      API side. Concatenated with the mode-specific rubric on the runtime
-      side to form the final system prompt.
+    - ``system`` — voice preamble + traveler context (Dossier + Profile +
+      OSINT), assembled on the API side. Concatenated with the
+      mode-specific rubric on the runtime side to form the final system
+      prompt.
     - ``input_text`` — the current user message.
-    - ``prior_turns`` — last N turns for the same session, so the model
-      has conversational continuity without us standing up an AgentCore
-      Memory hook for M001.
+    - ``prior_turns`` — last N turns for the same session.
     - ``mode`` — selects the rubric + tool set.
-    - ``auth_bearer`` — forwarded Supabase JWT. Tools set this as the
-      Authorization header on outbound calls to FastAPI; the existing
-      ``require_user`` / ``require_advisor`` guards enforce access.
-    - ``actor_kind`` — ``user`` (client) or ``advisor``. Controls the
-      advisor-voice toggle in the planning prompt and gates
-      ``update_node_status``.
-    - ``client_id`` — UUID of the ``clients`` row. Read-only on the
-      runtime side; all tool calls resolve the client from the JWT,
-      matching the FastAPI auth surface.
-    - ``itinerary_id`` — non-null for planning / approved-itinerary Q&A
-      sessions. Null for onboarding and general Q&A.
+    - ``auth_bearer`` — forwarded Supabase JWT. Tools that act on the
+      *user's* own resources (itineraries, mutations) set this as the
+      Authorization header on outbound calls; ``require_user`` /
+      ``require_advisor`` enforce access.
+    - ``agent_token`` — backend-only HS256 token minted at POST /sessions
+      and stashed only here. The traveler-context tools
+      (``get_traveler_context``, ``record_profile_fact``,
+      ``record_dossier_inference``) present this token instead of the
+      user JWT — the ``/agent/*`` routes reject Supabase JWTs by design.
+    - ``actor_kind`` — ``user`` (client) or ``advisor``.
+    - ``client_id`` — UUID of the ``clients`` row.
+    - ``itinerary_id`` — non-null for planning / approved-itinerary Q&A.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    system: str = Field(default="", description="Voice + Voodoo Doll preamble.")
+    system: str = Field(default="", description="Voice + traveler-context preamble.")
     input_text: str = Field(min_length=1, max_length=16000)
     prior_turns: list[PriorTurn] = Field(default_factory=list, max_length=200)
     mode: Mode
     auth_bearer: str = Field(min_length=1, max_length=8000)
+    agent_token: str = Field(default="", max_length=8000)
     actor_kind: Literal["user", "advisor"] = "user"
     client_id: uuid.UUID
     itinerary_id: uuid.UUID | None = None

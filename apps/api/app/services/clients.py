@@ -1,12 +1,17 @@
-"""Client creation service — atomic clients + voodoo_doll + invite write.
+"""Client creation service — atomic clients + dossier + facts + invite write.
 
-The single entry point :func:`create_client_with_voodoo_doll` wraps four
-operations in one transaction (mirroring the S01 ``invites.py`` pattern):
+The single entry point :func:`create_client_with_dossier` wraps the
+following operations in one transaction (mirroring the S01 ``invites.py``
+pattern):
 
 1. INSERT ``clients`` (owner_id = advisor_id).
-2. INSERT ``voodoo_dolls`` (client_id = above, authored_by = advisor_id).
-3. INSERT ``invites`` (code, role=client, email, created_by=advisor_id).
-4. Call Supabase ``generate_invite_link`` for the client email.
+2. INSERT ``dossiers`` (client_id = above, authored_by = advisor_id) — the
+   typed core only.
+3. INSERT 0..N ``dossier_facts`` rows from ``payload.dossier_facts``
+   (passions, motivations, …) so the existing onboarding form keeps its
+   long-tail UX in a single round-trip.
+4. INSERT ``invites`` (code, role=client, email, created_by=advisor_id).
+5. Call Supabase ``generate_invite_link`` for the client email.
 
 Atomicity is non-negotiable. If the upstream invite-link call fails the
 whole transaction rolls back — there must never be a ``clients`` row
@@ -18,7 +23,7 @@ via the ``(owner_id, lower(email))`` unique index), the insert returns
 Logging is redaction-safe per the slice plan: we log the client email
 (S01 precedent) and the new ``client_id`` UUID, but never the Supabase
 service-role key, the Authorization header, the ``estimated_net_worth_usd``,
-or the raw ``osint_notes``/``travel_history`` payloads.
+or the raw fact payloads.
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.models import Client, Invite, UserRole, VoodooDoll
+from app.models import Client, Dossier, DossierFact, Invite, UserRole
 from app.schemas.clients import ClientCreatePayload
 from app.services.supabase_admin import (
     MagicLinkIssued,
@@ -94,16 +99,16 @@ def _generate_invite_code() -> str:
     return secrets.token_urlsafe(16)
 
 
-async def create_client_with_voodoo_doll(
+async def create_client_with_dossier(
     session: AsyncSession,
     *,
     advisor_id: uuid.UUID,
     payload: ClientCreatePayload,
     settings: Settings | None = None,
 ) -> ClientCreateResult:
-    """Create a client + Voodoo Doll + invite and email the client a login link.
+    """Create a client + Dossier (+ optional initial dossier_facts) + invite.
 
-    All four operations share one transaction. On ``IntegrityError`` against
+    All operations share one transaction. On ``IntegrityError`` against
     ``clients_owner_email_idx`` we rollback and return ``DUPLICATE_EMAIL``;
     on ``SupabaseAdminError`` we rollback and return ``UPSTREAM_UNAVAILABLE``
     — the caller can surface those as 409 / 502 respectively. ``OK`` is only
@@ -132,9 +137,8 @@ async def create_client_with_voodoo_doll(
         )
         return ClientCreateResult(ClientCreateOutcome.DUPLICATE_EMAIL)
 
-    typed = payload.voodoo_doll.typed
-    jsonb = payload.voodoo_doll.jsonb
-    doll = VoodooDoll(
+    typed = payload.dossier.typed
+    dossier = Dossier(
         client_id=client.id,
         authored_by=advisor_id,
         contact_preference=typed.contact_preference,
@@ -142,16 +146,22 @@ async def create_client_with_voodoo_doll(
         children_ages=list(typed.children_ages),
         travel_party_notes=typed.travel_party_notes,
         estimated_net_worth_usd=typed.estimated_net_worth_usd,
-        passions=jsonb.passions,
-        motivations=jsonb.motivations,
-        travel_history=jsonb.travel_history,
-        triggers=jsonb.triggers,
-        constraints=jsonb.constraints,
-        deal_breakers=jsonb.deal_breakers,
-        dream_trip_signals=jsonb.dream_trip_signals,
-        osint_notes=jsonb.osint_notes,
     )
-    session.add(doll)
+    session.add(dossier)
+
+    now = datetime.now(timezone.utc)
+    for fact_payload in payload.dossier_facts:
+        session.add(
+            DossierFact(
+                client_id=client.id,
+                kind=fact_payload.kind,
+                text=fact_payload.text,
+                source_kind=fact_payload.source_kind,
+                source_ref=fact_payload.source_ref,
+                observed_at=fact_payload.observed_at or now,
+                recorded_by=advisor_id,
+            )
+        )
 
     invite = Invite(
         code=_generate_invite_code(),
@@ -312,7 +322,7 @@ async def reissue_client_invite(
     ``ALREADY_REDEEMED`` — a redeemed client has an auth row and should
     hit the normal magic-link flow, not a second invite.
 
-    Atomicity mirrors ``create_client_with_voodoo_doll``: an upstream
+    Atomicity mirrors ``create_client_with_dossier``: an upstream
     failure rolls back the supersede + insert so the advisor can retry
     without double-superseding.
     """

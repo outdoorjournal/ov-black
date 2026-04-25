@@ -32,6 +32,17 @@ jwt_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 """Forwarded Supabase JWT for the current turn. Set by the entrypoint."""
 
 
+agent_token_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "agent_token", default=None
+)
+"""Per-session HS256 token for backend-only ``/agent/*`` routes.
+
+Distinct from :data:`jwt_ctx` — the user JWT keeps its narrower scope
+(itineraries the traveler owns); the agent token unlocks Dossier + OSINT
+reads + private fact writes that the traveler must not be able to call.
+"""
+
+
 # Stashed so individual tools can read the itinerary pin without plumbing.
 pin_ctx: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "agent_pin",
@@ -61,6 +72,19 @@ def _auth_headers() -> dict[str, str]:
     if not jwt:
         raise BackendError(status=None, reason="missing_auth")
     return {"Authorization": f"Bearer {jwt}"}
+
+
+def _agent_auth_headers() -> dict[str, str]:
+    """Authorization header carrying the per-session agent token.
+
+    Used only by tools that hit ``/agent/*`` (Dossier + Profile + OSINT
+    context, agent-side fact writes). All other tools keep using
+    :func:`_auth_headers` so they continue to act on the user's behalf.
+    """
+    token = agent_token_ctx.get()
+    if not token:
+        raise BackendError(status=None, reason="missing_agent_token")
+    return {"Authorization": f"Bearer {token}"}
 
 
 @dataclass(slots=True)
@@ -109,6 +133,28 @@ async def patch_json(path: str, *, json: dict | None = None) -> Any:
     """PATCH JSON, return decoded JSON, raise :class:`BackendError` on failure."""
     try:
         resp = await _client().patch(path, json=json or {}, headers=_auth_headers())
+    except httpx.HTTPError as exc:
+        raise BackendError(status=None, reason=exc.__class__.__name__) from exc
+    return _unwrap(resp)
+
+
+async def agent_get_json(path: str, *, params: dict | None = None) -> Any:
+    """GET against an ``/agent/*`` route using the per-session agent token."""
+    try:
+        resp = await _client().get(
+            path, params=params, headers=_agent_auth_headers()
+        )
+    except httpx.HTTPError as exc:
+        raise BackendError(status=None, reason=exc.__class__.__name__) from exc
+    return _unwrap(resp)
+
+
+async def agent_post_json(path: str, *, json: dict | None = None) -> Any:
+    """POST JSON to an ``/agent/*`` route using the per-session agent token."""
+    try:
+        resp = await _client().post(
+            path, json=json or {}, headers=_agent_auth_headers()
+        )
     except httpx.HTTPError as exc:
         raise BackendError(status=None, reason=exc.__class__.__name__) from exc
     return _unwrap(resp)

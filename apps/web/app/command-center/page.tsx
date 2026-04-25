@@ -89,7 +89,7 @@ export default async function CommandCenterPage() {
           <Metric label="On the roster" value={metrics.total} />
           <Metric label="Active members" value={metrics.active} />
           <Metric label="Invites pending" value={metrics.pending} />
-          <Metric label="Voodoo Dolls" value={metrics.voodooDolls} />
+          <Metric label="Dossiers" value={metrics.dossiers} />
         </dl>
       </section>
 
@@ -208,17 +208,17 @@ function summarize(clients: ClientSummary[]): {
   total: number;
   active: number;
   pending: number;
-  voodooDolls: number;
+  dossiers: number;
 } {
   let active = 0;
   let pending = 0;
-  let voodooDolls = 0;
+  let dossiers = 0;
   for (const c of clients) {
     if (c.invite_status === "consumed") active += 1;
     if (c.invite_status === "pending") pending += 1;
-    if (c.has_voodoo_doll) voodooDolls += 1;
+    if (c.has_dossier) dossiers += 1;
   }
-  return { total: clients.length, active, pending, voodooDolls };
+  return { total: clients.length, active, pending, dossiers };
 }
 
 function inviteBadgeCopy(status: InviteStatus): string {

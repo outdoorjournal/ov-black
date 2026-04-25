@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { createServerSupabase } from "@/lib/supabase/server";
 
-import { VoodooDollForm } from "./_components/voodoo-doll-form";
+import { DossierForm } from "./_components/dossier-form";
 
 // Auth-gated per request; the form submits via a server action that
 // re-reads the advisor's access token on the server.
@@ -25,7 +25,7 @@ export default async function NewClientPage() {
       <header className="flex flex-col gap-6 border-b border-ink/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-ink/55">
-            Voodoo Doll &amp; invite
+            Dossier &amp; invite
           </p>
           <h1 className="mt-4 font-serif text-5xl tracking-tight text-ink sm:text-6xl">
             New Client
@@ -36,7 +36,7 @@ export default async function NewClientPage() {
         </Button>
       </header>
 
-      <VoodooDollForm />
+      <DossierForm />
     </main>
   );
 }

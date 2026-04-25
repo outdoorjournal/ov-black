@@ -6,9 +6,9 @@ as a JSON payload + request context; we validate, set up the JWT
 contextvar, build a Strands ``Agent`` for the turn's mode, and stream
 translated events back as SSE dicts.
 
-Redaction: the payload carries sensitive data (Voodoo Doll context,
-user JWT). Log only session-identifying fields and stable short
-reasons; never log the payload body, tool inputs, or tool outputs.
+Redaction: the payload carries sensitive data (traveler context, user
+JWT, agent token). Log only session-identifying fields and stable
+short reasons; never log the payload body, tool inputs, or tool outputs.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from bedrock_agentcore import BedrockAgentCoreApp
 from pydantic import ValidationError
 from strands.models import BedrockModel
 
-from agent.backend import jwt_ctx, pin_ctx
+from agent.backend import agent_token_ctx, jwt_ctx, pin_ctx
 from agent.config import get_settings
 from agent.modes import build_agent
 from agent.schemas import TurnPayload
@@ -75,6 +75,7 @@ async def invoke(payload, context=None):  # type: ignore[no-untyped-def]
     )
 
     token_jwt = jwt_ctx.set(req.auth_bearer)
+    token_agent = agent_token_ctx.set(req.agent_token or None)
     token_pin = pin_ctx.set(
         {
             "client_id": str(req.client_id),
@@ -106,6 +107,7 @@ async def invoke(payload, context=None):  # type: ignore[no-untyped-def]
         yield {"type": "done"}
     finally:
         jwt_ctx.reset(token_jwt)
+        agent_token_ctx.reset(token_agent)
         pin_ctx.reset(token_pin)
 
 

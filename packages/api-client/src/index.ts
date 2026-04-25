@@ -14,6 +14,9 @@ import {
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
   cancelClientInviteEndpointClientsClientIdInviteCancelPost,
   createClientEndpointClientsPost,
+  createDossierFactEndpointClientsClientIdDossierFactsPost,
+  createOsintFactEndpointClientsClientIdOsintFactsPost,
+  createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
@@ -24,16 +27,25 @@ import {
   lockItineraryEndpointItineraryItineraryIdLockPost,
   loginEndpointAuthLoginPost,
   randomOpenerEndpointOnboardingOpenersRandomGet,
+  redactDossierFactEndpointClientsClientIdDossierFactsFactIdDelete,
+  redactOsintFactEndpointClientsClientIdOsintFactsFactIdDelete,
+  redactProfileFactEndpointClientsClientIdProfileFactsFactIdDelete,
   redeemInviteEndpointAuthRedeemInvitePost,
   reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
+  updateDossierFactEndpointClientsClientIdDossierFactsFactIdPatch,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
+  updateOsintFactEndpointClientsClientIdOsintFactsFactIdPatch,
+  updateProfileFactEndpointClientsClientIdProfileFactsFactIdPatch,
 } from "./generated/sdk.gen.js";
 import type {
   AgentTurnSummary,
   ClientCreatePayload,
   ClientDetail,
   ClientSummary,
+  DossierFactCreate,
+  DossierFactDetail,
+  DossierFactUpdate,
   EdgeResponse,
   GraphResponse,
   ItineraryResponse,
@@ -45,6 +57,13 @@ import type {
   OnboardingOpenerResponse,
   OpenSessionRequest,
   OpenSessionResponse,
+  OsintFactCreate,
+  OsintFactDetail,
+  OsintFactUpdate,
+  ProfileFactCreate,
+  ProfileFactDetail,
+  ProfileFactUpdate,
+  RedactRequest,
   RedeemInviteRequest,
 } from "./generated/types.gen.js";
 
@@ -85,19 +104,28 @@ export type {
   SearchInventoryResponse,
 } from "./generated/types.gen.js";
 
-// Clients (S03): advisor-facing /clients surface — the three request/
-// response shapes plus the nested Voodoo Doll payload types. Re-exported
-// so apps/web can type forms + list/detail views from a single module.
+// Clients (S03): advisor-facing /clients surface — the request/response
+// shapes plus the nested Dossier and per-fact tier types. Re-exported so
+// apps/web can type forms + list/detail views from a single module.
 export type {
   ClientCreatePayload,
   ClientCreateResponse,
   ClientSummary,
   ClientDetail,
   InviteEvent,
-  VoodooDollPayload,
-  VoodooDollDetail,
-  VoodooDollTyped,
-  VoodooDollJsonb,
+  DossierPayload,
+  DossierDetail,
+  DossierTyped,
+  DossierFactCreate,
+  DossierFactDetail,
+  DossierFactUpdate,
+  ProfileFactCreate,
+  ProfileFactDetail,
+  ProfileFactUpdate,
+  OsintFactCreate,
+  OsintFactDetail,
+  OsintFactUpdate,
+  RedactRequest,
   ContactChannel,
   GroupType,
 } from "./generated/types.gen.js";
@@ -298,7 +326,7 @@ export type CreateClientResult =
   | { ok: false; status: number; detail: CreateClientDetail };
 
 /**
- * Typed wrapper for POST /clients (create client + Voodoo Doll + invite).
+ * Typed wrapper for POST /clients (create client + Dossier + invite).
  *
  * The 201 body carries `client_id` + `invite_email`; we re-shape to
  * `{ client_id, email }` so the result is keyed the same way apps/web
@@ -1101,6 +1129,294 @@ export async function getMyOnboardingSession(
       return { ok: true, session: data };
     }
     return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Per-fact tier mutations (Dossier / Profile / OSINT) ───────────────────
+//
+// Three triplets, all advisor-only. The 201 / 200 / 204 status matrix
+// collapses to `{ ok, fact? }` so apps/web can branch on `result.ok`
+// without try/catch. Cross-advisor reads return 404 (D015 collapse).
+
+export type FactMutationDetail =
+  | "client_not_found"
+  | "fact_not_found"
+  | "advisor_only"
+  | "validation_error"
+  | "invalid_source_kind"
+  | "network_error"
+  | "unknown";
+
+function _parseFactDetail(status: number, error: unknown): FactMutationDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "client_not_found") return "client_not_found";
+  if (raw === "fact_not_found") return "fact_not_found";
+  if (raw === "advisor_only") return "advisor_only";
+  if (raw === "invalid_source_kind") return "invalid_source_kind";
+  if (status === 400) return "invalid_source_kind";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "fact_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type CreateDossierFactResult =
+  | { ok: true; fact: DossierFactDetail }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function createDossierFact(
+  client: Client,
+  clientId: string,
+  body: DossierFactCreate,
+): Promise<CreateDossierFactResult> {
+  try {
+    const { data, error, response } =
+      await createDossierFactEndpointClientsClientIdDossierFactsPost({
+        client,
+        path: { client_id: clientId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, fact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type UpdateDossierFactResult =
+  | { ok: true; fact: DossierFactDetail }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function updateDossierFact(
+  client: Client,
+  clientId: string,
+  factId: string,
+  body: DossierFactUpdate,
+): Promise<UpdateDossierFactResult> {
+  try {
+    const { data, error, response } =
+      await updateDossierFactEndpointClientsClientIdDossierFactsFactIdPatch({
+        client,
+        path: { client_id: clientId, fact_id: factId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, fact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type RedactFactResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function redactDossierFact(
+  client: Client,
+  clientId: string,
+  factId: string,
+  body: RedactRequest,
+): Promise<RedactFactResult> {
+  try {
+    const { error, response } =
+      await redactDossierFactEndpointClientsClientIdDossierFactsFactIdDelete({
+        client,
+        path: { client_id: clientId, fact_id: factId },
+        body,
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type CreateProfileFactResult =
+  | { ok: true; fact: ProfileFactDetail }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function createProfileFact(
+  client: Client,
+  clientId: string,
+  body: ProfileFactCreate,
+): Promise<CreateProfileFactResult> {
+  try {
+    const { data, error, response } =
+      await createProfileFactEndpointClientsClientIdProfileFactsPost({
+        client,
+        path: { client_id: clientId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, fact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type UpdateProfileFactResult =
+  | { ok: true; fact: ProfileFactDetail }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function updateProfileFact(
+  client: Client,
+  clientId: string,
+  factId: string,
+  body: ProfileFactUpdate,
+): Promise<UpdateProfileFactResult> {
+  try {
+    const { data, error, response } =
+      await updateProfileFactEndpointClientsClientIdProfileFactsFactIdPatch({
+        client,
+        path: { client_id: clientId, fact_id: factId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, fact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function redactProfileFact(
+  client: Client,
+  clientId: string,
+  factId: string,
+  body: RedactRequest,
+): Promise<RedactFactResult> {
+  try {
+    const { error, response } =
+      await redactProfileFactEndpointClientsClientIdProfileFactsFactIdDelete({
+        client,
+        path: { client_id: clientId, fact_id: factId },
+        body,
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type CreateOsintFactResult =
+  | { ok: true; fact: OsintFactDetail }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function createOsintFact(
+  client: Client,
+  clientId: string,
+  body: OsintFactCreate,
+): Promise<CreateOsintFactResult> {
+  try {
+    const { data, error, response } =
+      await createOsintFactEndpointClientsClientIdOsintFactsPost({
+        client,
+        path: { client_id: clientId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, fact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type UpdateOsintFactResult =
+  | { ok: true; fact: OsintFactDetail }
+  | { ok: false; status: number; detail: FactMutationDetail };
+
+export async function updateOsintFact(
+  client: Client,
+  clientId: string,
+  factId: string,
+  body: OsintFactUpdate,
+): Promise<UpdateOsintFactResult> {
+  try {
+    const { data, error, response } =
+      await updateOsintFactEndpointClientsClientIdOsintFactsFactIdPatch({
+        client,
+        path: { client_id: clientId, fact_id: factId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, fact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function redactOsintFact(
+  client: Client,
+  clientId: string,
+  factId: string,
+  body: RedactRequest,
+): Promise<RedactFactResult> {
+  try {
+    const { error, response } =
+      await redactOsintFactEndpointClientsClientIdOsintFactsFactIdDelete({
+        client,
+        path: { client_id: clientId, fact_id: factId },
+        body,
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseFactDetail(response.status, error),
+    };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

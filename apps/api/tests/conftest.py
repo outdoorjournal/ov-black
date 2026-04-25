@@ -54,6 +54,9 @@ def settings_override() -> Iterator[Settings]:
         supabase_url="https://test.supabase.co",
         supabase_jwt_issuer=TEST_ISSUER,
         supabase_jwks_url="https://test.supabase.co/auth/v1/jwks",
+        # Stable test-only HS256 key for agent-token mint/verify round-trips.
+        # Tests that exercise the agent-token path import this same value.
+        agent_token_signing_secret="test-agent-token-signing-secret-please-rotate",
     )
 
     def _resolver() -> Settings:

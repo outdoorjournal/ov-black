@@ -15,11 +15,17 @@ from agent.tools.itinerary import get_itinerary, list_alternatives, list_itinera
 from agent.tools.mutations import update_node_status
 from agent.tools.proposals import assemble_draft, propose_card
 from agent.tools.set_mood import set_mood
-from agent.tools.voodoo import get_voodoo_doll
+from agent.tools.traveler import (
+    get_traveler_context,
+    record_dossier_inference,
+    record_profile_fact,
+)
 
 
 _TOOLS_ONBOARDING = [
-    get_voodoo_doll,
+    get_traveler_context,
+    record_profile_fact,
+    record_dossier_inference,
     search_inventory,
     get_inventory_detail,
     propose_card,
@@ -27,7 +33,9 @@ _TOOLS_ONBOARDING = [
 ]
 
 _TOOLS_PLANNING = [
-    get_voodoo_doll,
+    get_traveler_context,
+    record_profile_fact,
+    record_dossier_inference,
     get_itinerary,
     list_alternatives,
     search_inventory,
@@ -38,8 +46,9 @@ _TOOLS_PLANNING = [
     set_mood,
 ]
 
+# Q&A is read-only — no fact recording, the traveler is asking, not telling.
 _TOOLS_QA = [
-    get_voodoo_doll,
+    get_traveler_context,
     list_itineraries,
     get_itinerary,
 ]

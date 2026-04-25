@@ -116,8 +116,8 @@ def test_tool_result_update_node_status_maps_to_node_updated() -> None:
 
 
 def test_tool_result_read_only_tool_has_no_ui_frame() -> None:
-    # get_voodoo_doll is a read — no SSE frame for the browser.
-    event = {"tool_result": {"name": "get_voodoo_doll", "output": {"passions": []}}}
+    # get_traveler_context is a read — no SSE frame for the browser.
+    event = {"tool_result": {"name": "get_traveler_context", "output": {"profile_facts": []}}}
     assert list(translate_event(event)) == []
 
 
@@ -229,9 +229,9 @@ def test_tool_result_without_prior_tool_use_is_dropped() -> None:
 
 def test_read_only_tool_paired_messages_emits_no_frame() -> None:
     translator = EventTranslator()
-    list(translator.translate(_assistant_tool_use_event("tu-6", "get_voodoo_doll")))
+    list(translator.translate(_assistant_tool_use_event("tu-6", "get_traveler_context")))
     frames = list(
-        translator.translate(_tool_result_message_event("tu-6", {"passions": []}))
+        translator.translate(_tool_result_message_event("tu-6", {"profile_facts": []}))
     )
     assert frames == []
 

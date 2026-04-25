@@ -41,7 +41,7 @@ from app.models import (
     NodeStatus,
     NodeType,
     TurnRole,
-    VoodooDoll,
+    Dossier,
 )
 from app.models.client import ContactChannel, GroupType
 from app.services.agent import (
@@ -152,7 +152,7 @@ class FakeFactory:
     """async_sessionmaker stand-in.
 
     Holds the shared state the service will query through: the seeded
-    agent_session / client / voodoo_doll row trio, a running list of
+    agent_session / client / dossier row trio, a running list of
     turn rows (so second-call turn_index lookups see the first turn),
     and a queue of pre-scripted responses for non-data-model execute()
     calls (the FOR UPDATE row lock).
@@ -160,7 +160,7 @@ class FakeFactory:
 
     agent_session: AgentSession | None = None
     client_row: Client | None = None
-    doll: VoodooDoll | None = None
+    dossier: Dossier | None = None
     turns: list[AgentTurn] = field(default_factory=list)
     sessions_created: list[FakeSession] = field(default_factory=list)
     open_agent_session_on_reuse: AgentSession | None = None
@@ -271,20 +271,20 @@ class FakeFactory:
                 return FakeResult(rows=[None])
             return FakeResult(rows=[max(t.turn_index for t in self.turns)])
 
-        # Join on agent_session + client + voodoo_doll (context load).
+        # Join on agent_session + client + dossier (context load).
         if (
             "agent_sessions" in sql_lower
             and "clients" in sql_lower
-            and "voodoo_dolls" in sql_lower
+            and "dossiers" in sql_lower
         ):
             if (
                 self.agent_session is None
                 or self.client_row is None
-                or self.doll is None
+                or self.dossier is None
             ):
                 return FakeResult(rows=[])
             return FakeResult(
-                rows=[(self.agent_session, self.client_row, self.doll)]
+                rows=[(self.agent_session, self.client_row, self.dossier)]
             )
 
         # Plain agent_sessions lookup (open_or_reuse_session).
@@ -335,6 +335,18 @@ class FakeFactory:
                 return FakeResult(rows=[])
             return FakeResult(rows=[match.id])
 
+        # ── Per-fact tier reads (load_agent_context) — empty by default. ──
+        if "from dossier_facts" in sql_lower:
+            return FakeResult(rows=[])
+        if "from profile_facts" in sql_lower:
+            return FakeResult(rows=[])
+        if "from osint_facts" in sql_lower:
+            return FakeResult(rows=[])
+
+        # ── Standalone Dossier lookup by client_id (load_agent_context). ──
+        if "from dossiers" in sql_lower and "agent_sessions" not in sql_lower:
+            return FakeResult(rows=[self.dossier] if self.dossier else [])
+
         # Plain clients lookup.
         if "clients" in sql_lower and "agent_sessions" not in sql_lower:
             return FakeResult(
@@ -370,8 +382,8 @@ def client_row(advisor_id: uuid.UUID, user_id: uuid.UUID) -> Client:
 
 
 @pytest.fixture
-def voodoo_doll(client_row: Client) -> VoodooDoll:
-    doll = VoodooDoll(
+def dossier(client_row: Client) -> Dossier:
+    d = Dossier(
         client_id=client_row.id,
         authored_by=client_row.owner_id,
         contact_preference=ContactChannel.email,
@@ -379,17 +391,9 @@ def voodoo_doll(client_row: Client) -> VoodooDoll:
         children_ages=[],
         travel_party_notes="prefers quiet lodges",
         estimated_net_worth_usd=SECRET_NETWORTH,
-        passions=[{"label": "skiing"}],
-        motivations={"driver": "status"},
-        travel_history=[],
-        triggers=[],
-        constraints=[],
-        deal_breakers=[],
-        dream_trip_signals={},
-        osint_notes={"redflag": SECRET_OSINT},
     )
-    doll.id = uuid.uuid4()
-    return doll
+    d.id = uuid.uuid4()
+    return d
 
 
 @pytest.fixture
@@ -405,13 +409,13 @@ def agent_session(client_row: Client) -> AgentSession:
 @pytest.fixture
 def factory(
     client_row: Client,
-    voodoo_doll: VoodooDoll,
+    dossier: Dossier,
     agent_session: AgentSession,
 ) -> FakeFactory:
     return FakeFactory(
         agent_session=agent_session,
         client_row=client_row,
-        doll=voodoo_doll,
+        dossier=dossier,
     )
 
 
@@ -1067,19 +1071,25 @@ async def test_open_or_reuse_session_jit_backfill_profiles_upsert_never_downgrad
 
 
 def test_system_prompt_voice_and_context_present() -> None:
-    """S11: prompt now carries only voice preamble + Voodoo Doll context.
+    """Prompt carries voice preamble + three-tier disclosure rules + traveler context.
 
     The card/assemble protocol moved to the apps/agent runtime's
     per-mode rubric (see apps/agent/src/agent/prompts/). Runtime-side
     tests in apps/agent assert the protocol text lives there; this
-    API-side test only guards the voice + context assembly contract.
+    API-side test only guards the voice + disclosure-rules + context
+    assembly contract.
     """
     prompt = build_system_prompt("CONTEXT_PLACEHOLDER")
     # Voice preamble — shared with the runtime's fallback; drift here
     # would split the concierge voice across surfaces.
     assert "concierge agent" in prompt
+    # Disclosure rules call out each tier explicitly.
+    assert "Dossier facts" in prompt
+    assert "Profile facts" in prompt
+    assert "OSINT facts" in prompt
     # The context block is labelled and carries the passed-in string.
-    assert "Client context" in prompt
+    assert "Traveler context" in prompt
+    assert "CONTEXT_PLACEHOLDER" in prompt
     assert "CONTEXT_PLACEHOLDER" in prompt
 
 

@@ -46,21 +46,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.bedrock import AgentRuntimeClient, AgentRuntimeError
 from app.agent.prompt import build_system_prompt
-from app.agent.voodoo_doll_context import assemble_context
+from app.agent.traveler_context import assemble_traveler_context
 from app.config import Settings, get_settings
 from app.models import (
     AgentSession,
     AgentTurn,
     Client,
+    Dossier,
     Itinerary,
     ItineraryStatus,
     Node,
     NodeStatus,
     NodeType,
     TurnRole,
-    VoodooDoll,
 )
 from app.services import itineraries as itineraries_service
+from app.services.agent_token import AgentTokenError, mint_agent_token
+from app.services.facts import load_agent_context
 
 logger = logging.getLogger("ov_black.agent.service")
 
@@ -488,20 +490,26 @@ async def _load_session_context(
     session: AsyncSession,
     *,
     session_id: uuid.UUID,
-) -> tuple[AgentSession, Client, VoodooDoll] | None:
-    """Join agent_session → client → voodoo_doll in one round trip."""
+) -> tuple[AgentSession, Client, Dossier] | None:
+    """Join agent_session → client → dossier in one round trip.
+
+    Profile + OSINT + dossier facts are loaded separately by
+    :func:`app.services.facts.load_agent_context` and merged in by the
+    caller (so we don't bloat this single join with three correlated
+    sub-selects).
+    """
     row = (
         await session.execute(
-            select(AgentSession, Client, VoodooDoll)
+            select(AgentSession, Client, Dossier)
             .join(Client, Client.id == AgentSession.client_id)
-            .join(VoodooDoll, VoodooDoll.client_id == Client.id)
+            .join(Dossier, Dossier.client_id == Client.id)
             .where(AgentSession.id == session_id)
         )
     ).first()
     if row is None:
         return None
-    agent_session, client, doll = row
-    return agent_session, client, doll
+    agent_session, client, dossier = row
+    return agent_session, client, dossier
 
 
 async def _next_turn_index(
@@ -825,7 +833,7 @@ async def stream_turn(
                 },
             )
             return
-        agent_session, client_row, doll = ctx
+        agent_session, client_row, dossier = ctx
 
         authz = await _authorize_actor(actor, client_row)
         if authz is not TurnOutcome.OK:
@@ -864,9 +872,23 @@ async def stream_turn(
             )
             return
 
+        # Gather the three fact tiers (active rows only — agent must never
+        # see redacted facts). One call yields all three lists in three
+        # small SELECTs sharing the same session.
+        ctx_rows = await load_agent_context(db, client_id=client_row.id)
+        dossier_facts = ctx_rows.dossier_facts if ctx_rows else []
+        profile_facts = ctx_rows.profile_facts if ctx_rows else []
+        osint_facts = ctx_rows.osint_facts if ctx_rows else []
+
         # Assemble prompt + context OUTSIDE the log-safe zone.
-        doll_context = assemble_context(doll, client_full_name=client_row.full_name)
-        system_prompt = build_system_prompt(doll_context)
+        traveler_ctx = assemble_traveler_context(
+            dossier=dossier,
+            dossier_facts=dossier_facts,
+            profile_facts=profile_facts,
+            osint_facts=osint_facts,
+            client_full_name=client_row.full_name,
+        )
+        system_prompt = build_system_prompt(traveler_ctx)
         agentcore_session_id = agent_session.agentcore_session_id
         client_id = client_row.id
         actor_user_id = actor.user_id
@@ -922,6 +944,23 @@ async def stream_turn(
     # ``input_text`` and ignores ``input``; the legacy runtime was wired
     # against ``input``. Remove once the new runtime is in staging and
     # traffic has shifted.
+    # Mint a per-session agent token for the runtime to call backend-only
+    # /agent/* routes (Dossier+Profile+OSINT context, private fact writes).
+    # The user JWT (auth_bearer) keeps its narrower scope for tools that
+    # act on the user's own resources (itineraries, mutations).
+    try:
+        agent_token = mint_agent_token(
+            session_id=session_id,
+            client_id=client_id,
+            agentcore_session_id=agentcore_session_id,
+            settings=settings,
+        )
+    except AgentTokenError:
+        # Local dev / unconfigured environments: ship an empty string so
+        # the runtime can degrade gracefully (the new tools fail with a
+        # clear ``missing_agent_token`` rather than crashing the turn).
+        agent_token = ""
+
     payload = {
         "system": system_prompt,
         "input": [{"role": "user", "content": [{"text": content}]}],
@@ -929,6 +968,7 @@ async def stream_turn(
         "prior_turns": prior_turns,
         "mode": mode,
         "auth_bearer": auth_bearer or "",
+        "agent_token": agent_token,
         "actor_kind": actor.actor_kind,
         "client_id": str(client_id),
         "itinerary_id": (

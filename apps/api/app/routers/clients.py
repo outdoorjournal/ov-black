@@ -2,13 +2,13 @@
 
 Five routes, all gated by :func:`app.auth_guards.require_advisor`:
 
-- ``POST   /clients``                           create client + Voodoo Doll + invite (atomic)
+- ``POST   /clients``                           create client + Dossier (+ optional initial dossier_facts) + invite (atomic)
 - ``GET    /clients``                           advisor's own clients, newest-first
-- ``GET    /clients/{id}``                      full client + Voodoo Doll payload + invite history
+- ``GET    /clients/{id}``                      full client + dossier + active facts (?include_redacted=1 to include redacted)
 - ``POST   /clients/{id}/invite/reissue``       supersede the live invite and email a fresh one
 - ``POST   /clients/{id}/invite/cancel``        mark the live invite cancelled (no email)
 
-The POST path delegates to :func:`create_client_with_voodoo_doll` and maps
+The POST path delegates to :func:`create_client_with_dossier` and maps
 ``ClientCreateOutcome`` to HTTP status codes the same way ``routers/auth.py``
 maps ``RedeemOutcome`` — 201 / 409 / 502, with the 502 ``detail`` string
 (``auth_upstream_unavailable``) deliberately reused from S01 so ops
@@ -17,10 +17,7 @@ dashboards can collapse both paths under one alert.
 GET paths scope by ``owner_id = advisor_id``. ``GET /{client_id}`` 404s
 whenever the row does not belong to the calling advisor (S01 D015
 collapsed-shape precedent — 403 would let one advisor probe for another
-advisor's client UUIDs). Invite status is derived from every row joining
-``invites`` on ``(email, role='client', created_by=advisor_id)`` — after
-the 0007 lifecycle migration, multiple rows may exist per client (one per
-send), and the latest non-consumed row decides the rendered status.
+advisor's client UUIDs).
 """
 
 from __future__ import annotations
@@ -29,13 +26,13 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
-from app.models import Client, Invite, UserRole, VoodooDoll
+from app.models import Client, Dossier, Invite, UserRole
 from app.schemas.clients import (
     ClientCreatePayload,
     ClientCreateResponse,
@@ -44,16 +41,22 @@ from app.schemas.clients import (
     InviteEvent,
     InviteEventStatus,
     InviteStatus,
-    VoodooDollDetail,
+)
+from app.schemas.dossier import DossierDetail
+from app.schemas.facts import (
+    DossierFactDetail,
+    OsintFactDetail,
+    ProfileFactDetail,
 )
 from app.services.clients import (
     ClientCreateOutcome,
     InviteCancelOutcome,
     InviteReissueOutcome,
     cancel_client_invite,
-    create_client_with_voodoo_doll,
+    create_client_with_dossier,
     reissue_client_invite,
 )
+from app.services.facts import load_agent_context
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,11 +141,7 @@ async def _load_invites_for_advisor(
 ) -> dict[str, list[Invite]]:
     """Fetch every client-role invite this advisor issued, grouped by email.
 
-    One query instead of a per-client lookup. For a fresh advisor this is
-    a handful of rows; for a seasoned one it scales with lifetime clients,
-    which is still trivial compared to the itinerary graph. If that ever
-    stops being true we can move to a lateral join — the grouping lives
-    in the router so the SQL stays simple.
+    One query instead of a per-client lookup.
     """
     result = await session.execute(
         select(Invite).where(
@@ -163,12 +162,12 @@ async def _load_invites_for_advisor(
     status_code=status.HTTP_201_CREATED,
     response_model=ClientCreateResponse,
     responses={
-        201: {"description": "Client + Voodoo Doll created, invite email sent."},
+        201: {"description": "Client + Dossier created, invite email sent."},
         403: {"description": "Caller is not an advisor."},
         409: {"description": "Email is already tied to one of this advisor's clients."},
         502: {"description": "Supabase Auth admin API is unavailable."},
     },
-    summary="Create a new client + Voodoo Doll and email them an invite link.",
+    summary="Create a new client + Dossier and email them an invite link.",
 )
 async def create_client_endpoint(
     payload: ClientCreatePayload,
@@ -176,7 +175,7 @@ async def create_client_endpoint(
     session: "AsyncSession" = Depends(get_session),
 ) -> ClientCreateResponse:
     advisor_id = _advisor_id(user)
-    result = await create_client_with_voodoo_doll(
+    result = await create_client_with_dossier(
         session, advisor_id=advisor_id, payload=payload
     )
 
@@ -208,12 +207,9 @@ async def list_clients_endpoint(
 ) -> list[ClientSummary]:
     advisor_id = _advisor_id(user)
 
-    # Clients + Voodoo Doll presence in one query; invites fetched separately
-    # and grouped in Python so multiple-row-per-client histories don't blow
-    # up the join into N×M.
     stmt = (
-        select(Client, VoodooDoll.id)
-        .outerjoin(VoodooDoll, VoodooDoll.client_id == Client.id)
+        select(Client, Dossier.id)
+        .outerjoin(Dossier, Dossier.client_id == Client.id)
         .where(Client.owner_id == advisor_id)
         .order_by(Client.created_at.desc())
     )
@@ -223,19 +219,34 @@ async def list_clients_endpoint(
     invites_by_email = await _load_invites_for_advisor(session, advisor_id)
 
     rows: list[ClientSummary] = []
-    for client, doll_id in client_rows:
+    for client, dossier_id in client_rows:
         invites = invites_by_email.get(client.email, [])
         rows.append(
             ClientSummary(
                 id=client.id,
                 full_name=client.full_name,
                 email=client.email,
-                has_voodoo_doll=doll_id is not None,
+                has_dossier=dossier_id is not None,
                 invite_status=_derive_invite_status(invites),
                 created_at=client.created_at,
             )
         )
     return rows
+
+
+def _dossier_detail(dossier: Dossier | None) -> DossierDetail | None:
+    if dossier is None:
+        return None
+    return DossierDetail(
+        id=dossier.id,
+        contact_preference=dossier.contact_preference,
+        group_type=dossier.group_type,
+        children_ages=list(dossier.children_ages),
+        travel_party_notes=dossier.travel_party_notes,
+        estimated_net_worth_usd=dossier.estimated_net_worth_usd,
+        created_at=dossier.created_at,
+        updated_at=dossier.updated_at,
+    )
 
 
 @router.get(
@@ -244,12 +255,20 @@ async def list_clients_endpoint(
     responses={
         404: {"description": "No client with this id owned by the calling advisor."},
     },
-    summary="Get a single client + Voodoo Doll by id (scoped to the caller).",
+    summary="Get a single client + Dossier + per-tier facts (scoped to the caller).",
 )
 async def get_client_endpoint(
     client_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
     session: "AsyncSession" = Depends(get_session),
+    include_redacted: bool = Query(
+        default=False,
+        description=(
+            "When true, redacted facts are included in the response so "
+            "advisors can review and (in a later slice) restore them. "
+            "Default false hides redactions from normal review."
+        ),
+    ),
 ) -> ClientDetail:
     advisor_id = _advisor_id(user)
 
@@ -260,14 +279,16 @@ async def get_client_endpoint(
     )
     client = client_result.scalar_one_or_none()
     if client is None:
-        # Collapsed shape (S01 D015) — never 403 on cross-advisor, that
-        # leaks existence of the client_id to a probing advisor.
+        # Collapsed shape (S01 D015) — never 403 on cross-advisor.
         raise HTTPException(status_code=404, detail="client_not_found")
 
-    doll_result = await session.execute(
-        select(VoodooDoll).where(VoodooDoll.client_id == client.id)
+    ctx = await load_agent_context(
+        session, client_id=client.id, include_redacted=include_redacted
     )
-    doll = doll_result.scalar_one_or_none()
+    # ``ctx`` is None only if the client row vanished between the two
+    # selects; treat that as a 404 to keep the shape consistent.
+    if ctx is None:
+        raise HTTPException(status_code=404, detail="client_not_found")
 
     invites_result = await session.execute(
         select(Invite).where(
@@ -278,27 +299,6 @@ async def get_client_endpoint(
     )
     invites = list(invites_result.scalars())
 
-    voodoo_payload: VoodooDollDetail | None = None
-    if doll is not None:
-        voodoo_payload = VoodooDollDetail(
-            id=doll.id,
-            contact_preference=doll.contact_preference,
-            group_type=doll.group_type,
-            children_ages=list(doll.children_ages),
-            travel_party_notes=doll.travel_party_notes,
-            estimated_net_worth_usd=doll.estimated_net_worth_usd,
-            passions=list(doll.passions),
-            motivations=dict(doll.motivations),
-            travel_history=list(doll.travel_history),
-            triggers=list(doll.triggers),
-            constraints=list(doll.constraints),
-            deal_breakers=list(doll.deal_breakers),
-            dream_trip_signals=dict(doll.dream_trip_signals),
-            osint_notes=dict(doll.osint_notes),
-            created_at=doll.created_at,
-            updated_at=doll.updated_at,
-        )
-
     return ClientDetail(
         id=client.id,
         full_name=client.full_name,
@@ -307,7 +307,10 @@ async def get_client_endpoint(
         invite_history=_build_invite_history(invites),
         created_at=client.created_at,
         updated_at=client.updated_at,
-        voodoo_doll=voodoo_payload,
+        dossier=_dossier_detail(ctx.dossier),
+        dossier_facts=[DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts],
+        profile_facts=[ProfileFactDetail.model_validate(f, from_attributes=True) for f in ctx.profile_facts],
+        osint_facts=[OsintFactDetail.model_validate(f, from_attributes=True) for f in ctx.osint_facts],
     )
 
 

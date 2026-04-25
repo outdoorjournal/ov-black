@@ -1,4 +1,4 @@
-"""Service-level coverage for ``create_client_with_voodoo_doll`` (T04).
+"""Service-level coverage for ``create_client_with_dossier`` (T04).
 
 Mirrors the FakeSession + stubbed-admin pattern from ``test_invites.py``.
 No Postgres, no live Supabase — every outcome enum (OK / DUPLICATE_EMAIL
@@ -15,17 +15,14 @@ from typing import Any
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Client, Invite, VoodooDoll
-from app.schemas.clients import (
-    ClientCreatePayload,
-    VoodooDollJsonb,
-    VoodooDollPayload,
-    VoodooDollTyped,
-)
+from app.models import Client, Dossier, DossierFact, DossierFactKind, FactSourceKind, Invite
+from app.schemas.clients import ClientCreatePayload
+from app.schemas.dossier import DossierPayload, DossierTyped
+from app.schemas.facts import DossierFactCreate
 from app.services import clients as clients_service
 from app.services.clients import (
     ClientCreateOutcome,
-    create_client_with_voodoo_doll,
+    create_client_with_dossier,
 )
 from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
 
@@ -37,10 +34,10 @@ from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
 class FakeSession:
     """Minimal async-session stand-in for the clients service.
 
-    Tracks everything ``session.add``-ed so each test can inspect the three
-    rows (client / voodoo_doll / invite) the service tried to persist.
-    Optional ``flush_raises`` lets a test simulate the unique-index
-    violation from ``clients_owner_email_idx``.
+    Tracks everything ``session.add``-ed so each test can inspect the
+    rows the service tried to persist (client, dossier, dossier_facts,
+    invite). Optional ``flush_raises`` lets a test simulate the
+    unique-index violation from ``clients_owner_email_idx``.
     """
 
     added: list[Any] = field(default_factory=list)
@@ -52,7 +49,7 @@ class FakeSession:
 
     def add(self, obj: Any) -> None:
         # Emulate the server-side default on clients.id so the service can
-        # hand the generated UUID to the voodoo_dolls row in the same txn.
+        # hand the generated UUID to the dossier row in the same txn.
         if isinstance(obj, Client) and obj.id is None:
             obj.id = uuid.uuid4()
         self.added.append(obj)
@@ -60,8 +57,6 @@ class FakeSession:
     async def flush(self) -> None:
         self.flushes += 1
         if self.flush_raises is not None and self.flushes == self.raise_on_nth_flush:
-            # Pop the offending row the way SQLAlchemy would after a flush error,
-            # so downstream assertions can tell the row was rejected.
             raise self.flush_raises
 
     async def commit(self) -> None:
@@ -75,25 +70,27 @@ def _payload(*, email: str = "new@example.com") -> ClientCreatePayload:
     return ClientCreatePayload(
         full_name="Jane Doe",
         email=email,
-        voodoo_doll=VoodooDollPayload(
-            typed=VoodooDollTyped(
+        dossier=DossierPayload(
+            typed=DossierTyped(
                 contact_preference="email",
                 group_type="family",
                 children_ages=[7, 10],
                 travel_party_notes="prefers late checkouts",
                 estimated_net_worth_usd=5_000_000,
             ),
-            jsonb=VoodooDollJsonb(
-                passions=[{"label": "skiing"}],
-                motivations={"driver": "status"},
-                travel_history=[{"place": "Aspen", "year": 2024}],
-                triggers=[{"kind": "crowded"}],
-                constraints=[{"kind": "gluten_free"}],
-                deal_breakers=[{"kind": "long_haul"}],
-                dream_trip_signals={"tier": "ultra"},
-                osint_notes={"source": "linkedin"},
-            ),
         ),
+        dossier_facts=[
+            DossierFactCreate(
+                kind=DossierFactKind.passion,
+                text="skiing",
+                source_kind=FactSourceKind.advisor,
+            ),
+            DossierFactCreate(
+                kind=DossierFactKind.travel_history,
+                text="Aspen · 2024",
+                source_kind=FactSourceKind.advisor,
+            ),
+        ],
     )
 
 
@@ -130,13 +127,13 @@ def stub_admin_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ok_path_inserts_all_three_rows_and_commits_once(
+async def test_ok_path_inserts_client_dossier_facts_and_invite_with_one_commit(
     stub_admin_ok: list[tuple[str, str]],
 ) -> None:
     advisor_id = uuid.uuid4()
     session = FakeSession()
 
-    result = await create_client_with_voodoo_doll(
+    result = await create_client_with_dossier(
         session,
         advisor_id=advisor_id,
         payload=_payload(email="fresh@example.com"),
@@ -147,25 +144,30 @@ async def test_ok_path_inserts_all_three_rows_and_commits_once(
     assert result.issued is not None
     assert result.issued.email == "fresh@example.com"
 
-    # Exactly one commit, no rollbacks on the happy path.
     assert session.commits == 1
     assert session.rollbacks == 0
 
-    # All three rows were added and the admin was called with the right redirect.
     client_rows = [o for o in session.added if isinstance(o, Client)]
-    doll_rows = [o for o in session.added if isinstance(o, VoodooDoll)]
+    dossier_rows = [o for o in session.added if isinstance(o, Dossier)]
+    fact_rows = [o for o in session.added if isinstance(o, DossierFact)]
     invite_rows = [o for o in session.added if isinstance(o, Invite)]
+
     assert len(client_rows) == 1
-    assert len(doll_rows) == 1
+    assert len(dossier_rows) == 1
+    assert len(fact_rows) == 2  # the two seeded dossier_facts
     assert len(invite_rows) == 1
+
     assert client_rows[0].owner_id == advisor_id
     assert client_rows[0].email == "fresh@example.com"
-    assert doll_rows[0].client_id == client_rows[0].id
-    assert doll_rows[0].authored_by == advisor_id
-    assert doll_rows[0].children_ages == [7, 10]
+    assert dossier_rows[0].client_id == client_rows[0].id
+    assert dossier_rows[0].authored_by == advisor_id
+    assert dossier_rows[0].children_ages == [7, 10]
+    for fact in fact_rows:
+        assert fact.client_id == client_rows[0].id
+        assert fact.recorded_by == advisor_id
+        assert fact.source_kind is FactSourceKind.advisor
     assert invite_rows[0].email == "fresh@example.com"
     assert invite_rows[0].created_by == advisor_id
-    # ~22 chars for token_urlsafe(16) — validate shape, not exact value.
     assert 20 <= len(invite_rows[0].code) <= 24
 
     assert stub_admin_ok == [
@@ -180,7 +182,7 @@ async def test_duplicate_email_rolls_back_and_does_not_call_admin(
     advisor_id = uuid.uuid4()
     session = FakeSession(flush_raises=_integrity_error(), raise_on_nth_flush=1)
 
-    result = await create_client_with_voodoo_doll(
+    result = await create_client_with_dossier(
         session,
         advisor_id=advisor_id,
         payload=_payload(email="dup@example.com"),
@@ -191,8 +193,6 @@ async def test_duplicate_email_rolls_back_and_does_not_call_admin(
     assert result.issued is None
     assert session.commits == 0
     assert session.rollbacks == 1
-    # Admin was NEVER called — the unique-index violation short-circuits
-    # before the upstream email goes out.
     assert stub_admin_ok == []
 
 
@@ -203,7 +203,7 @@ async def test_upstream_failure_rolls_back_and_returns_unavailable(
     advisor_id = uuid.uuid4()
     session = FakeSession()
 
-    result = await create_client_with_voodoo_doll(
+    result = await create_client_with_dossier(
         session,
         advisor_id=advisor_id,
         payload=_payload(email="lost@example.com"),
@@ -213,15 +213,14 @@ async def test_upstream_failure_rolls_back_and_returns_unavailable(
     assert result.client_id is None
     assert result.issued is None
     assert session.commits == 0
-    # Service MUST rollback so the client + doll + invite rows do not persist
-    # when the magic-link email could not be issued.
+    # Service MUST rollback so the client + dossier + facts + invite rows
+    # do not persist when the magic-link email could not be issued.
     assert session.rollbacks == 1
 
 
 def test_invite_code_generator_shape() -> None:
     """``secrets.token_urlsafe(16)`` produces URL-safe ~22-char strings."""
     codes = {clients_service._generate_invite_code() for _ in range(100)}
-    # Collision-free across 100 draws.
     assert len(codes) == 100
     url_safe = set(
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"

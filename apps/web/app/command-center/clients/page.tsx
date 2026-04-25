@@ -95,7 +95,7 @@ function ClientList({
     id: string;
     full_name: string;
     email: string;
-    has_voodoo_doll: boolean;
+    has_dossier: boolean;
     invite_status: InviteStatus;
     created_at: string;
   }>;
@@ -106,7 +106,7 @@ function ClientList({
         <CardHeader>
           <CardTitle className="text-lg">No clients yet</CardTitle>
           <CardDescription>
-            Click New Client to create the first Voodoo Doll and issue an
+            Click New Client to create the first Dossier and issue an
             invite.
           </CardDescription>
         </CardHeader>
@@ -123,7 +123,12 @@ function ClientList({
               <div className="flex items-start justify-between gap-6">
                 <div>
                   <CardTitle className="font-serif text-2xl">
-                    {c.full_name}
+                    <Link
+                      href={`/command-center/clients/${c.id}`}
+                      className="underline-offset-4 hover:underline"
+                    >
+                      {c.full_name}
+                    </Link>
                   </CardTitle>
                   <CardDescription className="font-sans text-sm text-ink/70">
                     {c.email}
@@ -141,9 +146,9 @@ function ClientList({
               </div>
             </CardHeader>
             <CardContent className="font-sans text-sm text-ink/70">
-              {c.has_voodoo_doll
-                ? "Voodoo Doll on file."
-                : "No Voodoo Doll yet."}
+              {c.has_dossier
+                ? "Dossier on file."
+                : "No Dossier yet."}
             </CardContent>
           </Card>
         </li>

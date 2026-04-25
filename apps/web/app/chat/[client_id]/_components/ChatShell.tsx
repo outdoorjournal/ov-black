@@ -41,7 +41,7 @@ import {
 
 // Craft-feel bootstrap: S04 enforces 1..8000 chars on /turn content, so an
 // empty string is rejected at the API. A single space nudges the agent to
-// open the correspondence itself (it references seeded Voodoo Doll facts in
+// open the correspondence itself (it references seeded Dossier facts in
 // its greeting) without the user having to type a prompt first.
 const BOOTSTRAP_CONTENT = " ";
 

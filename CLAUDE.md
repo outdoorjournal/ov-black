@@ -86,6 +86,18 @@ pnpm -C infra/cdk cdk deploy OvBlackApi-staging -c imageTag=<sha>   # needs cred
 
 The domain is a graph of nodes (destinations, hotels, experiences, etc.) and edges, persisted in Postgres and exposed through `/itinerary/*` routes. Nodes carry `status` (proposed → approved/discarded) and `actor_kind` (agent vs. advisor vs. client). Every surface — client mood board, advisor Command Center, agent SSE stream — reads and mutates this same graph. See migrations [0002_itinerary_graph.sql](supabase/migrations/0002_itinerary_graph.sql) onward.
 
+### Traveler context tiers (Dossier + Profile + OSINT)
+
+Three semantically distinct stores feed the agent, each with its own disclosure rule:
+
+- **Dossier** ([dossiers](supabase/migrations/0011_dossier_profile_osint.sql) typed core + `dossier_facts`) — private internal knowledge. Two source kinds: `advisor` (manually entered) and `agent_inferred` (recorded by the agent during a turn). Ground reasoning, **never** reveal verbatim or even acknowledge to the traveler.
+- **Profile** (`profile_facts`) — what the traveler self-expressed. Source kinds: `traveler_told` (the agent recorded it) or `advisor` (manually attributed). The agent **may** reference these naturally ("you mentioned …").
+- **OSINT** (`osint_facts`) — external research (LinkedIn, press, public records). The agent reads but **NEVER** surfaces, paraphrases, or alludes to it.
+
+The agent fetches all three from the backend-only `GET /agent/context` endpoint in [apps/api/app/routers/agent_internal.py](apps/api/app/routers/agent_internal.py), authenticated by an HS256 per-session token minted at `POST /sessions`. The token is stashed only in the AgentCore runtime — never returned to the browser — so the traveler cannot pull Dossier or OSINT directly. Two write tools mirror the two write semantics: `record_profile_fact` (traveler told us) and `record_dossier_inference` (agent inferred privately). Per-fact CRUD for advisors lives at `/clients/{id}/{tier}/facts` and is reviewable in [/command-center/clients/[id]](apps/web/app/command-center/clients/[id]/page.tsx) under the three-tab detail page. The system prompt is assembled by [apps/api/app/agent/traveler_context.py](apps/api/app/agent/traveler_context.py) and labelled with the disclosure rules so the model has them in its working context every turn.
+
+Redaction discipline: net worth + Dossier + OSINT content must NEVER appear in any log record. The sweep test in [apps/api/tests/test_traveler_context.py](apps/api/tests/test_traveler_context.py) walks every caplog record and asserts no sentinel substring leaks; the `agent_token_signing_secret` is `repr=False` in `Settings`. Don't log the agent token, the user JWT, or fact text.
+
 ### Agent turn loop (S04)
 
 - `POST /sessions` opens an AgentCore session (idempotent per client_id) and returns `{session_id, agentcore_session_id, itinerary_id}`.

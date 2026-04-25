@@ -1,7 +1,7 @@
 """Coverage for the advisor-facing /clients surface (M001/S03 T05).
 
 Router-level tests only — the service behaviour is exercised by
-``test_clients_service.py``. We stub :func:`create_client_with_voodoo_doll`
+``test_clients_service.py``. We stub :func:`create_client_with_dossier`
 and override ``require_advisor`` / ``get_session`` so each case exercises
 exactly one router responsibility:
 
@@ -29,7 +29,7 @@ from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
 from app.main import app as fastapi_app
-from app.models import Client, Invite, UserRole, VoodooDoll
+from app.models import Client, Dossier, Invite, UserRole
 from app.models.client import ContactChannel, GroupType
 from app.routers import clients as clients_router_module
 from app.services.clients import (
@@ -59,12 +59,14 @@ class _ExecResult:
     def all(self) -> list[Any]:
         return list(self.rows)
 
-    def scalars(self) -> list[Any]:
-        # The router's invite reads now consume the result with .scalars()
-        # since multiple rows per (email, advisor) are expected once an
-        # advisor has resent at least once. The fake just hands back the
-        # underlying list — order is preserved by caller-side fixtures.
-        return list(self.rows)
+    def scalars(self) -> "_ExecResult":
+        # The router's invite reads consume .scalars() and may chain
+        # .all() (load_agent_context). Return self so both .all() and
+        # iteration over rows work.
+        return self
+
+    def __iter__(self):
+        return iter(self.rows)
 
 
 @dataclass
@@ -72,13 +74,13 @@ class FakeSession:
     """Async-session stand-in for the router's reads.
 
     Holds an advisor-scoped fixture: a dict of clients keyed by (owner_id,
-    client_id), plus voodoo_dolls and invites. ``execute`` introspects the
+    client_id), plus dossiers and invites. ``execute`` introspects the
     compiled SQL enough to dispatch to the right helper. The router only
     ever calls ``execute`` — no commit/rollback is expected on the read path.
     """
 
     clients_by_id: dict[uuid.UUID, Client] = field(default_factory=dict)
-    dolls_by_client: dict[uuid.UUID, VoodooDoll] = field(default_factory=dict)
+    dossiers_by_client: dict[uuid.UUID, Dossier] = field(default_factory=dict)
     invites: list[Invite] = field(default_factory=list)
 
     async def execute(self, stmt: Any) -> _ExecResult:
@@ -86,7 +88,7 @@ class FakeSession:
         params = compiled.params
         sql = str(compiled).lower()
 
-        # ── LIST /clients — JOIN with voodoo_dolls only (invites fetched separately) ──
+        # ── LIST /clients — JOIN with dossiers only (invites fetched separately) ──
         if "from clients" in sql and "join" in sql:
             advisor_id = next(
                 (v for v in params.values() if isinstance(v, uuid.UUID)), None
@@ -99,8 +101,8 @@ class FakeSession:
             ]
             owned.sort(key=lambda c: c.created_at, reverse=True)
             for client in owned:
-                doll = self.dolls_by_client.get(client.id)
-                rows.append((client, doll.id if doll else None))
+                dossier = self.dossiers_by_client.get(client.id)
+                rows.append((client, dossier.id if dossier else None))
             return _ExecResult(rows)
 
         # ── GET /clients/{id} — single client scoped to owner ──
@@ -119,13 +121,21 @@ class FakeSession:
                 return _ExecResult([])
             return _ExecResult([client])
 
-        # ── VoodooDoll lookup by client_id ──
-        if "from voodoo_dolls" in sql:
+        # ── Dossier lookup by client_id (for the GET-by-id flow) ──
+        if "from dossiers" in sql:
             client_id = next(
                 (v for v in params.values() if isinstance(v, uuid.UUID)), None
             )
-            doll = self.dolls_by_client.get(client_id)
-            return _ExecResult([doll] if doll is not None else [])
+            dossier = self.dossiers_by_client.get(client_id)
+            return _ExecResult([dossier] if dossier is not None else [])
+
+        # ── Per-fact-tier reads: empty by default in the router suite ──
+        if (
+            "from dossier_facts" in sql
+            or "from profile_facts" in sql
+            or "from osint_facts" in sql
+        ):
+            return _ExecResult([])
 
         # ── Invite lookup ──
         # Two callers: the list endpoint fetches every advisor invite and
@@ -226,7 +236,7 @@ def override_require_advisor_rejects_client() -> "Iterator[None]":
 
 @pytest.fixture()
 def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Stub ``create_client_with_voodoo_doll`` on the router module."""
+    """Stub ``create_client_with_dossier`` on the router module."""
     state: dict[str, Any] = {
         "calls": [],
         "return_outcome": ClientCreateOutcome.OK,
@@ -250,7 +260,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return ClientCreateResult(outcome=outcome, client_id=client_id)
 
     monkeypatch.setattr(
-        clients_router_module, "create_client_with_voodoo_doll", _fake
+        clients_router_module, "create_client_with_dossier", _fake
     )
     return state
 
@@ -259,7 +269,7 @@ def _valid_payload(email: str = "client@example.com") -> dict[str, Any]:
     return {
         "full_name": "Jane Traveler",
         "email": email,
-        "voodoo_doll": {
+        "dossier": {
             "typed": {
                 "contact_preference": "email",
                 "group_type": "couple",
@@ -267,8 +277,8 @@ def _valid_payload(email: str = "client@example.com") -> dict[str, Any]:
                 "travel_party_notes": "",
                 "estimated_net_worth_usd": None,
             },
-            "jsonb": {},
         },
+        "dossier_facts": [],
     }
 
 
@@ -292,8 +302,8 @@ def _client_row(
     return row
 
 
-def _doll_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> VoodooDoll:
-    doll = VoodooDoll(
+def _dossier_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> Dossier:
+    dossier = Dossier(
         client_id=client_id,
         authored_by=authored_by,
         contact_preference=ContactChannel.email,
@@ -301,19 +311,11 @@ def _doll_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> VoodooDoll:
         children_ages=[],
         travel_party_notes="notes",
         estimated_net_worth_usd=None,
-        passions=[],
-        motivations={},
-        travel_history=[],
-        triggers=[],
-        constraints=[],
-        deal_breakers=[],
-        dream_trip_signals={},
-        osint_notes={},
     )
-    doll.id = uuid.uuid4()
-    doll.created_at = datetime.now(timezone.utc)
-    doll.updated_at = doll.created_at
-    return doll
+    dossier.id = uuid.uuid4()
+    dossier.created_at = datetime.now(timezone.utc)
+    dossier.updated_at = dossier.created_at
+    return dossier
 
 
 def _invite_for(
@@ -418,7 +420,7 @@ def test_post_clients_missing_required_fields_returns_422(
     stub_service: dict[str, Any],
     auth_headers: dict[str, str],
 ) -> None:
-    # No voodoo_doll — Pydantic rejects with 422 before the handler runs.
+    # No dossier field — Pydantic rejects with 422 before the handler runs.
     bad_payload = {"full_name": "Jane", "email": "jane@example.com"}
 
     resp = client.post("/clients", json=bad_payload, headers=auth_headers)
@@ -463,7 +465,7 @@ def test_get_clients_returns_only_own_clients(
     fake_session.clients_by_id[a_client_2.id] = a_client_2
 
     # advisor_a has a doll for a_client only, and a consumed invite for a_client
-    fake_session.dolls_by_client[a_client.id] = _doll_for(a_client.id, advisor_a)
+    fake_session.dossiers_by_client[a_client.id] = _dossier_for(a_client.id, advisor_a)
     fake_session.invites.append(
         _invite_for(a_client.email, advisor_a, consumed=True)
     )
@@ -481,12 +483,12 @@ def test_get_clients_returns_only_own_clients(
     assert body[1]["email"] == "a@example.com"
 
     a_row = next(r for r in body if r["email"] == "a@example.com")
-    assert a_row["has_voodoo_doll"] is True
+    assert a_row["has_dossier"] is True
     assert a_row["invite_status"] == "consumed"
     assert a_row["full_name"] == "Alice A"
 
     c_row = next(r for r in body if r["email"] == "c@example.com")
-    assert c_row["has_voodoo_doll"] is False
+    assert c_row["has_dossier"] is False
     assert c_row["invite_status"] == "pending"
 
 
@@ -501,11 +503,11 @@ def test_get_client_by_id_returns_joined_payload_for_own_client(
 ) -> None:
     advisor_a = override_require_advisor
     own = _client_row(owner_id=advisor_a, email="own@example.com")
-    doll = _doll_for(own.id, advisor_a)
+    dossier = _dossier_for(own.id, advisor_a)
     invite = _invite_for(own.email, advisor_a)
 
     fake_session.clients_by_id[own.id] = own
-    fake_session.dolls_by_client[own.id] = doll
+    fake_session.dossiers_by_client[own.id] = dossier
     fake_session.invites.append(invite)
 
     resp = client.get(f"/clients/{own.id}", headers=auth_headers)
@@ -514,10 +516,14 @@ def test_get_client_by_id_returns_joined_payload_for_own_client(
     assert body["id"] == str(own.id)
     assert body["email"] == "own@example.com"
     assert body["invite_status"] == "pending"
-    assert body["voodoo_doll"] is not None
-    assert body["voodoo_doll"]["id"] == str(doll.id)
-    assert body["voodoo_doll"]["contact_preference"] == "email"
-    assert body["voodoo_doll"]["group_type"] == "couple"
+    assert body["dossier"] is not None
+    assert body["dossier"]["id"] == str(dossier.id)
+    assert body["dossier"]["contact_preference"] == "email"
+    assert body["dossier"]["group_type"] == "couple"
+    # Per-fact tier lists default to empty in this lightweight test setup.
+    assert body["dossier_facts"] == []
+    assert body["profile_facts"] == []
+    assert body["osint_facts"] == []
 
 
 def test_get_client_by_id_other_advisors_client_returns_404_not_403(
@@ -532,7 +538,7 @@ def test_get_client_by_id_other_advisors_client_returns_404_not_403(
     advisor_b = uuid.uuid4()
     other = _client_row(owner_id=advisor_b, email="other@example.com")
     fake_session.clients_by_id[other.id] = other
-    fake_session.dolls_by_client[other.id] = _doll_for(other.id, advisor_b)
+    fake_session.dossiers_by_client[other.id] = _dossier_for(other.id, advisor_b)
 
     resp = client.get(f"/clients/{other.id}", headers=auth_headers)
     assert resp.status_code == 404

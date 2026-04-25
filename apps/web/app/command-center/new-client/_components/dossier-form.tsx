@@ -5,7 +5,10 @@ import { useState, useTransition } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import type { ClientCreatePayload } from "@ov-black/api-client";
+import type {
+  ClientCreatePayload,
+  DossierFactCreate,
+} from "@ov-black/api-client";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -36,11 +39,13 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { createClientAction } from "../actions";
 
-// Zod schema mirrors apps/api/app/schemas/clients.py — the typed core is
-// strict (enums + bounded ints) and the JSONB long-tail is shallow on
-// purpose: the Voodoo Doll shape is intentionally evolvable per S03
-// research §Voodoo Doll schema volatility, so we match the backend's
-// "dict/list only" posture rather than pinning tighter shapes.
+// Zod schema mirrors apps/api/app/schemas/clients.py — the typed core
+// (group_type, contact_preference, etc.) lives on the Dossier row; the
+// rich-text sections (passions, motivations, …) flatten into a
+// `dossier_facts: DossierFactCreate[]` array on submit. The advisor's
+// onboarding UX stays sectioned for editorial clarity; the backend
+// stores per-fact rows so the command center can review/edit/redact
+// individual entries later.
 
 const CONTACT_CHANNELS = ["email", "sms", "whatsapp", "phone"] as const;
 const GROUP_TYPES = [
@@ -133,15 +138,112 @@ function splitTags(raw: string): string[] {
     .filter(Boolean);
 }
 
+function _passionFactText(p: { label: string; intensity: string; notes: string }): string {
+  const bits = [p.label.trim()];
+  if (p.intensity && p.intensity !== "medium") bits.push(`(${p.intensity})`);
+  if (p.notes.trim()) bits.push(`— ${p.notes.trim()}`);
+  return bits.join(" ");
+}
+
+function _travelFactText(h: { destination: string; year: string; notes: string }): string {
+  return [h.destination.trim(), h.year.trim(), h.notes.trim()]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function _motivationFact(label: string, value: string): DossierFactCreate | null {
+  const v = value.trim();
+  if (!v) return null;
+  return {
+    kind: "motivation",
+    text: `${label}: ${v}`,
+    source_kind: "advisor",
+    source_ref: { key: label.toLowerCase() },
+    observed_at: null,
+  };
+}
+
 function toPayload(values: FormValues): ClientCreatePayload {
   const ages = parseAges(values.children_ages_raw);
   const netWorth = values.estimated_net_worth_usd.trim();
   const netWorthParsed = netWorth ? Number.parseInt(netWorth, 10) : NaN;
 
+  const dossier_facts: DossierFactCreate[] = [];
+
+  for (const p of values.passions) {
+    const text = _passionFactText(p);
+    if (!text) continue;
+    dossier_facts.push({
+      kind: "passion",
+      text,
+      source_kind: "advisor",
+      source_ref: {},
+      observed_at: null,
+    });
+  }
+
+  for (const m of [
+    _motivationFact("FOMO", values.motivations_fomo),
+    _motivationFact("Status", values.motivations_status),
+    _motivationFact("Bucket list", values.motivations_bucket_list),
+    _motivationFact("Notes", values.motivations_notes),
+  ]) {
+    if (m) dossier_facts.push(m);
+  }
+
+  for (const h of values.travel_history) {
+    const text = _travelFactText(h);
+    if (!text) continue;
+    dossier_facts.push({
+      kind: "travel_history",
+      text,
+      source_kind: "advisor",
+      source_ref: {},
+      observed_at: null,
+    });
+  }
+
+  for (const t of splitTags(values.triggers_raw)) {
+    dossier_facts.push({
+      kind: "trigger",
+      text: t,
+      source_kind: "advisor",
+      source_ref: {},
+      observed_at: null,
+    });
+  }
+  for (const t of splitTags(values.constraints_raw)) {
+    dossier_facts.push({
+      kind: "constraint",
+      text: t,
+      source_kind: "advisor",
+      source_ref: {},
+      observed_at: null,
+    });
+  }
+  for (const t of splitTags(values.deal_breakers_raw)) {
+    dossier_facts.push({
+      kind: "deal_breaker",
+      text: t,
+      source_kind: "advisor",
+      source_ref: {},
+      observed_at: null,
+    });
+  }
+  if (values.dream_trip_signals.trim()) {
+    dossier_facts.push({
+      kind: "dream_signal",
+      text: values.dream_trip_signals.trim(),
+      source_kind: "advisor",
+      source_ref: {},
+      observed_at: null,
+    });
+  }
+
   return {
     full_name: values.full_name.trim(),
     email: values.email.trim(),
-    voodoo_doll: {
+    dossier: {
       typed: {
         contact_preference: values.contact_preference,
         group_type: values.group_type,
@@ -152,38 +254,12 @@ function toPayload(values: FormValues): ClientCreatePayload {
             ? netWorthParsed
             : null,
       },
-      jsonb: {
-        passions: values.passions.map((p) => ({
-          label: p.label,
-          intensity: p.intensity,
-          notes: p.notes,
-        })),
-        motivations: {
-          fomo: values.motivations_fomo,
-          status: values.motivations_status,
-          bucket_list: values.motivations_bucket_list,
-          notes: values.motivations_notes,
-        },
-        travel_history: values.travel_history.map((h) => ({
-          destination: h.destination,
-          year: h.year,
-          notes: h.notes,
-        })),
-        triggers: splitTags(values.triggers_raw).map((label) => ({ label })),
-        constraints: splitTags(values.constraints_raw).map((label) => ({
-          label,
-        })),
-        deal_breakers: splitTags(values.deal_breakers_raw).map((label) => ({
-          label,
-        })),
-        dream_trip_signals: { notes: values.dream_trip_signals },
-        osint_notes: {},
-      },
     },
+    dossier_facts,
   };
 }
 
-export function VoodooDollForm() {
+export function DossierForm() {
   const [isPending, startTransition] = useTransition();
   const [serverError, setServerError] = useState<string | null>(null);
 

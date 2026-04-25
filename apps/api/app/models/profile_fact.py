@@ -6,7 +6,8 @@ from datetime import datetime
 
 from sqlalchemy import DateTime
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, func, text
+from sqlalchemy import ForeignKey, func
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,7 +55,7 @@ class ProfileFact(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=text("gen_random_uuid()"),
+        server_default=sql_text("gen_random_uuid()"),
     )
     client_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -71,7 +72,7 @@ class ProfileFact(Base):
     source_ref: Mapped[dict] = mapped_column(
         JSONB,
         nullable=False,
-        server_default=text("'{}'::jsonb"),
+        server_default=sql_text("'{}'::jsonb"),
     )
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

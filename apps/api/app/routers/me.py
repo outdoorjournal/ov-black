@@ -7,11 +7,15 @@ discover where to redirect a freshly magic-linked invitee: RLS on
 ``public.clients`` only allows advisors to select rows they own, so clients
 can't answer this question against Supabase directly.
 
-``GET /me/voodoo-doll`` and ``GET /me/itineraries`` give the Bedrock
-AgentCore agent read access to the calling client's own data. The agent
-forwards the client's Supabase JWT when it invokes tools, so the same
-routes serve both the client's own browser and the agent acting on their
-behalf — no advisor gate, no separate service-to-service credential.
+``GET /me/itineraries`` gives the Bedrock AgentCore agent read access to
+the calling client's own itineraries. The agent forwards the client's
+Supabase JWT when it invokes tools, so the same routes serve both the
+client's own browser and the agent acting on their behalf.
+
+Dossier and OSINT are intentionally NOT exposed here — those are private
+to the advisor and never readable by the traveler. The agent reads them
+via ``GET /agent/context`` using a per-session agent token issued at
+``POST /sessions``; that path bypasses Supabase JWT auth entirely.
 """
 
 from __future__ import annotations
@@ -27,8 +31,7 @@ from sqlalchemy import func, select
 
 from app.auth import AuthenticatedUser, require_user
 from app.db import get_session
-from app.models import AgentSession, AgentTurn, Itinerary, ItineraryStatus, TurnRole, VoodooDoll
-from app.schemas.clients import VoodooDollDetail
+from app.models import AgentSession, AgentTurn, Itinerary, ItineraryStatus, TurnRole
 from app.services.clients import resolve_client_for_auth_user
 
 if TYPE_CHECKING:
@@ -112,64 +115,6 @@ async def get_my_client_endpoint(
     if client is None:
         raise HTTPException(status_code=404, detail="client_not_found")
     return MyClientResponse(client_id=client.id)
-
-
-@router.get(
-    "/voodoo-doll",
-    response_model=VoodooDollDetail,
-    responses={
-        404: {"description": "Caller has no client row, or no doll seeded yet."},
-    },
-    summary="Fetch the calling client's Voodoo Doll (agent read surface).",
-)
-async def get_my_voodoo_doll_endpoint(
-    user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
-) -> VoodooDollDetail:
-    """Return the caller's own Voodoo Doll.
-
-    Mirrors the shape of ``ClientDetail.voodoo_doll`` returned by the
-    advisor-facing ``GET /clients/{id}`` so the agent gets a stable, typed
-    view it can render into its system prompt. Collapses client-not-found
-    and doll-missing into a single 404 (D015 existence-hiding precedent).
-    """
-    try:
-        user_id = uuid.UUID(user.sub)
-    except ValueError:  # pragma: no cover — Supabase subs are always UUIDs
-        raise HTTPException(status_code=404, detail="voodoo_doll_not_found") from None
-
-    client = await resolve_client_for_auth_user(
-        session, user_id=user_id, email=user.email
-    )
-    if client is None:
-        raise HTTPException(status_code=404, detail="voodoo_doll_not_found")
-
-    doll = (
-        await session.execute(
-            select(VoodooDoll).where(VoodooDoll.client_id == client.id)
-        )
-    ).scalar_one_or_none()
-    if doll is None:
-        raise HTTPException(status_code=404, detail="voodoo_doll_not_found")
-
-    return VoodooDollDetail(
-        id=doll.id,
-        contact_preference=doll.contact_preference,
-        group_type=doll.group_type,
-        children_ages=list(doll.children_ages),
-        travel_party_notes=doll.travel_party_notes,
-        estimated_net_worth_usd=doll.estimated_net_worth_usd,
-        passions=doll.passions,
-        motivations=doll.motivations,
-        travel_history=doll.travel_history,
-        triggers=doll.triggers,
-        constraints=doll.constraints,
-        deal_breakers=doll.deal_breakers,
-        dream_trip_signals=doll.dream_trip_signals,
-        osint_notes=doll.osint_notes,
-        created_at=doll.created_at,
-        updated_at=doll.updated_at,
-    )
 
 
 @router.get(

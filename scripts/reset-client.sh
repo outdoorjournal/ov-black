@@ -9,11 +9,10 @@
 #
 # What it does NOT touch:
 #   - clients row, auth.users row — the user can log back in
-#   - voodoo_dolls — advisor-authored profile of the client
-# Pass --reset-voodoo-doll to also clear the doll back to defaults.
-#
-# Usage:
-#   scripts/reset-client.sh --email EMAIL [--reset-voodoo-doll] [-y]
+#   - dossiers typed core — advisor-authored client basics
+#   - dossier_facts / profile_facts / osint_facts — per-fact rows
+# Pass --reset-dossier to also clear the typed core back to defaults
+# AND truncate dossier_facts + profile_facts + osint_facts for the client.
 #
 # Env overrides:
 #   DB_URL              postgres dsn (default: local Supabase on :54322)
@@ -27,15 +26,15 @@ log() { printf '%s %s\n'        "$PREFIX" "$*"; }
 die() { printf '%s ERROR: %s\n' "$PREFIX" "$*" >&2; exit 1; }
 
 EMAIL=""
-RESET_DOLL=0
+RESET_DOSSIER=0
 ASSUME_YES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --email) EMAIL="${2:?}"; shift 2;;
-    --reset-voodoo-doll) RESET_DOLL=1; shift;;
+    --reset-dossier) RESET_DOSSIER=1; shift;;
     -y|--yes) ASSUME_YES=1; shift;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0;;
     *) die "unknown flag: $1";;
   esac
 done
@@ -83,16 +82,19 @@ counts=$(psql_exec -c "
     (select count(*) from public.edges e
        join public.itineraries i on i.id = e.itinerary_id
        where i.client_id = '$client_id'),
-    (select count(*) from public.voodoo_dolls where client_id = '$client_id');
+    (select count(*) from public.dossiers where client_id = '$client_id'),
+    (select count(*) from public.dossier_facts where client_id = '$client_id'),
+    (select count(*) from public.profile_facts where client_id = '$client_id'),
+    (select count(*) from public.osint_facts   where client_id = '$client_id');
 ")
-IFS='|' read -r n_sessions n_turns n_itins n_nodes n_edges n_dolls <<< "$counts"
+IFS='|' read -r n_sessions n_turns n_itins n_nodes n_edges n_dossiers n_d_facts n_p_facts n_o_facts <<< "$counts"
 
 log "to delete: ${n_sessions} sessions, ${n_turns} turns, ${n_itins} itineraries, ${n_nodes} nodes, ${n_edges} edges"
-if [[ "$RESET_DOLL" == "1" ]]; then
-  log "+ reset voodoo_dolls jsonb fields (${n_dolls} row(s))"
+if [[ "$RESET_DOSSIER" == "1" ]]; then
+  log "+ reset dossier typed core (${n_dossiers} row(s)) and truncate ${n_d_facts}/${n_p_facts}/${n_o_facts} dossier/profile/osint facts"
 fi
 
-if [[ "$n_sessions" == "0" && "$n_turns" == "0" && "$n_itins" == "0" && "$RESET_DOLL" != "1" ]]; then
+if [[ "$n_sessions" == "0" && "$n_turns" == "0" && "$n_itins" == "0" && "$RESET_DOSSIER" != "1" ]]; then
   log "nothing to do — client is already fresh"
   exit 0
 fi
@@ -105,21 +107,17 @@ if [[ "$ASSUME_YES" != "1" ]]; then
 fi
 
 # --- 4. delete in one transaction
-sql_reset_doll=""
-if [[ "$RESET_DOLL" == "1" ]]; then
-  sql_reset_doll="
-    update public.voodoo_dolls set
-      passions           = '[]'::jsonb,
-      motivations        = '{}'::jsonb,
-      travel_history     = '[]'::jsonb,
-      triggers           = '[]'::jsonb,
-      constraints        = '[]'::jsonb,
-      deal_breakers      = '[]'::jsonb,
-      dream_trip_signals = '{}'::jsonb,
-      osint_notes        = '{}'::jsonb,
-      travel_party_notes = '',
-      updated_at         = now()
+sql_reset_dossier=""
+if [[ "$RESET_DOSSIER" == "1" ]]; then
+  sql_reset_dossier="
+    update public.dossiers set
+      travel_party_notes      = '',
+      estimated_net_worth_usd = null,
+      updated_at              = now()
     where client_id = '$client_id';
+    delete from public.dossier_facts where client_id = '$client_id';
+    delete from public.profile_facts where client_id = '$client_id';
+    delete from public.osint_facts   where client_id = '$client_id';
   "
 fi
 
@@ -127,7 +125,7 @@ psql_exec <<SQL
 begin;
   delete from public.agent_sessions where client_id = '$client_id';
   delete from public.itineraries    where client_id = '$client_id';
-  $sql_reset_doll
+  $sql_reset_dossier
 commit;
 SQL
 

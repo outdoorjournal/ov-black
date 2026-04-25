@@ -18,8 +18,10 @@ from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.registry import get_registry
 from app.routers.agent import router as agent_router
+from app.routers.agent_internal import router as agent_internal_router
 from app.routers.auth import router as auth_router
 from app.routers.clients import router as clients_router
+from app.routers.facts import router as facts_router
 from app.routers.inventory import router as inventory_router
 from app.routers.itineraries import router as itineraries_router
 from app.routers.me import router as me_router
@@ -128,7 +130,17 @@ app = FastAPI(
 # issue tokens rather than consume them, so there is no JWT yet to validate.
 app.add_middleware(
     JWTAuthMiddleware,
-    public_paths=PUBLIC_PATHS | {"/auth/redeem-invite", "/auth/login"},
+    public_paths=PUBLIC_PATHS
+    | {
+        "/auth/redeem-invite",
+        "/auth/login",
+        # Backend-only agent surfaces — they validate a per-session agent
+        # token themselves; the Supabase JWT middleware would reject them
+        # because the agent is not a Supabase user.
+        "/agent/context",
+        "/agent/profile/facts",
+        "/agent/dossier/facts",
+    },
 )
 
 # Starlette stacks middleware LIFO — CORS is added *after* the JWT middleware
@@ -157,7 +169,9 @@ app.include_router(auth_router)
 app.include_router(itineraries_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)
+app.include_router(facts_router)
 app.include_router(agent_router)
+app.include_router(agent_internal_router)
 app.include_router(me_router)
 app.include_router(onboarding_router)
 
