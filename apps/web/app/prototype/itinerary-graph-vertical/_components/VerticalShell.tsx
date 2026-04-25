@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 
-import { NodeDetailSheet } from "../../itinerary-graph/_components/NodeDetailSheet";
+import { Card } from "../../itinerary-graph/_components/Card";
 import type { VerticalTimeline, NodeResponse } from "../_lib/types";
 import { getVerticalMeta } from "../_lib/types";
 import { computeVerticalLayout } from "../_state/layout";
@@ -29,7 +30,7 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
     offsetFromTop: 0,
   });
   const [sweptIds, setSweptIds] = useState<Set<string>>(new Set());
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const layout = useMemo(
     () =>
@@ -189,14 +190,24 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
     [state, dispatch],
   );
 
-  const subNodes = useMemo(() => {
-    if (!detailId) return [];
-    return state.nodes.filter((n) => n.parent_subgraph_id === detailId);
-  }, [detailId, state.nodes]);
+  const expandedNode: NodeResponse | null = useMemo(() => {
+    if (!expandedId) return null;
+    return (
+      state.nodes.find((n) => n.id === expandedId) ??
+      state.pendingProposals.find((n) => n.id === expandedId) ??
+      null
+    );
+  }, [expandedId, state.nodes, state.pendingProposals]);
 
-  const detailNode = detailId
-    ? state.nodes.find((n) => n.id === detailId) ?? null
-    : null;
+  // Esc closes the expanded card.
+  useEffect(() => {
+    if (!expandedId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpandedId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expandedId]);
 
   const dayLayouts = layout.days.map((d) => {
     const dayMeta = timeline.days.find((dm) => dm.date === d.date);
@@ -241,6 +252,7 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
           >
             <TimeAxis
               days={dayLayouts}
+              segments={layout.segments}
               pxPerMinute={zoom.pxPerMinute}
               totalHeight={layout.totalHeight}
             />
@@ -251,10 +263,11 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
               pendingProposals={state.pendingProposals}
               flashNodeId={state.flashNodeId}
               sweptIds={sweptIds}
+              expandedId={expandedId}
               onHoverNode={() => {
                 /* hover no longer drives focus — scroll position does */
               }}
-              onClickNode={(id) => setDetailId(id)}
+              onClickNode={(id) => setExpandedId(id)}
               onAcceptProposal={(id) =>
                 dispatch({ type: "ACCEPT_PROPOSAL", id })
               }
@@ -275,12 +288,27 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
         </aside>
       </div>
 
-      <NodeDetailSheet
-        node={detailNode}
-        mood={timeline.mood}
-        subNodes={subNodes}
-        onClose={() => setDetailId(null)}
-      />
+      <AnimatePresence>
+        {expandedNode ? (
+          <motion.div
+            key="expand-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
+            onClick={() => setExpandedId(null)}
+          >
+            <motion.div
+              layoutId={`card-${expandedNode.id}`}
+              className="w-full max-w-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Card node={expandedNode} mood={timeline.mood} />
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
