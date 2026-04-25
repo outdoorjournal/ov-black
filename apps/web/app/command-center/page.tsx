@@ -2,9 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
+  type AdvisorItinerarySummary,
   type ClientSummary,
   createApiClient,
   type InviteStatus,
+  listAdvisorItineraries,
   listClients,
 } from "@ov-black/api-client";
 
@@ -33,8 +35,15 @@ export default async function CommandCenterPage() {
   const api = createApiClient(
     accessToken ? { baseUrl: apiBaseUrl, accessToken } : { baseUrl: apiBaseUrl },
   );
-  const result = await listClients(api);
-  const clients = result.ok ? result.clients : [];
+
+  // Two reads in parallel — both gates are advisor-only and identical-key.
+  const [clientsResult, itinerariesResult] = await Promise.all([
+    listClients(api),
+    listAdvisorItineraries(api),
+  ]);
+
+  const clients = clientsResult.ok ? clientsResult.clients : [];
+  const itineraries = itinerariesResult.ok ? itinerariesResult.itineraries : [];
 
   const today = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
@@ -43,199 +52,343 @@ export default async function CommandCenterPage() {
     year: "numeric",
   }).format(new Date());
 
-  const metrics = summarize(clients);
-  const needsAttention = clients
-    .filter((c) => c.invite_status === "pending")
-    .slice(0, 5);
-  const recent = [...clients]
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, 5);
+  const metrics = summarize(clients, itineraries);
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 py-12 sm:px-10 sm:py-16">
-      <header className="flex flex-col gap-6 border-b border-ink/10 pb-10 sm:flex-row sm:items-end sm:justify-between">
+    <main className="flex w-full flex-1 flex-col gap-12 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
+      <header className="flex flex-col gap-4 border-b border-paper/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-ink/55">
+          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55">
             Command Center · {today}
           </p>
-          <h1 className="mt-4 font-serif text-5xl tracking-tight text-ink sm:text-6xl">
-            Overview
+          <h1 className="mt-3 font-serif text-4xl tracking-tight text-paper sm:text-5xl">
+            The atelier
           </h1>
-          <p className="mt-4 max-w-xl font-sans text-sm leading-relaxed text-ink/70">
-            The atelier at a glance — outstanding invites, latest
-            acquaintances, and the shape of the roster. A feed, a map, and
-            charts will settle in here as the season unfolds.
+          <p className="mt-3 max-w-xl font-sans text-sm leading-relaxed text-paper/70">
+            Active itineraries, the roster, and what wants attention — at a
+            glance.
           </p>
         </div>
-        <Button asChild>
+        <Button asChild className="self-start sm:self-auto">
           <Link href="/command-center/new-client">New Client</Link>
         </Button>
       </header>
 
-      {!result.ok ? (
-        <div className="border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
-          Could not load roster — {errorCopy(result.detail)}
-        </div>
+      {!clientsResult.ok ? (
+        <ErrorBanner>
+          Could not load roster — {errorCopy(clientsResult.detail)}
+        </ErrorBanner>
+      ) : null}
+      {!itinerariesResult.ok ? (
+        <ErrorBanner>
+          Could not load itineraries — {errorCopy(itinerariesResult.detail)}
+        </ErrorBanner>
       ) : null}
 
       <section aria-labelledby="metrics-heading">
-        <h2
-          id="metrics-heading"
-          className="sr-only"
-        >
+        <h2 id="metrics-heading" className="sr-only">
           Roster snapshot
         </h2>
-        <dl className="grid grid-cols-2 gap-px overflow-hidden border border-ink/10 bg-ink/10 sm:grid-cols-4">
-          <Metric label="On the roster" value={metrics.total} />
-          <Metric label="Active members" value={metrics.active} />
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-paper/10 bg-paper/[0.06] sm:grid-cols-5">
+          <Metric label="Clients" value={metrics.total} />
+          <Metric label="Active" value={metrics.active} />
           <Metric label="Invites pending" value={metrics.pending} />
-          <Metric label="Dossiers" value={metrics.dossiers} />
+          <Metric label="Itineraries" value={metrics.itineraries_total} />
+          <Metric label="In draft" value={metrics.itineraries_draft} />
         </dl>
       </section>
 
-      <section
-        aria-labelledby="attention-heading"
-        className="grid gap-10 lg:grid-cols-2 lg:gap-12"
-      >
-        <div>
-          <div className="flex items-baseline justify-between gap-4 border-b border-ink/10 pb-3">
-            <h2
-              id="attention-heading"
-              className="font-serif text-2xl tracking-tight text-ink"
-            >
-              Needs attention
-            </h2>
-            <Link
-              href="/command-center/clients"
-              className="font-sans text-[10px] uppercase tracking-[0.3em] text-ink/55 transition-colors hover:text-ink"
-            >
-              View all →
-            </Link>
-          </div>
-          {needsAttention.length === 0 ? (
-            <EmptyNote>Every invite has been answered — for now.</EmptyNote>
-          ) : (
-            <ul className="mt-6 flex flex-col divide-y divide-ink/10">
-              {needsAttention.map((c) => (
-                <ClientLine
-                  key={c.id}
-                  client={c}
-                  eyebrow={inviteBadgeCopy(c.invite_status)}
-                />
-              ))}
-            </ul>
-          )}
-        </div>
+      <Panel aria-labelledby="itineraries-heading">
+        <SectionHeader
+          id="itineraries-heading"
+          title="Itineraries"
+          eyebrow={`${itineraries.length} on the slate`}
+        />
+        {itineraries.length === 0 ? (
+          <EmptyNote>No itineraries yet — they appear as soon as a client&rsquo;s first session is opened.</EmptyNote>
+        ) : (
+          <ItinerariesTable rows={itineraries} />
+        )}
+      </Panel>
 
-        <div>
-          <div className="flex items-baseline justify-between gap-4 border-b border-ink/10 pb-3">
-            <h2
-              id="recent-heading"
-              className="font-serif text-2xl tracking-tight text-ink"
-            >
-              Recently acquainted
-            </h2>
-            <Link
-              href="/command-center/clients"
-              className="font-sans text-[10px] uppercase tracking-[0.3em] text-ink/55 transition-colors hover:text-ink"
-            >
-              View all →
-            </Link>
-          </div>
-          {recent.length === 0 ? (
-            <EmptyNote>
-              The atelier is quiet. Invite the first client to begin.
-            </EmptyNote>
-          ) : (
-            <ul className="mt-6 flex flex-col divide-y divide-ink/10">
-              {recent.map((c) => (
-                <ClientLine
-                  key={c.id}
-                  client={c}
-                  eyebrow={relativeDay(c.created_at)}
-                />
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
+      <Panel aria-labelledby="clients-heading">
+        <SectionHeader
+          id="clients-heading"
+          title="Clients"
+          eyebrow={`${clients.length} on the roster`}
+        />
+        {clients.length === 0 ? (
+          <EmptyNote>
+            The atelier is quiet. Invite the first client to begin.
+          </EmptyNote>
+        ) : (
+          <ClientsTable rows={clients} />
+        )}
+      </Panel>
     </main>
+  );
+}
+
+function Panel({
+  children,
+  ...rest
+}: {
+  children: React.ReactNode;
+} & React.HTMLAttributes<HTMLElement>) {
+  return (
+    <section
+      {...rest}
+      className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/[0.05] p-5 sm:p-7"
+    >
+      {children}
+    </section>
+  );
+}
+
+function SectionHeader({
+  id,
+  title,
+  eyebrow,
+}: {
+  id: string;
+  title: string;
+  eyebrow: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-paper/10 pb-3">
+      <h2
+        id={id}
+        className="font-serif text-2xl tracking-tight text-paper"
+      >
+        {title}
+      </h2>
+      <span className="font-sans text-[10px] uppercase tracking-[0.3em] text-paper/55">
+        {eyebrow}
+      </span>
+    </div>
   );
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="bg-paper px-6 py-8">
-      <p className="font-serif text-5xl tracking-tight text-ink">{value}</p>
-      <p className="mt-3 font-sans text-[10px] uppercase tracking-[0.3em] text-ink/55">
+    <div className="bg-ink px-5 py-6">
+      <p className="font-serif text-4xl tracking-tight text-paper">{value}</p>
+      <p className="mt-2 font-sans text-[10px] uppercase tracking-[0.3em] text-paper/55">
         {label}
       </p>
     </div>
   );
 }
 
-function ClientLine({
-  client,
-  eyebrow,
+function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
+  return (
+    <div className="-mx-5 overflow-x-auto sm:-mx-7">
+      <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
+        <thead className="bg-paper/[0.06] text-[10px] uppercase tracking-[0.3em] text-paper/55">
+          <tr>
+            <Th className="pl-5 sm:pl-7">Title</Th>
+            <Th>Client</Th>
+            <Th>Status</Th>
+            <Th>Activity</Th>
+            <Th className="pr-5 text-right sm:pr-7" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-paper/10">
+          {rows.map((row) => (
+            <tr
+              key={row.id}
+              className="group transition-colors hover:bg-paper/[0.08]"
+            >
+              <Td className="pl-5 sm:pl-7">
+                <Link
+                  href={`/command-center/itineraries/${row.id}`}
+                  className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
+                >
+                  {row.title || "Untitled draft"}
+                </Link>
+              </Td>
+              <Td>
+                <Link
+                  href={`/command-center/clients/${row.client.id}`}
+                  className="text-paper/80 underline-offset-4 hover:text-paper hover:underline"
+                >
+                  {row.client.full_name}
+                </Link>
+              </Td>
+              <Td>
+                <StatusPill status={row.status} />
+              </Td>
+              <Td className="whitespace-nowrap text-paper/60">
+                {relativeDay(row.last_activity_at)}
+              </Td>
+              <Td className="pr-5 text-right text-paper/40 sm:pr-7">
+                <span aria-hidden>→</span>
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ClientsTable({ rows }: { rows: ClientSummary[] }) {
+  return (
+    <div className="-mx-5 overflow-x-auto sm:-mx-7">
+      <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
+        <thead className="bg-paper/[0.06] text-[10px] uppercase tracking-[0.3em] text-paper/55">
+          <tr>
+            <Th className="pl-6 sm:pl-10">Name</Th>
+            <Th className="hidden md:table-cell">Email</Th>
+            <Th>Invite</Th>
+            <Th>Dossier</Th>
+            <Th>Joined</Th>
+            <Th className="pr-5 text-right sm:pr-7" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-paper/10">
+          {rows.map((c) => (
+            <tr
+              key={c.id}
+              className="group transition-colors hover:bg-paper/[0.08]"
+            >
+              <Td className="pl-5 sm:pl-7">
+                <Link
+                  href={`/command-center/clients/${c.id}`}
+                  className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
+                >
+                  {c.full_name}
+                </Link>
+              </Td>
+              <Td className="hidden truncate text-paper/60 md:table-cell">
+                {c.email}
+              </Td>
+              <Td>
+                <InvitePill status={c.invite_status} />
+              </Td>
+              <Td className="text-paper/60">{c.has_dossier ? "On file" : "—"}</Td>
+              <Td className="whitespace-nowrap text-paper/60">
+                {relativeDay(c.created_at)}
+              </Td>
+              <Td className="pr-5 text-right text-paper/40 sm:pr-7">
+                <span aria-hidden>→</span>
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Th({
+  children,
+  className = "",
 }: {
-  client: ClientSummary;
-  eyebrow: string;
+  children?: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <li className="flex items-baseline justify-between gap-6 py-4">
-      <div className="min-w-0">
-        <p className="truncate font-serif text-lg tracking-tight text-ink">
-          {client.full_name}
-        </p>
-        <p className="truncate font-sans text-xs text-ink/60">
-          {client.email}
-        </p>
-      </div>
-      <span className="whitespace-nowrap font-sans text-[10px] uppercase tracking-[0.3em] text-ink/55">
-        {eyebrow}
-      </span>
-    </li>
+    <th
+      scope="col"
+      className={`whitespace-nowrap px-3 py-3 font-sans font-normal ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  className = "",
+}: {
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return <td className={`px-3 py-3 align-middle ${className}`}>{children}</td>;
+}
+
+function StatusPill({ status }: { status: AdvisorItinerarySummary["status"] }) {
+  const tone =
+    status === "approved"
+      ? "border-paper/40 text-paper"
+      : "border-paper/15 text-paper/65";
+  return (
+    <span
+      className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function InvitePill({ status }: { status: InviteStatus }) {
+  const copy =
+    status === "consumed"
+      ? "Accepted"
+      : status === "pending"
+        ? "Pending"
+        : status === "cancelled"
+          ? "Cancelled"
+          : "—";
+  const tone =
+    status === "consumed"
+      ? "border-paper/40 text-paper"
+      : status === "pending"
+        ? "border-amber-300/40 text-amber-200/90"
+        : "border-paper/15 text-paper/55";
+  return (
+    <span
+      className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}
+    >
+      {copy}
+    </span>
   );
 }
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-6 font-sans text-sm italic text-ink/55">{children}</p>
+    <p className="font-sans text-sm italic text-paper/55">{children}</p>
   );
 }
 
-function summarize(clients: ClientSummary[]): {
+function ErrorBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border border-destructive/40 bg-destructive/10 p-4 font-sans text-sm text-destructive-foreground">
+      {children}
+    </div>
+  );
+}
+
+function summarize(
+  clients: ClientSummary[],
+  itineraries: AdvisorItinerarySummary[],
+): {
   total: number;
   active: number;
   pending: number;
-  dossiers: number;
+  itineraries_total: number;
+  itineraries_draft: number;
 } {
   let active = 0;
   let pending = 0;
-  let dossiers = 0;
   for (const c of clients) {
     if (c.invite_status === "consumed") active += 1;
     if (c.invite_status === "pending") pending += 1;
-    if (c.has_dossier) dossiers += 1;
   }
-  return { total: clients.length, active, pending, dossiers };
+  let drafts = 0;
+  for (const i of itineraries) {
+    if (i.status === "draft") drafts += 1;
+  }
+  return {
+    total: clients.length,
+    active,
+    pending,
+    itineraries_total: itineraries.length,
+    itineraries_draft: drafts,
+  };
 }
 
-function inviteBadgeCopy(status: InviteStatus): string {
-  switch (status) {
-    case "consumed":
-      return "Invite accepted";
-    case "pending":
-      return "Invite pending";
-    case "cancelled":
-      return "Invite cancelled";
-    case "none":
-      return "No invite";
-  }
-}
-
-// Relative-day label with a one-week window; older rows fall back to an
-// absolute date so the dashboard doesn't collapse into "a while ago".
 function relativeDay(iso: string): string {
   const then = new Date(iso);
   const now = new Date();
@@ -244,7 +397,8 @@ function relativeDay(iso: string): string {
   );
   if (days <= 0) return "Today";
   if (days === 1) return "Yesterday";
-  if (days < 7) return `${days} days ago`;
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",

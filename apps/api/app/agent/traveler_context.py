@@ -42,9 +42,7 @@ def _enum_value(maybe_enum) -> str:
 def _typed_core_lines(dossier: Dossier | None) -> list[str]:
     if dossier is None:
         return []
-    bits: list[str] = [
-        f"Group type: {_enum_value(dossier.group_type)}",
-    ]
+    bits: list[str] = []
     if dossier.children_ages:
         bits.append(f"Children ages: {list(dossier.children_ages)}")
     bits.append(f"Preferred contact: {_enum_value(dossier.contact_preference)}")

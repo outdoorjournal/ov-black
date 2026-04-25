@@ -31,7 +31,8 @@ const SOURCE_KINDS = ["traveler_told", "advisor"] as const;
 
 export function AddProfileFactForm({ clientId }: { clientId: string }) {
   const [kind, setKind] = useState<(typeof KINDS)[number]>("preference");
-  const [sourceKind, setSourceKind] = useState<(typeof SOURCE_KINDS)[number]>("advisor");
+  const [sourceKind, setSourceKind] =
+    useState<(typeof SOURCE_KINDS)[number]>("advisor");
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -61,11 +62,11 @@ export function AddProfileFactForm({ clientId }: { clientId: string }) {
         e.preventDefault();
         submit();
       }}
-      className="flex flex-col gap-3 rounded-md border border-border p-4"
+      className="flex flex-col gap-2 rounded-sm border border-paper/15 bg-paper/[0.09] p-3"
     >
-      <div className="grid gap-3 sm:grid-cols-[10rem_10rem_1fr]">
+      <div className="grid gap-2 sm:grid-cols-[8rem_8rem_1fr]">
         <Select value={kind} onValueChange={(v) => setKind(v as typeof kind)}>
-          <SelectTrigger>
+          <SelectTrigger className="h-9 border-paper/20 bg-transparent text-paper">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -80,7 +81,7 @@ export function AddProfileFactForm({ clientId }: { clientId: string }) {
           value={sourceKind}
           onValueChange={(v) => setSourceKind(v as typeof sourceKind)}
         >
-          <SelectTrigger>
+          <SelectTrigger className="h-9 border-paper/20 bg-transparent text-paper">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -95,9 +96,10 @@ export function AddProfileFactForm({ clientId }: { clientId: string }) {
           placeholder="What did the traveler tell us?"
           value={text}
           onChange={(e) => setText(e.target.value)}
+          className="h-9 border-paper/20 bg-transparent text-paper placeholder:text-paper/40 focus-visible:ring-paper/30"
         />
       </div>
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex items-center justify-between gap-3">
         {error ? (
           <p
             role="alert"
@@ -105,9 +107,16 @@ export function AddProfileFactForm({ clientId }: { clientId: string }) {
           >
             {error}
           </p>
-        ) : null}
-        <Button type="submit" disabled={isPending || !text.trim()} size="sm">
-          {isPending ? "saving…" : "Add fact"}
+        ) : (
+          <span />
+        )}
+        <Button
+          type="submit"
+          disabled={isPending || !text.trim()}
+          size="sm"
+          className="bg-paper text-ink hover:bg-paper/90"
+        >
+          {isPending ? "saving…" : "Add"}
         </Button>
       </div>
     </form>

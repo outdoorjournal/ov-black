@@ -22,17 +22,27 @@ advisor's client UUIDs).
 
 from __future__ import annotations
 
+import datetime as _datetime
 import logging
 import uuid
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import func, select
 
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
-from app.models import Client, Dossier, Invite, UserRole
+from app.models import (
+    AgentSession,
+    AgentTurn,
+    Client,
+    Dossier,
+    Invite,
+    TurnRole,
+    UserRole,
+)
 from app.schemas.clients import (
     ClientCreatePayload,
     ClientCreateResponse,
@@ -41,6 +51,11 @@ from app.schemas.clients import (
     InviteEvent,
     InviteEventStatus,
     InviteStatus,
+)
+from app.schemas.contacts import (
+    ClientContactCreate,
+    ClientContactDetail,
+    ClientContactUpdate,
 )
 from app.schemas.dossier import DossierDetail
 from app.schemas.facts import (
@@ -56,6 +71,13 @@ from app.services.clients import (
     create_client_with_dossier,
     reissue_client_invite,
 )
+from app.services.contacts import (
+    ContactOutcome,
+    create_client_contact,
+    delete_client_contact,
+    list_client_contacts,
+    update_client_contact,
+)
 from app.services.facts import load_agent_context
 
 if TYPE_CHECKING:
@@ -63,6 +85,26 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("ov_black.routers.clients")
+
+
+class ClientSessionSummary(BaseModel):
+    """Row shape for ``GET /clients/{id}/sessions`` — one agent session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    started_at: _datetime.datetime
+    ended_at: _datetime.datetime | None
+    last_turn_at: _datetime.datetime | None
+    turn_count: int
+    itinerary_id: uuid.UUID | None
+    seeded_opener: str | None
+
+
+class ClientSessionsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sessions: list[ClientSessionSummary]
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -240,7 +282,6 @@ def _dossier_detail(dossier: Dossier | None) -> DossierDetail | None:
     return DossierDetail(
         id=dossier.id,
         contact_preference=dossier.contact_preference,
-        group_type=dossier.group_type,
         children_ages=list(dossier.children_ages),
         travel_party_notes=dossier.travel_party_notes,
         estimated_net_worth_usd=dossier.estimated_net_worth_usd,
@@ -299,6 +340,8 @@ async def get_client_endpoint(
     )
     invites = list(invites_result.scalars())
 
+    contact_rows = await list_client_contacts(session, client_id=client.id)
+
     return ClientDetail(
         id=client.id,
         full_name=client.full_name,
@@ -311,6 +354,7 @@ async def get_client_endpoint(
         dossier_facts=[DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts],
         profile_facts=[ProfileFactDetail.model_validate(f, from_attributes=True) for f in ctx.profile_facts],
         osint_facts=[OsintFactDetail.model_validate(f, from_attributes=True) for f in ctx.osint_facts],
+        contacts=[ClientContactDetail.model_validate(c, from_attributes=True) for c in contact_rows],
     )
 
 
@@ -388,3 +432,150 @@ async def cancel_client_invite_endpoint(
         extra={"outcome": result.outcome.value},
     )
     raise HTTPException(status_code=500, detail="internal_error")
+
+
+@router.get(
+    "/{client_id}/sessions",
+    response_model=ClientSessionsResponse,
+    responses={
+        404: {"description": "No client with this id owned by the calling advisor."},
+    },
+    summary="List the calling advisor's view of every agent session for one client.",
+)
+async def list_client_sessions_endpoint(
+    client_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> ClientSessionsResponse:
+    advisor_id = _advisor_id(user)
+
+    owned = (
+        await session.execute(
+            select(Client.id).where(
+                Client.id == client_id,
+                Client.owner_id == advisor_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if owned is None:
+        # Collapsed-shape (D015) — never 403 on cross-advisor.
+        raise HTTPException(status_code=404, detail="client_not_found")
+
+    # One left-join with grouped aggregates so the table renders without an N+1.
+    # Only user/assistant turns count toward turn_count and last_turn_at —
+    # system/tool/error rows are noise from the advisor's perspective.
+    stmt = (
+        select(
+            AgentSession,
+            func.count(AgentTurn.id).label("turn_count"),
+            func.max(AgentTurn.created_at).label("last_turn_at"),
+        )
+        .outerjoin(
+            AgentTurn,
+            (AgentTurn.session_id == AgentSession.id)
+            & (AgentTurn.role.in_((TurnRole.user, TurnRole.assistant))),
+        )
+        .where(AgentSession.client_id == client_id)
+        .group_by(AgentSession.id)
+        .order_by(AgentSession.started_at.desc())
+    )
+    rows = (await session.execute(stmt)).all()
+
+    return ClientSessionsResponse(
+        sessions=[
+            ClientSessionSummary(
+                id=row[0].id,
+                started_at=row[0].started_at,
+                ended_at=row[0].ended_at,
+                last_turn_at=row[2],
+                turn_count=int(row[1] or 0),
+                itinerary_id=row[0].itinerary_id,
+                seeded_opener=row[0].seeded_opener,
+            )
+            for row in rows
+        ]
+    )
+
+
+# ── Contacts ─────────────────────────────────────────────────────────────
+
+
+def _raise_for_contact_outcome(outcome: ContactOutcome) -> None:
+    if outcome is ContactOutcome.CLIENT_NOT_FOUND:
+        raise HTTPException(status_code=404, detail="client_not_found")
+    if outcome is ContactOutcome.CONTACT_NOT_FOUND:
+        raise HTTPException(status_code=404, detail="contact_not_found")
+    raise HTTPException(status_code=500, detail="internal_error")
+
+
+@router.post(
+    "/{client_id}/contacts",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ClientContactDetail,
+    responses={
+        404: {"description": "No client with this id owned by the calling advisor."},
+    },
+    summary="Add a contact method (phone / messenger / social) to a client.",
+)
+async def create_client_contact_endpoint(
+    client_id: uuid.UUID,
+    payload: ClientContactCreate,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> ClientContactDetail:
+    result = await create_client_contact(
+        session,
+        advisor_id=_advisor_id(user),
+        client_id=client_id,
+        payload=payload,
+    )
+    if result.outcome is not ContactOutcome.OK or result.contact is None:
+        _raise_for_contact_outcome(result.outcome)
+    return ClientContactDetail.model_validate(result.contact, from_attributes=True)
+
+
+@router.patch(
+    "/{client_id}/contacts/{contact_id}",
+    response_model=ClientContactDetail,
+    summary="Update an existing contact method.",
+)
+async def update_client_contact_endpoint(
+    client_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    payload: ClientContactUpdate,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> ClientContactDetail:
+    result = await update_client_contact(
+        session,
+        advisor_id=_advisor_id(user),
+        client_id=client_id,
+        contact_id=contact_id,
+        payload=payload,
+    )
+    if result.outcome is not ContactOutcome.OK or result.contact is None:
+        _raise_for_contact_outcome(result.outcome)
+    return ClientContactDetail.model_validate(result.contact, from_attributes=True)
+
+
+@router.delete(
+    "/{client_id}/contacts/{contact_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Delete a contact method (hard delete).",
+)
+async def delete_client_contact_endpoint(
+    client_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: "AsyncSession" = Depends(get_session),
+) -> Response:
+    outcome = await delete_client_contact(
+        session,
+        advisor_id=_advisor_id(user),
+        client_id=client_id,
+        contact_id=contact_id,
+    )
+    if outcome is not ContactOutcome.OK:
+        _raise_for_contact_outcome(outcome)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

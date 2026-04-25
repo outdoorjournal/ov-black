@@ -9,11 +9,15 @@ import type {
 } from "@ov-black/api-client";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 import {
   redactDossierFactAction,
   redactOsintFactAction,
   redactProfileFactAction,
+  updateDossierFactAction,
+  updateOsintFactAction,
+  updateProfileFactAction,
 } from "../actions";
 
 type Tier = "dossier" | "profile" | "osint";
@@ -31,12 +35,10 @@ export function FactList({
   empty: string;
 }) {
   if (facts.length === 0) {
-    return (
-      <p className="font-sans text-sm italic text-ink/55">{empty}</p>
-    );
+    return <p className="font-sans text-sm italic text-paper/45">{empty}</p>;
   }
   return (
-    <ul className="flex flex-col gap-3">
+    <ul className="flex flex-col divide-y divide-paper/10">
       {facts.map((fact) => (
         <li key={fact.id}>
           <FactRow tier={tier} clientId={clientId} fact={fact} />
@@ -55,8 +57,41 @@ function FactRow({
   clientId: string;
   fact: AnyFact;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(fact.text);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const sourceRef = fact.source_ref as Record<string, unknown> | null | undefined;
+  const url =
+    sourceRef && typeof sourceRef["url"] === "string"
+      ? (sourceRef["url"] as string)
+      : null;
+
+  const onSave = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === fact.text) {
+      setEditing(false);
+      setDraft(fact.text);
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const action = updateActionFor(tier);
+      const result = await action(clientId, fact.id, { text: trimmed });
+      if ("error" in result) {
+        setError(result.error);
+      } else {
+        setEditing(false);
+      }
+    });
+  };
+
+  const onCancel = () => {
+    setEditing(false);
+    setDraft(fact.text);
+    setError(null);
+  };
 
   const onRedact = () => {
     const reason = window.prompt(
@@ -71,58 +106,128 @@ function FactRow({
     });
   };
 
-  const observed = fact.observed_at ? formatDate(fact.observed_at) : "";
-  const sourceRef = fact.source_ref as Record<string, unknown> | null | undefined;
-  const url =
-    sourceRef && typeof sourceRef["url"] === "string"
-      ? (sourceRef["url"] as string)
-      : null;
-
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-border p-4">
-      <div className="flex flex-wrap items-center gap-2 font-sans text-[10px] uppercase tracking-[0.2em] text-ink/55">
-        <Badge>{fact.kind}</Badge>
-        <Badge>{fact.source_kind}</Badge>
-        {observed ? <span>· {observed}</span> : null}
-      </div>
-      <p className="font-sans text-sm text-ink">{fact.text}</p>
-      {url ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="font-sans text-xs text-ink/70 underline-offset-4 hover:underline"
-        >
-          {url}
-        </a>
-      ) : null}
-      <div className="flex items-center justify-end gap-3">
-        {error ? (
-          <p
-            role="alert"
-            className="font-sans text-xs font-medium text-destructive"
-          >
-            {error}
-          </p>
+    <div className="flex flex-col gap-2 py-3">
+      <div className="flex flex-wrap items-center gap-2 font-sans text-[10px] uppercase tracking-[0.2em] text-paper/45">
+        <Tag>{fact.kind}</Tag>
+        <Tag tone="quiet">{fact.source_kind}</Tag>
+        {fact.observed_at ? (
+          <span>· {formatDate(fact.observed_at)}</span>
         ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onRedact}
-          disabled={isPending}
-        >
-          {isPending ? "removing…" : "Redact"}
-        </Button>
       </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSave();
+              }
+              if (e.key === "Escape") onCancel();
+            }}
+            autoFocus
+            className="border-paper/20 bg-transparent text-paper placeholder:text-paper/40 focus-visible:ring-paper/30"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onCancel}
+              disabled={isPending}
+              className="text-paper/70 hover:bg-paper/10 hover:text-paper"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={onSave}
+              disabled={isPending || !draft.trim()}
+              className="bg-paper text-ink hover:bg-paper/90"
+            >
+              {isPending ? "saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="break-words font-sans text-sm text-paper/90">
+              {fact.text}
+            </p>
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block break-all font-sans text-xs text-paper/60 underline-offset-4 hover:text-paper/90 hover:underline"
+              >
+                {url}
+              </a>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100 md:opacity-100">
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              disabled={isPending}
+              className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-paper"
+            >
+              Edit
+            </button>
+            <span className="text-paper/20">·</span>
+            <button
+              type="button"
+              onClick={onRedact}
+              disabled={isPending}
+              className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-destructive"
+            >
+              Redact
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error ? (
+        <p
+          role="alert"
+          className="font-sans text-xs font-medium text-destructive"
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function Badge({ children }: { children: React.ReactNode }) {
+function Tag({
+  children,
+  tone = "default",
+}: {
+  children: React.ReactNode;
+  tone?: "default" | "quiet";
+}) {
+  const cls =
+    tone === "quiet"
+      ? "border-paper/15 text-paper/45"
+      : "border-paper/25 text-paper/70";
   return (
-    <span className="rounded bg-ink/5 px-2 py-0.5">{children}</span>
+    <span
+      className={`rounded-full border ${cls} px-2 py-0.5 font-sans text-[9px] uppercase tracking-[0.2em]`}
+    >
+      {children}
+    </span>
   );
+}
+
+function updateActionFor(tier: Tier) {
+  if (tier === "dossier") return updateDossierFactAction;
+  if (tier === "profile") return updateProfileFactAction;
+  return updateOsintFactAction;
 }
 
 function redactActionFor(tier: Tier) {

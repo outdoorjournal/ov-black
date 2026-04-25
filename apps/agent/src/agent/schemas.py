@@ -74,12 +74,6 @@ class TurnPayload(BaseModel):
     actor_kind: Literal["user", "advisor"] = "user"
     client_id: uuid.UUID
     itinerary_id: uuid.UUID | None = None
-    # Set by the API only on turn_index 0 of an onboarding session that
-    # opened from /basecamp's single-prompt UI. The runtime appends a
-    # directive instructing the agent to echo this opener verbatim as its
-    # first message, so the streamed response matches the prompt the user
-    # already saw on the page. Empty / None on every other turn.
-    seeded_opener: str | None = Field(default=None, max_length=500)
 
 
 class ProposeCardArgs(BaseModel):

@@ -73,7 +73,6 @@ def _payload(*, email: str = "new@example.com") -> ClientCreatePayload:
         dossier=DossierPayload(
             typed=DossierTyped(
                 contact_preference="email",
-                group_type="family",
                 children_ages=[7, 10],
                 travel_party_notes="prefers late checkouts",
                 estimated_net_worth_usd=5_000_000,
@@ -171,7 +170,7 @@ async def test_ok_path_inserts_client_dossier_facts_and_invite_with_one_commit(
     assert 20 <= len(invite_rows[0].code) <= 24
 
     assert stub_admin_ok == [
-        ("fresh@example.com", "http://localhost:3000/auth/callback?next=/command-center"),
+        ("fresh@example.com", "http://localhost:3000/auth/callback?next=/basecamp"),
     ]
 
 

@@ -1,0 +1,27 @@
+<!--
+  Invite email template override.
+
+  Default GoTrue invite template links to /auth/v1/verify which 302s into
+  the implicit flow (tokens in the URL fragment) — the SSR /auth/callback
+  route can't read fragments, so the recipient lands "signed-out" the
+  first time. Pointing the link at /auth/callback?token_hash=&type=invite
+  drives verifyOtp server-side, which does sign them in on the first
+  click.
+
+  We also surface the OV-side invite_code (passed in via raw_user_meta_data
+  on inviteUserByEmail) so the recipient can fall back to typing it on
+  the home page if the link is mangled by their email client.
+-->
+<h2>You're invited to Outdoor Voyage Black</h2>
+
+<p>An advisor has invited you to join Outdoor Voyage Black. Click the link below to sign in for the first time.</p>
+
+<p>
+  <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite">Accept invitation</a>
+</p>
+
+<p>If the link doesn't work, you can claim your invitation by hand on the home page using this code:</p>
+
+<p style="font-family: monospace; font-size: 18px; letter-spacing: 0.1em;"><strong>{{ .Data.invite_code }}</strong></p>
+
+<p>This invitation is single-use and expires shortly.</p>

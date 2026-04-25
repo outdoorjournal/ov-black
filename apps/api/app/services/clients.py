@@ -40,7 +40,16 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.models import Client, Dossier, DossierFact, Invite, UserRole
+from app.models import (
+    Client,
+    ClientContact,
+    Dossier,
+    DossierFact,
+    Invite,
+    OsintFact,
+    ProfileFact,
+    UserRole,
+)
 from app.schemas.clients import ClientCreatePayload
 from app.services.supabase_admin import (
     MagicLinkIssued,
@@ -142,7 +151,6 @@ async def create_client_with_dossier(
         client_id=client.id,
         authored_by=advisor_id,
         contact_preference=typed.contact_preference,
-        group_type=typed.group_type,
         children_ages=list(typed.children_ages),
         travel_party_notes=typed.travel_party_notes,
         estimated_net_worth_usd=typed.estimated_net_worth_usd,
@@ -160,6 +168,39 @@ async def create_client_with_dossier(
                 source_ref=fact_payload.source_ref,
                 observed_at=fact_payload.observed_at or now,
                 recorded_by=advisor_id,
+            )
+        )
+    for fact_payload in payload.profile_facts:
+        session.add(
+            ProfileFact(
+                client_id=client.id,
+                kind=fact_payload.kind,
+                text=fact_payload.text,
+                source_kind=fact_payload.source_kind,
+                source_ref=fact_payload.source_ref,
+                observed_at=fact_payload.observed_at or now,
+                recorded_by=advisor_id,
+            )
+        )
+    for fact_payload in payload.osint_facts:
+        session.add(
+            OsintFact(
+                client_id=client.id,
+                kind=fact_payload.kind,
+                text=fact_payload.text,
+                source_kind=fact_payload.source_kind,
+                source_ref=fact_payload.source_ref,
+                observed_at=fact_payload.observed_at or now,
+                recorded_by=advisor_id,
+            )
+        )
+    for contact_payload in payload.contacts:
+        session.add(
+            ClientContact(
+                client_id=client.id,
+                kind=contact_payload.kind,
+                value=contact_payload.value,
+                label=contact_payload.label,
             )
         )
 
@@ -183,9 +224,13 @@ async def create_client_with_dossier(
         )
         return ClientCreateResult(ClientCreateOutcome.DUPLICATE_EMAIL)
 
-    redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/command-center"
+    redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/basecamp"
     try:
-        issued = await generate_invite_link(email, redirect_to)
+        issued = await generate_invite_link(
+            email,
+            redirect_to,
+            data={"invite_code": invite.code},
+        )
     except SupabaseAdminError as exc:
         await session.rollback()
         logger.warning(
@@ -386,9 +431,13 @@ async def reissue_client_invite(
         )
         return InviteReissueResult(InviteReissueOutcome.UPSTREAM_UNAVAILABLE)
 
-    redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/command-center"
+    redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/basecamp"
     try:
-        issued = await generate_invite_link(client.email, redirect_to)
+        issued = await generate_invite_link(
+            client.email,
+            redirect_to,
+            data={"invite_code": new_invite.code},
+        )
     except SupabaseAdminError as exc:
         await session.rollback()
         logger.warning(

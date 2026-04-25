@@ -30,7 +30,7 @@ from app.auth_guards import require_advisor
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import Client, Dossier, Invite, UserRole
-from app.models.client import ContactChannel, GroupType
+from app.models.client import ContactChannel
 from app.routers import clients as clients_router_module
 from app.services.clients import (
     ClientCreateOutcome,
@@ -134,6 +134,7 @@ class FakeSession:
             "from dossier_facts" in sql
             or "from profile_facts" in sql
             or "from osint_facts" in sql
+            or "from client_contacts" in sql
         ):
             return _ExecResult([])
 
@@ -272,7 +273,6 @@ def _valid_payload(email: str = "client@example.com") -> dict[str, Any]:
         "dossier": {
             "typed": {
                 "contact_preference": "email",
-                "group_type": "couple",
                 "children_ages": [],
                 "travel_party_notes": "",
                 "estimated_net_worth_usd": None,
@@ -307,7 +307,6 @@ def _dossier_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> Dossier:
         client_id=client_id,
         authored_by=authored_by,
         contact_preference=ContactChannel.email,
-        group_type=GroupType.couple,
         children_ages=[],
         travel_party_notes="notes",
         estimated_net_worth_usd=None,
@@ -519,7 +518,6 @@ def test_get_client_by_id_returns_joined_payload_for_own_client(
     assert body["dossier"] is not None
     assert body["dossier"]["id"] == str(dossier.id)
     assert body["dossier"]["contact_preference"] == "email"
-    assert body["dossier"]["group_type"] == "couple"
     # Per-fact tier lists default to empty in this lightweight test setup.
     assert body["dossier_facts"] == []
     assert body["profile_facts"] == []

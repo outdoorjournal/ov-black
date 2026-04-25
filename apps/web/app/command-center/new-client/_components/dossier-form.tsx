@@ -6,18 +6,15 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import type {
+  ClientContactCreate,
   ClientCreatePayload,
+  ContactKind,
   DossierFactCreate,
+  OsintFactCreate,
+  ProfileFactCreate,
 } from "@ov-black/api-client";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -39,64 +36,121 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { createClientAction } from "../actions";
 
-// Zod schema mirrors apps/api/app/schemas/clients.py — the typed core
-// (group_type, contact_preference, etc.) lives on the Dossier row; the
-// rich-text sections (passions, motivations, …) flatten into a
-// `dossier_facts: DossierFactCreate[]` array on submit. The advisor's
-// onboarding UX stays sectioned for editorial clarity; the backend
-// stores per-fact rows so the command center can review/edit/redact
-// individual entries later.
+// Onboarding form. The typed core (children ages, contact preference,
+// notes, net worth) lands on the Dossier row; the optional fact seeds
+// land on dossier_facts / profile_facts / osint_facts so the advisor can
+// front-load knowledge in one round-trip. The detail-page Add forms reuse
+// the same shapes for ongoing edits — no parallel UI.
 
 const CONTACT_CHANNELS = ["email", "sms", "whatsapp", "phone"] as const;
-const GROUP_TYPES = [
-  "solo",
-  "couple",
-  "family",
-  "friends",
-  "multigen",
-  "corporate",
-] as const;
-const INTENSITIES = ["low", "medium", "high"] as const;
 
-const passionSchema = z.object({
-  label: z.string().trim().min(1, "Add a passion or remove the row."),
-  intensity: z.enum(INTENSITIES).default("medium"),
-  notes: z.string().trim().max(1000).default(""),
+const CONTACT_KINDS: ContactKind[] = [
+  "phone_cell",
+  "phone_home",
+  "phone_work",
+  "whatsapp",
+  "signal",
+  "telegram",
+  "imessage",
+  "instagram",
+  "linkedin",
+  "x",
+  "facebook",
+  "wechat",
+  "other",
+];
+
+const CONTACT_KIND_LABELS: Record<ContactKind, string> = {
+  phone_cell: "Cell",
+  phone_home: "Home",
+  phone_work: "Work",
+  whatsapp: "WhatsApp",
+  signal: "Signal",
+  telegram: "Telegram",
+  imessage: "iMessage",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  x: "X",
+  facebook: "Facebook",
+  wechat: "WeChat",
+  other: "Other",
+};
+
+const TIERS = ["dossier", "profile", "osint"] as const;
+type Tier = (typeof TIERS)[number];
+
+const KIND_OPTIONS: Record<Tier, readonly string[]> = {
+  dossier: [
+    "passion",
+    "motivation",
+    "travel_history",
+    "trigger",
+    "constraint",
+    "deal_breaker",
+    "dream_signal",
+    "preference",
+    "party",
+    "other",
+  ],
+  profile: [
+    "passion",
+    "motivation",
+    "travel_history",
+    "trigger",
+    "constraint",
+    "deal_breaker",
+    "dream_signal",
+    "preference",
+    "aspiration",
+    "other",
+  ],
+  osint: [
+    "linkedin",
+    "facebook",
+    "instagram",
+    "press",
+    "company",
+    "public_record",
+    "other",
+  ],
+};
+
+const TIER_RULES: Record<Tier, string> = {
+  dossier: "Private — never shown to traveler.",
+  profile: "Traveler self-expression — agent may reference.",
+  osint: "External research — never reveal or allude to.",
+};
+
+const DEFAULT_KIND: Record<Tier, string> = {
+  dossier: "passion",
+  profile: "preference",
+  osint: "linkedin",
+};
+
+const factSchema = z.object({
+  tier: z.enum(TIERS),
+  kind: z.string().min(1),
+  text: z.string().trim().max(4000).default(""),
+  url: z.string().trim().max(2000).default(""),
 });
 
-const travelHistorySchema = z.object({
-  destination: z
-    .string()
-    .trim()
-    .min(1, "Add a destination or remove the row."),
-  year: z.string().trim().max(12).default(""),
-  notes: z.string().trim().max(1000).default(""),
+const contactSchema = z.object({
+  kind: z.enum(CONTACT_KINDS as [ContactKind, ...ContactKind[]]),
+  value: z.string().trim().max(256).default(""),
+  label: z.string().trim().max(64).default(""),
 });
 
 const formSchema = z.object({
   full_name: z.string().trim().min(1, "Required").max(200),
   email: z.string().trim().email("Enter a valid email"),
   contact_preference: z.enum(CONTACT_CHANNELS),
-  group_type: z.enum(GROUP_TYPES),
   children_ages_raw: z.string().trim().max(200).default(""),
   travel_party_notes: z.string().trim().max(2000).default(""),
   estimated_net_worth_usd: z.string().trim().max(32).default(""),
-  passions: z.array(passionSchema).default([]),
-  motivations_fomo: z.string().trim().max(500).default(""),
-  motivations_status: z.string().trim().max(500).default(""),
-  motivations_bucket_list: z.string().trim().max(500).default(""),
-  motivations_notes: z.string().trim().max(2000).default(""),
-  travel_history: z.array(travelHistorySchema).default([]),
-  triggers_raw: z.string().trim().max(2000).default(""),
-  constraints_raw: z.string().trim().max(2000).default(""),
-  deal_breakers_raw: z.string().trim().max(2000).default(""),
-  dream_trip_signals: z.string().trim().max(2000).default(""),
+  contacts: z.array(contactSchema).default([]),
+  facts: z.array(factSchema).default([]),
 });
 
-// Input = what the form renders / user edits (defaults may be omitted).
-// Output = what the resolver produces (defaults applied → all strings present).
-// Passing both to useForm keeps the resolver + handleSubmit callback types
-// aligned under exactOptionalPropertyTypes.
 type FormInput = z.input<typeof formSchema>;
 type FormValues = z.output<typeof formSchema>;
 
@@ -104,20 +158,11 @@ const DEFAULT_VALUES: FormInput = {
   full_name: "",
   email: "",
   contact_preference: "email",
-  group_type: "solo",
   children_ages_raw: "",
   travel_party_notes: "",
   estimated_net_worth_usd: "",
-  passions: [],
-  motivations_fomo: "",
-  motivations_status: "",
-  motivations_bucket_list: "",
-  motivations_notes: "",
-  travel_history: [],
-  triggers_raw: "",
-  constraints_raw: "",
-  deal_breakers_raw: "",
-  dream_trip_signals: "",
+  contacts: [],
+  facts: [],
 };
 
 function parseAges(raw: string): number[] {
@@ -130,114 +175,62 @@ function parseAges(raw: string): number[] {
     .filter((n) => Number.isFinite(n) && n >= 0 && n <= 25);
 }
 
-function splitTags(raw: string): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/\r?\n|,/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
-
-function _passionFactText(p: { label: string; intensity: string; notes: string }): string {
-  const bits = [p.label.trim()];
-  if (p.intensity && p.intensity !== "medium") bits.push(`(${p.intensity})`);
-  if (p.notes.trim()) bits.push(`— ${p.notes.trim()}`);
-  return bits.join(" ");
-}
-
-function _travelFactText(h: { destination: string; year: string; notes: string }): string {
-  return [h.destination.trim(), h.year.trim(), h.notes.trim()]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function _motivationFact(label: string, value: string): DossierFactCreate | null {
-  const v = value.trim();
-  if (!v) return null;
-  return {
-    kind: "motivation",
-    text: `${label}: ${v}`,
-    source_kind: "advisor",
-    source_ref: { key: label.toLowerCase() },
-    observed_at: null,
-  };
-}
-
 function toPayload(values: FormValues): ClientCreatePayload {
   const ages = parseAges(values.children_ages_raw);
-  const netWorth = values.estimated_net_worth_usd.trim();
-  const netWorthParsed = netWorth ? Number.parseInt(netWorth, 10) : NaN;
+  // Tolerate human-formatted entries like "$250,000,000" or "250 000 000".
+  // parseInt stops at the first non-digit, so "250,000,000" → 250 silently —
+  // strip everything that isn't a digit before parsing.
+  const netWorthDigits = values.estimated_net_worth_usd.replace(/[^\d]/g, "");
+  const netWorthParsed = netWorthDigits
+    ? Number.parseInt(netWorthDigits, 10)
+    : NaN;
 
   const dossier_facts: DossierFactCreate[] = [];
+  const profile_facts: ProfileFactCreate[] = [];
+  const osint_facts: OsintFactCreate[] = [];
+  const contacts: ClientContactCreate[] = [];
 
-  for (const p of values.passions) {
-    const text = _passionFactText(p);
+  for (const c of values.contacts) {
+    const value = c.value.trim();
+    if (!value) continue;
+    contacts.push({
+      kind: c.kind,
+      value,
+      label: c.label.trim(),
+    });
+  }
+
+  for (const f of values.facts) {
+    const text = f.text.trim();
     if (!text) continue;
-    dossier_facts.push({
-      kind: "passion",
-      text,
-      source_kind: "advisor",
-      source_ref: {},
-      observed_at: null,
-    });
-  }
-
-  for (const m of [
-    _motivationFact("FOMO", values.motivations_fomo),
-    _motivationFact("Status", values.motivations_status),
-    _motivationFact("Bucket list", values.motivations_bucket_list),
-    _motivationFact("Notes", values.motivations_notes),
-  ]) {
-    if (m) dossier_facts.push(m);
-  }
-
-  for (const h of values.travel_history) {
-    const text = _travelFactText(h);
-    if (!text) continue;
-    dossier_facts.push({
-      kind: "travel_history",
-      text,
-      source_kind: "advisor",
-      source_ref: {},
-      observed_at: null,
-    });
-  }
-
-  for (const t of splitTags(values.triggers_raw)) {
-    dossier_facts.push({
-      kind: "trigger",
-      text: t,
-      source_kind: "advisor",
-      source_ref: {},
-      observed_at: null,
-    });
-  }
-  for (const t of splitTags(values.constraints_raw)) {
-    dossier_facts.push({
-      kind: "constraint",
-      text: t,
-      source_kind: "advisor",
-      source_ref: {},
-      observed_at: null,
-    });
-  }
-  for (const t of splitTags(values.deal_breakers_raw)) {
-    dossier_facts.push({
-      kind: "deal_breaker",
-      text: t,
-      source_kind: "advisor",
-      source_ref: {},
-      observed_at: null,
-    });
-  }
-  if (values.dream_trip_signals.trim()) {
-    dossier_facts.push({
-      kind: "dream_signal",
-      text: values.dream_trip_signals.trim(),
-      source_kind: "advisor",
-      source_ref: {},
-      observed_at: null,
-    });
+    if (f.tier === "dossier") {
+      dossier_facts.push({
+        kind: f.kind as DossierFactCreate["kind"],
+        text,
+        source_kind: "advisor",
+        source_ref: {},
+        observed_at: null,
+      });
+    } else if (f.tier === "profile") {
+      profile_facts.push({
+        kind: f.kind as ProfileFactCreate["kind"],
+        text,
+        source_kind: "advisor",
+        source_ref: {},
+        observed_at: null,
+      });
+    } else {
+      const sourceRef: Record<string, unknown> = {};
+      const url = f.url.trim();
+      if (url) sourceRef["url"] = url;
+      osint_facts.push({
+        kind: f.kind as OsintFactCreate["kind"],
+        text,
+        source_kind: "advisor",
+        source_ref: sourceRef,
+        observed_at: null,
+      });
+    }
   }
 
   return {
@@ -246,7 +239,6 @@ function toPayload(values: FormValues): ClientCreatePayload {
     dossier: {
       typed: {
         contact_preference: values.contact_preference,
-        group_type: values.group_type,
         children_ages: ages,
         travel_party_notes: values.travel_party_notes,
         estimated_net_worth_usd:
@@ -256,6 +248,9 @@ function toPayload(values: FormValues): ClientCreatePayload {
       },
     },
     dossier_facts,
+    profile_facts,
+    osint_facts,
+    contacts,
   };
 }
 
@@ -268,11 +263,8 @@ export function DossierForm() {
     defaultValues: DEFAULT_VALUES,
   });
 
-  const passions = useFieldArray({ control: form.control, name: "passions" });
-  const travelHistory = useFieldArray({
-    control: form.control,
-    name: "travel_history",
-  });
+  const contacts = useFieldArray({ control: form.control, name: "contacts" });
+  const facts = useFieldArray({ control: form.control, name: "facts" });
 
   const onSubmit = (values: FormValues) => {
     setServerError(null);
@@ -289,16 +281,13 @@ export function DossierForm() {
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className="flex flex-col gap-8"
+        className="flex flex-col gap-10"
       >
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Client basics</CardTitle>
-            <CardDescription>
-              Name and contact channel. The invite email lands here.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-5 sm:grid-cols-2">
+        <Section
+          title="Client basics"
+          description="Name and contact channel. The invite email lands here."
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
             <FormField
               control={form.control}
               name="full_name"
@@ -335,10 +324,7 @@ export function DossierForm() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Preferred contact</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    value={field.value}
-                  >
+                  <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select a channel" />
@@ -356,45 +342,14 @@ export function DossierForm() {
                 </FormItem>
               )}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Travel party</CardTitle>
-            <CardDescription>
-              Who travels with this client and notes the advisor should not
-              forget.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-5">
-            <FormField
-              control={form.control}
-              name="group_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Group type</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    value={field.value}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a group type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {GROUP_TYPES.map((g) => (
-                        <SelectItem key={g} value={g}>
-                          {g}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+        <Section
+          title="Personal notes"
+          description="Stable signals about the person — children, household, things the advisor should not forget. Trip-specific party makeup belongs on an itinerary, not here."
+        >
+          <div className="grid gap-5">
             <FormField
               control={form.control}
               name="children_ages_raw"
@@ -416,7 +371,7 @@ export function DossierForm() {
               name="travel_party_notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Party notes</FormLabel>
+                  <FormLabel>Notes</FormLabel>
                   <FormControl>
                     <Textarea rows={3} {...field} />
                   </FormControl>
@@ -433,7 +388,7 @@ export function DossierForm() {
                   <FormControl>
                     <Input
                       inputMode="numeric"
-                      placeholder="Optional"
+                      placeholder="Optional — e.g. 250,000,000"
                       {...field}
                     />
                   </FormControl>
@@ -444,31 +399,59 @@ export function DossierForm() {
                 </FormItem>
               )}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Passions</CardTitle>
-            <CardDescription>
-              Things this client cares about deeply. Add a row per passion.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            {passions.fields.map((row, i) => (
+        <Section
+          title="Contacts"
+          description="Phone numbers, messenger handles, social. Add as many as you have. The invite still flows to the email above."
+        >
+          <div className="flex flex-col gap-3">
+            {contacts.fields.length === 0 ? (
+              <p className="font-sans text-sm italic text-ink/55">
+                No contacts yet. Add some now or skip — you can add them on
+                the client detail page anytime.
+              </p>
+            ) : null}
+
+            {contacts.fields.map((row, i) => (
               <div
                 key={row.id}
-                className="grid gap-3 rounded-md border border-border p-4 sm:grid-cols-[1fr_9rem_auto]"
+                className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-[8rem_1fr_8rem_auto]"
               >
                 <FormField
                   control={form.control}
-                  name={`passions.${i}.label` as const}
+                  name={`contacts.${i}.kind` as const}
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Label</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value ?? "phone_cell"}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {CONTACT_KINDS.map((k) => (
+                            <SelectItem key={k} value={k}>
+                              {CONTACT_KIND_LABELS[k]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name={`contacts.${i}.value` as const}
+                  render={({ field }) => (
+                    <FormItem>
                       <FormControl>
                         <Input
-                          placeholder="e.g. Deep-sea diving"
+                          placeholder="Number or handle"
                           {...field}
                         />
                       </FormControl>
@@ -478,285 +461,195 @@ export function DossierForm() {
                 />
                 <FormField
                   control={form.control}
-                  name={`passions.${i}.intensity` as const}
+                  name={`contacts.${i}.label` as const}
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Intensity</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value ?? "medium"}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {INTENSITIES.map((t) => (
-                            <SelectItem key={t} value={t}>
-                              {t}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
+                      <FormControl>
+                        <Input
+                          placeholder="Label (optional)"
+                          {...field}
+                        />
+                      </FormControl>
                     </FormItem>
                   )}
                 />
-                <div className="flex items-end">
-                  <Button
+                <div className="flex items-center justify-end">
+                  <button
                     type="button"
-                    variant="outline"
-                    onClick={() => passions.remove(i)}
+                    onClick={() => contacts.remove(i)}
+                    className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/55 transition-colors hover:text-destructive"
                   >
                     Remove
-                  </Button>
-                </div>
-                <div className="sm:col-span-3">
-                  <FormField
-                    control={form.control}
-                    name={`passions.${i}.notes` as const}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Notes</FormLabel>
-                        <FormControl>
-                          <Textarea rows={2} {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  </button>
                 </div>
               </div>
             ))}
+
             <div>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() =>
-                  passions.append({
+                  contacts.append({
+                    kind: "phone_cell",
+                    value: "",
                     label: "",
-                    intensity: "medium",
-                    notes: "",
                   })
                 }
               >
-                Add passion
+                Add contact
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Motivations</CardTitle>
-            <CardDescription>
-              What drives this client to book. All fields optional.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-5 sm:grid-cols-2">
-            <FormField
-              control={form.control}
-              name="motivations_fomo"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>FOMO</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="motivations_status"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Status</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="motivations_bucket_list"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Bucket list</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="motivations_notes"
-              render={({ field }) => (
-                <FormItem className="sm:col-span-2">
-                  <FormLabel>Notes</FormLabel>
-                  <FormControl>
-                    <Textarea rows={3} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </CardContent>
-        </Card>
+        <Section
+          title="Seed facts"
+          description="Optional. Drop in anything you already know across the three tiers — it lands on the same fact tables you'll edit on the client detail page later."
+        >
+          <div className="flex flex-col gap-3">
+            {facts.fields.length === 0 ? (
+              <p className="font-sans text-sm italic text-ink/55">
+                No seeds yet. Add some now or skip — you can record facts on
+                the client detail page anytime.
+              </p>
+            ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Travel history</CardTitle>
-            <CardDescription>
-              Recent or formative trips. Add a row per trip.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            {travelHistory.fields.map((row, i) => (
-              <div
-                key={row.id}
-                className="grid gap-3 rounded-md border border-border p-4 sm:grid-cols-[1fr_9rem_auto]"
-              >
-                <FormField
-                  control={form.control}
-                  name={`travel_history.${i}.destination` as const}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Destination</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g. Patagonia" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name={`travel_history.${i}.year` as const}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Year</FormLabel>
-                      <FormControl>
-                        <Input placeholder="2024" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <div className="flex items-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => travelHistory.remove(i)}
+            {facts.fields.map((row, i) => {
+              const tier =
+                (form.watch(`facts.${i}.tier`) as Tier | undefined) ??
+                "dossier";
+              const isOsint = tier === "osint";
+              const kinds = KIND_OPTIONS[tier];
+              return (
+                <div
+                  key={row.id}
+                  className="flex flex-col gap-2 rounded-md border border-border p-3"
+                >
+                  <div
+                    className={`grid gap-2 ${isOsint ? "sm:grid-cols-[7rem_8rem_1fr_1fr_auto]" : "sm:grid-cols-[7rem_8rem_1fr_auto]"}`}
                   >
-                    Remove
-                  </Button>
+                    <FormField
+                      control={form.control}
+                      name={`facts.${i}.tier` as const}
+                      render={({ field }) => (
+                        <FormItem>
+                          <Select
+                            onValueChange={(v) => {
+                              const next = v as Tier;
+                              field.onChange(next);
+                              // Reset kind to a valid default for the new tier.
+                              form.setValue(
+                                `facts.${i}.kind` as const,
+                                DEFAULT_KIND[next],
+                              );
+                            }}
+                            value={field.value ?? "dossier"}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {TIERS.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {t}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`facts.${i}.kind` as const}
+                      render={({ field }) => (
+                        <FormItem>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value ?? DEFAULT_KIND[tier]}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {kinds.map((k) => (
+                                <SelectItem key={k} value={k}>
+                                  {k}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`facts.${i}.text` as const}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <Input placeholder="Fact text…" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {isOsint ? (
+                      <FormField
+                        control={form.control}
+                        name={`facts.${i}.url` as const}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormControl>
+                              <Input
+                                placeholder="Source URL (optional)"
+                                {...field}
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    ) : null}
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => facts.remove(i)}
+                        className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/55 transition-colors hover:text-destructive"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <p className="font-sans text-[10px] uppercase tracking-[0.25em] text-ink/45">
+                    {TIER_RULES[tier]}
+                  </p>
                 </div>
-                <div className="sm:col-span-3">
-                  <FormField
-                    control={form.control}
-                    name={`travel_history.${i}.notes` as const}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Notes</FormLabel>
-                        <FormControl>
-                          <Textarea rows={2} {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
+
             <div>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() =>
-                  travelHistory.append({
-                    destination: "",
-                    year: "",
-                    notes: "",
+                  facts.append({
+                    tier: "dossier",
+                    kind: DEFAULT_KIND["dossier"],
+                    text: "",
+                    url: "",
                   })
                 }
               >
-                Add trip
+                Add fact
               </Button>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">
-              Triggers &amp; constraints
-            </CardTitle>
-            <CardDescription>
-              One per line, or comma-separated. Plain language tags.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-5 sm:grid-cols-2">
-            <FormField
-              control={form.control}
-              name="triggers_raw"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Triggers</FormLabel>
-                  <FormControl>
-                    <Textarea rows={3} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="constraints_raw"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Constraints</FormLabel>
-                  <FormControl>
-                    <Textarea rows={3} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="deal_breakers_raw"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Deal-breakers</FormLabel>
-                  <FormControl>
-                    <Textarea rows={3} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="dream_trip_signals"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Dream trip</FormLabel>
-                  <FormControl>
-                    <Textarea rows={3} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
         {serverError ? (
           <p
@@ -774,5 +667,25 @@ export function DossierForm() {
         </div>
       </form>
     </Form>
+  );
+}
+
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-5">
+      <header className="border-b border-ink/10 pb-3">
+        <h2 className="font-serif text-xl tracking-tight text-ink">{title}</h2>
+        <p className="mt-1 font-sans text-sm text-ink/65">{description}</p>
+      </header>
+      {children}
+    </section>
   );
 }

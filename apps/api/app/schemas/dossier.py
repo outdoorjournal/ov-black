@@ -12,7 +12,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, conint, conlist
 
-from app.models.client import ContactChannel, GroupType
+from app.models.client import ContactChannel
 
 
 class DossierTyped(BaseModel):
@@ -21,7 +21,6 @@ class DossierTyped(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contact_preference: ContactChannel
-    group_type: GroupType
     children_ages: conlist(conint(ge=0, le=25), max_length=12) = Field(  # type: ignore[valid-type]
         default_factory=list,
     )
@@ -44,7 +43,6 @@ class DossierDetail(BaseModel):
 
     id: uuid.UUID
     contact_preference: ContactChannel
-    group_type: GroupType
     children_ages: list[int]
     travel_party_notes: str
     estimated_net_worth_usd: int | None

@@ -159,10 +159,10 @@ def _seed_advisor_client_dossier(
                 text(
                     """
                     insert into public.dossiers (
-                      client_id, authored_by, contact_preference, group_type,
+                      client_id, authored_by, contact_preference,
                       estimated_net_worth_usd
                     ) values (
-                      :client_id, :authored_by, 'email', 'couple', :net_worth
+                      :client_id, :authored_by, 'email', :net_worth
                     )
                     """
                 ),

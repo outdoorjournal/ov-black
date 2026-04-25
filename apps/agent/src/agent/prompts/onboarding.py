@@ -36,20 +36,5 @@ _AMBIENCE_BLOCK = (
 )
 
 
-def _seeded_opener_block(seeded_opener: str) -> str:
-    return (
-        "\n\nFirst-message directive: your very first assistant message in "
-        "this session MUST be exactly the following sentence, verbatim, "
-        "with no preamble, no quotation marks, no follow-up question, and "
-        f"nothing added: «{seeded_opener}»\n"
-        "After the user replies, continue the conversation with grounded "
-        "follow-ups that quietly populate the Voodoo Doll. Never repeat "
-        "or paraphrase this opener in any later turn."
-    )
-
-
-def build_onboarding_prompt(seeded_opener: str | None = None) -> str:
-    rubric = _RUBRIC_BASE + _AMBIENCE_BLOCK
-    if seeded_opener:
-        rubric += _seeded_opener_block(seeded_opener)
-    return rubric
+def build_onboarding_prompt() -> str:
+    return _RUBRIC_BASE + _AMBIENCE_BLOCK

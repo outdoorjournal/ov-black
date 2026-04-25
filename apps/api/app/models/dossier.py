@@ -9,22 +9,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Integer
 
 from app.models import Base
-from app.models.client import (
-    ContactChannel,
-    GroupType,
-    contact_channel_enum,
-    group_type_enum,
-)
+from app.models.client import ContactChannel, contact_channel_enum
 
 
 class Dossier(Base):
     """1:1 with ``clients`` — typed core columns only (long-tail moved to dossier_facts).
 
-    The dossier holds private internal knowledge: structured signals seeded by
-    the advisor at onboarding (group type, children ages, contact channel,
-    party notes, net worth). Long-tail facts (passions, motivations, etc.) and
-    agent inferences live in ``dossier_facts``; external research lives in
-    ``osint_facts``; traveler self-expression lives in ``profile_facts``.
+    The dossier holds private internal knowledge: structured signals about the
+    *person* seeded by the advisor at onboarding (children ages, contact
+    channel, party notes, net worth). Long-tail facts (passions, motivations,
+    etc.) and agent inferences live in ``dossier_facts``; external research
+    lives in ``osint_facts``; traveler self-expression lives in
+    ``profile_facts``.
 
     ``authored_by`` is the advisor who wrote the dossier — kept explicit so
     future co-advising or hand-off flows do not require a migration.
@@ -51,7 +47,6 @@ class Dossier(Base):
         contact_channel_enum,
         nullable=False,
     )
-    group_type: Mapped[GroupType] = mapped_column(group_type_enum, nullable=False)
     children_ages: Mapped[list[int]] = mapped_column(
         ARRAY(Integer),
         nullable=False,

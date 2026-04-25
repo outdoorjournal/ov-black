@@ -1,17 +1,10 @@
 {
   "mcpServers": {
-    "gsd-workflow": {
-      "command": "/Users/cmyers/.nodenv/versions/24.11.1/bin/node",
-      "args": [
-        "/Users/cmyers/.nodenv/versions/24.11.1/lib/node_modules/gsd-pi/packages/mcp-server/dist/cli.js"
-      ],
-      "cwd": "/Users/cmyers/personal/ov-black",
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
       "env": {
-        "GSD_CLI_PATH": "/Users/cmyers/.nodenv/versions/24.11.1/bin/gsd",
-        "GSD_WORKFLOW_EXECUTORS_MODULE": "/Users/cmyers/.gsd/agent/extensions/gsd/tools/workflow-tool-executors.js",
-        "GSD_WORKFLOW_WRITE_GATE_MODULE": "/Users/cmyers/.gsd/agent/extensions/gsd/bootstrap/write-gate.js",
-        "GSD_PERSIST_WRITE_GATE_STATE": "1",
-        "GSD_WORKFLOW_PROJECT_ROOT": "/Users/cmyers/personal/ov-black"
+        "PLAYWRIGHT_HEADLESS": "1"
       }
     }
   }

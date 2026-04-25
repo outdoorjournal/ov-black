@@ -31,7 +31,7 @@ from app.auth import AuthenticatedUser
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import Client, TurnRole
-from app.models.client import ContactChannel, GroupType
+from app.models.client import ContactChannel
 from app.routers import agent as agent_router_module
 from app.services.agent import ActorContext, SessionOutcome, TurnOutcome
 

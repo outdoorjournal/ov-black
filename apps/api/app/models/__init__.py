@@ -18,10 +18,10 @@ from app.models.agent import (  # noqa: E402,F401  (re-exported)
     AgentTurn,
     TurnRole,
 )
-from app.models.client import (  # noqa: E402,F401  (re-exported)
-    Client,
-    ContactChannel,
-    GroupType,
+from app.models.client import Client, ContactChannel  # noqa: E402,F401
+from app.models.client_contact import (  # noqa: E402,F401  (re-exported)
+    ClientContact,
+    ContactKind,
 )
 from app.models.dossier import Dossier  # noqa: E402,F401  (re-exported)
 from app.models.dossier_fact import (  # noqa: E402,F401  (re-exported)
@@ -57,7 +57,9 @@ __all__ = [
     "AgentTurn",
     "Base",
     "Client",
+    "ClientContact",
     "ContactChannel",
+    "ContactKind",
     "Dossier",
     "DossierFact",
     "DossierFactKind",
@@ -65,7 +67,6 @@ __all__ = [
     "EdgeHistory",
     "EdgeType",
     "FactSourceKind",
-    "GroupType",
     "Invite",
     "Itinerary",
     "ItineraryStatus",

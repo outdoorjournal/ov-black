@@ -74,6 +74,35 @@ pnpm -C infra/cdk cdk deploy OvBlackApi-staging -c imageTag=<sha>   # needs cred
 
 `scripts/verify-sNN.sh` are per-slice smoke scripts run against a deployed staging environment. They expect `STAGING_API_URL` (and optionally `OV_BLACK_STAGING_JWT`) in env and exit non-zero on failure.
 
+## Driving the live app
+
+Two complementary tools exist for exercising real workflows end-to-end (vs. unit/integration tests). Use them when verifying a feature actually works in the running stack — not as a substitute for pytest/vitest, which remain the fast default.
+
+### `scripts/mint-jwt.sh` — Supabase JWT on stdout
+
+Mints a fresh access_token for a given email and prints **only** the token to stdout (logs go to stderr), so it composes into env vars for HTTP/curl-based probes. Reuses the same admin-API conventions as `bootstrap-login.sh`, but goes one hop further (`/auth/v1/verify`) to extract the actual JWT instead of a clickable magic-link URL.
+
+```bash
+# local Supabase, advisor JWT for git user.email
+export OV_BLACK_STAGING_JWT="$(scripts/mint-jwt.sh)"
+
+# explicit email + role
+scripts/mint-jwt.sh --email me@x.com --role client
+
+# staging — needs the staging service role key
+SUPABASE_URL=https://<proj>.supabase.co \
+  SUPABASE_SERVICE_ROLE_KEY=... \
+  scripts/mint-jwt.sh --email me@x.com
+```
+
+Use this for direct API checks (`/itinerary/*`, `/sessions`, `/clients/*/facts`, etc.) where you don't need the UI in the loop. Sibling to `scripts/bootstrap-login.sh`, which is still the right tool when you want to log in via a browser locally.
+
+### Playwright MCP — full-browser end-to-end checks
+
+`@playwright/mcp` is wired up in [.mcp.json](.mcp.json) (`PLAYWRIGHT_HEADLESS=1` by default). Once the MCP server is running, browser tools (`browser_navigate / click / fill / select / screenshot / press_key / wait_for`) are available for driving the actual web UI through Supabase login, Command Center, mood board, agent SSE streams, etc.
+
+Use this only for genuine end-to-end verification — screenshots are token-heavy and UI tests are flakier than API tests. Prefer `mint-jwt.sh` + curl when an API-level check would suffice. Do not pair Playwright with mocked auth: log in through the real magic-link flow so the JWT and middleware are exercised end-to-end.
+
 ## Architecture notes
 
 ### Auth perimeter (R017)

@@ -95,7 +95,6 @@ async def get_agent_context_endpoint(
         dossier_detail = DossierDetail(
             id=ctx.dossier.id,
             contact_preference=ctx.dossier.contact_preference,
-            group_type=ctx.dossier.group_type,
             children_ages=list(ctx.dossier.children_ages),
             travel_party_notes=ctx.dossier.travel_party_notes,
             estimated_net_worth_usd=ctx.dossier.estimated_net_worth_usd,

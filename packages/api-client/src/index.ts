@@ -13,14 +13,18 @@ import {
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
   cancelClientInviteEndpointClientsClientIdInviteCancelPost,
+  createClientContactEndpointClientsClientIdContactsPost,
   createClientEndpointClientsPost,
   createDossierFactEndpointClientsClientIdDossierFactsPost,
   createOsintFactEndpointClientsClientIdOsintFactsPost,
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
+  deleteClientContactEndpointClientsClientIdContactsContactIdDelete,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
+  listAdvisorItinerariesEndpointItinerariesGet,
+  listClientSessionsEndpointClientsClientIdSessionsGet,
   listClientsEndpointClientsGet,
   listMyItinerariesEndpointMeItinerariesGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
@@ -33,15 +37,21 @@ import {
   redeemInviteEndpointAuthRedeemInvitePost,
   reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
+  updateClientContactEndpointClientsClientIdContactsContactIdPatch,
   updateDossierFactEndpointClientsClientIdDossierFactsFactIdPatch,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
   updateOsintFactEndpointClientsClientIdOsintFactsFactIdPatch,
   updateProfileFactEndpointClientsClientIdProfileFactsFactIdPatch,
 } from "./generated/sdk.gen.js";
 import type {
+  AdvisorItinerarySummary,
   AgentTurnSummary,
+  ClientContactCreate,
+  ClientContactDetail,
+  ClientContactUpdate,
   ClientCreatePayload,
   ClientDetail,
+  ClientSessionSummary,
   ClientSummary,
   DossierFactCreate,
   DossierFactDetail,
@@ -127,7 +137,21 @@ export type {
   OsintFactUpdate,
   RedactRequest,
   ContactChannel,
-  GroupType,
+  ContactKind,
+  ClientContactCreate,
+  ClientContactDetail,
+  ClientContactUpdate,
+} from "./generated/types.gen.js";
+
+// Advisor /itineraries (plural) — rich roster row with embedded client.
+// Distinct namespace from the singular /itinerary CRUD and the lean
+// /me/itineraries shape.
+export type {
+  AdvisorItineraryClient,
+  AdvisorItinerarySummary,
+  AdvisorItinerariesResponse,
+  ClientSessionSummary,
+  ClientSessionsResponse,
 } from "./generated/types.gen.js";
 
 // Pydantic inlines these Literal unions into ClientSummary / InviteEvent
@@ -1443,6 +1467,193 @@ export async function listMyItineraries(
       return { ok: true, itineraries: data.itineraries };
     }
     return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListAdvisorItinerariesDetail =
+  | "advisor_only"
+  | "network_error"
+  | "unknown";
+
+export type ListAdvisorItinerariesResult =
+  | { ok: true; itineraries: AdvisorItinerarySummary[] }
+  | { ok: false; status: number; detail: ListAdvisorItinerariesDetail };
+
+/**
+ * Typed wrapper for GET /itineraries (advisor). Returns one row per
+ * itinerary across the calling advisor's clients, embedding the client
+ * block so the Command Center can render a dense roster without N+1.
+ */
+export async function listAdvisorItineraries(
+  client: Client,
+): Promise<ListAdvisorItinerariesResult> {
+  try {
+    const { data, error, response } =
+      await listAdvisorItinerariesEndpointItinerariesGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itineraries: data.itineraries };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 403 ? "advisor_only" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListClientSessionsDetail =
+  | "client_not_found"
+  | "advisor_only"
+  | "network_error"
+  | "unknown";
+
+export type ListClientSessionsResult =
+  | { ok: true; sessions: ClientSessionSummary[] }
+  | { ok: false; status: number; detail: ListClientSessionsDetail };
+
+/**
+ * Typed wrapper for GET /clients/{id}/sessions. Lists every agent
+ * session for one client (advisor-scoped); each row carries turn_count
+ * and last_turn_at so the Command Center can render the chat history
+ * without an N+1 over /sessions/{id}/turns.
+ */
+export type ContactMutationDetail =
+  | "client_not_found"
+  | "contact_not_found"
+  | "advisor_only"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+function _parseContactDetail(
+  status: number,
+  error: unknown,
+): ContactMutationDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "client_not_found") return "client_not_found";
+  if (raw === "contact_not_found") return "contact_not_found";
+  if (raw === "advisor_only") return "advisor_only";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "contact_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type CreateClientContactResult =
+  | { ok: true; contact: ClientContactDetail }
+  | { ok: false; status: number; detail: ContactMutationDetail };
+
+export async function createClientContact(
+  client: Client,
+  clientId: string,
+  body: ClientContactCreate,
+): Promise<CreateClientContactResult> {
+  try {
+    const { data, error, response } =
+      await createClientContactEndpointClientsClientIdContactsPost({
+        client,
+        path: { client_id: clientId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, contact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseContactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type UpdateClientContactResult =
+  | { ok: true; contact: ClientContactDetail }
+  | { ok: false; status: number; detail: ContactMutationDetail };
+
+export async function updateClientContact(
+  client: Client,
+  clientId: string,
+  contactId: string,
+  body: ClientContactUpdate,
+): Promise<UpdateClientContactResult> {
+  try {
+    const { data, error, response } =
+      await updateClientContactEndpointClientsClientIdContactsContactIdPatch({
+        client,
+        path: { client_id: clientId, contact_id: contactId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, contact: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseContactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type DeleteClientContactResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: ContactMutationDetail };
+
+export async function deleteClientContact(
+  client: Client,
+  clientId: string,
+  contactId: string,
+): Promise<DeleteClientContactResult> {
+  try {
+    const { error, response } =
+      await deleteClientContactEndpointClientsClientIdContactsContactIdDelete({
+        client,
+        path: { client_id: clientId, contact_id: contactId },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseContactDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function listClientSessions(
+  client: Client,
+  clientId: string,
+): Promise<ListClientSessionsResult> {
+  try {
+    const { data, error, response } =
+      await listClientSessionsEndpointClientsClientIdSessionsGet({
+        client,
+        path: { client_id: clientId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, sessions: data.sessions };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail:
+        response.status === 404
+          ? "client_not_found"
+          : response.status === 403
+            ? "advisor_only"
+            : "unknown",
+    };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

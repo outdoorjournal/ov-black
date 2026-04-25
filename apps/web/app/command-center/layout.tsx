@@ -28,7 +28,7 @@ export default async function CommandCenterLayout({
   return (
     <div className="flex min-h-screen flex-col bg-paper text-ink">
       <Navbar email={user.email ?? "Signed in"} />
-      <div className="flex-1">{children}</div>
+      <div className="flex flex-1 flex-col">{children}</div>
     </div>
   );
 }

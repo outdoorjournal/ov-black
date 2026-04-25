@@ -17,6 +17,7 @@ from app.db import dispose_engine
 from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.registry import get_registry
+from app.routers.advisor_itineraries import router as advisor_itineraries_router
 from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
 from app.routers.auth import router as auth_router
@@ -167,6 +168,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(itineraries_router)
+app.include_router(advisor_itineraries_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)
 app.include_router(facts_router)

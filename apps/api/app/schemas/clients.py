@@ -21,11 +21,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.contacts import ClientContactCreate, ClientContactDetail
 from app.schemas.dossier import DossierDetail, DossierPayload
 from app.schemas.facts import (
     DossierFactCreate,
     DossierFactDetail,
+    OsintFactCreate,
     OsintFactDetail,
+    ProfileFactCreate,
     ProfileFactDetail,
 )
 
@@ -33,9 +36,10 @@ from app.schemas.facts import (
 class ClientCreatePayload(BaseModel):
     """Payload for ``POST /clients``: a new client + their Dossier.
 
-    ``dossier_facts`` is an optional initial seed of long-tail facts
-    (passions, motivations, …) — written in the same atomic transaction
-    as the client + dossier rows so onboarding stays one round-trip.
+    Three optional initial fact seeds (one per tier) are written in the
+    same atomic transaction as the client + dossier rows so onboarding
+    stays one round-trip even when the advisor records knowledge across
+    all three disclosure tiers up front.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -44,6 +48,9 @@ class ClientCreatePayload(BaseModel):
     email: EmailStr
     dossier: DossierPayload
     dossier_facts: list[DossierFactCreate] = Field(default_factory=list)
+    profile_facts: list[ProfileFactCreate] = Field(default_factory=list)
+    osint_facts: list[OsintFactCreate] = Field(default_factory=list)
+    contacts: list[ClientContactCreate] = Field(default_factory=list)
 
 
 class ClientCreateResponse(BaseModel):
@@ -118,3 +125,4 @@ class ClientDetail(BaseModel):
     dossier_facts: list[DossierFactDetail] = Field(default_factory=list)
     profile_facts: list[ProfileFactDetail] = Field(default_factory=list)
     osint_facts: list[OsintFactDetail] = Field(default_factory=list)
+    contacts: list[ClientContactDetail] = Field(default_factory=list)

@@ -23,7 +23,6 @@ def build_agent(model: Any, payload: TurnPayload) -> Agent:
         api_system=payload.system,
         actor_kind=payload.actor_kind,
         itinerary_id_present=payload.itinerary_id is not None,
-        seeded_opener=payload.seeded_opener,
     )
     tools = tools_for(payload.mode)
     return Agent(

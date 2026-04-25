@@ -254,7 +254,7 @@ async def test_reissue_supersedes_active_and_inserts_fresh_row(
     assert session.commits == 1
     assert session.rollbacks == 0
     assert stub_admin_ok == [
-        (client.email, "http://localhost:3000/auth/callback?next=/command-center"),
+        (client.email, "http://localhost:3000/auth/callback?next=/basecamp"),
     ]
 
 

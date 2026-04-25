@@ -53,7 +53,7 @@ export function Navbar({ email }: NavbarProps) {
 
   return (
     <nav className="sticky top-0 z-40 border-b border-paper/10 bg-ink text-paper">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-6 py-4 sm:px-10">
+      <div className="flex items-center justify-between gap-6 px-6 py-4 sm:px-10">
         <Link
           href="/command-center"
           className="flex items-baseline gap-3 transition-opacity hover:opacity-80"
@@ -85,7 +85,7 @@ export function Navbar({ email }: NavbarProps) {
       </div>
 
       <div className="border-t border-paper/10">
-        <div className="mx-auto flex max-w-6xl items-center gap-8 px-6 sm:px-10">
+        <div className="flex items-center gap-8 px-6 sm:px-10">
           {NAV.map((item) => {
             const active = item.isActive(pathname ?? "");
             return (

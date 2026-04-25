@@ -337,6 +337,22 @@ async def open_or_reuse_session(
         session.add(new)
         await session.commit()
         await session.refresh(new)
+
+        # When basecamp pre-shows the opener, persist it as turn_index=0 so the
+        # opener lives in the conversation history (visible on reload) and the
+        # agent sees it via prior_turns instead of echoing it from a directive.
+        if seeded_opener:
+            opener_turn = AgentTurn(
+                session_id=new.id,
+                turn_index=0,
+                role=TurnRole.assistant,
+                content=seeded_opener,
+                actor_kind="agent",
+                actor_id=new.agentcore_session_id,
+                retried=0,
+            )
+            session.add(opener_turn)
+            await session.commit()
         if backfilled:
             logger.info(
                 "agent.auth.client_backfilled",
@@ -973,13 +989,6 @@ async def stream_turn(
         "client_id": str(client_id),
         "itinerary_id": (
             str(pinned_itinerary_id) if pinned_itinerary_id else None
-        ),
-        # Only ship seeded_opener on the very first turn — once the agent
-        # has spoken, the directive ("your first message MUST be …") would
-        # cause it to repeat the opener as turn N+2. The runtime appends
-        # the directive only when this field is non-empty.
-        "seeded_opener": (
-            agent_session.seeded_opener if turn_index == 0 else None
         ),
     }
 

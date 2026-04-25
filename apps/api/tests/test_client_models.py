@@ -29,7 +29,6 @@ from app.models import (
     DossierFact,
     DossierFactKind,
     FactSourceKind,
-    GroupType,
     OsintFact,
     OsintFactKind,
     ProfileFact,
@@ -153,7 +152,6 @@ async def test_dossier_typed_core_round_trip(session: AsyncSession) -> None:
             client_id=client_id,
             authored_by=advisor_id,
             contact_preference=ContactChannel.whatsapp,
-            group_type=GroupType.couple,
             children_ages=[7, 11],
             travel_party_notes="Plus nanny on long trips.",
             estimated_net_worth_usd=25_000_000,
@@ -169,7 +167,6 @@ async def test_dossier_typed_core_round_trip(session: AsyncSession) -> None:
 
         # Enums coerce back to the Python enum members.
         assert fetched.contact_preference is ContactChannel.whatsapp
-        assert fetched.group_type is GroupType.couple
         # Typed columns round-trip.
         assert fetched.children_ages == [7, 11]
         assert fetched.travel_party_notes == "Plus nanny on long trips."
@@ -205,7 +202,6 @@ async def test_dossier_defaults_round_trip(session: AsyncSession) -> None:
             client_id=client_id,
             authored_by=advisor_id,
             contact_preference=ContactChannel.email,
-            group_type=GroupType.solo,
         )
         session.add(dossier)
         await session.commit()

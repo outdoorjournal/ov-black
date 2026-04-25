@@ -59,11 +59,11 @@ export function AddOsintFactForm({ clientId }: { clientId: string }) {
         e.preventDefault();
         submit();
       }}
-      className="flex flex-col gap-3 rounded-md border border-border p-4"
+      className="flex flex-col gap-2 rounded-sm border border-paper/15 bg-paper/[0.09] p-3"
     >
-      <div className="grid gap-3 sm:grid-cols-[10rem_1fr_1fr]">
+      <div className="grid gap-2 sm:grid-cols-[8rem_1fr_1fr]">
         <Select value={kind} onValueChange={(v) => setKind(v as typeof kind)}>
-          <SelectTrigger>
+          <SelectTrigger className="h-9 border-paper/20 bg-transparent text-paper">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -78,14 +78,16 @@ export function AddOsintFactForm({ clientId }: { clientId: string }) {
           placeholder="What did you find?"
           value={text}
           onChange={(e) => setText(e.target.value)}
+          className="h-9 border-paper/20 bg-transparent text-paper placeholder:text-paper/40 focus-visible:ring-paper/30"
         />
         <Input
           placeholder="Source URL (optional)"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          className="h-9 border-paper/20 bg-transparent text-paper placeholder:text-paper/40 focus-visible:ring-paper/30"
         />
       </div>
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex items-center justify-between gap-3">
         {error ? (
           <p
             role="alert"
@@ -93,9 +95,16 @@ export function AddOsintFactForm({ clientId }: { clientId: string }) {
           >
             {error}
           </p>
-        ) : null}
-        <Button type="submit" disabled={isPending || !text.trim()} size="sm">
-          {isPending ? "saving…" : "Add OSINT fact"}
+        ) : (
+          <span />
+        )}
+        <Button
+          type="submit"
+          disabled={isPending || !text.trim()}
+          size="sm"
+          className="bg-paper text-ink hover:bg-paper/90"
+        >
+          {isPending ? "saving…" : "Add"}
         </Button>
       </div>
     </form>

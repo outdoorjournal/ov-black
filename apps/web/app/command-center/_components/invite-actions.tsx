@@ -4,8 +4,6 @@ import { useState, useTransition } from "react";
 
 import type { InviteStatus } from "@ov-black/api-client";
 
-import { Button } from "@/components/ui/button";
-
 import { cancelInviteAction, reissueInviteAction } from "../actions";
 
 type Status =
@@ -67,40 +65,41 @@ export function InviteActions({ clientId, inviteStatus }: InviteActionsProps) {
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex gap-2">
-        <Button
+        <button
           type="button"
-          variant="outline"
-          size="sm"
           onClick={onReissue}
           disabled={isPending}
+          className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-paper disabled:opacity-50"
         >
           {status.kind === "working" && status.op === "reissue"
             ? "Resending…"
             : "Resend"}
-        </Button>
+        </button>
         {showCancel && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onCancel}
-            disabled={isPending}
-          >
-            {status.kind === "working" && status.op === "cancel"
-              ? "Cancelling…"
-              : "Cancel"}
-          </Button>
+          <>
+            <span className="text-paper/20">·</span>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={isPending}
+              className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-destructive disabled:opacity-50"
+            >
+              {status.kind === "working" && status.op === "cancel"
+                ? "Cancelling…"
+                : "Cancel"}
+            </button>
+          </>
         )}
       </div>
       {status.kind === "success" && (
-        <p className="font-sans text-[11px] uppercase tracking-[0.2em] text-ink/60">
+        <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/60">
           {status.message}
         </p>
       )}
       {status.kind === "error" && (
         <p
           role="alert"
-          className="font-sans text-[11px] uppercase tracking-[0.2em] text-destructive"
+          className="font-sans text-[10px] uppercase tracking-[0.2em] text-destructive"
         >
           {status.message}
         </p>

@@ -13,17 +13,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models import Base
 
 
-class GroupType(str, enum.Enum):
-    """Mirrors the public.group_type Postgres enum from 0003_clients_voodoo_dolls.sql."""
-
-    solo = "solo"
-    couple = "couple"
-    family = "family"
-    friends = "friends"
-    multigen = "multigen"
-    corporate = "corporate"
-
-
 class ContactChannel(str, enum.Enum):
     """Mirrors the public.contact_channel Postgres enum from 0003_clients_voodoo_dolls.sql."""
 
@@ -35,15 +24,6 @@ class ContactChannel(str, enum.Enum):
 
 # Reuse the Postgres-side enum types — SQLAlchemy must not try to CREATE TYPE,
 # the migration owns that. native_enum=True + create_type=False enforces this.
-group_type_enum = SAEnum(
-    GroupType,
-    name="group_type",
-    schema="public",
-    native_enum=True,
-    create_type=False,
-    values_callable=lambda e: [m.value for m in e],
-)
-
 contact_channel_enum = SAEnum(
     ContactChannel,
     name="contact_channel",

@@ -126,6 +126,7 @@ async def generate_invite_link(
     email: str,
     redirect_to: str,
     *,
+    data: dict[str, object] | None = None,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> MagicLinkIssued:
@@ -139,6 +140,11 @@ async def generate_invite_link(
     does). We opportunistically capture an ``action_link`` if the
     deployment's GoTrue returns one, but treat its absence as success
     — the email is what matters.
+
+    ``data`` lands on ``raw_user_meta_data`` for the new auth user and is
+    rendered into the email template as ``{{ .Data.<key> }}``. Used to
+    surface the OV-side ``invite_code`` so the recipient can fall back to
+    typing it manually if the magic link is broken in transit.
     """
     settings = settings or get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -150,7 +156,7 @@ async def generate_invite_link(
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
         "Content-Type": "application/json",
     }
-    payload = {"email": email, "redirect_to": redirect_to, "data": {}}
+    payload = {"email": email, "redirect_to": redirect_to, "data": data or {}}
 
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=10.0)

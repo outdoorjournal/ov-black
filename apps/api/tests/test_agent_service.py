@@ -43,7 +43,7 @@ from app.models import (
     TurnRole,
     Dossier,
 )
-from app.models.client import ContactChannel, GroupType
+from app.models.client import ContactChannel
 from app.services.agent import (
     ActorContext,
     SessionOutcome,
@@ -387,7 +387,6 @@ def dossier(client_row: Client) -> Dossier:
         client_id=client_row.id,
         authored_by=client_row.owner_id,
         contact_preference=ContactChannel.email,
-        group_type=GroupType.couple,
         children_ages=[],
         travel_party_notes="prefers quiet lodges",
         estimated_net_worth_usd=SECRET_NETWORTH,
