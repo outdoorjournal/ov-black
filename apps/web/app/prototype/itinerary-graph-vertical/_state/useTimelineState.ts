@@ -136,6 +136,13 @@ function reducer(
 }
 
 export function useVerticalTimelineState(initial: VerticalTimeline) {
+  // Pick a visually rich node for the opening frame so the ambient layer
+  // never starts blank (image + map coords both present).
+  const defaultFocus = initial.nodes.find((n) => {
+    const m = n.metadata as { ambient_image?: string; location?: unknown };
+    return typeof m.ambient_image === "string" && Boolean(m.location);
+  });
+
   const init: VerticalTimelineState = {
     sample: initial,
     nodes: [...initial.nodes],
@@ -148,7 +155,7 @@ export function useVerticalTimelineState(initial: VerticalTimeline) {
         text: `${initial.label} — ${initial.subtitle}. Hover cards to fly the map; try the AI demo below.`,
       },
     ],
-    focusedNodeId: null,
+    focusedNodeId: defaultFocus?.id ?? null,
     flashNodeId: null,
     assemblePulse: 0,
   };

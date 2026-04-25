@@ -1,5 +1,6 @@
 "use client";
 
+import "mapbox-gl/dist/mapbox-gl.css";
 import { useEffect, useRef, useState } from "react";
 
 import { getMapboxToken, loadMapbox, type MapboxMap } from "../_lib/mapbox";
@@ -67,14 +68,14 @@ export function MapFlyer({ focus }: MapFlyerProps) {
 
   return (
     <div
-      ref={containerRef}
-      className="absolute inset-x-0 bottom-0 h-[62%]"
+      className="absolute inset-0"
       style={{
-        opacity: 0.38,
-        mixBlendMode: "soft-light",
-        filter: "saturate(0.85)",
+        opacity: 0.9,
+        filter: "saturate(0.9) contrast(0.95)",
       }}
-    />
+    >
+      <div ref={containerRef} className="h-full w-full" />
+    </div>
   );
 }
 

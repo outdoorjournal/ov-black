@@ -16,7 +16,7 @@ export function TimeAxis({ days, pxPerMinute, totalHeight }: TimeAxisProps) {
 
   return (
     <div
-      className="relative w-[110px] shrink-0 border-r border-ink/10 bg-paper"
+      className="relative w-[110px] shrink-0 border-r border-ink/10 bg-paper/80 backdrop-blur-sm"
       style={{ minHeight: totalHeight }}
     >
       {days.map((d) => (

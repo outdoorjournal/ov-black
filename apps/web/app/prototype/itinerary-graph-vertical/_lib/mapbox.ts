@@ -6,7 +6,9 @@ let cached: MapboxModule | null = null;
 let loading: Promise<MapboxModule> | null = null;
 
 export function getMapboxToken(): string | undefined {
-  const token = process.env["NEXT_PUBLIC_MAPBOX_API_KEY"];
+  // NB: dot-access required — Next.js only inlines `process.env.FOO` syntax into
+  // the client bundle; bracket access leaves it `undefined` in production/browser.
+  const token = process.env.NEXT_PUBLIC_MAPBOX_API_KEY;
   return token && token.length > 0 ? token : undefined;
 }
 

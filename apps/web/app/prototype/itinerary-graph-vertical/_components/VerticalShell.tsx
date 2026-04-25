@@ -95,8 +95,13 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
           offsetFromTop: pos.y - container.scrollTop,
         };
       }
+      // Drive ambient focus from scroll: whichever card is closest to center
+      // becomes the selected node and powers the map / image.
+      if (bestId !== state.focusedNodeId) {
+        dispatch({ type: "FOCUS_NODE", id: bestId });
+      }
     }
-  }, [layout]);
+  }, [layout, state.focusedNodeId, dispatch]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -201,7 +206,10 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
   });
 
   return (
-    <div className="relative flex h-screen w-screen flex-col text-ink">
+    <div
+      className="relative flex h-screen w-screen flex-col bg-paper text-ink"
+      style={{ isolation: "isolate" }}
+    >
       <AmbientBackdrop imageSrc={ambientImage} focus={focusCoords} />
 
       <header className="relative z-20 flex items-center justify-between gap-4 border-b border-ink/10 bg-paper/80 px-4 py-2 backdrop-blur-sm">
@@ -243,7 +251,9 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
               pendingProposals={state.pendingProposals}
               flashNodeId={state.flashNodeId}
               sweptIds={sweptIds}
-              onHoverNode={(id) => dispatch({ type: "FOCUS_NODE", id })}
+              onHoverNode={() => {
+                /* hover no longer drives focus — scroll position does */
+              }}
               onClickNode={(id) => setDetailId(id)}
               onAcceptProposal={(id) =>
                 dispatch({ type: "ACCEPT_PROPOSAL", id })
