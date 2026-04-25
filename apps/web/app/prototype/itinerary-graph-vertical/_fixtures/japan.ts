@@ -1249,6 +1249,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-07-01", "09:48"),
         durationMinutes: 129,
         mode: "JR Pass · reserved",
+        location: { lat: 35.1266, lng: 138.9115, label: "Mishima Station" },
+        from_location: { lat: 34.7335, lng: 135.5003, label: "Shin-Osaka Station" },
+        to_location: { lat: 35.1266, lng: 138.9115, label: "Mishima Station" },
       },
       {
         idHint: "day12-mishima",
@@ -1266,6 +1269,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-07-01", "13:20"),
         durationMinutes: 90,
         mode: "Reservation WR0000090250 · Bus #0013 · Platform 2",
+        location: { lat: 35.5024, lng: 138.7528, label: "Kawaguchiko Station" },
+        from_location: { lat: 35.1266, lng: 138.9115, label: "Mishima Station" },
+        to_location: { lat: 35.5024, lng: 138.7528, label: "Kawaguchiko Station" },
       },
       {
         idHint: "day12-kawaguchi",
@@ -1283,6 +1289,9 @@ const DAYS: DayData[] = [
         durationMinutes: 55,
         mode: "Local bus · IC card",
         ambient_image: "/japan/day12_kawaguchiko_local_bus.jpg",
+        location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        from_location: { lat: 35.5024, lng: 138.7528, label: "Kawaguchiko Station" },
+        to_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
       },
       {
         idHint: "day12-5th-station",
@@ -1364,6 +1373,9 @@ const DAYS: DayData[] = [
         durationMinutes: 155,
         mode: "Reserved",
         alt_group: "day13-bus-slots",
+        location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        from_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        to_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
       },
       {
         idHint: "day13-bus-2",
@@ -1373,6 +1385,9 @@ const DAYS: DayData[] = [
         durationMinutes: 155,
         mode: "Reserved",
         alt_group: "day13-bus-slots",
+        location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        from_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        to_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
       },
       {
         idHint: "day13-bus-3",
@@ -1382,6 +1397,9 @@ const DAYS: DayData[] = [
         durationMinutes: 155,
         mode: "Reserved",
         alt_group: "day13-bus-slots",
+        location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        from_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        to_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
       },
       {
         idHint: "day13-bus-4",
@@ -1391,6 +1409,9 @@ const DAYS: DayData[] = [
         durationMinutes: 155,
         mode: "Reserved",
         alt_group: "day13-bus-slots",
+        location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        from_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        to_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
       },
       {
         idHint: "day13-bus-5",
@@ -1400,6 +1421,9 @@ const DAYS: DayData[] = [
         durationMinutes: 155,
         mode: "Reserved",
         alt_group: "day13-bus-slots",
+        location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        from_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        to_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
       },
       {
         idHint: "day13-bus-6",
@@ -1409,6 +1433,9 @@ const DAYS: DayData[] = [
         durationMinutes: 155,
         mode: "Reserved",
         alt_group: "day13-bus-slots",
+        location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        from_location: { lat: 35.3965, lng: 138.7325, label: "Fuji Subaru 5th Station" },
+        to_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
       },
       {
         idHint: "day13-odakyu",
@@ -1417,7 +1444,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-07-02", "17:30"),
         durationMinutes: 21,
         mode: "Odakyu Line · IC card",
-        location: { lat: 35.6502, lng: 139.5975 },
+        location: { lat: 35.6502, lng: 139.5975, label: "Soshigaya-Okura Station" },
+        from_location: { lat: 35.6896, lng: 139.7006, label: "Shinjuku Station" },
+        to_location: { lat: 35.6502, lng: 139.5975, label: "Soshigaya-Okura Station" },
       },
       {
         idHint: "day13-taxi-pickup",
@@ -1426,7 +1455,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-07-02", "18:00"),
         durationMinutes: 40,
         mode: "Taxi · pay on site",
-        location: { lat: 35.6475, lng: 139.6039 },
+        location: { lat: 35.6475, lng: 139.6039, label: "Yamato Seijo Office" },
+        from_location: { lat: 35.6502, lng: 139.5975, label: "Soshigaya-Okura Station" },
+        to_location: { lat: 35.6475, lng: 139.6039, label: "Yamato Seijo Office" },
       },
       {
         idHint: "day13-apt",
@@ -1499,7 +1530,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-07-04", "11:30"),
         durationMinutes: 75,
         mode: "IC card · no JR Pass on final day",
-        location: { lat: 35.5494, lng: 139.7798 },
+        location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
+        from_location: { lat: 35.6487, lng: 139.5950, label: "Soshigaya (Setagaya)" },
+        to_location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
       },
       {
         idHint: "day15-departure",
