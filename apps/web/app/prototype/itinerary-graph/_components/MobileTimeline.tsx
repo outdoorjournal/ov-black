@@ -4,12 +4,11 @@ import { AnimatePresence, motion, useAnimate } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
 
 import { type MoodId, type NodeResponse, getMeta } from "../_lib/types";
-import type { TimelineState } from "../_state/useTimelineState";
+import { timelineStore } from "../_state/timelineStore";
 import { Card } from "./Card";
 import { GhostCard } from "./GhostCard";
 
 interface MobileTimelineProps {
-  state: TimelineState;
   mood: MoodId;
   onCardClick: (node: NodeResponse) => void;
   onMoveNode: (nodeId: string, dayIndex: number) => void;
@@ -24,24 +23,27 @@ interface DayGroup {
 }
 
 export function MobileTimeline({
-  state,
   mood,
   onCardClick,
   onMoveNode,
   onAcceptProposal,
   onDismissProposal,
 }: MobileTimelineProps) {
+  const nodes = timelineStore.useStore((s) => s.nodes);
+  const pendingProposals = timelineStore.useStore((s) => s.pendingProposals);
+  const dayLabels = timelineStore.useStore((s) => s.sample.dayLabels);
+
   const [parked, setParked] = useState<NodeResponse | null>(null);
   const proposalIds = useMemo(
-    () => new Set(state.pendingProposals.map((p) => p.id)),
-    [state.pendingProposals],
+    () => new Set(pendingProposals.map((p) => p.id)),
+    [pendingProposals],
   );
 
   const groups = useMemo<DayGroup[]>(() => {
     const byDay = new Map<number, NodeResponse[]>();
     const topLevel = [
-      ...state.nodes.filter((n) => n.parent_subgraph_id === null),
-      ...state.pendingProposals,
+      ...nodes.filter((n) => n.parent_subgraph_id === null),
+      ...pendingProposals,
     ];
     for (const n of topLevel) {
       const day = (getMeta(n).day_index as number | undefined) ?? 1;
@@ -59,12 +61,12 @@ export function MobileTimeline({
       });
       result.push({
         day: d,
-        label: state.sample.dayLabels?.[d - 1] ?? `Day ${d}`,
+        label: dayLabels?.[d - 1] ?? `Day ${d}`,
         nodes: inDay,
       });
     }
     return result;
-  }, [state.nodes, state.pendingProposals, state.sample.dayLabels]);
+  }, [nodes, pendingProposals, dayLabels]);
 
   const handlePluck = useCallback((node: NodeResponse) => {
     setParked(node);

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
 import type { MoodId, NodeResponse } from "../_lib/types";
-import type { ChatMessage } from "../_state/useTimelineState";
+import type { ChatMessage } from "../_state/timelineStore";
 
 interface ConversationPanelProps {
   mood: MoodId;

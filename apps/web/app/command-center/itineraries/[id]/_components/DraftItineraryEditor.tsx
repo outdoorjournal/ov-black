@@ -19,7 +19,7 @@
 // (`already_locked`), we assume another advisor holds it and set
 // `locked-by-other`. Release flips back to `unlocked`.
 
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import {
   acquireItineraryLock,
@@ -32,6 +32,8 @@ import {
   type NodeResponse,
 } from "@ov-black/api-client";
 
+import { draftItineraryStore } from "./draftItineraryStore";
+
 export type DraftItineraryEditorProps = {
   itineraryId: string;
   apiBaseUrl: string;
@@ -41,24 +43,6 @@ export type DraftItineraryEditorProps = {
   initialStatus: ItineraryStatus;
 };
 
-type LockStatus = "unlocked" | "locked-by-me" | "locked-by-other";
-
-type NodeView = {
-  id: string;
-  title: string;
-  source: string | null;
-  source_id: string | null;
-};
-
-function toNodeView(node: NodeResponse): NodeView {
-  return {
-    id: node.id,
-    title: node.title,
-    source: node.source ?? null,
-    source_id: node.source_id ?? null,
-  };
-}
-
 export function DraftItineraryEditor({
   itineraryId,
   apiBaseUrl,
@@ -67,17 +51,35 @@ export function DraftItineraryEditor({
   initialEdges: _initialEdges,
   initialStatus,
 }: DraftItineraryEditorProps) {
-  const [status, setStatus] = useState<ItineraryStatus>(initialStatus);
-  const [lockStatus, setLockStatus] = useState<LockStatus>("unlocked");
-  const [nodes, setNodes] = useState<NodeView[]>(
-    initialNodes.map(toNodeView),
+  return (
+    <draftItineraryStore.Provider initial={{ initialStatus, initialNodes }}>
+      <DraftItineraryEditorInner
+        itineraryId={itineraryId}
+        apiBaseUrl={apiBaseUrl}
+        accessToken={accessToken}
+      />
+    </draftItineraryStore.Provider>
   );
-  // In-flight flags — the only signal the DOM carries for "working on it".
-  // Reverting a button press when the request rejects is the error
-  // affordance (R014 — no toast, no spinner).
-  const [edgePending, setEdgePending] = useState(false);
-  const [releasePending, setReleasePending] = useState(false);
-  const [approvePending, setApprovePending] = useState(false);
+}
+
+type InnerProps = {
+  itineraryId: string;
+  apiBaseUrl: string;
+  accessToken: string;
+};
+
+function DraftItineraryEditorInner({
+  itineraryId,
+  apiBaseUrl,
+  accessToken,
+}: InnerProps) {
+  const status = draftItineraryStore.useStore((s) => s.status);
+  const lockStatus = draftItineraryStore.useStore((s) => s.lockStatus);
+  const nodes = draftItineraryStore.useStore((s) => s.nodes);
+  const edgePending = draftItineraryStore.useStore((s) => s.edgePending);
+  const releasePending = draftItineraryStore.useStore((s) => s.releasePending);
+  const approvePending = draftItineraryStore.useStore((s) => s.approvePending);
+  const storeApi = draftItineraryStore.useStoreApi();
 
   const lockedBySelf = lockStatus === "locked-by-me";
   const isApproved = status === "approved";
@@ -89,82 +91,75 @@ export function DraftItineraryEditor({
   );
 
   const onEdit = useCallback(() => {
-    if (edgePending || lockedBySelf || isApproved) return;
-    setEdgePending(true);
-    const previousLock = lockStatus;
+    const s = storeApi.getState();
+    if (s.edgePending || s.lockStatus === "locked-by-me" || s.status === "approved") return;
+    s.setEdgePending(true);
+    const previousLock = s.lockStatus;
     // Optimistic flip: most advisors will acquire cleanly. Revert to the
     // previous state on failure (already_locked → locked-by-other;
     // anything else → unlocked).
-    setLockStatus("locked-by-me");
+    s.setLockStatus("locked-by-me");
     void acquireItineraryLock(clientForAction(), itineraryId)
       .then((result) => {
         if (!result.ok) {
           if (result.detail === "already_locked") {
-            setLockStatus("locked-by-other");
+            storeApi.getState().setLockStatus("locked-by-other");
           } else {
-            setLockStatus(previousLock);
+            storeApi.getState().setLockStatus(previousLock);
           }
         }
       })
       .finally(() => {
-        setEdgePending(false);
+        storeApi.getState().setEdgePending(false);
       });
-  }, [
-    clientForAction,
-    edgePending,
-    isApproved,
-    itineraryId,
-    lockStatus,
-    lockedBySelf,
-  ]);
+  }, [clientForAction, itineraryId, storeApi]);
 
   const onRelease = useCallback(() => {
-    if (releasePending || !lockedBySelf) return;
-    setReleasePending(true);
-    const previousLock = lockStatus;
-    setLockStatus("unlocked");
+    const s = storeApi.getState();
+    if (s.releasePending || s.lockStatus !== "locked-by-me") return;
+    s.setReleasePending(true);
+    const previousLock = s.lockStatus;
+    s.setLockStatus("unlocked");
     void releaseItineraryLock(clientForAction(), itineraryId)
       .then((result) => {
         if (!result.ok) {
-          setLockStatus(previousLock);
+          storeApi.getState().setLockStatus(previousLock);
         }
       })
       .finally(() => {
-        setReleasePending(false);
+        storeApi.getState().setReleasePending(false);
       });
-  }, [clientForAction, itineraryId, lockStatus, lockedBySelf, releasePending]);
+  }, [clientForAction, itineraryId, storeApi]);
 
   const onApprove = useCallback(() => {
-    if (approvePending || isApproved) return;
-    setApprovePending(true);
-    const previousStatus = status;
-    setStatus("approved");
+    const s = storeApi.getState();
+    if (s.approvePending || s.status === "approved") return;
+    s.setApprovePending(true);
+    const previousStatus = s.status;
+    s.setStatus("approved");
     void approveItinerary(clientForAction(), itineraryId)
       .then((result) => {
         if (!result.ok) {
-          setStatus(previousStatus);
+          storeApi.getState().setStatus(previousStatus);
         }
       })
       .finally(() => {
-        setApprovePending(false);
+        storeApi.getState().setApprovePending(false);
       });
-  }, [approvePending, clientForAction, isApproved, itineraryId, status]);
+  }, [clientForAction, itineraryId, storeApi]);
 
   const onNodeFieldBlur = useCallback(
     (nodeId: string, field: "title" | "source_id", nextValue: string) => {
-      if (!inputsEditable) return;
-      const target = nodes.find((n) => n.id === nodeId);
+      const s = storeApi.getState();
+      const editable =
+        s.lockStatus === "locked-by-me" && s.status !== "approved";
+      if (!editable) return;
+      const target = s.nodes.find((n) => n.id === nodeId);
       if (!target) return;
       const currentValue = field === "title" ? target.title : target.source_id;
       if ((currentValue ?? "") === nextValue) return;
-      const previousNodes = nodes;
-      setNodes((prev) =>
-        prev.map((n) =>
-          n.id === nodeId
-            ? { ...n, [field]: nextValue }
-            : n,
-        ),
-      );
+      const previousNodes = s.nodes;
+      s.patchNode(nodeId, field, nextValue);
       const patch =
         field === "title" ? { title: nextValue } : { source_id: nextValue };
       void updateNode(clientForAction(), {
@@ -173,11 +168,11 @@ export function DraftItineraryEditor({
         patch,
       }).then((result) => {
         if (!result.ok) {
-          setNodes(previousNodes);
+          storeApi.getState().setNodes(previousNodes);
         }
       });
     },
-    [clientForAction, inputsEditable, itineraryId, nodes],
+    [clientForAction, itineraryId, storeApi],
   );
 
   return (

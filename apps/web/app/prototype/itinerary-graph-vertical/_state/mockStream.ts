@@ -1,12 +1,9 @@
 "use client";
 
-import type { Dispatch } from "react";
+import type { StoreApi } from "zustand";
 
 import { getVerticalMeta, type NodeResponse } from "../_lib/types";
-import type {
-  VerticalTimelineAction,
-  VerticalTimelineState,
-} from "./useTimelineState";
+import type { VerticalState } from "./verticalStore";
 
 export interface AgentNode {
   id: string;
@@ -22,8 +19,7 @@ export interface AgentNode {
 export type ScenarioId = "propose" | "assemble" | "modify" | "freeform";
 
 export interface ScenarioContext {
-  state: VerticalTimelineState;
-  dispatch: Dispatch<VerticalTimelineAction>;
+  store: StoreApi<VerticalState>;
   onAssembleSweep?: (nodeIds: string[]) => void;
 }
 
@@ -39,28 +35,27 @@ async function streamAssistant(
   perTokenMs = 22,
 ): Promise<void> {
   const msgId = nextId("msg");
-  ctx.dispatch({ type: "APPEND_ASSISTANT_MESSAGE", id: msgId });
+  ctx.store.getState().appendAssistantMessage(msgId);
   const tokens = text.match(/\S+\s*|\s+/g) ?? [text];
   for (const tok of tokens) {
     await sleep(perTokenMs);
-    ctx.dispatch({ type: "APPEND_DELTA", id: msgId, text: tok });
+    ctx.store.getState().appendDelta(msgId, tok);
   }
-  ctx.dispatch({ type: "FINISH_ASSISTANT", id: msgId });
+  ctx.store.getState().finishAssistant(msgId);
 }
 
 async function runProposeScenario(ctx: ScenarioContext) {
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: "Can you propose a couple more experiences I might love?",
-  });
+  ctx.store.getState().appendUserMessage(
+    nextId("msg"),
+    "Can you propose a couple more experiences I might love?",
+  );
   await sleep(300);
   await streamAssistant(
     ctx,
     "Looking at your trip, here are a few ideas — each lands on the timeline at its proposed time. Accept or dismiss from the chat or the card.",
   );
 
-  const itineraryId = ctx.state.sample.itinerary.id;
+  const itineraryId = ctx.store.getState().sample.itinerary.id;
 
   const proposals: AgentNode[] = [
     {
@@ -136,38 +131,38 @@ async function runProposeScenario(ctx: ScenarioContext) {
 
   for (const proposal of proposals) {
     await sleep(480);
-    ctx.dispatch({ type: "PROPOSE_NODE", node: proposal });
+    ctx.store.getState().proposeNode(proposal);
   }
 }
 
 async function runAssembleScenario(ctx: ScenarioContext) {
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: "Assemble my days into a confirmed draft.",
-  });
+  ctx.store.getState().appendUserMessage(
+    nextId("msg"),
+    "Assemble my days into a confirmed draft.",
+  );
   await sleep(300);
   await streamAssistant(
     ctx,
     "Cementing the order — watch your days pulse in sequence.",
   );
 
+  const state = ctx.store.getState();
   // Compute a sweep order: nodes sorted by start_time.
-  const ordered = ctx.state.nodes
+  const ordered = state.nodes
     .slice()
     .sort((a, b) => {
       const sa = new Date(
-        getVerticalMeta(a).start_time ?? ctx.state.sample.windowStart,
+        getVerticalMeta(a).start_time ?? state.sample.windowStart,
       ).getTime();
       const sb = new Date(
-        getVerticalMeta(b).start_time ?? ctx.state.sample.windowStart,
+        getVerticalMeta(b).start_time ?? state.sample.windowStart,
       ).getTime();
       return sa - sb;
     })
     .map((n) => n.id);
 
   ctx.onAssembleSweep?.(ordered);
-  ctx.dispatch({ type: "ASSEMBLE_PULSE" });
+  ctx.store.getState().pulseAssemble();
   await sleep(600);
   await streamAssistant(
     ctx,
@@ -177,16 +172,17 @@ async function runAssembleScenario(ctx: ScenarioContext) {
 }
 
 async function runModifyScenario(ctx: ScenarioContext) {
-  const target = ctx.state.nodes.find((n: NodeResponse) => n.type === "hotel");
+  const target = ctx.store
+    .getState()
+    .nodes.find((n: NodeResponse) => n.type === "hotel");
   if (!target) {
     await streamAssistant(ctx, "No hotel to swap in this sample.");
     return;
   }
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: "Can you find me something more private for the Shin-Nakano stay?",
-  });
+  ctx.store.getState().appendUserMessage(
+    nextId("msg"),
+    "Can you find me something more private for the Shin-Nakano stay?",
+  );
   await sleep(300);
   await streamAssistant(
     ctx,
@@ -211,7 +207,7 @@ async function runModifyScenario(ctx: ScenarioContext) {
       },
     },
   };
-  ctx.dispatch({ type: "UPDATE_NODE", node: updated });
+  ctx.store.getState().applyNodeUpdate(updated);
 }
 
 async function runFreeformScenario(ctx: ScenarioContext, userText: string) {
@@ -225,11 +221,7 @@ async function runFreeformScenario(ctx: ScenarioContext, userText: string) {
   if (/swap|change|different|another|replace|private/.test(text)) {
     return runModifyScenario(ctx);
   }
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: userText,
-  });
+  ctx.store.getState().appendUserMessage(nextId("msg"), userText);
   await sleep(200);
   await streamAssistant(
     ctx,

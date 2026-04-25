@@ -24,13 +24,12 @@ import {
   PAD_Y,
   computeLayout,
 } from "../_state/layout";
-import type { TimelineState } from "../_state/useTimelineState";
+import { timelineStore } from "../_state/timelineStore";
 import { Card } from "./Card";
 import { EdgeLayer } from "./EdgeLayer";
 import { GhostCard } from "./GhostCard";
 
 interface TimelineCanvasProps {
-  state: TimelineState;
   mood: MoodId;
   onCardClick: (node: NodeResponse) => void;
   onMoveNode: (nodeId: string, dayIndex: number) => void;
@@ -39,26 +38,32 @@ interface TimelineCanvasProps {
 }
 
 export function TimelineCanvas({
-  state,
   mood,
   onCardClick,
   onMoveNode,
   onAcceptProposal,
   onDismissProposal,
 }: TimelineCanvasProps) {
+  const nodes = timelineStore.useStore((s) => s.nodes);
+  const edges = timelineStore.useStore((s) => s.edges);
+  const pendingProposals = timelineStore.useStore((s) => s.pendingProposals);
+  const assemblePulse = timelineStore.useStore((s) => s.assemblePulse);
+  const flashNodeId = timelineStore.useStore((s) => s.flashNodeId);
+  const sample = timelineStore.useStore((s) => s.sample);
+
   const [activeDrag, setActiveDrag] = useState<string | null>(null);
 
   const layout = useMemo(() => {
-    const combined = [...state.nodes, ...state.pendingProposals];
-    return computeLayout(combined, state.edges);
-  }, [state.nodes, state.pendingProposals, state.edges]);
+    const combined = [...nodes, ...pendingProposals];
+    return computeLayout(combined, edges);
+  }, [nodes, pendingProposals, edges]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
   const dayIndices = layout.dayIndices;
-  const proposalIds = new Set(state.pendingProposals.map((p) => p.id));
+  const proposalIds = new Set(pendingProposals.map((p) => p.id));
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveDrag(null);
@@ -83,11 +88,7 @@ export function TimelineCanvas({
         className="relative"
         style={{ width: layout.width, height: layout.height }}
       >
-        <EdgeLayer
-          edges={state.edges}
-          layout={layout}
-          pulse={state.assemblePulse}
-        />
+        <EdgeLayer edges={edges} layout={layout} pulse={assemblePulse} />
 
         {/* Day columns — droppable rails + headers */}
         {dayIndices.map((day, i) => (
@@ -96,7 +97,7 @@ export function TimelineCanvas({
             day={day}
             columnIndex={i}
             height={layout.height - PAD_Y - DAY_HEADER_HEIGHT}
-            label={state.sample.dayLabels?.[day - 1] ?? `Day ${day}`}
+            label={sample.dayLabels?.[day - 1] ?? `Day ${day}`}
             active={activeDrag !== null}
           />
         ))}
@@ -133,7 +134,7 @@ export function TimelineCanvas({
                   <DraggableCard
                     node={node}
                     mood={mood}
-                    flash={state.flashNodeId === node.id}
+                    flash={flashNodeId === node.id}
                     isActive={activeDrag === node.id}
                     onClick={() => onCardClick(node)}
                   />

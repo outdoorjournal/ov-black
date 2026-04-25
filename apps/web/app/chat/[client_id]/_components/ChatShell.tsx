@@ -1,10 +1,10 @@
 "use client";
 
-// The client-side owner of the chat surface. Holds the reducer that tracks
-// the persisted turn list + the in-flight streaming buffer, wires the DIY
-// SSE consumer (useAgentStream from T04) into the reducer, and auto-fires a
-// craft-feel bootstrap turn on mount so the agent's opening move is what the
-// user sees first — not a blank composer.
+// The client-side owner of the chat surface. Holds the zustand store that
+// tracks the persisted turn list + the in-flight streaming buffer, wires
+// the DIY SSE consumer (useAgentStream from T04) into the store, and
+// auto-fires a craft-feel bootstrap turn on mount so the agent's opening
+// move is what the user sees first — not a blank composer.
 //
 // The layout is deliberately split now so S06/S07 (mood board) can slide in
 // later without another framing change: an absolute `atmos-frame` acts as
@@ -12,14 +12,7 @@
 // column (left) and an empty mood-board aside (right) that's ready to host
 // imagery in a later slice.
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  type Dispatch,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   useAgentStream,
@@ -34,16 +27,11 @@ import { createBrowserSupabase } from "@/lib/supabase";
 
 import { AtmosFrame } from "./AtmosFrame";
 import type { CardActionKind } from "./Card";
+import { chatStore, nextTurnIndex } from "./chatStore";
 import { Composer } from "./Composer";
 import { ConversationStream } from "./ConversationStream";
 import { MoodBoard } from "./MoodBoard";
-import {
-  fromSummary,
-  type AgentTurnView,
-  type CardView,
-  type InitialCardPayload,
-  type StreamState,
-} from "./types";
+import type { InitialCardPayload } from "./types";
 import {
   createApiClient,
   updateNodeStatus,
@@ -56,115 +44,6 @@ import {
 // open the correspondence itself (it references seeded Voodoo Doll facts in
 // its greeting) without the user having to type a prompt first.
 const BOOTSTRAP_CONTENT = " ";
-
-type ShellState = {
-  turns: AgentTurnView[];
-  streaming: StreamState | null;
-  cards: CardView[];
-};
-
-type ShellAction =
-  | { type: "user_turn_committed"; turn: AgentTurnView }
-  | { type: "stream_started"; turnIndex: number }
-  | { type: "delta"; text: string }
-  | { type: "done"; frame: DoneFrame }
-  | { type: "error"; frame: ErrorFrame }
-  | { type: "card_proposed"; frame: CardFrame }
-  | { type: "card_action"; nodeId: string; nextStatus: NodeStatus }
-  | { type: "card_action_reverted"; nodeId: string; previousStatus: NodeStatus };
-
-function reducer(state: ShellState, action: ShellAction): ShellState {
-  switch (action.type) {
-    case "user_turn_committed":
-      return { ...state, turns: [...state.turns, action.turn] };
-    case "stream_started":
-      return {
-        ...state,
-        streaming: { turnIndex: action.turnIndex, buffer: "" },
-      };
-    case "delta": {
-      if (!state.streaming) return state;
-      return {
-        ...state,
-        streaming: {
-          ...state.streaming,
-          buffer: state.streaming.buffer + action.text,
-        },
-      };
-    }
-    case "done": {
-      if (!state.streaming) return state;
-      const finalTurn: AgentTurnView = {
-        id: action.frame.turn_id,
-        turn_index: state.streaming.turnIndex,
-        role: "assistant",
-        content: state.streaming.buffer,
-      };
-      return { ...state, turns: [...state.turns, finalTurn], streaming: null };
-    }
-    case "error": {
-      const index = state.streaming?.turnIndex ?? nextTurnIndex(state.turns);
-      const errorTurn: AgentTurnView = {
-        id: `error-${index}-${Date.now()}`,
-        turn_index: index,
-        role: "error",
-        // content isn't rendered — the ConversationStream row uses the
-        // D015 literal fallback copy instead. We still store the backend
-        // `reason` verbatim for debugging/network-tab correlation.
-        content: action.frame.reason,
-      };
-      return { ...state, turns: [...state.turns, errorTurn], streaming: null };
-    }
-    case "card_proposed": {
-      // Agent just emitted a `card` SSE frame. Append as `proposed`; if the
-      // same node_id is re-emitted (shouldn't happen — T02 prompt avoids
-      // re-proposing), the newer snapshot replaces the older one so the DOM
-      // stays consistent with what the backend just persisted.
-      const { frame } = action;
-      const next: CardView = {
-        node_id: frame.node_id,
-        source: frame.source,
-        source_id: frame.source_id,
-        status: "proposed",
-        snapshot: frame.snapshot,
-      };
-      const existingIndex = state.cards.findIndex(
-        (c) => c.node_id === frame.node_id,
-      );
-      if (existingIndex === -1) {
-        return { ...state, cards: [...state.cards, next] };
-      }
-      const cards = state.cards.slice();
-      cards[existingIndex] = next;
-      return { ...state, cards };
-    }
-    case "card_action": {
-      return {
-        ...state,
-        cards: state.cards.map((c) =>
-          c.node_id === action.nodeId ? { ...c, status: action.nextStatus } : c,
-        ),
-      };
-    }
-    case "card_action_reverted": {
-      return {
-        ...state,
-        cards: state.cards.map((c) =>
-          c.node_id === action.nodeId
-            ? { ...c, status: action.previousStatus }
-            : c,
-        ),
-      };
-    }
-    default:
-      return state;
-  }
-}
-
-function nextTurnIndex(turns: AgentTurnView[]): number {
-  if (turns.length === 0) return 0;
-  return turns[turns.length - 1]!.turn_index + 1;
-}
 
 export type ChatShellProps = {
   sessionId: string;
@@ -187,20 +66,42 @@ export function ChatShell({
   itineraryId,
   initialCards = [],
 }: ChatShellProps) {
-  const [state, dispatch] = useReducer(reducer, undefined, () => ({
-    turns: initialTurns.map(fromSummary),
-    streaming: null,
-    cards: initialCards.map((c) => ({
-      node_id: c.node_id,
-      source: c.source,
-      source_id: c.source_id,
-      status: c.status,
-      snapshot: c.snapshot,
-    })),
-  }));
+  return (
+    <chatStore.Provider initial={{ initialTurns, initialCards }}>
+      <ChatShellInner
+        sessionId={sessionId}
+        accessToken={accessToken}
+        apiBaseUrl={apiBaseUrl}
+        client={client}
+        itineraryId={itineraryId}
+      />
+    </chatStore.Provider>
+  );
+}
+
+type ChatShellInnerProps = {
+  sessionId: string;
+  accessToken: string;
+  apiBaseUrl: string;
+  client: { id: string; full_name: string };
+  itineraryId: string | undefined;
+};
+
+function ChatShellInner({
+  sessionId,
+  accessToken,
+  apiBaseUrl,
+  client,
+  itineraryId,
+}: ChatShellInnerProps) {
+  const turns = chatStore.useStore((s) => s.turns);
+  const streaming = chatStore.useStore((s) => s.streaming);
+  const cards = chatStore.useStore((s) => s.cards);
+  const initialTurnsCount = chatStore.useStore((s) => s.initialTurnsCount);
+  const storeApi = chatStore.useStoreApi();
 
   const override = useAtmosOverride();
-  const { mood: classifiedMood, phaseCounter } = usePhaseShiftMood(state.turns);
+  const { mood: classifiedMood, phaseCounter } = usePhaseShiftMood(turns);
   const currentMood = override ?? classifiedMood;
 
   const abortRef = useRef<AbortController | null>(null);
@@ -240,23 +141,23 @@ export function ChatShell({
       // in the DOM; no dedicated callback work needed here.
     },
     onDelta: (frame: DeltaFrame) => {
-      dispatch({ type: "delta", text: frame.text });
+      storeApi.getState().appendDelta(frame.text);
     },
     onDone: (frame: DoneFrame) => {
-      dispatch({ type: "done", frame });
+      storeApi.getState().finishStream(frame);
     },
     onError: (frame: ErrorFrame) => {
-      dispatch({ type: "error", frame });
+      storeApi.getState().errorStream(frame);
     },
     onCard: (frame: CardFrame) => {
       // Legacy path: pre-agent-workspace runtime. Persistence happens on
       // the API side; the frame already carries node_id + snapshot.
-      dispatch({ type: "card_proposed", frame });
+      storeApi.getState().proposeCard(frame);
     },
     onCardProposed: (node: AgentNode) => {
       // New path: apps/agent runtime. ``node`` is the persisted row from
       // POST /itinerary/{id}/nodes. Lift the snapshot out of metadata
-      // and rebuild the legacy frame shape the reducer already handles.
+      // and rebuild the legacy frame shape the store action handles.
       const snapshot = (node.metadata?.snapshot ?? {
         title: node.title,
       }) as CardFrame["snapshot"];
@@ -267,12 +168,12 @@ export function ChatShell({
         node_id: node.id,
         snapshot,
       };
-      dispatch({ type: "card_proposed", frame });
+      storeApi.getState().proposeCard(frame);
     },
     onNodeUpdated: (node: AgentNode) => {
-      // Advisor adjustment landed — replay as a card_action for the reducer.
-      // Known statuses map cleanly; anything else is ignored (the status
-      // literal must match NodeStatus in the api-client types).
+      // Advisor adjustment landed — replay as a card-status flip. Known
+      // statuses map cleanly; anything else is ignored (the status literal
+      // must match NodeStatus in the api-client types).
       const allowed: readonly NodeStatus[] = [
         "idea",
         "proposed",
@@ -282,11 +183,7 @@ export function ChatShell({
         "discarded",
       ];
       if (allowed.includes(node.status as NodeStatus)) {
-        dispatch({
-          type: "card_action",
-          nodeId: node.id,
-          nextStatus: node.status as NodeStatus,
-        });
+        storeApi.getState().setCardStatus(node.id, node.status as NodeStatus);
       }
     },
   });
@@ -297,7 +194,7 @@ export function ChatShell({
   const onCardAction = useCallback(
     (nodeId: string, action: CardActionKind) => {
       if (!itineraryId) return;
-      const card = state.cards.find((c) => c.node_id === nodeId);
+      const card = storeApi.getState().cards.find((c) => c.node_id === nodeId);
       if (!card) return;
       const nextStatus: NodeStatus =
         action === "pin"
@@ -307,11 +204,11 @@ export function ChatShell({
           : "proposed";
       if (card.status === nextStatus) return;
       const previousStatus = card.status;
-      dispatch({ type: "card_action", nodeId, nextStatus });
+      storeApi.getState().setCardStatus(nodeId, nextStatus);
       void (async () => {
         const token = await getAccessToken();
         if (!token) {
-          dispatch({ type: "card_action_reverted", nodeId, previousStatus });
+          storeApi.getState().revertCardStatus(nodeId, previousStatus);
           return;
         }
         const api = createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
@@ -321,40 +218,38 @@ export function ChatShell({
           status: nextStatus,
         });
         if (!result.ok) {
-          dispatch({ type: "card_action_reverted", nodeId, previousStatus });
+          storeApi.getState().revertCardStatus(nodeId, previousStatus);
         }
       })();
     },
-    [apiBaseUrl, getAccessToken, itineraryId, state.cards],
+    [apiBaseUrl, getAccessToken, itineraryId, storeApi],
   );
 
   const submit = useCallback(
     (content: string, opts?: { hideUserTurn?: boolean }) => {
+      const state = storeApi.getState();
+      const optimisticIndex = nextTurnIndex(state.turns);
       // Optimistic user-turn row, unless this is the bootstrap (" ") call
       // where we don't want the user column to show a blank message.
       if (!opts?.hideUserTurn) {
-        const optimisticIndex = nextTurnIndex(state.turns);
-        dispatch({
-          type: "user_turn_committed",
-          turn: {
-            id: `user-${optimisticIndex}-${Date.now()}`,
-            turn_index: optimisticIndex,
-            role: "user",
-            content,
-          },
+        state.commitUserTurn({
+          id: `user-${optimisticIndex}-${Date.now()}`,
+          turn_index: optimisticIndex,
+          role: "user",
+          content,
         });
       }
-      const assistantIndex = nextTurnIndex(state.turns) + (opts?.hideUserTurn ? 0 : 1);
-      dispatch({ type: "stream_started", turnIndex: assistantIndex });
+      const assistantIndex = optimisticIndex + (opts?.hideUserTurn ? 0 : 1);
+      storeApi.getState().startStream(assistantIndex);
       void sendTurn(content);
     },
-    [sendTurn, state.turns],
+    [sendTurn, storeApi],
   );
 
   useBootstrapOpener({
-    initialTurnsCount: initialTurns.length,
-    streaming: state.streaming,
-    dispatch,
+    initialTurnsCount,
+    streaming,
+    startStream: storeApi.getState().startStream,
     sendTurn,
   });
 
@@ -388,13 +283,13 @@ export function ChatShell({
               </h1>
             </div>
           </header>
-          <ConversationStream turns={state.turns} streaming={state.streaming} />
+          <ConversationStream turns={turns} streaming={streaming} />
           <Composer
-            disabled={state.streaming !== null}
+            disabled={streaming !== null}
             onSend={(content) => submit(content)}
           />
         </div>
-        <MoodBoard cards={state.cards} onAction={onCardAction} />
+        <MoodBoard cards={cards} onAction={onCardAction} />
       </div>
     </main>
   );
@@ -406,12 +301,12 @@ export function ChatShell({
 function useBootstrapOpener({
   initialTurnsCount,
   streaming,
-  dispatch,
+  startStream,
   sendTurn,
 }: {
   initialTurnsCount: number;
-  streaming: StreamState | null;
-  dispatch: Dispatch<ShellAction>;
+  streaming: { turnIndex: number; buffer: string } | null;
+  startStream: (turnIndex: number) => void;
   sendTurn: (content: string) => Promise<void>;
 }): void {
   const firedRef = useRef(false);
@@ -421,10 +316,7 @@ function useBootstrapOpener({
     if (initialTurnsCount > 0) return;
     if (streaming !== null) return;
     firedRef.current = true;
-    dispatch({ type: "stream_started", turnIndex: 0 });
+    startStream(0);
     void sendTurn(BOOTSTRAP_CONTENT);
-    // sendTurn identity is stable (T04 holds options in a ref), so we can
-    // omit it from deps without lint churn — but include it defensively so
-    // react-hooks/exhaustive-deps stays quiet.
-  }, [initialTurnsCount, streaming, dispatch, sendTurn]);
+  }, [initialTurnsCount, streaming, startStream, sendTurn]);
 }

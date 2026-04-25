@@ -1,9 +1,9 @@
 "use client";
 
-import type { Dispatch } from "react";
+import type { StoreApi } from "zustand";
 
 import type { NodeResponse } from "../_lib/types";
-import type { TimelineAction, TimelineState } from "./useTimelineState";
+import type { TimelineState } from "./timelineStore";
 
 // Local mirror of the AgentNode shape from agentStream.types. Kept here so
 // scenario authors can build full NodeResponse-shaped proposals without
@@ -22,8 +22,7 @@ export interface AgentNode {
 export type ScenarioId = "propose" | "assemble" | "modify" | "freeform";
 
 export interface ScenarioContext {
-  state: TimelineState;
-  dispatch: Dispatch<TimelineAction>;
+  store: StoreApi<TimelineState>;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -39,24 +38,20 @@ async function streamAssistant(
   perTokenMs = 22,
 ): Promise<string> {
   const msgId = nextId("msg");
-  ctx.dispatch({ type: "APPEND_ASSISTANT_MESSAGE", id: msgId });
+  ctx.store.getState().appendAssistantMessage(msgId);
   const tokens = text.match(/\S+\s*|\s+/g) ?? [text];
   for (const tok of tokens) {
     await sleep(perTokenMs);
-    ctx.dispatch({ type: "APPEND_DELTA", id: msgId, text: tok });
+    ctx.store.getState().appendDelta(msgId, tok);
   }
-  ctx.dispatch({ type: "FINISH_ASSISTANT", id: msgId });
+  ctx.store.getState().finishAssistant(msgId);
   return msgId;
 }
 
 // Propose-cards scenario — streams a reply, then lays down a few proposals.
 async function runProposeScenario(ctx: ScenarioContext) {
   const userText = "Can you propose a couple of experiences I might love?";
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: userText,
-  });
+  ctx.store.getState().appendUserMessage(nextId("msg"), userText);
 
   await sleep(300);
   await streamAssistant(
@@ -64,10 +59,11 @@ async function runProposeScenario(ctx: ScenarioContext) {
     "Looking at your itinerary, here are a few ideas — each lands in its day as a ghost card you can accept or dismiss.",
   );
 
-  const day = ctx.state.nodes[0]
-    ? ((ctx.state.nodes[0].metadata["day_index"] as number | undefined) ?? 1)
+  const state = ctx.store.getState();
+  const day = state.nodes[0]
+    ? ((state.nodes[0].metadata["day_index"] as number | undefined) ?? 1)
     : 1;
-  const itineraryId = ctx.state.sample.itinerary.id;
+  const itineraryId = state.sample.itinerary.id;
 
   const proposals: AgentNode[] = [
     {
@@ -143,33 +139,32 @@ async function runProposeScenario(ctx: ScenarioContext) {
 
   for (const proposal of proposals) {
     await sleep(480);
-    ctx.dispatch({ type: "PROPOSE_NODE", node: proposal });
+    ctx.store.getState().proposeNode(proposal);
   }
 }
 
 // Assemble-draft scenario — creates follows edges between adjacent nodes of
 // the same day and between days.
 async function runAssembleScenario(ctx: ScenarioContext) {
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: "Can you connect everything into a draft?",
-  });
+  ctx.store
+    .getState()
+    .appendUserMessage(nextId("msg"), "Can you connect everything into a draft?");
   await sleep(300);
   await streamAssistant(
     ctx,
     "Connecting your days now — watch the spine stitch together.",
   );
 
+  const state = ctx.store.getState();
   const byDay = new Map<number, NodeResponse[]>();
-  for (const n of ctx.state.nodes) {
+  for (const n of state.nodes) {
     const day = (n.metadata["day_index"] as number | undefined) ?? 0;
     const arr = byDay.get(day) ?? [];
     arr.push(n);
     byDay.set(day, arr);
   }
   const existingEdges = new Set(
-    ctx.state.edges
+    state.edges
       .filter((e) => e.type === "follows")
       .map((e) => `${e.from_node_id}::${e.to_node_id}`),
   );
@@ -194,7 +189,7 @@ async function runAssembleScenario(ctx: ScenarioContext) {
     }
   }
 
-  ctx.dispatch({ type: "ASSEMBLE_DRAFT", newEdges });
+  ctx.store.getState().assembleDraft(newEdges);
   await sleep(600);
   await streamAssistant(
     ctx,
@@ -205,7 +200,7 @@ async function runAssembleScenario(ctx: ScenarioContext) {
 
 // Modify-node scenario — picks the first hotel and swaps its title/metadata.
 async function runModifyScenario(ctx: ScenarioContext) {
-  const target = ctx.state.nodes.find((n) => n.type === "hotel");
+  const target = ctx.store.getState().nodes.find((n) => n.type === "hotel");
   if (!target) {
     await streamAssistant(
       ctx,
@@ -213,11 +208,12 @@ async function runModifyScenario(ctx: ScenarioContext) {
     );
     return;
   }
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: "Can you find me something more private for our stay?",
-  });
+  ctx.store
+    .getState()
+    .appendUserMessage(
+      nextId("msg"),
+      "Can you find me something more private for our stay?",
+    );
   await sleep(300);
   await streamAssistant(
     ctx,
@@ -246,7 +242,7 @@ async function runModifyScenario(ctx: ScenarioContext) {
       },
     },
   };
-  ctx.dispatch({ type: "UPDATE_NODE", node: updated });
+  ctx.store.getState().applyNodeUpdate(updated);
 }
 
 // Freeform scenario — matches the user's input against keywords.
@@ -261,11 +257,7 @@ async function runFreeformScenario(ctx: ScenarioContext, userText: string) {
   if (/swap|change|different|another|replace/.test(text)) {
     return runModifyScenario(ctx);
   }
-  ctx.dispatch({
-    type: "APPEND_USER_MESSAGE",
-    id: nextId("msg"),
-    text: userText,
-  });
+  ctx.store.getState().appendUserMessage(nextId("msg"), userText);
   await sleep(200);
   await streamAssistant(
     ctx,
@@ -289,4 +281,3 @@ export async function runScenario(
       return runFreeformScenario(ctx, userText ?? "");
   }
 }
-
