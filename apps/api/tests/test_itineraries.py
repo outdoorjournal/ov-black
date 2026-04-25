@@ -175,7 +175,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             id=kwargs["node_id"],
             itinerary_id=kwargs["itinerary_id"],
             parent_subgraph_id=None,
-            type=NodeType.note,
+            type=NodeType.experience,
             status=NodeStatus.idea,
             title=kwargs.get("title", ""),
             source=None,
@@ -626,7 +626,7 @@ async def test_update_node_captures_before_and_after(
             db_session,
             actor,
             itinerary_id=itinerary.id,
-            type=NodeType.note,
+            type=NodeType.experience,
             title="orig",
         )
         assert isinstance(node, Node)
@@ -665,7 +665,7 @@ async def test_delete_node_writes_before_snapshot(
             db_session,
             actor,
             itinerary_id=itinerary.id,
-            type=NodeType.note,
+            type=NodeType.experience,
             title="doomed",
         )
         assert isinstance(node, Node)
@@ -699,10 +699,10 @@ async def test_add_edge_writes_history(db_session: AsyncSession) -> None:
     itinerary = await create_itinerary(db_session, actor, title="edge test")
     try:
         a = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
         )
         b = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
         )
         assert isinstance(a, Node) and isinstance(b, Node)
         edge = await add_edge(
@@ -735,10 +735,10 @@ async def test_delete_edge_writes_before_snapshot(
     itinerary = await create_itinerary(db_session, actor, title="edge del")
     try:
         a = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
         )
         b = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.note
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
         )
         assert isinstance(a, Node) and isinstance(b, Node)
         edge = await add_edge(
@@ -806,7 +806,7 @@ async def test_self_loop_edge_maps_to_validation_error(
     itinerary_id = itinerary.id
     try:
         node = await add_node(
-            db_session, actor, itinerary_id=itinerary_id, type=NodeType.note
+            db_session, actor, itinerary_id=itinerary_id, type=NodeType.experience
         )
         assert isinstance(node, Node)
         result = await add_edge(
@@ -894,7 +894,7 @@ async def test_get_itinerary_graph_assembles_subgraph(
             actor,
             itinerary_id=itinerary.id,
             parent_subgraph_id=child.id,
-            type=NodeType.note,
+            type=NodeType.experience,
             title="Note",
         )
         assert isinstance(grandchild, Node)
@@ -936,7 +936,7 @@ async def test_concurrent_updates_each_land_history_rows(
             db_session,
             actor,
             itinerary_id=itinerary.id,
-            type=NodeType.note,
+            type=NodeType.experience,
             title="v0",
         )
         assert isinstance(node, Node)

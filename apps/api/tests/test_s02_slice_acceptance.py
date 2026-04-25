@@ -389,7 +389,7 @@ def test_get_itinerary_graph_returns_assembled_view(
         c1 = client.post(
             f"/itinerary/{itinerary_id}/nodes",
             json={
-                "type": "note",
+                "type": "experience",
                 "title": "Child 1",
                 "parent_subgraph_id": sub_id,
             },
@@ -401,7 +401,7 @@ def test_get_itinerary_graph_returns_assembled_view(
         c2 = client.post(
             f"/itinerary/{itinerary_id}/nodes",
             json={
-                "type": "note",
+                "type": "experience",
                 "title": "Child 2",
                 "parent_subgraph_id": sub_id,
             },
@@ -461,7 +461,7 @@ def test_every_mutation_produces_history_row(
     try:
         n1 = client.post(
             f"/itinerary/{itinerary_id}/nodes",
-            json={"type": "note", "title": "v0"},
+            json={"type": "experience", "title": "v0"},
             headers=auth_headers,
         )
         assert n1.status_code == 201, n1.text
@@ -470,7 +470,7 @@ def test_every_mutation_produces_history_row(
         # Second node so we can insert an edge between them.
         n2 = client.post(
             f"/itinerary/{itinerary_id}/nodes",
-            json={"type": "note", "title": "other"},
+            json={"type": "experience", "title": "other"},
             headers=auth_headers,
         )
         assert n2.status_code == 201, n2.text

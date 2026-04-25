@@ -38,10 +38,12 @@ from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     ItineraryStatus,
     Node,
     NodeHistory,
+    NodeRole,
     NodeStatus,
     NodeType,
 )
 from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
+from app.models.party import NodeParty, Party, Traveler  # noqa: E402,F401
 from app.models.osint_fact import (  # noqa: E402,F401  (re-exported)
     OsintFact,
     OsintFactKind,
@@ -72,14 +74,18 @@ __all__ = [
     "ItineraryStatus",
     "Node",
     "NodeHistory",
+    "NodeParty",
+    "NodeRole",
     "NodeStatus",
     "NodeType",
     "OnboardingOpener",
     "OsintFact",
     "OsintFactKind",
+    "Party",
     "Profile",
     "ProfileFact",
     "ProfileFactKind",
+    "Traveler",
     "TurnRole",
     "UserRole",
 ]

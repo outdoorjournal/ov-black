@@ -301,7 +301,7 @@ async def test_add_node_by_non_advisor_while_locked_returns_locked(
             db_session,
             _user(other_user_id),
             itinerary_id=itinerary.id,
-            type=NodeType.note,
+            type=NodeType.experience,
             title="blocked",
         )
         assert isinstance(err, ItineraryError)
@@ -355,7 +355,7 @@ async def test_update_node_by_non_advisor_while_locked_returns_locked(
             db_session,
             _user(user_id),
             itinerary_id=itinerary.id,
-            type=NodeType.note,
+            type=NodeType.experience,
             title="orig",
         )
         assert isinstance(node, Node)

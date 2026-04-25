@@ -4,16 +4,25 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, func, text
+from typing import Any
+
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, func, text
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
 
 
 class NodeType(str, enum.Enum):
-    """Mirrors the public.node_type Postgres enum from 0002_itinerary_graph.sql."""
+    """Mirrors the public.node_type Postgres enum.
+
+    0002_itinerary_graph.sql introduced the original 8 values; 0014 added
+    the per-mode transit kinds (subway/train/drive/walk/boat) and `waiting`
+    so each card kind carries its own signature detail per the cards style
+    guide. `transit` and `destination` remain valid for legacy rows but
+    Phase 2+ writes prefer the granular kinds.
+    """
 
     destination = "destination"
     flight = "flight"
@@ -23,6 +32,23 @@ class NodeType(str, enum.Enum):
     transit = "transit"
     free_time = "free_time"
     note = "note"
+    subway = "subway"
+    train = "train"
+    drive = "drive"
+    walk = "walk"
+    boat = "boat"
+    waiting = "waiting"
+
+
+class NodeRole(str, enum.Enum):
+    """Mirrors the public.node_role Postgres enum from 0014.
+
+    Graph-structural axis orthogonal to NodeType. Linearization skips rows
+    where role is non-null; renderers use them as headers / sync points.
+    """
+
+    destination = "destination"
+    terminus = "terminus"
 
 
 class NodeStatus(str, enum.Enum):
@@ -76,6 +102,14 @@ node_status_enum = PGEnum(
 edge_type_enum = PGEnum(
     EdgeType,
     name="edge_type",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
+node_role_enum = PGEnum(
+    NodeRole,
+    name="node_role",
     schema="public",
     create_type=False,
     values_callable=lambda e: [m.value for m in e],
@@ -178,6 +212,22 @@ class Node(Base):
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
+    # 0014 — first-class temporal/spatial/structural columns. The
+    # `location` and `route` PostGIS geography columns exist in the DB
+    # (see 0014) but are intentionally omitted from this ORM until the
+    # geoalchemy2 dependency lands; raw queries can still read/write them.
+    starts_at: Mapped[Any | None] = mapped_column(TSTZRANGE, nullable=True)
+    altitude_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_selected_alt: Mapped[bool] = mapped_column(
+        nullable=False,
+        server_default=text("true"),
+    )
+    attached_to_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("nodes.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    role: Mapped[NodeRole | None] = mapped_column(node_role_enum, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

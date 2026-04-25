@@ -31,11 +31,13 @@ from app.models import (
     Itinerary,
     Node,
     NodeHistory,
+    NodeRole,
     NodeStatus,
     NodeType,
 )
 from app.models.itinerary import (
     edge_type_enum,
+    node_role_enum,
     node_status_enum,
     node_type_enum,
 )
@@ -57,9 +59,14 @@ def _supabase_running() -> bool:
 
 def test_saenum_create_type_is_false_for_all_graph_enums() -> None:
     """Regression guard for D003: Supabase CLI owns DDL — SQLAlchemy never
-    emits CREATE TYPE for the three new Postgres enums.
+    emits CREATE TYPE for the graph enums.
     """
-    for sa_enum in (node_type_enum, node_status_enum, edge_type_enum):
+    for sa_enum in (
+        node_type_enum,
+        node_status_enum,
+        edge_type_enum,
+        node_role_enum,
+    ):
         assert sa_enum.create_type is False, (
             f"Postgres ENUM {sa_enum.name!r} must have create_type=False so "
             "SQLAlchemy does not try to CREATE TYPE against the DB "
@@ -71,6 +78,9 @@ def test_saenum_create_type_is_false_for_all_graph_enums() -> None:
 def test_node_type_enum_values_match_migration() -> None:
     """Python enum values must be byte-identical to the Postgres enum so the
     values_callable lambda rendering in SAEnum round-trips correctly.
+
+    0014 added the per-mode transit kinds + waiting; the legacy `transit`
+    and `destination` values remain valid for back-compat.
     """
     assert {m.value for m in NodeType} == {
         "destination",
@@ -81,6 +91,12 @@ def test_node_type_enum_values_match_migration() -> None:
         "transit",
         "free_time",
         "note",
+        "subway",
+        "train",
+        "drive",
+        "walk",
+        "boat",
+        "waiting",
     }
     assert {m.value for m in NodeStatus} == {
         "idea",
@@ -96,6 +112,10 @@ def test_node_type_enum_values_match_migration() -> None:
         "connected_by",
         "requires",
         "grouped_with",
+    }
+    assert {m.value for m in NodeRole} == {
+        "destination",
+        "terminus",
     }
 
 
@@ -290,11 +310,14 @@ async def test_edges_no_self_loop_rejects_self_edge(
     try:
         session.add(Itinerary(id=itinerary_id, title="neg test 2"))
         await session.flush()
+        # Type intentionally non-note: the notes_anchored_or_attached XOR
+        # constraint (0014) would otherwise mask the edges_no_self_loop
+        # failure this test is asserting on.
         session.add(
             Node(
                 id=node_id,
                 itinerary_id=itinerary_id,
-                type=NodeType.note,
+                type=NodeType.experience,
             )
         )
         await session.flush()
