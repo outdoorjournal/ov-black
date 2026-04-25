@@ -85,6 +85,8 @@ const DAYS: DayData[] = [
         durationMinutes: 79,
         mode: "Keikyu Airport Line Express · IC card",
         location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano" },
+        from_location: { lat: 35.5494, lng: 139.7798, label: "Haneda Airport" },
+        to_location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
       },
       {
         idHint: "day01-checkin",
@@ -133,6 +135,8 @@ const DAYS: DayData[] = [
         durationMinutes: 22,
         mode: "Tokyo Metro · IC card",
         location: { lat: 35.6646, lng: 139.7709 },
+        from_location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
+        to_location: { lat: 35.6646, lng: 139.7709, label: "Tsukijishijo Station" },
       },
       {
         idHint: "day02-tsukiji",
@@ -157,6 +161,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-21", "10:00"),
         durationMinutes: 16,
         mode: "Tokyo Metro · IC card",
+        location: { lat: 35.7106, lng: 139.7975, label: "Asakusa Station" },
+        from_location: { lat: 35.6646, lng: 139.7709, label: "Tsukijishijo Station" },
+        to_location: { lat: 35.7106, lng: 139.7975, label: "Asakusa Station" },
       },
       {
         idHint: "day02-sensoji",
@@ -198,6 +205,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-21", "15:00"),
         durationMinutes: 45,
         mode: "IC card",
+        location: { lat: 35.7106, lng: 139.7975, label: "Asakusa Station" },
+        from_location: { lat: 35.7166, lng: 139.7978, label: "Asakusa Sumo Club" },
+        to_location: { lat: 35.7104, lng: 139.7970, label: "Asakusa (samurai studio)" },
       },
       {
         idHint: "day02-samurai",
@@ -221,6 +231,9 @@ const DAYS: DayData[] = [
         title: "Return to apartment with guide",
         start: isoTokyo("2024-06-21", "17:30"),
         durationMinutes: 30,
+        location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
+        from_location: { lat: 35.7104, lng: 139.7970, label: "Asakusa Station" },
+        to_location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
       },
       {
         idHint: "day02-apt",
@@ -252,6 +265,8 @@ const DAYS: DayData[] = [
         durationMinutes: 12,
         mode: "Tokyo Metro · IC card",
         location: { lat: 35.6917, lng: 139.7052 },
+        from_location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
+        to_location: { lat: 35.6917, lng: 139.7052, label: "Shinjuku-Sanchome Station" },
       },
       {
         idHint: "day03-mocha",
@@ -356,6 +371,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-23", "08:00"),
         durationMinutes: 60,
         mode: "IC card · ≈1h",
+        location: { lat: 35.6504, lng: 139.7917, label: "Shin-Toyosu Station" },
+        from_location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
+        to_location: { lat: 35.6504, lng: 139.7917, label: "Shin-Toyosu Station" },
       },
       {
         idHint: "day04-teamlab",
@@ -380,6 +398,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-23", "11:00"),
         durationMinutes: 40,
         mode: "IC card · ≈40 min",
+        location: { lat: 35.7022, lng: 139.7536, label: "Suidobashi Station" },
+        from_location: { lat: 35.6504, lng: 139.7917, label: "Shin-Toyosu Station" },
+        to_location: { lat: 35.7022, lng: 139.7536, label: "Suidobashi Station" },
       },
       {
         idHint: "day04-dome",
@@ -432,6 +453,8 @@ const DAYS: DayData[] = [
         durationMinutes: 40,
         mode: "IC + JR Yamanote · JR Pass",
         location: { lat: 35.6285, lng: 139.7387 },
+        from_location: { lat: 35.6930, lng: 139.6662, label: "Shin-Nakano Station" },
+        to_location: { lat: 35.6285, lng: 139.7387, label: "Shinagawa Station" },
       },
       {
         idHint: "day05-shinkansen",
@@ -441,6 +464,9 @@ const DAYS: DayData[] = [
         durationMinutes: 153,
         mode: "JR Pass · reserved seats",
         description: "Hikari is covered by JR Pass; Nozomi/Mizuho are not.",
+        location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
+        from_location: { lat: 35.6285, lng: 139.7387, label: "Shinagawa Station" },
+        to_location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
       },
       {
         idHint: "day05-arrive-kyoto",
@@ -497,6 +523,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-24", "16:30"),
         durationMinutes: 60,
         mode: "JR Pass",
+        location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
+        from_location: { lat: 35.0192, lng: 135.6803, label: "Saga-Arashiyama Station" },
+        to_location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
       },
       {
         idHint: "day05-apt",
@@ -544,6 +573,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-25", "09:25"),
         durationMinutes: 46,
         mode: "Kintetsu Line · IC card (not JR)",
+        location: { lat: 34.6829, lng: 135.8285, label: "Kintetsu-Nara Station" },
+        from_location: { lat: 34.9853, lng: 135.7588, label: "Kintetsu Kyoto Station" },
+        to_location: { lat: 34.6829, lng: 135.8285, label: "Kintetsu-Nara Station" },
       },
       {
         idHint: "day06-nara-park",
@@ -614,6 +646,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-25", "18:15"),
         durationMinutes: 60,
         mode: "JR Pass / IC card",
+        location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
+        from_location: { lat: 34.6788, lng: 135.8270, label: "JR Nara Station" },
+        to_location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
       },
       {
         idHint: "day06-apt",
@@ -642,6 +677,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-26", "07:40"),
         durationMinutes: 20,
         mode: "Taxi · pay on site",
+        location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
+        from_location: { lat: 34.9889, lng: 135.7575, label: "RESI STAY Apartment" },
+        to_location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
       },
       {
         idHint: "day07-shinkansen",
@@ -650,6 +688,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-26", "08:29"),
         durationMinutes: 124,
         mode: "JR Pass · reserved seats",
+        location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
+        from_location: { lat: 34.9859, lng: 135.7585, label: "Kyoto Station" },
+        to_location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
       },
       {
         idHint: "day07-arrive-hiro",
@@ -694,6 +735,9 @@ const DAYS: DayData[] = [
         durationMinutes: 40,
         mode: "Hiroshima Electric Railway · IC card",
         ambient_image: "/japan/day07_hiroshima_tram.jpg",
+        location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
+        from_location: { lat: 34.3932, lng: 132.4527, label: "Genbaku Dome-mae (Peace Park)" },
+        to_location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
       },
       {
         idHint: "day07-apt",
@@ -733,6 +777,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-27", "10:56"),
         durationMinutes: 28,
         mode: "Hiroden · IC card",
+        location: { lat: 34.3939, lng: 132.4376, label: "Nishi-Hiroshima Station" },
+        from_location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroden)" },
+        to_location: { lat: 34.3939, lng: 132.4376, label: "Nishi-Hiroshima Station" },
       },
       {
         idHint: "day08-jr",
@@ -741,6 +788,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-27", "11:15"),
         durationMinutes: 26,
         mode: "JR Pass",
+        location: { lat: 34.3083, lng: 132.3018, label: "Miyajimaguchi Station" },
+        from_location: { lat: 34.3939, lng: 132.4376, label: "Nishi-Hiroshima Station" },
+        to_location: { lat: 34.3083, lng: 132.3018, label: "Miyajimaguchi Station" },
       },
       {
         idHint: "day08-ferry",
@@ -749,7 +799,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-27", "12:55"),
         durationMinutes: 10,
         mode: "JR Pass · Miyajimaguchi Port",
-        location: { lat: 34.3083, lng: 132.3021 },
+        location: { lat: 34.3033, lng: 132.3220, label: "Miyajima Pier" },
+        from_location: { lat: 34.3083, lng: 132.3021, label: "Miyajimaguchi Port" },
+        to_location: { lat: 34.3033, lng: 132.3220, label: "Miyajima Pier" },
       },
       {
         idHint: "day08-kayak",
@@ -790,6 +842,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-27", "17:40"),
         durationMinutes: 10,
         mode: "JR Pass",
+        location: { lat: 34.3083, lng: 132.3021, label: "Miyajimaguchi Port" },
+        from_location: { lat: 34.3033, lng: 132.3220, label: "Miyajima Pier" },
+        to_location: { lat: 34.3083, lng: 132.3021, label: "Miyajimaguchi Port" },
       },
       {
         idHint: "day08-tram-back",
@@ -798,6 +853,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-27", "17:54"),
         durationMinutes: 62,
         mode: "IC card",
+        location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroden)" },
+        from_location: { lat: 34.3083, lng: 132.3018, label: "Hiroden Miyajimaguchi" },
+        to_location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroden)" },
       },
       {
         idHint: "day08-okonomi",
@@ -848,6 +906,9 @@ const DAYS: DayData[] = [
         durationMinutes: 97,
         mode: "Highway bus · IC card",
         ambient_image: "/japan/day09_highway_bus.jpg",
+        location: { lat: 34.3425, lng: 132.9432, label: "Tadanoumi Station" },
+        from_location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroshima)" },
+        to_location: { lat: 34.3425, lng: 132.9432, label: "Tadanoumi Station" },
       },
       {
         idHint: "day09-arrive-tadanoumi",
@@ -866,6 +927,9 @@ const DAYS: DayData[] = [
         durationMinutes: 15,
         mode: "Ferry · guide pays",
         ambient_image: "/japan/day09_okunoshima_ferry.jpg",
+        location: { lat: 34.3098, lng: 132.9852, label: "Okunoshima Pier" },
+        from_location: { lat: 34.3380, lng: 132.9445, label: "Tadanoumi Port" },
+        to_location: { lat: 34.3098, lng: 132.9852, label: "Okunoshima Pier" },
       },
       {
         idHint: "day09-okunoshima",
@@ -890,6 +954,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-28", "13:48"),
         durationMinutes: 15,
         mode: "Ferry",
+        location: { lat: 34.3380, lng: 132.9445, label: "Tadanoumi Port" },
+        from_location: { lat: 34.3098, lng: 132.9852, label: "Okunoshima Pier" },
+        to_location: { lat: 34.3380, lng: 132.9445, label: "Tadanoumi Port" },
       },
       {
         idHint: "day09-takehara",
@@ -914,6 +981,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-28", "16:34"),
         durationMinutes: 101,
         mode: "Express bus · IC card",
+        location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroshima)" },
+        from_location: { lat: 34.3416, lng: 132.9080, label: "Takehara" },
+        to_location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroshima)" },
       },
       {
         idHint: "day09-apt",
@@ -939,6 +1009,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-29", "09:35"),
         durationMinutes: 13,
         mode: "Hiroden · IC card",
+        location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
+        from_location: { lat: 34.3935, lng: 132.4684, label: "Hatchobori (Hiroden)" },
+        to_location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
       },
       {
         idHint: "day10-shinkansen",
@@ -947,6 +1020,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-29", "10:33"),
         durationMinutes: 86,
         mode: "JR Pass · reserved",
+        location: { lat: 34.7335, lng: 135.5003, label: "Shin-Osaka Station" },
+        from_location: { lat: 34.3979, lng: 132.4750, label: "Hiroshima Station" },
+        to_location: { lat: 34.7335, lng: 135.5003, label: "Shin-Osaka Station" },
       },
       {
         idHint: "day10-subway",
@@ -955,7 +1031,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-29", "12:14"),
         durationMinutes: 45,
         mode: "JR + Tanimachi Line · IC",
-        location: { lat: 34.6546, lng: 135.5187 },
+        location: { lat: 34.6634, lng: 135.5183, label: "Shitennoji-mae Yuhigaoka" },
+        from_location: { lat: 34.7335, lng: 135.5003, label: "Shin-Osaka Station" },
+        to_location: { lat: 34.6634, lng: 135.5183, label: "Shitennoji-mae Yuhigaoka" },
       },
       {
         idHint: "day10-castle",
@@ -1058,6 +1136,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-30", "08:59"),
         durationMinutes: 12,
         mode: "IC card",
+        location: { lat: 34.7039, lng: 135.5008, label: "Higashi-Umeda Station" },
+        from_location: { lat: 34.6584, lng: 135.5178, label: "Shitennoji-mae" },
+        to_location: { lat: 34.7039, lng: 135.5008, label: "Higashi-Umeda Station" },
       },
       {
         idHint: "day11-crosta-drop",
@@ -1076,7 +1157,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-30", "09:46"),
         durationMinutes: 11,
         mode: "JR Pass",
-        location: { lat: 34.6671, lng: 135.4415 },
+        location: { lat: 34.6671, lng: 135.4415, label: "Universal City Station" },
+        from_location: { lat: 34.7024, lng: 135.4959, label: "Osaka Station" },
+        to_location: { lat: 34.6671, lng: 135.4415, label: "Universal City Station" },
       },
       {
         idHint: "day11-usj",
@@ -1101,6 +1184,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-30", "19:08"),
         durationMinutes: 11,
         mode: "JR Pass",
+        location: { lat: 34.7024, lng: 135.4959, label: "Osaka Station" },
+        from_location: { lat: 34.6671, lng: 135.4415, label: "Universal City Station" },
+        to_location: { lat: 34.7024, lng: 135.4959, label: "Osaka Station" },
       },
       {
         idHint: "day11-subway-daikoku",
@@ -1109,7 +1195,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-06-30", "19:41"),
         durationMinutes: 16,
         mode: "Midosuji · IC card",
-        location: { lat: 34.6616, lng: 135.5002 },
+        location: { lat: 34.6616, lng: 135.5002, label: "Daikokucho Station" },
+        from_location: { lat: 34.7026, lng: 135.4983, label: "Umeda Station" },
+        to_location: { lat: 34.6616, lng: 135.5002, label: "Daikokucho Station" },
       },
       {
         idHint: "day11-apt",
@@ -1141,6 +1229,9 @@ const DAYS: DayData[] = [
         start: isoTokyo("2024-07-01", "08:40"),
         durationMinutes: 19,
         mode: "IC card",
+        location: { lat: 34.7335, lng: 135.5003, label: "Shin-Osaka Station" },
+        from_location: { lat: 34.6616, lng: 135.5002, label: "Daikokucho Station" },
+        to_location: { lat: 34.7335, lng: 135.5003, label: "Shin-Osaka Station" },
       },
       {
         idHint: "day12-ship",

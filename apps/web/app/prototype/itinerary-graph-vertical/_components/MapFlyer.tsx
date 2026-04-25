@@ -63,77 +63,100 @@ export function MapFlyer({ focus, arc = null }: MapFlyerProps) {
     };
   }, [tokenPresent]);
 
+  // Marker updates are snappy (apply immediately on focus change). Camera
+  // moves are debounced so rapid scroll doesn't restart a new animation every
+  // few ms — that's what made the motion look jittery.
+  const cameraTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!ready || !mapRef.current) return;
+    const map = mapRef.current;
+
+    // Marker: update without delay.
     if (!focus) {
       if (markerRef.current) {
         markerRef.current.remove();
         markerRef.current = null;
       }
-      // Clearing focus does NOT clear the arc — that's controlled separately.
-      return;
-    }
-    void loadMapbox().then((mapbox) => {
-      if (!mapRef.current) return;
-      if (!markerRef.current) {
-        const el = buildMarkerElement();
-        markerRef.current = new mapbox.Marker({ element: el, anchor: "center" })
-          .setLngLat([focus.lng, focus.lat])
-          .addTo(mapRef.current);
-      } else {
-        markerRef.current.setLngLat([focus.lng, focus.lat]);
-      }
-    });
-    if (!arc) {
-      // Single-point focus: fly there at city zoom.
-      mapRef.current.flyTo({
-        center: [focus.lng, focus.lat],
-        zoom: 9,
-        speed: 0.7,
-        curve: 1.4,
-        essential: true,
+    } else {
+      void loadMapbox().then((mapbox) => {
+        if (!mapRef.current) return;
+        if (!markerRef.current) {
+          const el = buildMarkerElement();
+          markerRef.current = new mapbox.Marker({ element: el, anchor: "center" })
+            .setLngLat([focus.lng, focus.lat])
+            .addTo(mapRef.current);
+        } else {
+          markerRef.current.setLngLat([focus.lng, focus.lat]);
+        }
       });
     }
+
+    // Camera: debounce + use easeTo (linear pan + zoom interpolation, no
+    // zoom-out-then-in fly arc) so close-by hops feel like a single glide.
+    if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current);
+    if (!focus || arc) return;
+    cameraTimerRef.current = setTimeout(() => {
+      if (!mapRef.current) return;
+      const cur = mapRef.current.getCenter();
+      const distSq =
+        Math.pow(cur.lng - focus.lng, 2) + Math.pow(cur.lat - focus.lat, 2);
+      // Tiny moves (same city) animate quickly; big jumps take longer.
+      const duration =
+        distSq < 0.05 ? 600 : distSq < 5 ? 900 : 1400;
+      map.easeTo({
+        center: [focus.lng, focus.lat],
+        zoom: 9,
+        duration,
+        easing: easeOutCubic,
+        essential: true,
+      });
+    }, 140);
   }, [ready, focus, arc]);
 
-  // Arc handling — draw / update / clear the great-circle line.
+  // Arc handling — draw / update / clear the great-circle line. Also debounced.
+  const arcTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
-    void loadMapbox().then((mapbox) => {
-      if (!mapRef.current) return;
-      if (!arc) {
-        clearArc(map);
-        if (sourceMarkerRef.current) {
-          sourceMarkerRef.current.remove();
-          sourceMarkerRef.current = null;
+    if (arcTimerRef.current) clearTimeout(arcTimerRef.current);
+    arcTimerRef.current = setTimeout(() => {
+      void loadMapbox().then((mapbox) => {
+        if (!mapRef.current) return;
+        if (!arc) {
+          clearArc(map);
+          if (sourceMarkerRef.current) {
+            sourceMarkerRef.current.remove();
+            sourceMarkerRef.current = null;
+          }
+          return;
         }
-        return;
-      }
-      const points = greatCirclePoints(arc.from, arc.to, 96);
-      ensureArcLayers(map, points);
-      // Drop a smaller "from" marker so both endpoints read as places.
-      if (!sourceMarkerRef.current) {
-        const el = buildMarkerElement(true);
-        sourceMarkerRef.current = new mapbox.Marker({ element: el, anchor: "center" })
-          .setLngLat(arc.from)
-          .addTo(map);
-      } else {
-        sourceMarkerRef.current.setLngLat(arc.from);
-      }
-      // Frame both endpoints with breathing room.
-      const bounds = new mapbox.LngLatBounds(arc.from, arc.from).extend(arc.to);
-      map.fitBounds(bounds, {
-        padding: { top: 80, bottom: 80, left: 120, right: 80 },
-        duration: 1100,
-        essential: true,
-        maxZoom: 7,
+        const points = greatCirclePoints(arc.from, arc.to, 96);
+        ensureArcLayers(map, points);
+        if (!sourceMarkerRef.current) {
+          const el = buildMarkerElement(true);
+          sourceMarkerRef.current = new mapbox.Marker({ element: el, anchor: "center" })
+            .setLngLat(arc.from)
+            .addTo(map);
+        } else {
+          sourceMarkerRef.current.setLngLat(arc.from);
+        }
+        const bounds = new mapbox.LngLatBounds(arc.from, arc.from).extend(arc.to);
+        map.fitBounds(bounds, {
+          padding: { top: 80, bottom: 80, left: 120, right: 80 },
+          duration: 1500,
+          easing: easeInOutCubic,
+          essential: true,
+          maxZoom: 7,
+        });
       });
-    });
+    }, 160);
   }, [ready, arc]);
 
   useEffect(() => {
     return () => {
+      if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current);
+      if (arcTimerRef.current) clearTimeout(arcTimerRef.current);
       if (markerRef.current) {
         markerRef.current.remove();
         markerRef.current = null;
@@ -144,6 +167,9 @@ export function MapFlyer({ focus, arc = null }: MapFlyerProps) {
       }
     };
   }, []);
+
+  // Easing helpers — cubic feels gentler than Mapbox's default linear ease.
+  // (Defined inside the file scope so they're stable references.)
 
   if (!tokenPresent) {
     return <MapFallback focus={focus} />;
@@ -185,6 +211,14 @@ interface MapboxStyleEditor {
   addLayer: (layer: Record<string, unknown>) => void;
   removeLayer: (id: string) => void;
   removeSource: (id: string) => void;
+}
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 function greatCirclePoints(

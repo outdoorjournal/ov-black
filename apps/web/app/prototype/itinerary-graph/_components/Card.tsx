@@ -41,10 +41,13 @@ export function Card({
   const tint = MOOD_ACCENTS[mood].tint;
   const statusClasses = statusShellClasses(node.status);
 
+  const isNote = node.type === "note";
   const shellStyle = {
     backgroundImage: `${NOISE_URL}, linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 40%)`,
-    backgroundColor: "#f7f4ee",
-    borderColor: "rgba(10, 10, 10, 0.10)",
+    backgroundColor: isNote ? "#fbf1c7" : "#f7f4ee",
+    borderColor: isNote
+      ? "rgba(180, 140, 30, 0.22)"
+      : "rgba(10, 10, 10, 0.10)",
     boxShadow: isDragging
       ? "0 1px 0 rgba(0,0,0,0.05), 0 24px 48px -14px rgba(0,0,0,0.35)"
       : "0 1px 0 rgba(0,0,0,0.04), 0 8px 24px -12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.6)",
@@ -90,17 +93,17 @@ export function Card({
           }}
         />
       ) : null}
-      {node.status === "approved" ? (
+      {node.type !== "note" && node.status === "approved" ? (
         <span className="absolute bottom-1.5 right-2 text-[9px] uppercase tracking-[0.2em] text-ink/40">
           Approved
         </span>
       ) : null}
-      {node.status === "proposed" ? (
+      {node.type !== "note" && node.status === "proposed" ? (
         <span className="absolute bottom-1.5 right-2 text-[9px] uppercase tracking-[0.2em] text-ink/40">
           Proposed
         </span>
       ) : null}
-      {node.status === "discarded" ? (
+      {node.type !== "note" && node.status === "discarded" ? (
         <span className="absolute bottom-1.5 right-2 text-[9px] uppercase tracking-[0.2em] text-ink/40">
           Dismissed
         </span>
@@ -335,18 +338,14 @@ function FreeTimeFace({ node }: { node: NodeResponse }) {
 function NoteFace({ node }: { node: NodeResponse }) {
   const meta = getMeta(node);
   return (
-    <div
-      className="mt-1 rounded-sm px-2 py-1.5"
-      style={{
-        backgroundImage:
-          "repeating-linear-gradient(0deg, transparent 0, transparent 18px, rgba(10,10,10,0.10) 18px, rgba(10,10,10,0.10) 19px)",
-      }}
-    >
-      <h3 className="font-serif text-[15px] leading-[19px] text-ink">
+    <div className="mt-1">
+      <h3 className="font-serif text-[15px] leading-snug text-ink">
         {node.title}
       </h3>
       {meta.body ? (
-        <p className="text-[11px] leading-[19px] text-ink/70">{meta.body}</p>
+        <p className="mt-0.5 text-[11px] leading-snug text-ink/70">
+          {meta.body}
+        </p>
       ) : null}
     </div>
   );

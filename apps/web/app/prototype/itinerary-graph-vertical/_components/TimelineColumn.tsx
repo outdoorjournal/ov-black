@@ -24,6 +24,7 @@ interface TimelineColumnProps {
   mood: MoodId;
   pendingProposals: NodeResponse[];
   flashNodeId: string | null;
+  focusedNodeId: string | null;
   sweptIds: Set<string>;
   expandedId: string | null;
   onHoverNode: (id: string | null) => void;
@@ -64,6 +65,7 @@ export function TimelineColumn(props: TimelineColumnProps) {
     mood,
     pendingProposals,
     flashNodeId,
+    focusedNodeId,
     sweptIds,
     expandedId,
     onHoverNode,
@@ -180,6 +182,7 @@ export function TimelineColumn(props: TimelineColumnProps) {
           typeof meta.duration_minutes === "number" ? meta.duration_minutes : 30;
         const swept = sweptIds.has(p.node.id);
         const flashing = flashNodeId === p.node.id;
+        const isFocused = focusedNodeId === p.node.id;
         const motionExtras = swept
           ? {
               animate: {
@@ -209,7 +212,23 @@ export function TimelineColumn(props: TimelineColumnProps) {
                 </div>
               ) : (
                 <MeasuredCard id={p.node.id} onMeasure={onMeasureCard}>
-                  <motion.div layoutId={`card-${p.node.id}`}>
+                  <motion.div
+                    layoutId={`card-${p.node.id}`}
+                    animate={{
+                      boxShadow: isFocused
+                        ? "0 0 0 1.5px rgba(184,138,62,0.85), 0 10px 28px -10px rgba(184,138,62,0.45)"
+                        : "0 0 0 0 rgba(184,138,62,0), 0 0 0 0 rgba(0,0,0,0)",
+                    }}
+                    transition={{ duration: 0.18 }}
+                    className="relative rounded-lg"
+                  >
+                    {isFocused ? (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute -left-1 top-2 bottom-2 w-[3px] rounded-full"
+                        style={{ backgroundColor: "#b88a3e" }}
+                      />
+                    ) : null}
                     <Card
                       node={p.node}
                       mood={mood}

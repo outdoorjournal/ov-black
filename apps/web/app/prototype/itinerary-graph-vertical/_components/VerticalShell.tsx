@@ -121,46 +121,99 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
     prevPxPerMinute.current = zoom.pxPerMinute;
   }, [zoom.pxPerMinute, layout]);
 
-  // Track the closest node to viewport center on scroll (used both for anchor and focus).
-  const recomputeCenterAnchor = useCallback(() => {
+  // Time-ordered list of focusable (non-night-bar) node ids — used by the
+  // scroll handler to walk forward/back from the currently focused card.
+  const sortedFocusableIds = useMemo(() => {
+    return [...state.nodes]
+      .filter((n) => {
+        const p = layout.positions.get(n.id);
+        return p && !p.nightBar;
+      })
+      .sort((a, b) => {
+        const sa = new Date(getVerticalMeta(a).start_time ?? "").getTime();
+        const sb = new Date(getVerticalMeta(b).start_time ?? "").getTime();
+        return sa - sb;
+      })
+      .map((n) => n.id);
+  }, [state.nodes, layout]);
+
+  const lastScrollTopRef = useRef(0);
+
+  const onScroll = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
-    const viewportCenter = container.scrollTop + container.clientHeight / 2;
-    let bestId: string | null = null;
-    let bestDist = Infinity;
+    const scrollTop = container.scrollTop;
+    const delta = scrollTop - lastScrollTopRef.current;
+    lastScrollTopRef.current = scrollTop;
+    const viewportCenter = scrollTop + container.clientHeight / 2;
+
+    // Anchor for zoom recentering — track whichever non-night-bar card sits
+    // closest to viewport center, regardless of focus.
+    let anchorId: string | null = null;
+    let anchorDist = Infinity;
     for (const [id, p] of layout.positions.entries()) {
       if (p.nightBar) continue;
       const cardCenter = p.y + Math.min(p.cardH, p.barH) / 2;
-      const dist = Math.abs(cardCenter - viewportCenter);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestId = id;
+      const d = Math.abs(cardCenter - viewportCenter);
+      if (d < anchorDist) {
+        anchorDist = d;
+        anchorId = id;
       }
     }
-    if (bestId) {
-      const pos = layout.positions.get(bestId);
+    if (anchorId) {
+      const pos = layout.positions.get(anchorId);
       if (pos) {
         anchorRef.current = {
-          nodeId: bestId,
+          nodeId: anchorId,
           offsetFromTop: pos.y - container.scrollTop,
         };
       }
-      // Drive ambient focus from scroll: whichever card is closest to center
-      // becomes the selected node and powers the map / image.
-      if (bestId !== state.focusedNodeId) {
-        dispatch({ type: "FOCUS_NODE", id: bestId });
+    }
+
+    if (sortedFocusableIds.length === 0) return;
+
+    const currentIdx = state.focusedNodeId
+      ? sortedFocusableIds.indexOf(state.focusedNodeId)
+      : -1;
+
+    // Walk forward/back from the currently-focused card, advancing while the
+    // next card's center has crossed viewport center in the scroll direction.
+    if (Math.abs(delta) < 0.5 || currentIdx < 0) {
+      // No clear scroll direction or no current focus — fall back to closest.
+      if (anchorId && anchorId !== state.focusedNodeId) {
+        dispatch({ type: "FOCUS_NODE", id: anchorId });
+      }
+      return;
+    }
+    const dir = delta > 0 ? 1 : -1;
+    let idx = currentIdx;
+    while (true) {
+      const nextIdx = idx + dir;
+      if (nextIdx < 0 || nextIdx >= sortedFocusableIds.length) break;
+      const nextId = sortedFocusableIds[nextIdx];
+      if (!nextId) break;
+      const nextPos = layout.positions.get(nextId);
+      if (!nextPos) break;
+      const nextCenter = nextPos.y + Math.min(nextPos.cardH, nextPos.barH) / 2;
+      if (dir > 0 ? nextCenter <= viewportCenter : nextCenter >= viewportCenter) {
+        idx = nextIdx;
+      } else {
+        break;
       }
     }
-  }, [layout, state.focusedNodeId, dispatch]);
+    const nextFocusId = sortedFocusableIds[idx];
+    if (nextFocusId && nextFocusId !== state.focusedNodeId) {
+      dispatch({ type: "FOCUS_NODE", id: nextFocusId });
+    }
+  }, [layout, sortedFocusableIds, state.focusedNodeId, dispatch]);
 
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
-    const onScroll = () => recomputeCenterAnchor();
+    lastScrollTopRef.current = container.scrollTop;
     container.addEventListener("scroll", onScroll, { passive: true });
-    recomputeCenterAnchor();
     return () => container.removeEventListener("scroll", onScroll);
-  }, [recomputeCenterAnchor]);
+  }, [onScroll]);
 
   // Focused node → ambient image + map coords.
   const focusedNode: NodeResponse | null = useMemo(() => {
@@ -341,8 +394,11 @@ export function VerticalShell({ timeline }: VerticalShellProps) {
               flashNodeId={state.flashNodeId}
               sweptIds={sweptIds}
               expandedId={expandedId}
-              onHoverNode={() => {
-                /* hover no longer drives focus — scroll position does */
+              focusedNodeId={state.focusedNodeId}
+              onHoverNode={(id) => {
+                if (id && id !== state.focusedNodeId) {
+                  dispatch({ type: "FOCUS_NODE", id });
+                }
               }}
               onClickNode={(id) => setExpandedId(id)}
               onAcceptProposal={(id) =>
