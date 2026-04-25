@@ -22,7 +22,11 @@ from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
 from app.routers.auth import router as auth_router
 from app.routers.clients import router as clients_router
+from app.routers.demos import router as demos_router
 from app.routers.facts import router as facts_router
+from app.routers.integrations.flight_status import router as flight_status_router
+from app.routers.integrations.google_places import router as google_places_router
+from app.routers.integrations.weather import router as weather_router
 from app.routers.inventory import router as inventory_router
 from app.routers.itineraries import router as itineraries_router
 from app.routers.me import router as me_router
@@ -176,6 +180,10 @@ app.include_router(agent_router)
 app.include_router(agent_internal_router)
 app.include_router(me_router)
 app.include_router(onboarding_router)
+app.include_router(demos_router)
+app.include_router(google_places_router)
+app.include_router(weather_router)
+app.include_router(flight_status_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

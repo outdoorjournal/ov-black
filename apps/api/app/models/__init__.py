@@ -44,6 +44,11 @@ from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
 )
 from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
 from app.models.party import NodeParty, Party, Traveler  # noqa: E402,F401
+from app.models.template import (  # noqa: E402,F401
+    CardTemplate,
+    TemplateEdge,
+    TemplateNode,
+)
 from app.models.osint_fact import (  # noqa: E402,F401  (re-exported)
     OsintFact,
     OsintFactKind,
@@ -58,6 +63,7 @@ __all__ = [
     "AgentSession",
     "AgentTurn",
     "Base",
+    "CardTemplate",
     "Client",
     "ClientContact",
     "ContactChannel",
@@ -85,6 +91,8 @@ __all__ = [
     "Profile",
     "ProfileFact",
     "ProfileFactKind",
+    "TemplateEdge",
+    "TemplateNode",
     "Traveler",
     "TurnRole",
     "UserRole",

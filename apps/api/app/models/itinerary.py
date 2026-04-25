@@ -228,6 +228,21 @@ class Node(Base):
         nullable=True,
     )
     role: Mapped[NodeRole | None] = mapped_column(node_role_enum, nullable=True)
+    # 0015 — template lineage. ``template_id`` is FK with ON DELETE SET NULL
+    # so a node survives template purges. ``template_node_id`` points at the
+    # specific template_node row that was the source; ``template_version`` is
+    # the snapshot of card_templates.version at instantiation, used for drift
+    # detection without comparing every field.
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("card_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    template_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

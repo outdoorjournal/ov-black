@@ -40,7 +40,7 @@ from app.schemas.card_attrs import (
     Vehicle,
     parse_card_attrs,
 )
-from tests.fixtures.japan_itinerary import (
+from app.seed_data.japan_itinerary import (
     JAPAN_DAYS,
     all_items,
     metadata_dump,

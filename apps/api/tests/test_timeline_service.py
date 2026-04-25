@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.services.timeline import Card, TimelineView, linearize
-from tests.fixtures.japan_itinerary import FixtureItem, all_items
+from app.seed_data.japan_itinerary import FixtureItem, all_items
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
