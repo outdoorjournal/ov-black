@@ -2,12 +2,55 @@
 
 from __future__ import annotations
 
-from agent.translate import translate_event
+import json
+
+from agent.translate import EventTranslator, translate_event
 
 
 def _one(event: dict) -> dict | None:
     frames = list(translate_event(event))
     return frames[0] if frames else None
+
+
+def _assistant_tool_use_event(tool_use_id: str, name: str, input_data: dict | None = None) -> dict:
+    """Build a Strands ``ModelMessageEvent``-shaped dict for a tool invocation."""
+    return {
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": tool_use_id,
+                        "name": name,
+                        "input": input_data or {},
+                    }
+                }
+            ],
+        }
+    }
+
+
+def _tool_result_message_event(tool_use_id: str, payload: dict) -> dict:
+    """Build a Strands ``ToolResultMessageEvent``-shaped dict.
+
+    Strands' ``@tool`` decorator wraps a plain dict return as
+    ``content: [{"text": json.dumps(result)}]`` plus
+    ``status: "success"``. Mirror that here.
+    """
+    return {
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": tool_use_id,
+                        "status": "success",
+                        "content": [{"text": json.dumps(payload)}],
+                    }
+                }
+            ],
+        }
+    }
 
 
 def test_delta_with_strands_native_shape() -> None:
@@ -101,3 +144,116 @@ def test_bedrock_converse_tool_result_nested_form() -> None:
         }
     }
     assert _one(event) == {"type": "card_proposed", "node": {"id": "abc"}}
+
+
+# ── Realistic Strands shapes (paired ModelMessageEvent → ToolResultMessageEvent)
+# Strands' real ``ToolResultEvent`` is non-callback, so the only tool
+# result data the entrypoint sees is the message-shaped event above.
+# Its ``toolResult`` block carries ``toolUseId`` but NO ``name`` — the
+# translator correlates by toolUseId with a prior assistant ``toolUse``
+# block. These tests exercise that correlation across two events using
+# a shared ``EventTranslator`` instance.
+
+
+def test_set_mood_paired_messages_emits_mood_frame() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-1", "set_mood", {"mood_id": "kyoto-zen"})))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event(
+                "tu-1", {"mood_id": "kyoto-zen", "description": "Kyoto stillness."}
+            )
+        )
+    )
+    assert frames == [{"type": "mood", "mood_id": "kyoto-zen"}]
+
+
+def test_set_mood_unknown_id_payload_drops_frame() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-2", "set_mood", {"mood_id": "bogus"})))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event("tu-2", {"error": "unknown_mood", "mood_id": "bogus"})
+        )
+    )
+    assert frames == []
+
+
+def test_propose_card_paired_messages_emits_card_proposed() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-3", "propose_card")))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event("tu-3", {"id": "node-1", "title": "Dolomites trek"})
+        )
+    )
+    assert frames == [
+        {"type": "card_proposed", "node": {"id": "node-1", "title": "Dolomites trek"}}
+    ]
+
+
+def test_assemble_draft_paired_messages_counts_edges() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-4", "assemble_draft")))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event("tu-4", {"edges": [{"id": "e1"}, {"id": "e2"}]})
+        )
+    )
+    assert frames == [{"type": "draft_assembled", "edges_created": 2}]
+
+
+def test_update_node_status_paired_messages_emits_node_updated() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-5", "update_node_status")))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event("tu-5", {"id": "node-2", "status": "approved"})
+        )
+    )
+    assert frames == [
+        {"type": "node_updated", "node": {"id": "node-2", "status": "approved"}}
+    ]
+
+
+def test_tool_result_without_prior_tool_use_is_dropped() -> None:
+    # A toolResult arriving with no preceding assistant toolUse block
+    # has no name to correlate with, so it cannot be routed to a frame.
+    # This is a defensive case — it should never happen in practice.
+    translator = EventTranslator()
+    frames = list(
+        translator.translate(_tool_result_message_event("tu-orphan", {"mood_id": "alpine"}))
+    )
+    assert frames == []
+
+
+def test_read_only_tool_paired_messages_emits_no_frame() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-6", "get_voodoo_doll")))
+    frames = list(
+        translator.translate(_tool_result_message_event("tu-6", {"passions": []}))
+    )
+    assert frames == []
+
+
+def test_translator_correlates_when_tool_use_and_result_share_one_message() -> None:
+    # If a single message ever carries both a toolUse and the matching
+    # toolResult (e.g. the model emits both inline), the first pass
+    # captures the name before the second pass routes the result.
+    translator = EventTranslator()
+    event = {
+        "message": {
+            "content": [
+                {"toolUse": {"toolUseId": "tu-7", "name": "set_mood", "input": {}}},
+                {
+                    "toolResult": {
+                        "toolUseId": "tu-7",
+                        "status": "success",
+                        "content": [{"text": json.dumps({"mood_id": "ember"})}],
+                    }
+                },
+            ]
+        }
+    }
+    frames = list(translator.translate(event))
+    assert frames == [{"type": "mood", "mood_id": "ember"}]

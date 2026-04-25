@@ -82,6 +82,16 @@ export type NodeUpdatedFrame = {
   node: AgentNode;
 };
 
+// Emitted when the agent calls `set_mood` to shift basecamp ambience.
+// `mood_id` is one of the curated MoodIds in apps/web/lib/atmos/moods.ts.
+// The wire payload is `{type:"mood", mood_id:string}` — we keep mood_id
+// as a plain string here and let the consumer narrow against MoodId so
+// this types module stays free of UI-layer imports.
+export type MoodFrame = {
+  type: "mood";
+  mood_id: string;
+};
+
 export type SseFrame =
   | FirstTokenFrame
   | DeltaFrame
@@ -90,4 +100,5 @@ export type SseFrame =
   | CardFrame
   | CardProposedFrame
   | DraftAssembledFrame
-  | NodeUpdatedFrame;
+  | NodeUpdatedFrame
+  | MoodFrame;

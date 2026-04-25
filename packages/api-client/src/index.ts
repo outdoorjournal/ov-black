@@ -17,10 +17,13 @@ import {
   createSessionEndpointSessionsPost,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
+  getMyOnboardingSessionEndpointMeOnboardingSessionGet,
   listClientsEndpointClientsGet,
+  listMyItinerariesEndpointMeItinerariesGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
   lockItineraryEndpointItineraryItineraryIdLockPost,
   loginEndpointAuthLoginPost,
+  randomOpenerEndpointOnboardingOpenersRandomGet,
   redeemInviteEndpointAuthRedeemInvitePost,
   reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
@@ -35,8 +38,11 @@ import type {
   GraphResponse,
   ItineraryResponse,
   LoginRequest,
+  MyItinerarySummary,
+  MyOnboardingSessionResponse,
   NodeResponse,
   NodeStatus,
+  OnboardingOpenerResponse,
   OpenSessionRequest,
   OpenSessionResponse,
   RedeemInviteRequest,
@@ -116,6 +122,16 @@ export type {
   TurnRequest,
   AgentTurnSummary,
   TurnRole,
+} from "./generated/types.gen.js";
+
+// /me/* — self-scoped client surfaces. Powers the basecamp page's empty/
+// hydrated decision and the itinerary grid; no advisor gate.
+export type {
+  MyClientResponse,
+  MyItinerariesResponse,
+  MyItinerarySummary,
+  MyOnboardingSessionResponse,
+  OnboardingOpenerResponse,
 } from "./generated/types.gen.js";
 
 export interface ApiClientConfig {
@@ -437,7 +453,13 @@ export type CreateSessionResult =
       agentcore_session_id: string;
       // S07 T05: exposed so the RSC chat page can feed GET /itinerary/{id}
       // to rehydrate proposed cards on reload without a separate lookup.
-      itinerary_id: string;
+      // Null on basecamp/onboarding-only sessions where no itinerary has
+      // been minted yet — chat/[client_id] callers get one because
+      // open_or_reuse_session eagerly creates one for that path.
+      itinerary_id: string | null;
+      // Echoed back from the row so basecamp can verify the persisted
+      // opener matches what it asked for. Null on non-basecamp sessions.
+      seeded_opener: string | null;
     }
   | { ok: false; status: number; detail: CreateSessionDetail };
 
@@ -463,6 +485,7 @@ export async function createSessionEndpoint(
         session_id: data.session_id,
         agentcore_session_id: data.agentcore_session_id,
         itinerary_id: data.itinerary_id,
+        seeded_opener: data.seeded_opener ?? null,
       };
     }
     return {
@@ -1023,4 +1046,88 @@ function parseCancelInviteDetail(
   if (status === 404) return "client_not_found";
   if (status === 409) return "no_active_invite";
   return "unknown";
+}
+
+// ── Basecamp / onboarding ──────────────────────────────────────────────────
+
+export type PickRandomOpenerResult =
+  | { ok: true; opener: OnboardingOpenerResponse }
+  | { ok: false; status: number; detail: "no_openers_configured" | "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for GET /onboarding/openers/random.
+ *
+ * Server-side fetch from /basecamp's RSC: returns one curated open-ended
+ * question to render as the single elegant prompt for a brand-new client.
+ * 404 (`no_openers_configured`) is a deploy-time misconfiguration.
+ */
+export async function pickRandomOpener(
+  client: Client,
+): Promise<PickRandomOpenerResult> {
+  try {
+    const { data, error, response } =
+      await randomOpenerEndpointOnboardingOpenersRandomGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, opener: data };
+    }
+    if (response.status === 404) {
+      return { ok: false, status: 404, detail: "no_openers_configured" };
+    }
+    return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type GetMyOnboardingSessionResult =
+  | { ok: true; session: MyOnboardingSessionResponse }
+  | { ok: false; status: number; detail: "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for GET /me/onboarding_session.
+ *
+ * Returns the calling client's most-recent agent-session metadata —
+ * `{ session_id, turn_count, last_turn_at, seeded_opener }`. All fields
+ * are null/0 when no session has ever been opened. Basecamp uses
+ * `turn_count > 0` as the "have we conversed?" signal.
+ */
+export async function getMyOnboardingSession(
+  client: Client,
+): Promise<GetMyOnboardingSessionResult> {
+  try {
+    const { data, error, response } =
+      await getMyOnboardingSessionEndpointMeOnboardingSessionGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, session: data };
+    }
+    return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListMyItinerariesResult =
+  | { ok: true; itineraries: MyItinerarySummary[] }
+  | { ok: false; status: number; detail: "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for GET /me/itineraries.
+ *
+ * Returns the calling client's itineraries (draft + approved) ordered
+ * newest-updated first. Powers basecamp's itinerary grid. Empty list is
+ * a valid 200 — a client mid-onboarding has none yet.
+ */
+export async function listMyItineraries(
+  client: Client,
+): Promise<ListMyItinerariesResult> {
+  try {
+    const { data, error, response } =
+      await listMyItinerariesEndpointMeItinerariesGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itineraries: data.itineraries };
+    }
+    return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }

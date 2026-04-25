@@ -21,6 +21,7 @@ def build_prompt(
     api_system: str,
     actor_kind: str,
     itinerary_id_present: bool,
+    seeded_opener: str | None = None,
 ) -> str:
     """Assemble the full system prompt for a turn.
 
@@ -28,11 +29,15 @@ def build_prompt(
     today that is the voice preamble + Voodoo Doll context block. If it
     ever arrives empty we still emit the hard-coded voice preamble so
     the agent never runs without one.
+
+    ``seeded_opener`` is honored only in onboarding mode. The API only
+    sets it on turn_index == 0 to avoid making the agent repeat the
+    opener on later turns.
     """
     preamble = api_system.strip() or VOICE_PREAMBLE
 
     if mode is Mode.onboarding:
-        rubric = build_onboarding_prompt()
+        rubric = build_onboarding_prompt(seeded_opener=seeded_opener)
     elif mode is Mode.planning:
         rubric = build_planning_prompt(
             actor_kind=actor_kind,

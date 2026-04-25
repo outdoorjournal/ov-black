@@ -25,7 +25,7 @@ from agent.backend import jwt_ctx, pin_ctx
 from agent.config import get_settings
 from agent.modes import build_agent
 from agent.schemas import TurnPayload
-from agent.translate import translate_event
+from agent.translate import EventTranslator
 
 
 logger = logging.getLogger("agent.app")
@@ -90,10 +90,11 @@ async def invoke(payload, context=None):  # type: ignore[no-untyped-def]
             for turn in prior
         ]
 
+        translator = EventTranslator()
         async for ev in agent.stream_async(req.input_text):
             if not isinstance(ev, dict):
                 continue
-            for frame in translate_event(ev):
+            for frame in translator.translate(ev):
                 yield frame
         yield {"type": "done"}
     except Exception as exc:  # noqa: BLE001 — runtime must never crash

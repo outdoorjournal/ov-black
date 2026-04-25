@@ -81,6 +81,7 @@ class AgentSession(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    seeded_opener: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class AgentTurn(Base):

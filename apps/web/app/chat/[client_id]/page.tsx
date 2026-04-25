@@ -94,10 +94,16 @@ export default async function ChatPage({ params }: PageProps) {
 
   // Replay prior turns AND prior MoodBoard cards in parallel — this is the
   // reload path. A brand-new session returns empty lists and the ChatShell
-  // auto-fires a bootstrap opener turn on mount.
+  // auto-fires a bootstrap opener turn on mount. itinerary_id is non-null
+  // here in practice (open_or_reuse_session eagerly creates one for the
+  // chat path) but is typed as nullable for the basecamp call site.
+  const itineraryId = sessionResult.itinerary_id;
+  if (itineraryId === null) {
+    notFound();
+  }
   const [turnsResult, itineraryResult] = await Promise.all([
     listTurns(api, sessionResult.session_id),
-    getItinerary(api, sessionResult.itinerary_id),
+    getItinerary(api, itineraryId),
   ]);
   const initialTurns: AgentTurnSummary[] = turnsResult.ok ? turnsResult.turns : [];
   const initialCards: InitialCardPayload[] = itineraryResult.ok
@@ -113,7 +119,7 @@ export default async function ChatPage({ params }: PageProps) {
       apiBaseUrl={apiBaseUrl}
       client={clientForShell}
       initialTurns={initialTurns}
-      itineraryId={sessionResult.itinerary_id}
+      itineraryId={itineraryId}
       initialCards={initialCards}
     />
   );

@@ -23,6 +23,7 @@ from app.routers.clients import router as clients_router
 from app.routers.inventory import router as inventory_router
 from app.routers.itineraries import router as itineraries_router
 from app.routers.me import router as me_router
+from app.routers.onboarding import router as onboarding_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -158,6 +159,7 @@ app.include_router(inventory_router)
 app.include_router(clients_router)
 app.include_router(agent_router)
 app.include_router(me_router)
+app.include_router(onboarding_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

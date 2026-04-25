@@ -29,6 +29,7 @@ import type {
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  MoodFrame,
   NodeUpdatedFrame,
   SseFrame,
 } from "./agentStream.types";
@@ -43,6 +44,7 @@ export type {
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  MoodFrame,
   NodeUpdatedFrame,
   SseFrame,
 } from "./agentStream.types";
@@ -66,6 +68,7 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "card_proposed",
   "draft_assembled",
   "node_updated",
+  "mood",
 ]);
 
 function isSseFrame(value: unknown): value is SseFrame {
@@ -98,6 +101,10 @@ function isSseFrame(value: unknown): value is SseFrame {
   if (type === "draft_assembled") {
     const v = value as { edges_created?: unknown };
     if (typeof v.edges_created !== "number") return false;
+  }
+  if (type === "mood") {
+    const v = value as { mood_id?: unknown };
+    if (typeof v.mood_id !== "string") return false;
   }
 
   return true;
@@ -169,7 +176,15 @@ export function parseFrames(buffer: string): ParseResult {
 }
 
 export type UseAgentStreamOptions = {
-  sessionId: string;
+  // Either a stable sessionId known at hook-construction time OR a getter
+  // that is consulted at send-time. The getter form is required when the
+  // session is opened lazily (basecamp's first-touch submit) — React state
+  // updates do not propagate to optsRef synchronously, so a `sessionId:
+  // sessionId ?? ""` binding fires `/sessions//turn` on the very first
+  // submit. Callers in that flow point getSessionId at a ref they update
+  // alongside setSessionId so the URL is built from the freshest value.
+  sessionId?: string;
+  getSessionId?: () => string | null;
   // Called immediately before each fetch so we pick up a token refreshed by
   // @supabase/ssr since the last turn. Returning null aborts the turn with the
   // same `upstream_unavailable` surface as a network failure — the user is
@@ -197,6 +212,12 @@ export type UseAgentStreamOptions = {
   onCardProposed?: (node: AgentNode) => void;
   onDraftAssembled?: (frame: DraftAssembledFrame) => void;
   onNodeUpdated?: (node: AgentNode) => void;
+  /**
+   * Fires when the agent calls ``set_mood`` to shift basecamp ambience.
+   * The basecamp shell wires this to its current-mood state which
+   * AtmosFrame then crossfades to. Off-basecamp surfaces can ignore.
+   */
+  onMood?: (frame: MoodFrame) => void;
   /**
    * Caller-owned abort controller ref. The hook writes a fresh
    * AbortController into this ref at the start of every stream so the caller
@@ -248,8 +269,14 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
         abortRef.current = controller;
       }
 
-      const url = `${current.apiBaseUrl}/sessions/${current.sessionId}/turn`;
-      const pathForLog = `/sessions/${current.sessionId}/turn`;
+      const sessionId = current.getSessionId?.() ?? current.sessionId ?? "";
+      if (!sessionId) {
+        console.error("[agentStream] no sessionId available at send time");
+        current.onError?.({ type: "error", reason: "upstream_unavailable" });
+        return;
+      }
+      const url = `${current.apiBaseUrl}/sessions/${sessionId}/turn`;
+      const pathForLog = `/sessions/${sessionId}/turn`;
 
       // Pull the freshest token right before the fetch. @supabase/ssr's
       // browser client keeps the in-memory session auto-refreshed, so this
@@ -338,6 +365,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "node_updated":
                 current.onNodeUpdated?.(frame.node);
                 break;
+              case "mood":
+                current.onMood?.(frame);
+                break;
             }
             if (terminated) break;
           }
@@ -392,6 +422,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "node_updated":
         current.onNodeUpdated?.(frame.node);
+        break;
+      case "mood":
+        current.onMood?.(frame);
         break;
     }
   }

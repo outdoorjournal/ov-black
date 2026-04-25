@@ -42,7 +42,11 @@ async function roleAwareRedirect(
     return errorRedirect(origin, "no_client");
   }
 
-  return NextResponse.redirect(new URL(`/chat/${clientId}`, origin));
+  // Clients land on /basecamp — the persistent home that handles both
+  // first-touch onboarding (single-prompt UI) and the post-conversation
+  // surface (itinerary list + right-rail chat). /chat/{client_id} is
+  // still reachable for itinerary-deep-dive sessions.
+  return NextResponse.redirect(new URL("/basecamp", origin));
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

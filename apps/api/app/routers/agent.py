@@ -123,6 +123,7 @@ async def create_session_endpoint(
         actor=actor,
         client_id=payload.client_id,
         itinerary_id=payload.itinerary_id,
+        seeded_opener=payload.seeded_opener,
     )
     if outcome is not SessionOutcome.OK or agent_session is None:
         # Collapsed 404 shape (D015) — FORBIDDEN and CLIENT_NOT_FOUND both
@@ -132,6 +133,7 @@ async def create_session_endpoint(
         session_id=agent_session.id,
         agentcore_session_id=agent_session.agentcore_session_id,
         itinerary_id=itinerary_id,
+        seeded_opener=agent_session.seeded_opener,
     )
 
 

@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.auth import AuthenticatedUser, require_user
 from app.db import get_session
-from app.models import Itinerary, ItineraryStatus, VoodooDoll
+from app.models import AgentSession, AgentTurn, Itinerary, ItineraryStatus, TurnRole, VoodooDoll
 from app.schemas.clients import VoodooDollDetail
 from app.services.clients import resolve_client_for_auth_user
 
@@ -65,6 +65,27 @@ class MyItinerariesResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     itineraries: list[MyItinerarySummary]
+
+
+class MyOnboardingSessionResponse(BaseModel):
+    """Summary of the calling client's most-recent agent session.
+
+    Returned shape is intentionally a "session metadata" object rather
+    than a single ``has_prior`` boolean — basecamp derives whether to
+    show the single-prompt opener UI from ``turn_count > 0``, and the
+    same payload can later drive surfaces like "23 messages with your
+    concierge" or "last spoke 4 days ago" without a new endpoint.
+
+    All fields are null when the client has never opened a session
+    (typical brand-new invitee landing on /basecamp for the first time).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: uuid.UUID | None
+    turn_count: int
+    last_turn_at: datetime | None
+    seeded_opener: str | None
 
 
 @router.get(
@@ -187,4 +208,71 @@ async def list_my_itineraries_endpoint(
     ).scalars().all()
     return MyItinerariesResponse(
         itineraries=[MyItinerarySummary.model_validate(row) for row in rows]
+    )
+
+
+@router.get(
+    "/onboarding_session",
+    response_model=MyOnboardingSessionResponse,
+    summary="Summarize the calling client's most-recent agent session.",
+)
+async def get_my_onboarding_session_endpoint(
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+) -> MyOnboardingSessionResponse:
+    """Return ``{session_id, turn_count, last_turn_at, seeded_opener}`` or all-null.
+
+    Powers basecamp's "have we conversed yet?" decision: if ``turn_count``
+    is zero we render the single-prompt opener UI; otherwise we render the
+    persistent right-rail chat invite. Returns the most-recent session
+    across all modes — the basecamp UI only branches on whether ANY
+    conversation has happened, not on which mode it was in.
+    """
+    empty = MyOnboardingSessionResponse(
+        session_id=None,
+        turn_count=0,
+        last_turn_at=None,
+        seeded_opener=None,
+    )
+    try:
+        user_id = uuid.UUID(user.sub)
+    except ValueError:  # pragma: no cover
+        return empty
+
+    client = await resolve_client_for_auth_user(
+        session, user_id=user_id, email=user.email
+    )
+    if client is None:
+        return empty
+
+    agent_session = (
+        await session.execute(
+            select(AgentSession)
+            .where(AgentSession.client_id == client.id)
+            .order_by(AgentSession.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if agent_session is None:
+        return empty
+
+    summary = (
+        await session.execute(
+            select(
+                func.count(AgentTurn.id),
+                func.max(AgentTurn.created_at),
+            ).where(
+                AgentTurn.session_id == agent_session.id,
+                AgentTurn.role.in_((TurnRole.user, TurnRole.assistant)),
+            )
+        )
+    ).one()
+    turn_count = int(summary[0] or 0)
+    last_turn_at = summary[1]
+
+    return MyOnboardingSessionResponse(
+        session_id=agent_session.id,
+        turn_count=turn_count,
+        last_turn_at=last_turn_at,
+        seeded_opener=agent_session.seeded_opener,
     )

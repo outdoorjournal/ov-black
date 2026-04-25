@@ -14,6 +14,7 @@ from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
 from agent.tools.mutations import update_node_status
 from agent.tools.proposals import assemble_draft, propose_card
+from agent.tools.set_mood import set_mood
 from agent.tools.voodoo import get_voodoo_doll
 
 
@@ -22,6 +23,7 @@ _TOOLS_ONBOARDING = [
     search_inventory,
     get_inventory_detail,
     propose_card,
+    set_mood,
 ]
 
 _TOOLS_PLANNING = [
@@ -33,6 +35,7 @@ _TOOLS_PLANNING = [
     propose_card,
     assemble_draft,
     update_node_status,
+    set_mood,
 ]
 
 _TOOLS_QA = [

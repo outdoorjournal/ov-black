@@ -32,12 +32,20 @@ class OpenSessionRequest(BaseModel):
     ``itinerary_id`` is optional: pin the session to a specific draft for
     planning mode, or omit for a general session (onboarding / Q&A). A
     session pinned to an approved itinerary serves as a trip-scoped Q&A.
+
+    ``seeded_opener`` is the verbatim opening line the basecamp UI picked
+    from the onboarding-opener bank for a brand-new client. It is recorded
+    on the session row and replayed on the runtime as a mode-rubric
+    directive ("your first message MUST be exactly …") so the agent's
+    streamed first turn matches the prompt the user already saw on the
+    page. Ignored / persisted-but-no-op for non-onboarding sessions.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     client_id: uuid.UUID
     itinerary_id: uuid.UUID | None = None
+    seeded_opener: Annotated[str, Field(max_length=500)] | None = None
 
 
 class OpenSessionResponse(BaseModel):
@@ -46,7 +54,9 @@ class OpenSessionResponse(BaseModel):
     ``itinerary_id`` reflects the session's current pin. ``None`` means the
     session is unpinned — the browser's mood-board aside can either stay
     empty (onboarding / Q&A) or hydrate after the first ``card_proposed``
-    frame auto-creates one.
+    frame auto-creates one. ``seeded_opener`` round-trips so the caller
+    can verify the persisted value matches what they sent (for reused
+    sessions, this may be a value chosen on a prior request).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -54,6 +64,7 @@ class OpenSessionResponse(BaseModel):
     session_id: uuid.UUID
     agentcore_session_id: str
     itinerary_id: uuid.UUID | None
+    seeded_opener: str | None = None
 
 
 class TurnRequest(BaseModel):

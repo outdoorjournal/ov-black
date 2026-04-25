@@ -238,6 +238,7 @@ async def open_or_reuse_session(
     actor: ActorContext,
     client_id: uuid.UUID,
     itinerary_id: uuid.UUID | None = None,
+    seeded_opener: str | None = None,
 ) -> tuple[SessionOutcome, AgentSession | None, uuid.UUID | None]:
     """Idempotently open an AgentSession for a client.
 
@@ -329,6 +330,7 @@ async def open_or_reuse_session(
             client_id=client_id,
             agentcore_session_id=str(uuid.uuid4()),
             itinerary_id=itinerary_id,
+            seeded_opener=seeded_opener,
         )
         session.add(new)
         await session.commit()
@@ -931,6 +933,13 @@ async def stream_turn(
         "client_id": str(client_id),
         "itinerary_id": (
             str(pinned_itinerary_id) if pinned_itinerary_id else None
+        ),
+        # Only ship seeded_opener on the very first turn — once the agent
+        # has spoken, the directive ("your first message MUST be …") would
+        # cause it to repeat the opener as turn N+2. The runtime appends
+        # the directive only when this field is non-empty.
+        "seeded_opener": (
+            agent_session.seeded_opener if turn_index == 0 else None
         ),
     }
 

@@ -24,6 +24,7 @@ from app.models.client import (  # noqa: E402,F401  (re-exported)
     GroupType,
 )
 from app.models.invite import Invite  # noqa: E402,F401  (re-exported)
+from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
 from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     Edge,
     EdgeHistory,
@@ -55,6 +56,7 @@ __all__ = [
     "NodeHistory",
     "NodeStatus",
     "NodeType",
+    "OnboardingOpener",
     "Profile",
     "TurnRole",
     "UserRole",

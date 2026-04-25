@@ -1,24 +1,31 @@
 """Strands event → SSE frame translation.
 
-The entrypoint yields dicts the AgentCore runtime serializes as
-``data: <json>\\n\\n`` frames. FastAPI's ``stream_turn`` forwards each
-frame verbatim to the browser. Three shapes the browser expects:
+The entrypoint feeds every dict that ``stream_async`` yields into
+:meth:`EventTranslator.translate`. The shapes the browser expects:
 
 - ``{"type": "delta", "text": "..."}`` — streamed tokens
 - ``{"type": "card_proposed", "node": {...}}`` — a new node
-- ``{"type": "draft_assembled", "edges_created": int}`` — day-by-day ordering landed
+- ``{"type": "draft_assembled", "edges_created": int}`` — day-by-day ordering
 - ``{"type": "node_updated", "node": {...}}`` — advisor adjustment applied
+- ``{"type": "mood", "mood_id": "..."}`` — basecamp ambience shift
 
-``translate_event`` is a pure function over the event dict Strands
-yields from ``stream_async``. The precise event shape evolves with the
-Strands SDK; we dispatch defensively on known keys and swallow
-unknowns. Text deltas land with slightly different envelopes in
-different SDK versions (``delta``, ``data``, or nested inside a
-``content_block_delta`` envelope) — the helper normalizes them.
+Strands does NOT yield a single event with both the tool name and its
+output: ``ToolResultEvent`` is non-callback (so ``stream_async`` never
+yields it), and the ``ToolResultMessageEvent`` we DO see carries
+``toolUseId`` + ``content`` but **no name**. The name lives on the
+prior assistant ``ModelMessageEvent``'s ``toolUse`` block, paired by
+``toolUseId``. ``EventTranslator`` correlates the two by remembering
+``{toolUseId → name}`` for the lifetime of one turn.
+
+Tool returns are wrapped by Strands' ``@tool`` decorator: a dict that
+isn't already in ``{status, content}`` form gets serialized into
+``content: [{"text": json.dumps(result)}]``. The translator parses
+that back into a dict before shaping the SSE frame.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterator
 from typing import Any
@@ -30,6 +37,7 @@ _TOOL_FRAME_TYPES = {
     "propose_card": "card_proposed",
     "assemble_draft": "draft_assembled",
     "update_node_status": "node_updated",
+    "set_mood": "mood",
 }
 
 
@@ -61,80 +69,166 @@ def _extract_delta_text(event: dict) -> str | None:
     return None
 
 
-def _extract_tool_result(event: dict) -> tuple[str, Any] | None:
-    """Return ``(tool_name, result)`` for a tool-result event, else None."""
-    # Strands' own shape.
-    tr = event.get("tool_result") or event.get("toolResult")
-    if isinstance(tr, dict):
-        name = tr.get("name") or tr.get("toolUseName") or tr.get("tool_name")
-        output = tr.get("output") or tr.get("content") or tr.get("result")
-        if isinstance(name, str) and output is not None:
-            return name, output
-    # Nested form sometimes emitted by Bedrock Converse passthrough.
-    message = event.get("message")
-    if isinstance(message, dict):
-        for block in message.get("content") or []:
-            if isinstance(block, dict):
-                inner = block.get("toolResult") or block.get("tool_result")
-                if isinstance(inner, dict):
-                    name = inner.get("toolName") or inner.get("name")
-                    output = inner.get("output") or inner.get("content")
-                    if isinstance(name, str) and output is not None:
-                        return name, output
+def _tool_result_payload(raw: Any) -> dict | None:
+    """Recover the original tool return dict from a Strands toolResult body.
+
+    A dict already at the top level passes through. A Strands content list
+    is searched for the first parseable dict — either a ``{"json": {...}}``
+    block (tools that return a Bedrock-shaped result) or a ``{"text": ...}``
+    block holding a JSON-encoded dict (the wrap path the ``@tool`` decorator
+    takes for plain dict returns).
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, list):
+        return None
+    for block in raw:
+        if not isinstance(block, dict):
+            continue
+        json_value = block.get("json") or block.get("output")
+        if isinstance(json_value, dict):
+            return json_value
+        text = block.get("text")
+        if isinstance(text, str):
+            try:
+                parsed = json.loads(text)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
     return None
 
 
-def translate_event(event: dict) -> Iterator[dict]:
-    """Map one Strands event dict to zero or more SSE frame dicts."""
-    if not isinstance(event, dict):
-        return
-
-    delta_text = _extract_delta_text(event)
-    if delta_text is not None:
-        yield {"type": "delta", "text": delta_text}
-        return
-
-    tool = _extract_tool_result(event)
-    if tool is not None:
-        name, output = tool
-        frame_type = _TOOL_FRAME_TYPES.get(name)
-        if frame_type is None:
-            return  # Read-only tools — no UI frame.
-        frame = _tool_result_to_frame(frame_type, output)
-        if frame is not None:
-            yield frame
-        return
-
-    # Everything else (reasoning, tool_use in progress, model metadata)
-    # is internal to the agent turn. Do not surface to the browser.
-    return
-
-
-def _tool_result_to_frame(frame_type: str, output: Any) -> dict | None:
-    """Shape a tool's return value into the frame the browser expects."""
-    # Tool output may arrive as a dict, or as a list of content blocks
-    # (Bedrock Converse tool-result format). Normalize first.
-    if isinstance(output, list):
-        for block in output:
-            if isinstance(block, dict):
-                json_value = block.get("json") or block.get("output")
-                if isinstance(json_value, dict):
-                    output = json_value
-                    break
-        else:
-            logger.warning("agent.translate.unparseable_tool_output", extra={"frame": frame_type})
-            return None
-
-    if not isinstance(output, dict):
+def _frame_for_tool(name: str, output: dict) -> dict | None:
+    """Shape a tool's return dict into the frame the browser expects."""
+    frame_type = _TOOL_FRAME_TYPES.get(name)
+    if frame_type is None:
         return None
-
     if frame_type == "card_proposed":
         return {"type": "card_proposed", "node": output}
     if frame_type == "draft_assembled":
         return {
             "type": "draft_assembled",
-            "edges_created": int(output.get("edges_created", len(output.get("edges") or []))),
+            "edges_created": int(
+                output.get("edges_created", len(output.get("edges") or []))
+            ),
         }
     if frame_type == "node_updated":
         return {"type": "node_updated", "node": output}
+    if frame_type == "mood":
+        # An invalid mood_id payload (the tool returned `{"error": ...}`)
+        # is dropped on the floor — the browser never sees a malformed
+        # mood frame. The error is still observable via tool-result trace.
+        mood_id = output.get("mood_id")
+        if isinstance(mood_id, str) and "error" not in output:
+            return {"type": "mood", "mood_id": mood_id}
+        return None
     return None
+
+
+class EventTranslator:
+    """Stateful Strands event → SSE frame translator.
+
+    Holds a per-turn ``toolUseId → tool_name`` map so a later
+    ``ToolResultMessageEvent`` (which only carries ``toolUseId``) can be
+    routed to the right SSE frame shape. Construct one per turn.
+    """
+
+    def __init__(self) -> None:
+        self._tool_names: dict[str, str] = {}
+
+    def translate(self, event: Any) -> Iterator[dict]:
+        """Map one Strands event dict to zero or more SSE frame dicts."""
+        if not isinstance(event, dict):
+            return
+
+        delta_text = _extract_delta_text(event)
+        if delta_text is not None:
+            yield {"type": "delta", "text": delta_text}
+            return
+
+        message = event.get("message")
+        if isinstance(message, dict):
+            yield from self._translate_message(message)
+            return
+
+        # Legacy top-level tool_result envelope (older Strands releases and
+        # the synthetic test fixtures). Real Strands ≥ 1.x routes tool
+        # results through ``message`` events, handled above.
+        tr = event.get("tool_result") or event.get("toolResult")
+        if isinstance(tr, dict):
+            yield from self._translate_tool_result_block(tr)
+            return
+
+        # Reasoning, tool_use streams, model metadata — internal, not
+        # surfaced to the browser.
+        return
+
+    def _translate_message(self, message: dict) -> Iterator[dict]:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return
+        # First pass: capture toolUse → name mappings (assistant messages).
+        for block in content:
+            if isinstance(block, dict):
+                tu = block.get("toolUse") or block.get("tool_use")
+                if isinstance(tu, dict):
+                    tuid = tu.get("toolUseId") or tu.get("tool_use_id")
+                    name = tu.get("name")
+                    if isinstance(tuid, str) and isinstance(name, str):
+                        self._tool_names[tuid] = name
+        # Second pass: emit frames for any toolResult blocks (user-role
+        # messages carrying tool execution results).
+        for block in content:
+            if isinstance(block, dict):
+                tr = block.get("toolResult") or block.get("tool_result")
+                if isinstance(tr, dict):
+                    yield from self._translate_tool_result_block(tr)
+
+    def _translate_tool_result_block(self, tr: dict) -> Iterator[dict]:
+        # Resolve the tool name. Real Strands toolResult blocks have only
+        # toolUseId; legacy/test shapes may carry an explicit name.
+        name = (
+            tr.get("toolName")
+            or tr.get("name")
+            or tr.get("toolUseName")
+            or tr.get("tool_name")
+        )
+        if not isinstance(name, str):
+            tuid = tr.get("toolUseId") or tr.get("tool_use_id")
+            if isinstance(tuid, str):
+                name = self._tool_names.get(tuid)
+        if not isinstance(name, str):
+            return
+        if name not in _TOOL_FRAME_TYPES:
+            return  # Read-only tools — no UI frame.
+
+        # Output may be at content/output/result keys; payload may be a
+        # plain dict or Strands' wrapped content-block list.
+        raw: Any = tr.get("output")
+        if raw is None:
+            raw = tr.get("content")
+        if raw is None:
+            raw = tr.get("result")
+        output = _tool_result_payload(raw)
+        if output is None:
+            logger.warning(
+                "agent.translate.unparseable_tool_output",
+                extra={"tool": name},
+            )
+            return
+        frame = _frame_for_tool(name, output)
+        if frame is not None:
+            yield frame
+
+
+def translate_event(event: Any) -> Iterator[dict]:
+    """One-shot stateless translator.
+
+    Real turn streaming should construct an :class:`EventTranslator`
+    once and call ``translate`` per event so toolUseId → name
+    correlation works across the assistant message and the subsequent
+    tool-result message. This free function exists for callers and
+    tests that work with self-contained legacy envelopes.
+    """
+    yield from EventTranslator().translate(event)

@@ -143,10 +143,12 @@ class _FakeAgentSession:
         session_id: uuid.UUID,
         client_id: uuid.UUID,
         agentcore_session_id: str = "ac-sess-xyz",
+        seeded_opener: str | None = None,
     ) -> None:
         self.id = session_id
         self.client_id = client_id
         self.agentcore_session_id = agentcore_session_id
+        self.seeded_opener = seeded_opener
 
 
 def _fake_turn(
@@ -204,6 +206,7 @@ def test_post_sessions_advisor_owned_client_returns_201(
         actor: ActorContext,
         client_id: uuid.UUID,  # noqa: ARG001
         itinerary_id: uuid.UUID | None = None,  # noqa: ARG001
+        seeded_opener: str | None = None,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         assert actor.actor_kind == "advisor"
         assert actor.user_id == advisor
@@ -235,7 +238,7 @@ def test_post_sessions_cross_advisor_returns_404(
     other_client_id = uuid.uuid4()
 
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None  # noqa: ARG001
+        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None, seeded_opener: str | None = None  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         return SessionOutcome.FORBIDDEN, None, None
 
@@ -271,7 +274,7 @@ def test_post_sessions_is_idempotent_on_reopen(
     call_count = {"n": 0}
 
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None  # noqa: ARG001
+        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None, seeded_opener: str | None = None  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         call_count["n"] += 1
         return SessionOutcome.OK, agent_sess, itinerary_id
