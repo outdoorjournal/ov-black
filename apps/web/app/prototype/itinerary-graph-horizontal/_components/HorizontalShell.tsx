@@ -142,6 +142,7 @@ function Inner({ timeline }: HorizontalShellProps) {
     ],
   );
 
+
   // Recompute whether scroll-hints should show based on the canvas's current
   // scrollLeft / clientWidth / scrollWidth. The 16px slop keeps hints from
   // flickering on/off when the viewport rests within a pixel of an edge.

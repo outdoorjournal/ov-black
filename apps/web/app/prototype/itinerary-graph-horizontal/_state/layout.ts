@@ -353,25 +353,50 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   const ys = new Map<string, number>();
   const yBots = new Map<string, number>();
 
-  for (const item of items) {
-    if (item.isNightBar) {
-      // Night bars don't enter the stretch loop. Their y is mapped fresh
-      // from the (stretch-aware) minute-of-day axis at render time.
-      continue;
+  // Process items in **groups by startMin**, not one-at-a-time. Two items at
+  // the same minute (say 15:00 in Day 2 and Day 7) need to share whichever
+  // stretch the busier day requires; otherwise the calmer day's card stays
+  // at the pre-stretch y while the time axis shows the post-stretch y, and
+  // the card visually drifts to the wrong time. We resolve the whole group
+  // before moving on so every co-minute card lands on the same y.
+  let i = 0;
+  while (i < items.length) {
+    const startMin = items[i]!.startMin;
+    let j = i;
+    while (j < items.length && items[j]!.startMin === startMin) j++;
+    const group = items.slice(i, j);
+    i = j;
+
+    // Night bars don't compete with cards for vertical room.
+    const cardGroup = group.filter((g) => !g.isNightBar);
+    if (cardGroup.length === 0) continue;
+
+    // Common starting y for the whole group, before any push at this minute.
+    // (mapMinuteToY against the still-unstretched `segments` plus all
+    // stretches at atMin < startMin — earlier groups have already pushed
+    // theirs.)
+    const yInitial =
+      mapMinuteToY(startMin, segments) + stretchBefore(startMin);
+
+    // Find the max push the group needs to clear its day's previous card.
+    let maxExtra = 0;
+    for (const item of cardGroup) {
+      const lastBot =
+        dayLastBottom.get(item.dayKey) ?? Number.NEGATIVE_INFINITY;
+      const minY = lastBot + VERTICAL_PAD;
+      const extra = minY - yInitial;
+      if (extra > maxExtra) maxExtra = extra;
     }
-    let y = mapMinuteToY(item.startMin, segments) + stretchBefore(item.startMin);
-    const lastBot =
-      dayLastBottom.get(item.dayKey) ?? Number.NEGATIVE_INFINITY;
-    const minY = lastBot + VERTICAL_PAD;
-    if (y < minY) {
-      const extra = minY - y;
-      stretchPoints.push({ atMin: item.startMin, px: extra });
-      y += extra;
+    if (maxExtra > 0) {
+      stretchPoints.push({ atMin: startMin, px: maxExtra });
     }
-    const yBot = y + item.cardH;
-    dayLastBottom.set(item.dayKey, yBot);
-    ys.set(item.node.id, y);
-    yBots.set(item.node.id, yBot);
+    const finalY = yInitial + maxExtra;
+    for (const item of cardGroup) {
+      ys.set(item.node.id, finalY);
+      yBots.set(item.node.id, finalY + item.cardH);
+      // Each day's lastBottom uses its own card's measured height.
+      dayLastBottom.set(item.dayKey, finalY + item.cardH);
+    }
   }
 
   // Materialize the stretches as real segment boundaries (a vertical jump
@@ -466,19 +491,44 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   }
   const totalHeight = segHeight + 80;
 
-  // Time markers: one per HH:00 hour mark inside a live segment. Live-ness
-  // checks against the original (unstretched) segments because splits at
-  // stretch points don't change which minutes are live — they only change y.
-  const timeMarkers: TimeMarker[] = [];
+  // Time markers: one per unique card start-time (HH:MM), placed at the
+  // card's actual y. Same idiom the vertical prototype uses — every card
+  // has a label *next to it*, so non-uniform stretches between hours never
+  // make a card look misplaced relative to its label. Hour boundaries are
+  // also added when no card lands on them, so the gutter still reads as a
+  // clock when the schedule is sparse.
+  const labelByMinute = new Map<number, { y: number; label: string }>();
+  for (const item of items) {
+    if (item.isNightBar) continue;
+    const y = ys.get(item.node.id);
+    if (typeof y !== "number") continue;
+    const existing = labelByMinute.get(item.startMin);
+    if (existing) {
+      // Multiple cards at the same minute share one label at the topmost y.
+      if (y < existing.y) existing.y = y;
+    } else {
+      labelByMinute.set(item.startMin, {
+        y,
+        label: formatMinuteOfDay(item.startMin),
+      });
+    }
+  }
+  // Backfill empty hour boundaries inside live original segments.
   for (let h = 0; h < 24; h++) {
     const min = h * 60;
+    if (labelByMinute.has(min)) continue;
     const live = segments.some(
       (s) => s.startMin <= min && min <= s.endMin && s.type === "live",
     );
     if (!live) continue;
-    const y = mapMinuteToY(min, displaySegments);
-    timeMarkers.push({ y, label: formatMinuteOfDay(min) });
+    labelByMinute.set(min, {
+      y: mapMinuteToY(min, displaySegments),
+      label: formatMinuteOfDay(min),
+    });
   }
+  const timeMarkers: TimeMarker[] = Array.from(labelByMinute.values()).sort(
+    (a, b) => a.y - b.y,
+  );
 
   return {
     positions,

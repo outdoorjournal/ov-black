@@ -148,17 +148,31 @@ function LiveSegmentLayer({
   );
 }
 
-// When two hour markers would render within `minGap` of each other, push
-// the lower one down so they don't overlap. Same algorithm the vertical
-// prototype uses; copied here so the horizontal axis behaves consistently.
+// Drop labels that would render within `minGap` of an already-kept label,
+// rather than shifting them down. Cards on this axis are anchored to their
+// own labels' y; if a co-minute label gets nudged for visual breathing room,
+// the card no longer aligns with it. We bias toward keeping HH:00 hour
+// labels (more useful as a clock) when they collide with an off-the-hour
+// card-time label.
 function dedupeMarkersByGap(markers: TimeMarker[], minGap: number): TimeMarker[] {
   if (markers.length === 0) return markers;
   const out: TimeMarker[] = [];
   let lastY = Number.NEGATIVE_INFINITY;
   for (const m of markers) {
-    const y = Math.max(m.y, lastY + minGap);
-    out.push({ ...m, y });
-    lastY = y;
+    if (m.y - lastY < minGap) {
+      // Replace the previous label with this one if this one is on-the-hour
+      // and the previous wasn't.
+      const prev = out[out.length - 1];
+      const isHour = m.label.endsWith(":00");
+      const prevIsHour = prev?.label.endsWith(":00");
+      if (isHour && prev && !prevIsHour) {
+        out[out.length - 1] = m;
+        lastY = m.y;
+      }
+      continue;
+    }
+    out.push(m);
+    lastY = m.y;
   }
   return out;
 }
