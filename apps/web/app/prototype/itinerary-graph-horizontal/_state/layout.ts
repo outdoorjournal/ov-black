@@ -41,8 +41,13 @@ export const PAD_X = 16;
 export const PAD_TOP = 12;
 export const DAY_HEADER_HEIGHT = 64;
 // Matches CardShell glance width (`w-[260px]`) in /prototype/cards so the
-// focused/dragging chrome wraps the visible card edge exactly.
-export const COL_WIDTH = 260;
+// focused/dragging chrome wraps the visible card edge exactly. `LANE_WIDTH`
+// is the in-day side-by-side slot width — currently the same as the legacy
+// `COL_WIDTH` because a day with one lane should render identically to the
+// pre-lane layout.
+export const LANE_WIDTH = 260;
+export const LANE_GAP = 12;
+export const COL_WIDTH = LANE_WIDTH;
 export const COL_GAP = 20;
 export const NIGHT_BAR_WIDTH = 6;
 export const NIGHT_BAR_GAP = 4;
@@ -70,6 +75,7 @@ export interface PositionedHNode {
   node: NodeResponse;
   dayKey: string;
   dayIndex: number; // 0-based index into the days array
+  lane: number;
   x: number;
   y: number;
   w: number;
@@ -113,6 +119,12 @@ interface LayoutArgs {
   tzOffsetHours: number;
   daysMeta: Array<{ date: string; label: string; weather_emoji?: string }>;
   cardHeights?: Map<string, number>;
+  // When a drag is in flight, the dragged node's id is passed here so the
+  // layout treats its old slot as vacant: other cards in its day collapse
+  // around it instead of being pushed into a side lane, and the ghost-node
+  // version of the dragged card competes for lanes against everyone else
+  // *without* the dragged source still holding lane 0.
+  excludeNodeId?: string;
 }
 
 // Build the global minute-of-day live-interval union from every non-night-bar
@@ -213,6 +225,27 @@ export function mapMinuteToY(min: number, segments: TimelineSegment[]): number {
   return last ? last.yEnd : 0;
 }
 
+// Inverse of mapMinuteToY — useful for translating a drag's pointer-y back
+// into a clock minute so the dragged card can adopt the time it's being
+// dropped at. Elide bands collapse onto the band's boundary minute (so a
+// drop into a dead gap snaps to the nearest live edge rather than landing
+// on an undefined hour).
+export function mapYToMinute(y: number, segments: TimelineSegment[]): number {
+  if (segments.length === 0) return 0;
+  const first = segments[0];
+  if (first && y < first.yStart) return first.startMin;
+  for (const seg of segments) {
+    if (y < seg.yEnd) {
+      if (seg.type === "elide") return seg.endMin;
+      const range = seg.yEnd - seg.yStart || 1;
+      const t = (y - seg.yStart) / range;
+      return seg.startMin + t * (seg.endMin - seg.startMin);
+    }
+  }
+  const last = segments[segments.length - 1];
+  return last ? last.endMin : 0;
+}
+
 // Split segments at every stretch's atMin so each stretch becomes a real
 // segment boundary (a vertical jump in y) rather than a value that gets
 // distributed linearly across a segment's interior. After this transform,
@@ -262,8 +295,15 @@ function applyStretchesToSegments(
 }
 
 export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
-  const { nodes, edges, pxPerMinute, tzOffsetHours, daysMeta, cardHeights } =
-    args;
+  const {
+    nodes,
+    edges,
+    pxPerMinute,
+    tzOffsetHours,
+    daysMeta,
+    cardHeights,
+    excludeNodeId,
+  } = args;
 
   // Alt groups: from metadata or from `alternative_to` edges. Same shape as
   // the vertical layout — a set of node ids that should be visually grouped.
@@ -341,14 +381,79 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     });
   }
 
-  // Sort items globally by (startMin, dayIndex). Sorting by minute first
-  // means stretches injected for day 2's 08:30 are visible to day 5's 09:00
-  // before either has been laid out — keeping the global axis monotone.
+  // Pre-pass: per-day lane assignment based on time overlap. Cards whose
+  // [start, start+duration] intervals collide go to successively higher
+  // lanes (rendered side-by-side in the same day column). Night bars do not
+  // participate — they live in the column's right-edge strip and never
+  // compete with cards for lane room. While a drag is in flight, the
+  // dragged source is excluded from lane competition so its old position
+  // doesn't push the ghost into a second lane during a same-day reorder.
+  const laneByNode = new Map<string, number>();
+  const dayLaneCount = new Map<string, number>();
+  {
+    const itemsByDay = new Map<string, Item[]>();
+    for (const it of items) {
+      if (it.isNightBar) continue;
+      if (excludeNodeId && it.node.id === excludeNodeId) continue;
+      const arr = itemsByDay.get(it.dayKey) ?? [];
+      arr.push(it);
+      itemsByDay.set(it.dayKey, arr);
+    }
+    for (const [dayKey, dayItems] of itemsByDay.entries()) {
+      // Stable sort by startMin (insertion order breaks ties so the original
+      // fixture ordering wins when two items literally share a start_time).
+      const indexed = dayItems.map((it, i) => ({ it, i }));
+      indexed.sort((a, b) =>
+        a.it.startMin === b.it.startMin
+          ? a.i - b.i
+          : a.it.startMin - b.it.startMin,
+      );
+      // laneEnd[i] = endMin of the latest card placed in lane i so far.
+      const laneEnd: number[] = [];
+      for (const { it } of indexed) {
+        const dur =
+          typeof it.meta.duration_minutes === "number"
+            ? it.meta.duration_minutes
+            : 30;
+        const end = it.startMin + dur;
+        let lane = -1;
+        for (let li = 0; li < laneEnd.length; li++) {
+          const prev = laneEnd[li];
+          if (typeof prev === "number" && prev <= it.startMin) {
+            lane = li;
+            laneEnd[li] = end;
+            break;
+          }
+        }
+        if (lane === -1) {
+          lane = laneEnd.length;
+          laneEnd.push(end);
+        }
+        laneByNode.set(it.node.id, lane);
+      }
+      dayLaneCount.set(dayKey, Math.max(1, laneEnd.length));
+    }
+    // The dragged source is given lane 0 so it still renders at a sensible
+    // x; its stretch / lastBottom contributions are skipped below so other
+    // cards behave as if its slot is empty.
+    if (excludeNodeId) laneByNode.set(excludeNodeId, 0);
+  }
+
+  // Sort items globally by (startMin, dayIndex, lane). Sorting by minute
+  // first means stretches injected for day 2's 08:30 are visible to day 5's
+  // 09:00 before either has been laid out — keeping the global axis
+  // monotone. Tie-breaking by lane lets the same-minute group resolve from
+  // the leftmost lane outward.
   items.sort((a, b) => {
     if (a.startMin !== b.startMin) return a.startMin - b.startMin;
-    return a.dayIndex - b.dayIndex;
+    if (a.dayIndex !== b.dayIndex) return a.dayIndex - b.dayIndex;
+    return (laneByNode.get(a.node.id) ?? 0) - (laneByNode.get(b.node.id) ?? 0);
   });
 
+  // Per (day,lane) lastBottom tracking. Two cards in different lanes of the
+  // same day at the same minute don't need to push each other vertically —
+  // they sit side-by-side instead. Only same-lane collisions trigger stretch.
+  const laneKey = (dayKey: string, lane: number) => `${dayKey}#${lane}`;
   const dayLastBottom = new Map<string, number>();
   const ys = new Map<string, number>();
   const yBots = new Map<string, number>();
@@ -378,11 +483,18 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     const yInitial =
       mapMinuteToY(startMin, segments) + stretchBefore(startMin);
 
-    // Find the max push the group needs to clear its day's previous card.
+    // Find the max push the group needs to clear its (day, lane) previous
+    // card. Same-day siblings in *different* lanes don't push each other —
+    // that's what lets a drop sit beside a busy slot instead of below it.
+    // We deliberately *don't* exclude the dragged source from stretch
+    // math: keeping its lastBottom in place prevents the rest of the day
+    // from collapsing upward during drag (which would warp the pointer-y →
+    // minute mapping mid-gesture).
     let maxExtra = 0;
     for (const item of cardGroup) {
-      const lastBot =
-        dayLastBottom.get(item.dayKey) ?? Number.NEGATIVE_INFINITY;
+      const lane = laneByNode.get(item.node.id) ?? 0;
+      const key = laneKey(item.dayKey, lane);
+      const lastBot = dayLastBottom.get(key) ?? Number.NEGATIVE_INFINITY;
       const minY = lastBot + VERTICAL_PAD;
       const extra = minY - yInitial;
       if (extra > maxExtra) maxExtra = extra;
@@ -392,10 +504,10 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     }
     const finalY = yInitial + maxExtra;
     for (const item of cardGroup) {
+      const lane = laneByNode.get(item.node.id) ?? 0;
       ys.set(item.node.id, finalY);
       yBots.set(item.node.id, finalY + item.cardH);
-      // Each day's lastBottom uses its own card's measured height.
-      dayLastBottom.set(item.dayKey, finalY + item.cardH);
+      dayLastBottom.set(laneKey(item.dayKey, lane), finalY + item.cardH);
     }
   }
 
@@ -413,14 +525,16 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   // that used to consume it is gone.)
   void stretchBefore;
 
-  // Now compute day column x positions — one column per day, single fixed
-  // width. The chrome (header tile, droppable rail) lives inside each
-  // column's box; cards render at columnX + 0 (no lanes).
+  // Now compute day column x positions — one column per day. Width grows
+  // with lane count so a day with two side-by-side cards reserves room for
+  // both. Sparse days keep their original single-lane width.
   const days: DayLayout[] = [];
   let cursorX = TIME_GUTTER + PAD_X;
   for (const dm of daysMeta) {
     const dayIndex = dayIndexByDate.get(dm.date) ?? 0;
-    const columnWidth = COL_WIDTH + NIGHT_BAR_GAP + NIGHT_BAR_WIDTH;
+    const laneCount = dayLaneCount.get(dm.date) ?? 1;
+    const lanesWidth = laneCount * LANE_WIDTH + (laneCount - 1) * LANE_GAP;
+    const columnWidth = lanesWidth + NIGHT_BAR_GAP + NIGHT_BAR_WIDTH;
     days.push({
       date: dm.date,
       dayIndex,
@@ -434,12 +548,14 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   const totalWidth = cursorX + PAD_X;
 
   // Assemble PositionedHNodes against the now-known column x's. Cards sit
-  // on the left edge of their column (lane 0); night bars pin to the right.
+  // at columnX + lane * (LANE_WIDTH + LANE_GAP); night bars pin to the
+  // column's right edge regardless of how many lanes are open.
   const positions = new Map<string, PositionedHNode>();
   for (const item of items) {
     const dayLayout = days[item.dayIndex];
     if (!dayLayout) continue;
     const baseX = dayLayout.columnX;
+    const lane = laneByNode.get(item.node.id) ?? 0;
 
     let x: number;
     let w: number;
@@ -457,8 +573,8 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       );
       barH = Math.max(item.cardH, totalSegHeight - y);
     } else {
-      x = baseX;
-      w = COL_WIDTH;
+      x = baseX + lane * (LANE_WIDTH + LANE_GAP);
+      w = LANE_WIDTH;
       y = ys.get(item.node.id) ?? mapMinuteToY(item.startMin, displaySegments);
       const yBot = yBots.get(item.node.id) ?? y + item.cardH;
       barH = yBot - y;
@@ -468,6 +584,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       node: item.node,
       dayKey: item.dayKey,
       dayIndex: item.dayIndex,
+      lane,
       x,
       y,
       w,

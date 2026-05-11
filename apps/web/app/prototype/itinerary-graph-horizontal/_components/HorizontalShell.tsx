@@ -19,6 +19,16 @@
 // Below md: the canvas + axis are replaced with MobileDayList and the map
 // drops to the bottom of the page.
 
+import {
+  DndContext,
+  DragOverlay,
+  type DragEndEvent,
+  type DragOverEvent,
+  PointerSensor,
+  pointerWithin,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   type UIEvent,
@@ -32,10 +42,12 @@ import {
 import { Card } from "../../itinerary-graph/_components/Card";
 import type { HorizontalTimeline, NodeResponse } from "../_lib/types";
 import { getHMeta } from "../_lib/types";
+import { tzDayKey } from "../_lib/time";
 import {
   computeHorizontalLayout,
   DAY_HEADER_HEIGHT,
   TIME_GUTTER,
+  mapYToMinute,
 } from "../_state/layout";
 import { horizontalStore } from "../_state/horizontalStore";
 import { runScenario } from "../_state/mockStream";
@@ -43,11 +55,33 @@ import { runScenario } from "../_state/mockStream";
 import { AIDemoController } from "./AIDemoController";
 import { ChatPanel } from "./ChatPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
+import { JapanCard } from "./JapanCard";
 import { MapStrip } from "./MapStrip";
 import { MobileDayList } from "./MobileDayList";
 import { ScrollHint } from "./ScrollHint";
 import { TimeAxis } from "./TimeAxis";
 import { ZoomControls } from "./ZoomControls";
+
+const DRAG_GHOST_ID = "__drag-ghost__";
+
+// Build an ISO timestamp anchored on `dayKey` at `minuteOfDay` in the
+// traveler's tz. Used to synthesize a *preview* start_time for the ghost
+// card while a drag is in flight — final commit goes through the
+// in-store rebase helpers.
+function buildIsoOnDayAtMinute(
+  dayKey: string,
+  minuteOfDay: number,
+  tzOffsetHours: number,
+): string {
+  const clamped = Math.max(0, Math.min(1439, Math.round(minuteOfDay)));
+  const hh = String(Math.floor(clamped / 60)).padStart(2, "0");
+  const mm = String(clamped % 60).padStart(2, "0");
+  const sign = tzOffsetHours >= 0 ? "+" : "-";
+  const absOff = Math.abs(tzOffsetHours);
+  const offH = String(Math.floor(absOff)).padStart(2, "0");
+  const offM = String(Math.round((absOff % 1) * 60)).padStart(2, "0");
+  return `${dayKey}T${hh}:${mm}:00${sign}${offH}:${offM}`;
+}
 
 // How far the left/right scroll-hints jump when clicked. ~one column +
 // gutter, so each click lands the viewport on the next day's column.
@@ -82,6 +116,95 @@ function Inner({ timeline }: HorizontalShellProps) {
   );
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [scrollHints, setScrollHints] = useState({ left: false, right: false });
+  // Drag preview state. While `activeDragId` is set, we add a synthetic
+  // "ghost" node to the layout in the day the pointer is over so other cards
+  // in that column slide down to make room before the drop is committed.
+  // `overMinute` is derived from the pointer's y position inside the canvas
+  // body, so dropping high in the column lands a morning slot and dropping
+  // low lands an evening slot — independent of where the card came from.
+  const [drag, setDrag] = useState<{
+    activeId: string | null;
+    overDayKey: string | null;
+    overMinute: number | null;
+  }>({ activeId: null, overDayKey: null, overMinute: null });
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+
+  const allNodes = useMemo(
+    () => [...nodes, ...pendingProposals],
+    [nodes, pendingProposals],
+  );
+
+  const activeNode = useMemo(
+    () => (drag.activeId ? allNodes.find((n) => n.id === drag.activeId) : null) ?? null,
+    [drag.activeId, allNodes],
+  );
+
+  const activeSourceDayKey = useMemo(() => {
+    if (!activeNode) return null;
+    const start = getHMeta(activeNode).start_time;
+    if (!start) return null;
+    return tzDayKey(start, timeline.timezoneOffsetHours);
+  }, [activeNode, timeline.timezoneOffsetHours]);
+
+  const ghostNode: NodeResponse | null = useMemo(() => {
+    if (!activeNode || !drag.overDayKey) return null;
+    const meta = getHMeta(activeNode);
+    if (!meta.start_time) return null;
+    const minute = drag.overMinute;
+    // If the pointer hasn't been measured yet, fall back to the source
+    // minute so the very first frame is still meaningful.
+    const fallbackMinute = (() => {
+      const start = new Date(meta.start_time).getTime();
+      const local = new Date(start + timeline.timezoneOffsetHours * 3600 * 1000);
+      return local.getUTCHours() * 60 + local.getUTCMinutes();
+    })();
+    // No ghost when hovering over the source day at the source minute —
+    // the original card already occupies that slot. Otherwise (different
+    // day OR same day at a different time) we want the preview.
+    const previewMinute = minute ?? fallbackMinute;
+    if (
+      drag.overDayKey === activeSourceDayKey &&
+      Math.abs(previewMinute - fallbackMinute) < 10
+    ) {
+      return null;
+    }
+    return {
+      id: DRAG_GHOST_ID,
+      itinerary_id: activeNode.itinerary_id,
+      parent_subgraph_id: null,
+      type: activeNode.type,
+      status: activeNode.status,
+      title: activeNode.title,
+      source: activeNode.source,
+      source_id: activeNode.source_id,
+      metadata: {
+        ...activeNode.metadata,
+        start_time: buildIsoOnDayAtMinute(
+          drag.overDayKey,
+          previewMinute,
+          timeline.timezoneOffsetHours,
+        ),
+      },
+    } satisfies NodeResponse;
+  }, [activeNode, drag.overDayKey, drag.overMinute, activeSourceDayKey, timeline.timezoneOffsetHours]);
+
+  const layoutCardHeights = useMemo(() => {
+    if (!ghostNode || !drag.activeId) return cardHeights;
+    const h = cardHeights.get(drag.activeId);
+    if (!h) return cardHeights;
+    const next = new Map(cardHeights);
+    next.set(ghostNode.id, h);
+    return next;
+  }, [cardHeights, ghostNode, drag.activeId]);
+
+  const layoutNodes = useMemo(
+    () => (ghostNode ? [...allNodes, ghostNode] : allNodes),
+    [allNodes, ghostNode],
+  );
 
   const handleMeasureCard = useCallback((id: string, h: number) => {
     setCardHeights((prev) => {
@@ -124,23 +247,89 @@ function Inner({ timeline }: HorizontalShellProps) {
   const layout = useMemo(
     () =>
       computeHorizontalLayout({
-        nodes: [...nodes, ...pendingProposals],
+        nodes: layoutNodes,
         edges,
         pxPerMinute,
         tzOffsetHours: timeline.timezoneOffsetHours,
         daysMeta: timeline.days,
-        cardHeights,
+        cardHeights: layoutCardHeights,
+        ...(drag.activeId ? { excludeNodeId: drag.activeId } : {}),
       }),
     [
-      nodes,
-      pendingProposals,
+      layoutNodes,
       edges,
       pxPerMinute,
       timeline.timezoneOffsetHours,
       timeline.days,
-      cardHeights,
+      layoutCardHeights,
+      drag.activeId,
     ],
   );
+
+  const handleDragStart = useCallback((id: string) => {
+    setDrag({ activeId: id, overDayKey: null, overMinute: null });
+  }, []);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const overId = event.over?.id;
+    const dayKey =
+      typeof overId === "string" && overId.startsWith("day-")
+        ? overId.slice(4)
+        : null;
+    setDrag((prev) =>
+      prev.overDayKey === dayKey ? prev : { ...prev, overDayKey: dayKey },
+    );
+  }, []);
+
+  // Latest pointer y inside the canvas body, in the layout's coordinate
+  // system. We resolve it against `layout.segments` to find the minute-of-
+  // day the user is hovering over.
+  const dragSegmentsRef = useRef(layout.segments);
+  dragSegmentsRef.current = layout.segments;
+  useEffect(() => {
+    if (!drag.activeId) return;
+    const onMove = (e: PointerEvent) => {
+      const body = bodyRef.current;
+      if (!body) return;
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const rawMinute = mapYToMinute(y, dragSegmentsRef.current);
+      // Snap the live preview to a 15-minute grid so the ghost doesn't jitter
+      // and the dropped time is always a clean quarter-hour.
+      const snapped = Math.round(rawMinute / 15) * 15;
+      setDrag((prev) =>
+        prev.overMinute === snapped ? prev : { ...prev, overMinute: snapped },
+      );
+    };
+    window.addEventListener("pointermove", onMove);
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [drag.activeId]);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      const snapshot = drag;
+      setDrag({ activeId: null, overDayKey: null, overMinute: null });
+      if (!over) return;
+      const overId = String(over.id);
+      if (!overId.startsWith("day-")) return;
+      const targetDayKey = overId.slice(4);
+      if (!targetDayKey) return;
+      const minute = snapshot.overMinute;
+      if (typeof minute === "number") {
+        storeApi
+          .getState()
+          .moveNodeToDayAndMinute(String(active.id), targetDayKey, minute);
+      } else {
+        storeApi.getState().moveNodeToDay(String(active.id), targetDayKey);
+      }
+    },
+    [drag, storeApi],
+  );
+
+  const handleDragCancel = useCallback(() => {
+    setDrag({ activeId: null, overDayKey: null, overMinute: null });
+  }, []);
 
 
   // Recompute whether scroll-hints should show based on the canvas's current
@@ -293,6 +482,14 @@ function Inner({ timeline }: HorizontalShellProps) {
   }, [expandedId, nodes, pendingProposals]);
 
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={(e) => handleDragStart(String(e.active.id))}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
     <div className="flex h-screen w-screen flex-col bg-paper text-ink">
       <header className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm">
         <div>
@@ -361,6 +558,9 @@ function Inner({ timeline }: HorizontalShellProps) {
                 focusedNodeId={focusedNodeId}
                 tzOffsetHours={timeline.timezoneOffsetHours}
                 axisWidth={TIME_GUTTER}
+                activeDragId={drag.activeId}
+                ghostId={ghostNode?.id ?? null}
+                bodyRef={bodyRef}
                 onCardHover={(id) => {
                   if (id && id !== storeApi.getState().focusedNodeId) {
                     storeApi.getState().focusNode(id);
@@ -439,6 +639,21 @@ function Inner({ timeline }: HorizontalShellProps) {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {/* DragOverlay portals a clone of the dragged card so it can follow the
+          cursor without disturbing the canvas's absolute layout (which is busy
+          opening up a ghost slot in the target day). */}
+      <DragOverlay dropAnimation={null}>
+        {activeNode ? (
+          <div style={{ width: 260, cursor: "grabbing" }}>
+            <JapanCard
+              node={activeNode}
+              tzOffsetHours={timeline.timezoneOffsetHours}
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
     </div>
+    </DndContext>
   );
 }

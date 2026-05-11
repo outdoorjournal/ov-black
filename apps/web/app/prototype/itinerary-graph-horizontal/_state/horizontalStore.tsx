@@ -61,6 +61,10 @@ export type HorizontalState = {
   // Day move: re-target a node to a different day key. Updates the start_time
   // to the same minute-of-day on the new date, preserving timezone.
   moveNodeToDay: (id: string, dayKey: string) => void;
+  // Day + time move: like moveNodeToDay but also overrides the minute-of-day.
+  // Powers the drag-and-drop flow where the drop's pointer-y determines the
+  // new clock time instead of preserving the source time.
+  moveNodeToDayAndMinute: (id: string, dayKey: string, minuteOfDay: number) => void;
 
   setPxPerMinute: (value: number) => void;
   zoomIn: () => void;
@@ -85,7 +89,16 @@ function rebaseStartToDay(
   const hh = d.getUTCHours();
   const mm = d.getUTCMinutes();
   const ss = d.getUTCSeconds();
-  // Build the same HH:MM:SS on the new date in the same tz offset.
+  return buildIsoOnDay(dayKey, hh, mm, ss, tzOffsetHours);
+}
+
+function buildIsoOnDay(
+  dayKey: string,
+  hh: number,
+  mm: number,
+  ss: number,
+  tzOffsetHours: number,
+): string {
   const offsetSign = tzOffsetHours >= 0 ? "+" : "-";
   const absOff = Math.abs(tzOffsetHours);
   const offH = String(Math.floor(absOff)).padStart(2, "0");
@@ -94,6 +107,20 @@ function rebaseStartToDay(
   const mmStr = String(mm).padStart(2, "0");
   const ssStr = String(ss).padStart(2, "0");
   return `${dayKey}T${hhStr}:${mmStr}:${ssStr}${offsetSign}${offH}:${offM}`;
+}
+
+// Build a new ISO start_time on `dayKey` at the given minute-of-day, in the
+// timeline's tz. Snaps to a clean minute so drag drops don't introduce
+// fractional-seconds noise.
+function rebaseStartToDayAndMinute(
+  dayKey: string,
+  minuteOfDay: number,
+  tzOffsetHours: number,
+): string {
+  const clamped = Math.max(0, Math.min(1439, Math.round(minuteOfDay)));
+  const hh = Math.floor(clamped / 60);
+  const mm = clamped % 60;
+  return buildIsoOnDay(dayKey, hh, mm, 0, tzOffsetHours);
 }
 
 export const horizontalStore = createStoreContext<
@@ -208,6 +235,31 @@ export const horizontalStore = createStoreContext<
               const newStart = rebaseStartToDay(
                 meta.start_time,
                 dayKey,
+                tz,
+              );
+              return {
+                ...n,
+                metadata: { ...meta, start_time: newStart },
+              };
+            };
+            return {
+              nodes: s.nodes.map(update),
+              pendingProposals: s.pendingProposals.map(update),
+              flashNodeId: id,
+            };
+          }),
+        moveNodeToDayAndMinute: (id, dayKey, minuteOfDay) =>
+          set((s) => {
+            const tz = s.sample.timezoneOffsetHours;
+            const update = (n: NodeResponse): NodeResponse => {
+              if (n.id !== id) return n;
+              const meta = n.metadata as {
+                start_time?: string;
+                [k: string]: unknown;
+              };
+              const newStart = rebaseStartToDayAndMinute(
+                dayKey,
+                minuteOfDay,
                 tz,
               );
               return {
