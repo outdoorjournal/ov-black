@@ -16,7 +16,59 @@ interface CardShellProps {
   width?: "glance" | "zoom";
   children: ReactNode;
   noteOverride?: boolean;
+  // Surfaced in the Booked / Confirmed footer band as the operator's
+  // confirmation string. Omit and the band still renders with just the
+  // status label.
+  serial?: string;
+  // Surfaced in the Approved / Confirmed footer band as a short date stamp.
+  statusDate?: string;
 }
+
+interface SubstrateStyle {
+  bg: string;
+  border: string;
+  shadow: string;
+}
+
+// Status escalates the substrate itself — paper darkens, border thickens,
+// shadow deepens, Confirmed gains an inner ring to read as heavier stock.
+// Mirrors HYBRID_CFG in StatusAlternatives.tsx (the chosen Alt C+D direction).
+const SUBSTRATE_BY_STATUS: Record<StatusKind, SubstrateStyle> = {
+  idea: {
+    bg: "#f7f4ee",
+    border: "1px dashed rgba(10,10,10,0.18)",
+    shadow: "0 1px 0 rgba(0,0,0,0.04)",
+  },
+  proposed: {
+    bg: "#f7f4ee",
+    border: "1px solid rgba(10,10,10,0.10)",
+    shadow:
+      "0 1px 0 rgba(0,0,0,0.04), 0 8px 24px -12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.6)",
+  },
+  approved: {
+    bg: "#f5f1e7",
+    border: "1px solid rgba(10,10,10,0.14)",
+    shadow:
+      "0 1px 0 rgba(0,0,0,0.05), 0 10px 26px -12px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.55)",
+  },
+  booked: {
+    bg: "#ede6d6",
+    border: "1.5px solid rgba(10,10,10,0.20)",
+    shadow:
+      "0 2px 0 rgba(0,0,0,0.06), 0 14px 32px -10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5)",
+  },
+  confirmed: {
+    bg: "#e6dcc4",
+    border: "2px solid rgba(10,10,10,0.32)",
+    shadow:
+      "0 0 0 1px rgba(10,10,10,0.10), 0 3px 0 rgba(0,0,0,0.08), 0 22px 44px -12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.55), inset 0 0 0 3px rgba(247,244,238,0.7), inset 0 0 0 4px rgba(10,10,10,0.10)",
+  },
+  discarded: {
+    bg: "#f7f4ee",
+    border: "1px solid rgba(10,10,10,0.10)",
+    shadow: "0 1px 0 rgba(0,0,0,0.04)",
+  },
+};
 
 export function CardShell({
   kind,
@@ -24,30 +76,47 @@ export function CardShell({
   width = "glance",
   children,
   noteOverride,
+  serial,
+  statusDate,
 }: CardShellProps) {
   const token = TYPE_TOKENS[kind];
   const isNote = noteOverride ?? kind === "note";
 
+  const substrate = SUBSTRATE_BY_STATUS[status];
+
+  // Notes keep their yellow paper substrate regardless of status — they are
+  // commentary, not booked inventory, so the substrate-weight cue would
+  // mis-signal a lifecycle they don't have.
+  const bg = isNote ? "#fbf1c7" : substrate.bg;
+  const border = isNote
+    ? "1px solid rgba(180,140,30,0.22)"
+    : substrate.border;
+
   const style = {
     backgroundImage: `${NOISE_BG}, linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 40%)`,
-    backgroundColor: isNote ? "#fbf1c7" : "#f7f4ee",
-    borderColor: isNote ? "rgba(180,140,30,0.22)" : "rgba(10,10,10,0.10)",
-    boxShadow:
-      status === "discarded"
-        ? "0 1px 0 rgba(0,0,0,0.04)"
-        : "0 1px 0 rgba(0,0,0,0.04), 0 8px 24px -12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.6)",
+    backgroundColor: bg,
+    border,
+    boxShadow: substrate.shadow,
   };
 
+  // Padding lives on the body wrapper, not the shell, so the footer band can
+  // run edge-to-edge.
   const wrapClass = [
-    "relative rounded-lg border overflow-hidden font-sans text-ink text-left",
-    width === "glance" ? "p-3 w-[260px]" : "p-5 w-full max-w-[640px]",
-    status === "idea" ? "border-dashed opacity-80" : "",
+    "relative rounded-lg overflow-hidden font-sans text-ink text-left",
+    width === "glance" ? "w-[260px]" : "w-full max-w-[640px]",
+    status === "idea" ? "opacity-80" : "",
     status === "discarded" ? "opacity-50 grayscale" : "",
-    status === "confirmed" ? "ring-1 ring-ink/20 ring-offset-2 ring-offset-paper" : "",
   ].join(" ");
 
+  const bodyClass = width === "glance" ? "p-3 pb-0" : "p-5 pb-0";
+
   return (
-    <div role="group" aria-label={`${token.label} card, ${STATUS_TOKENS[status].label}`} className={wrapClass} style={style}>
+    <div
+      role="group"
+      aria-label={`${token.label} card, ${STATUS_TOKENS[status].label}`}
+      className={wrapClass}
+      style={style}
+    >
       {status !== "idea" && status !== "discarded" ? (
         <span
           aria-hidden
@@ -60,40 +129,86 @@ export function CardShell({
         />
       ) : null}
 
-      <StatusBadge status={status} />
-
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
-        <token.Icon size={12} strokeWidth={1.6} aria-hidden />
-        <span>{token.label}</span>
+      <div className={bodyClass}>
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
+          <token.Icon size={12} strokeWidth={1.6} aria-hidden />
+          <span>{token.label}</span>
+        </div>
+        {children}
       </div>
 
-      {children}
+      <StatusFooter status={status} serial={serial} statusDate={statusDate} />
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: StatusKind }) {
-  if (status === "idea") return null;
-  const label = STATUS_TOKENS[status].label;
-  const glyph =
-    status === "approved"
-      ? "✓"
-      : status === "booked"
-      ? "🔒"
-      : status === "confirmed"
-      ? "✓✓"
-      : status === "discarded"
-      ? "—"
-      : "·";
-  return (
-    <span
-      className="absolute bottom-1.5 right-2 inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.2em] text-ink/45"
-      aria-label={`Status: ${label}`}
-    >
-      <span aria-hidden>{glyph}</span>
-      <span>{label}</span>
-    </span>
-  );
+function StatusFooter({
+  status,
+  serial,
+  statusDate,
+}: {
+  status: StatusKind;
+  serial: string | undefined;
+  statusDate: string | undefined;
+}) {
+  if (status === "approved") {
+    return (
+      <div
+        className="mt-3 flex items-center justify-between border-t border-ink/15 px-3 py-1.5"
+        aria-label="Status: approved"
+      >
+        <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-ink/70">
+          <span aria-hidden>✓</span> Approved
+        </span>
+        {statusDate ? (
+          <span className="font-mono text-[10px] text-ink/45">{statusDate}</span>
+        ) : null}
+      </div>
+    );
+  }
+  if (status === "booked") {
+    return (
+      <div
+        className="mt-3 flex items-center justify-between px-3 py-2"
+        style={{ backgroundColor: "rgba(10,10,10,0.08)" }}
+        aria-label="Status: booked"
+      >
+        <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-ink/85">
+          <span aria-hidden>⚿</span> Booked
+        </span>
+        {serial ? (
+          <span className="font-mono text-[10px] text-ink/65">{serial}</span>
+        ) : null}
+      </div>
+    );
+  }
+  if (status === "confirmed") {
+    return (
+      <div
+        className="mt-3 flex flex-col px-3 py-2.5"
+        style={{ backgroundColor: "#0a0a0a", color: "#f7f4ee" }}
+        aria-label="Status: confirmed"
+      >
+        <div className="flex items-center justify-between">
+          <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.32em]">
+            <span aria-hidden>◉</span> Confirmed
+          </span>
+          {statusDate ? (
+            <span className="font-mono text-[9px] tracking-wider text-paper/55">
+              {statusDate}
+            </span>
+          ) : null}
+        </div>
+        {serial ? (
+          <span className="mt-0.5 font-mono text-[10px] tracking-wide text-paper/80">
+            {serial}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+  // idea / proposed / discarded carry their state via the substrate alone.
+  return null;
 }
 
 export function Title({ children, className = "" }: { children: ReactNode; className?: string }) {

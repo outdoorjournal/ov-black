@@ -1,7 +1,24 @@
+import { redirect } from "next/navigation";
+
+import { resolveUserRole } from "@/lib/role";
+import { createServerSupabase } from "@/lib/supabase/server";
+
 import { InviteEntry } from "./_components/invite-entry";
 import { SignInEntry } from "./_components/sign-in-entry";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const supabase = await createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    const role = await resolveUserRole(supabase);
+    redirect(role === "advisor" ? "/command-center" : "/basecamp");
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-ink text-paper">
       <div
