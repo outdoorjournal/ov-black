@@ -26,13 +26,30 @@ import {
   type PositionedHNode,
 } from "../_state/layout";
 import { formatDayTile, localMinuteOfDay } from "../_lib/time";
-import type { NodeResponse, NodeStatus } from "../_lib/types";
+import type { NodeResponse, NodeStatus, NodeType } from "../_lib/types";
 
 const LOCKED_STATUSES: ReadonlySet<NodeStatus> = new Set(["approved", "confirmed"]);
 
 function isLockedStatus(status: NodeStatus): boolean {
   return LOCKED_STATUSES.has(status);
 }
+
+const DURATION_BAR_TYPE_COLOR: Partial<Record<NodeType, string>> = {
+  flight: "#4d7490",
+  transit: "#7a7a7a",
+  experience: "#b58a3a",
+  destination: "#5f7a4a",
+  hotel: "#3a3a3a",
+  meal: "#b85a3e",
+  free_time: "#a0a0a0",
+  note: "#bbb6ad",
+};
+
+function durationBarColor(type: NodeType): string {
+  return DURATION_BAR_TYPE_COLOR[type] ?? "#8a8a8a";
+}
+
+const DURATION_BAR_WIDTH = 16;
 
 interface HorizontalCanvasProps {
   layout: HLayoutResult;
@@ -49,6 +66,7 @@ interface HorizontalCanvasProps {
   onAcceptProposal: (id: string) => void;
   onDismissProposal: (id: string) => void;
   onMeasureCard: (id: string, height: number) => void;
+  onScrollToNode: (id: string) => void;
 }
 
 function MeasuredCard({
@@ -91,6 +109,7 @@ export function HorizontalCanvas({
   onAcceptProposal,
   onDismissProposal,
   onMeasureCard,
+  onScrollToNode,
 }: HorizontalCanvasProps) {
   const positioned = Array.from(layout.positions.values());
   const proposalIds = useMemo(
@@ -199,6 +218,71 @@ export function HorizontalCanvas({
               aria-label={p.node.title}
             />
           ))}
+
+        {/* Duration bars — a colored strip at each non-night-bar card's
+            left edge, height = the event's full duration mapped onto this
+            non-linear y axis. Extends past the card body for long events,
+            making "this dinner runs 2 hours" visible at a glance. Color is
+            keyed to node type (same palette as vertical's DurationBar).
+            When the bar extends well below the card, an up-arrow button at
+            the bar's tail scrolls the viewport back to the card. */}
+        {positioned
+          .filter((p) => !p.nightBar && p.barH > 0 && p.node.id !== ghostId)
+          .map((p) => {
+            const showScrollBack = p.barH > p.cardH + 24;
+            return (
+              <div
+                key={`dur-${p.node.id}`}
+                className="pointer-events-none absolute"
+                style={{
+                  top: p.y,
+                  left: xOf(p) - DURATION_BAR_WIDTH - 4,
+                  width: DURATION_BAR_WIDTH,
+                  height: p.barH,
+                }}
+              >
+                <div
+                  aria-hidden
+                  className="absolute inset-0 rounded-full"
+                  style={{
+                    backgroundColor: durationBarColor(p.node.type),
+                    opacity: 0.55,
+                    boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.15)",
+                  }}
+                />
+                {showScrollBack ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onScrollToNode(p.node.id);
+                    }}
+                    title={`Scroll back to ${p.node.title}`}
+                    aria-label={`Scroll back to ${p.node.title}`}
+                    className="pointer-events-auto absolute left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-ink/15 bg-paper text-ink/70 shadow-sm transition-colors hover:bg-ink hover:text-paper"
+                    style={{ bottom: -2 }}
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      aria-hidden
+                      className="block"
+                    >
+                      <path
+                        d="M5 2.5 L1.8 6 M5 2.5 L8.2 6 M5 2.5 L5 8"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        fill="none"
+                      />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
 
         <AnimatePresence initial={false}>
           {positioned

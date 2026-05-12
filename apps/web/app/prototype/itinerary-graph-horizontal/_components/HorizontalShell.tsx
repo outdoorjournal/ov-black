@@ -574,6 +574,7 @@ function Inner({ timeline }: HorizontalShellProps) {
                   storeApi.getState().dismissProposal(id)
                 }
                 onMeasureCard={handleMeasureCard}
+                onScrollToNode={scrollToNode}
               />
             </div>
             <ScrollHint
