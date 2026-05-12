@@ -535,7 +535,6 @@ function Inner({ timeline }: HorizontalShellProps) {
                 pxPerMinute={pxPerMinute}
                 totalHeight={layout.totalHeight}
                 timeMarkers={layout.timeMarkers}
-                days={layout.days}
               />
             </div>
           </div>

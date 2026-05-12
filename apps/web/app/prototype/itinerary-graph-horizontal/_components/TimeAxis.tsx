@@ -1,24 +1,17 @@
 "use client";
 
 // Shared minute-of-day y axis. Renders the sun-color gradient (single 24h
-// sweep, since every column shares 0..1440), elision bands, hour labels, and
-// — anchored to the bottom of the gutter — a small stack of weather glyphs,
-// one per day, so you can scan the trip's weather at a glance.
+// sweep, since every column shares 0..1440), elision bands, and hour labels.
 
 import { sunStopsForDay } from "../../itinerary-graph-vertical/_lib/sun";
 import { formatDuration } from "../_lib/time";
-import type {
-  DayLayout,
-  TimelineSegment,
-  TimeMarker,
-} from "../_state/layout";
+import type { TimelineSegment, TimeMarker } from "../_state/layout";
 
 interface TimeAxisProps {
   segments: TimelineSegment[];
   pxPerMinute: number;
   totalHeight: number;
   timeMarkers: TimeMarker[];
-  days: DayLayout[];
 }
 
 // When two hour labels would render within this distance the lower one is
@@ -30,7 +23,6 @@ export function TimeAxis({
   pxPerMinute,
   totalHeight,
   timeMarkers,
-  days,
 }: TimeAxisProps) {
   const minor = pxPerMinute > 3.0 ? 15 : pxPerMinute > 1.5 ? 30 : 60;
   const dedupedMarkers = dedupeMarkersByGap(timeMarkers, MARKER_MIN_GAP_PX);
@@ -62,29 +54,6 @@ export function TimeAxis({
         </div>
       ))}
 
-      {/* Weather strip — one tile per day, hugging the top so it reads as a
-          legend for the columns to the right. The day-header in the column
-          itself is the primary "day N" label; this strip is the at-a-glance
-          mood. */}
-      <div className="absolute bottom-0 left-0 right-0 max-h-[40%] overflow-y-auto border-t border-ink/10 bg-paper/85 px-2 py-2 text-center">
-        <p className="mb-1 text-[8px] uppercase tracking-[0.18em] text-ink/50">
-          Weather
-        </p>
-        <ul className="space-y-1 text-[12px]">
-          {days.map((d) => (
-            <li
-              key={`weather-${d.date}`}
-              className="flex items-center justify-center gap-1 text-ink/80"
-              title={`${d.label} · ${d.date}`}
-            >
-              <span className="font-mono text-[9px] text-ink/45">
-                {d.label.replace("Day ", "")}
-              </span>
-              <span aria-hidden>{d.weather_emoji ?? "·"}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
     </div>
   );
 }
