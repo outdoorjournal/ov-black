@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const t = TYPE_TOKENS.experience;
@@ -20,6 +20,23 @@ export function ExperienceGlance({ status = "proposed" }: { status?: StatusKind 
         <EnergyMeter level={1} />
         <span>Best 14:00–16:00</span>
       </div>
+    </CardShell>
+  );
+}
+
+export function ExperienceCompact({
+  status = "proposed",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="experience" status={status} width="compact">
+      <CompactBody
+        kind="experience"
+        title="Tea ceremony · Urasenke"
+        time="14:00"
+        duration="90m"
+      />
     </CardShell>
   );
 }

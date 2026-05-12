@@ -11,6 +11,7 @@ import { ChevronRight } from "lucide-react";
 import {
   CardShell,
   Chip,
+  CompactBody,
   Sub,
   Title,
 } from "../../cards/_components/CardShell";
@@ -29,6 +30,9 @@ interface JapanCardProps {
   tzOffsetHours: number;
   onClick?: () => void;
   flash?: boolean;
+  // When the parent layout is below the compact zoom breakpoint, render
+  // the strip variant (180px-wide, single-line) instead of the glance card.
+  compact?: boolean;
 }
 
 // The node graph collapses every ground transport leg into the single `transit`
@@ -82,7 +86,13 @@ function statusToKind(status: NodeResponse["status"]): StatusKind {
   }
 }
 
-export function JapanCard({ node, tzOffsetHours, onClick, flash }: JapanCardProps) {
+export function JapanCard({
+  node,
+  tzOffsetHours,
+  onClick,
+  flash,
+  compact = false,
+}: JapanCardProps) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
 
@@ -94,10 +104,29 @@ export function JapanCard({ node, tzOffsetHours, onClick, flash }: JapanCardProp
     "transition-shadow",
   ].join(" ");
 
+  const width = compact ? "compact" : "glance";
+  const meta = getHMeta(node);
+  const start = meta.start_time
+    ? formatClock(meta.start_time, tzOffsetHours)
+    : null;
+  const dur =
+    typeof meta.duration_minutes === "number"
+      ? formatDuration(meta.duration_minutes)
+      : null;
+
   return (
     <button type="button" onClick={onClick} className={wrapperClass}>
-      <CardShell kind={kind} status={status} width="glance">
-        <CardBody node={node} kind={kind} tzOffsetHours={tzOffsetHours} />
+      <CardShell kind={kind} status={status} width={width}>
+        {compact ? (
+          <CompactBody
+            kind={kind}
+            title={node.title}
+            time={start}
+            duration={dur}
+          />
+        ) : (
+          <CardBody node={node} kind={kind} tzOffsetHours={tzOffsetHours} />
+        )}
       </CardShell>
     </button>
   );

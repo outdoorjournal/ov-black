@@ -10,10 +10,12 @@ import {
   type StatusKind,
 } from "../_lib/tokens";
 
+export type CardWidth = "compact" | "glance" | "zoom";
+
 interface CardShellProps {
   kind: CardKind;
   status?: StatusKind;
-  width?: "glance" | "zoom";
+  width?: CardWidth;
   children: ReactNode;
   noteOverride?: boolean;
   // Surfaced in the Booked / Confirmed footer band as the operator's
@@ -100,15 +102,31 @@ export function CardShell({
   };
 
   // Padding lives on the body wrapper, not the shell, so the footer band can
-  // run edge-to-edge.
+  // run edge-to-edge. Compact matches glance's 260px footprint — the variant
+  // collapses *vertically*, not horizontally; it's triggered by low zoom
+  // density on the timeline, where horizontal room isn't the constraint.
+  const widthClass =
+    width === "compact" || width === "glance"
+      ? "w-[260px]"
+      : "w-full max-w-[640px]";
   const wrapClass = [
     "relative rounded-lg overflow-hidden font-sans text-ink text-left",
-    width === "glance" ? "w-[260px]" : "w-full max-w-[640px]",
+    widthClass,
     status === "idea" ? "opacity-80" : "",
     status === "discarded" ? "opacity-50 grayscale" : "",
   ].join(" ");
 
-  const bodyClass = width === "glance" ? "p-3 pb-0" : "p-5 pb-0";
+  const bodyClass =
+    width === "compact"
+      ? "px-2.5 py-1.5"
+      : width === "glance"
+        ? "p-3 pb-0"
+        : "p-5 pb-0";
+
+  // Compact mode is a strip — no full type-label header, no status footer.
+  // Compact shows the type icon inline with the body and relies on the
+  // corner stamp + substrate weight to carry status.
+  const isCompact = width === "compact";
 
   return (
     <div
@@ -120,7 +138,9 @@ export function CardShell({
       {status !== "idea" && status !== "discarded" ? (
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-1 left-3 h-3 w-12 rotate-[-3deg] opacity-80"
+          className={`pointer-events-none absolute -top-0.5 ${
+            isCompact ? "left-2 h-2 w-8" : "-top-1 left-3 h-3 w-12"
+          } rotate-[-3deg] opacity-80`}
           style={{
             backgroundColor: token.accent,
             boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
@@ -130,14 +150,18 @@ export function CardShell({
       ) : null}
 
       <div className={bodyClass}>
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
-          <token.Icon size={12} strokeWidth={1.6} aria-hidden />
-          <span>{token.label}</span>
-        </div>
+        {isCompact ? null : (
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
+            <token.Icon size={12} strokeWidth={1.6} aria-hidden />
+            <span>{token.label}</span>
+          </div>
+        )}
         {children}
       </div>
 
-      <StatusFooter status={status} serial={serial} statusDate={statusDate} />
+      {isCompact ? null : (
+        <StatusFooter status={status} serial={serial} statusDate={statusDate} />
+      )}
     </div>
   );
 }
@@ -221,6 +245,49 @@ export function Title({ children, className = "" }: { children: ReactNode; class
 
 export function Sub({ children }: { children: ReactNode }) {
   return <p className="mt-0.5 text-[11px] text-ink/65">{children}</p>;
+}
+
+// Compact-card content row. Type icon + tight title + optional time and
+// duration. Designed for ~180px shells where every pixel of vertical and
+// horizontal space matters; longer titles truncate to one line.
+export function CompactBody({
+  kind,
+  title,
+  time,
+  duration,
+  trailing,
+}: {
+  kind: CardKind;
+  title: ReactNode;
+  time?: string | null;
+  duration?: string | null;
+  // Optional inline trailing slot (e.g. flight "DTW → HND" arc). Replaces
+  // the default time/duration row when provided.
+  trailing?: ReactNode;
+}) {
+  const token = TYPE_TOKENS[kind];
+  return (
+    <div className="flex items-start gap-2">
+      <token.Icon
+        size={14}
+        strokeWidth={1.6}
+        aria-hidden
+        className="mt-0.5 shrink-0 text-ink/70"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-serif text-[13px] leading-snug text-ink">
+          {title}
+        </p>
+        {trailing ?? (
+          <p className="mt-0.5 flex items-center gap-1.5 truncate font-mono text-[10px] text-ink/60">
+            {time ? <span>{time}</span> : null}
+            {time && duration ? <span aria-hidden>·</span> : null}
+            {duration ? <span>{duration}</span> : null}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function Chip({

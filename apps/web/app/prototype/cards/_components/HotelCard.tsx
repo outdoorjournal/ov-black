@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const t = TYPE_TOKENS.hotel;
@@ -22,6 +22,18 @@ export function HotelGlance({ status = "booked" }: { status?: StatusKind }) {
         <Chip tint={t.tint}>King · Suite</Chip>
         <Chip tint={t.tint}>14:00 → 12:00</Chip>
       </div>
+    </CardShell>
+  );
+}
+
+export function HotelCompact({
+  status = "booked",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="hotel" status={status} width="compact">
+      <CompactBody kind="hotel" title="Aman Tokyo" duration="3 nights" />
     </CardShell>
   );
 }

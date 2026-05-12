@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { METRO_LINE_COLORS, TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const t = TYPE_TOKENS.subway;
@@ -43,6 +43,23 @@ export function SubwayGlance({ status = "approved" }: { status?: StatusKind }) {
         <Chip tint={t.tint}>10 stops</Chip>
         <Chip tint={t.tint}>1 transfer-free</Chip>
       </div>
+    </CardShell>
+  );
+}
+
+export function SubwayCompact({
+  status = "approved",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="subway" status={status} width="compact">
+      <CompactBody
+        kind="subway"
+        title="Asakusa → Ginza"
+        time="14:05"
+        duration="17m"
+      />
     </CardShell>
   );
 }

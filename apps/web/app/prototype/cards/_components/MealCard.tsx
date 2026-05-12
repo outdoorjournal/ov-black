@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const t = TYPE_TOKENS.meal;
@@ -20,6 +20,23 @@ export function MealGlance({ status = "booked" }: { status?: StatusKind }) {
         <Chip tint={t.tint}>Pescatarian on file</Chip>
         <Chip tint={t.tint}>Smart casual</Chip>
       </div>
+    </CardShell>
+  );
+}
+
+export function MealCompact({
+  status = "booked",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="meal" status={status} width="compact">
+      <CompactBody
+        kind="meal"
+        title="Sushi Saito"
+        time="19:30"
+        duration="2h"
+      />
     </CardShell>
   );
 }

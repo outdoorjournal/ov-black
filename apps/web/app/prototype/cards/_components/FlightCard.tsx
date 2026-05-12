@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const t = TYPE_TOKENS.flight;
@@ -32,6 +32,28 @@ export function FlightGlance({
         <Sub>{code}</Sub>
         <span className="text-[11px] text-ink/60">{duration}</span>
       </div>
+    </CardShell>
+  );
+}
+
+export function FlightCompact({
+  from = "DTW",
+  to = "HND",
+  duration = "13h 15m",
+  status = "approved",
+}: {
+  from?: string;
+  to?: string;
+  duration?: string;
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="flight" status={status} width="compact">
+      <CompactBody
+        kind="flight"
+        title={`${from} → ${to}`}
+        duration={duration}
+      />
     </CardShell>
   );
 }

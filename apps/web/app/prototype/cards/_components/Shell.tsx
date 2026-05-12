@@ -1,18 +1,31 @@
 "use client";
 
-import { DriveGlance, DriveZoom, WalkGlance } from "./DriveWalkCard";
-import { ExperienceGlance, ExperienceZoom } from "./ExperienceCard";
-import { FlightGlance, FlightZoom } from "./FlightCard";
 import {
+  DriveCompact,
+  DriveGlance,
+  DriveZoom,
+  WalkCompact,
+  WalkGlance,
+} from "./DriveWalkCard";
+import {
+  ExperienceCompact,
+  ExperienceGlance,
+  ExperienceZoom,
+} from "./ExperienceCard";
+import { FlightCompact, FlightGlance, FlightZoom } from "./FlightCard";
+import {
+  FreeTimeCompact,
   FreeTimeGlance,
   FreeTimeZoom,
+  NoteCompact,
   NoteGlance,
   NoteZoom,
+  WaitingCompact,
   WaitingGlance,
   WaitingZoom,
 } from "./FreeWaitNoteCard";
-import { HotelGlance, HotelZoom } from "./HotelCard";
-import { MealGlance, MealZoom } from "./MealCard";
+import { HotelCompact, HotelGlance, HotelZoom } from "./HotelCard";
+import { MealCompact, MealGlance, MealZoom } from "./MealCard";
 import {
   A11yPanel,
   Row,
@@ -22,8 +35,8 @@ import {
 } from "./Sections";
 import { StatusAlternatives } from "./StatusAlternatives";
 import { StatusShowcase } from "./StatusShowcase";
-import { SubwayGlance, SubwayZoom } from "./SubwayCard";
-import { TrainGlance, TrainZoom } from "./TrainCard";
+import { SubwayCompact, SubwayGlance, SubwayZoom } from "./SubwayCard";
+import { TrainCompact, TrainGlance, TrainZoom } from "./TrainCard";
 
 export function Shell() {
   return (
@@ -241,6 +254,35 @@ export function Shell() {
 
         <Section
           index="11"
+          title="Density · compact strip"
+          blurb="A vertically-compact variant for zoomed-out timelines — same 260-px width as glance, same type taxonomy and status substrate, but stripped to icon + title + time so the card row only occupies ~40 px of vertical space. Used in the horizontal itinerary when pxPerMinute drops below the compact breakpoint, since at low zoom the timeline runs out of *height* per hour, not width."
+          notes={[
+            "Compact suppresses the type-label header and the status footer band — the corner stamp and substrate weight carry status alone.",
+            "Long titles truncate to one line; the type icon stays alongside so the kind is still readable without color.",
+            "Drop-in replacement for the glance card in the horizontal canvas — same wrapper, same status/kind props, same width.",
+          ]}
+        >
+          <Row label="Movement">
+            <FlightCompact />
+            <SubwayCompact />
+            <TrainCompact />
+            <DriveCompact />
+            <WalkCompact />
+          </Row>
+          <Row label="Stay · activity · meal">
+            <HotelCompact />
+            <ExperienceCompact />
+            <MealCompact />
+          </Row>
+          <Row label="Compose">
+            <FreeTimeCompact />
+            <WaitingCompact />
+            <NoteCompact />
+          </Row>
+        </Section>
+
+        <Section
+          index="12"
           title="Accessibility"
           blurb="The checklist this prototype is meeting (or aspiring to). Anything that fails today is called out so we can plan."
         >

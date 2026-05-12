@@ -650,6 +650,11 @@ function Inner({ timeline }: HorizontalShellProps) {
             <JapanCard
               node={activeNode}
               tzOffsetHours={timeline.timezoneOffsetHours}
+              compact={
+                drag.activeId
+                  ? layout.positions.get(drag.activeId)?.compact ?? false
+                  : false
+              }
             />
           </div>
         ) : null}

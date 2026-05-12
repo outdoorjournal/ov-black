@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const drive = TYPE_TOKENS.drive;
@@ -29,6 +29,40 @@ export function DriveGlance({ status = "booked" }: { status?: StatusKind }) {
       <div className="mt-2 flex flex-wrap gap-1">
         <Chip tint={drive.tint}>Plate 品川 330 · ぬ 12-34</Chip>
       </div>
+    </CardShell>
+  );
+}
+
+export function DriveCompact({
+  status = "booked",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="drive" status={status} width="compact">
+      <CompactBody
+        kind="drive"
+        title="Haneda → Aman"
+        time="18:55"
+        duration="42m"
+      />
+    </CardShell>
+  );
+}
+
+export function WalkCompact({
+  status = "approved",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="walk" status={status} width="compact">
+      <CompactBody
+        kind="walk"
+        title="Aman → Ginza"
+        time="10:30"
+        duration="14m"
+      />
     </CardShell>
   );
 }

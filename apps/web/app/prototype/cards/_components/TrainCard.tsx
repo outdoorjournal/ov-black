@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const t = TYPE_TOKENS.train;
@@ -44,6 +44,23 @@ export function TrainGlance({ status = "approved" }: { status?: StatusKind }) {
         <Chip tint={t.tint}>JR Pass · OK</Chip>
         <Chip tint={t.tint}>Reserved</Chip>
       </div>
+    </CardShell>
+  );
+}
+
+export function TrainCompact({
+  status = "approved",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="train" status={status} width="compact">
+      <CompactBody
+        kind="train"
+        title="Shin-Ōsaka → Atami"
+        time="09:54"
+        duration="3h 27m"
+      />
     </CardShell>
   );
 }

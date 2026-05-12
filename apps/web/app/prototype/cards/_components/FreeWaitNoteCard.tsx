@@ -1,6 +1,6 @@
 "use client";
 
-import { CardShell, Chip, Sub, Title } from "./CardShell";
+import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
 import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
 
 const free = TYPE_TOKENS.free_time;
@@ -20,6 +20,23 @@ export function FreeTimeGlance({ status = "proposed" }: { status?: StatusKind })
         <span>Sunset 18:42</span>
         <span>Energy: rest</span>
       </div>
+    </CardShell>
+  );
+}
+
+export function FreeTimeCompact({
+  status = "proposed",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="free_time" status={status} width="compact">
+      <CompactBody
+        kind="free_time"
+        title="Open afternoon"
+        time="14:00"
+        duration="3h"
+      />
     </CardShell>
   );
 }
@@ -99,6 +116,23 @@ export function WaitingGlance({ status = "proposed" }: { status?: StatusKind }) 
   );
 }
 
+export function WaitingCompact({
+  status = "proposed",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="waiting" status={status} width="compact">
+      <CompactBody
+        kind="waiting"
+        title="Check-in window"
+        time="17:30"
+        duration="30m"
+      />
+    </CardShell>
+  );
+}
+
 export function WaitingZoom() {
   return (
     <CardShell kind="waiting" status="approved" width="zoom">
@@ -145,6 +179,18 @@ export function NoteGlance({ status = "proposed" }: { status?: StatusKind }) {
           <span>Mar 12</span>
         </div>
       </div>
+    </CardShell>
+  );
+}
+
+export function NoteCompact({
+  status = "proposed",
+}: {
+  status?: StatusKind;
+}) {
+  return (
+    <CardShell kind="note" status={status} width="compact">
+      <CompactBody kind="note" title="Bring umbrella" />
     </CardShell>
   );
 }

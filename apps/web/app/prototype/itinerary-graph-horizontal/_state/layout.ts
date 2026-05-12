@@ -44,13 +44,24 @@ export const PAD_X = 24;
 export const PAD_TOP = 12;
 export const DAY_HEADER_HEIGHT = 64;
 // Matches CardShell glance width (`w-[260px]`) in /prototype/cards so the
-// focused/dragging chrome wraps the visible card edge exactly. `LANE_WIDTH`
-// is the in-day side-by-side slot width — currently the same as the legacy
-// `COL_WIDTH` because a day with one lane should render identically to the
-// pre-lane layout.
+// focused/dragging chrome wraps the visible card edge exactly. Compact
+// cards share the same 260px footprint — only their vertical height
+// collapses, since the compact trigger is low *vertical* density per-card,
+// not horizontal pressure.
 export const LANE_WIDTH = 260;
 export const LANE_GAP = 12;
 export const COL_WIDTH = LANE_WIDTH;
+
+// Per-card compact rule: room = (nextInLane.startMin − this.startMin) ×
+// pxPerMinute. Pure time-distance in pixels — no slot inflation — so the
+// rule scales linearly with zoom. Long-duration cards stay glance at
+// normal zoom (120 min × 1.2 = 144 px ≥ 100); short cards collapse; and
+// zooming all the way out forces *everything* compact. A two-pass
+// "actual rendered room" rule was tried and rejected: when many days'
+// cards land at the same minute-of-day, intermediate global slots get
+// occupied (~52 px each) regardless of zoom, leaving plenty of room for
+// glance even when the user wants everything compressed.
+export const GLANCE_MIN_HEIGHT_PX = 100;
 export const COL_GAP = 20;
 export const NIGHT_BAR_WIDTH = 6;
 export const NIGHT_BAR_GAP = 4;
@@ -86,6 +97,9 @@ export interface PositionedHNode {
   w: number;
   cardH: number;
   barH: number;
+  // True when the card's duration at the current zoom doesn't give it
+  // enough vertical room for a glance card — render compact strip instead.
+  compact: boolean;
   nightBar?: boolean;
   altGroup?: string;
   altGroupMembers?: string[];
@@ -179,6 +193,8 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     excludeNodeId,
   } = args;
 
+  const laneWidth = LANE_WIDTH;
+
   // Alt groups: from metadata or from `alternative_to` edges. Same shape as
   // the vertical layout — a set of node ids that should be visually grouped.
   // In this prototype we *don't* fan them into separate lanes; they stack
@@ -216,7 +232,12 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     durationMin: number;
     cardH: number;
     isNightBar: boolean;
+    compact: boolean;
   }
+
+  // Compact form's single-row card height. Used as the cardH fallback for
+  // items whose compact decision flipped before they were measured.
+  const compactFallbackH = 44;
 
   const items: Item[] = [];
   for (const n of nodes) {
@@ -233,9 +254,14 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     const startMin = isNightBar ? rawStartMin : snapMinute(rawStartMin);
     const durationMin =
       typeof m.duration_minutes === "number" ? m.duration_minutes : 30;
+    // Card height starts at the glance fallback; the pass-1 segments use
+    // this to estimate "if everyone were glance, how much room would each
+    // card have?". After pass 1 we revise both `compact` and `cardH`.
     const measured = cardHeights?.get(n.id);
     const cardH =
-      typeof measured === "number" && measured > 0 ? measured : CARD_FALLBACK_H;
+      typeof measured === "number" && measured > 0
+        ? Math.max(measured, CARD_FALLBACK_H)
+        : CARD_FALLBACK_H;
     items.push({
       node: n,
       meta: m,
@@ -246,6 +272,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       durationMin,
       cardH,
       isNightBar,
+      compact: false,
     });
   }
 
@@ -297,27 +324,17 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     if (excludeNodeId) laneByNode.set(excludeNodeId, 0);
   }
 
-  // Slot → required height (max card height + pad across all days/lanes that
-  // place a card at this snapped minute). Excluding the dragged source keeps
-  // its old slot from holding the row open after it's been picked up.
   const pxPerSlot = Math.max(MIN_SLOT_PX, pxPerMinute * SNAP_SLOT_MIN);
-  const slotRequiredH = new Map<number, number>();
-  for (const item of items) {
-    if (item.isNightBar) continue;
-    if (excludeNodeId && item.node.id === excludeNodeId) continue;
-    const required = item.cardH + VERTICAL_PAD;
-    const cur = slotRequiredH.get(item.startMin) ?? 0;
-    if (required > cur) slotRequiredH.set(item.startMin, required);
-  }
 
-  // Build segments slot-by-slot across the full 0..1440 day. Occupied slots
-  // get their required height; runs of empty slots stay live if short and
-  // collapse to an elision band when long.
-  const segments: TimelineSegment[] = [];
-  {
+  // Helper: build segments slot-by-slot from a map of slot → required
+  // height. Reused twice — once with everyone-glance heights to estimate
+  // per-card room, once with the final per-card chosen-form heights.
+  const buildSegments = (
+    slotRequiredH: Map<number, number>,
+  ): TimelineSegment[] => {
+    const out: TimelineSegment[] = [];
     let yCursor = 0;
     let emptyStart: number | null = null;
-
     const flushEmpty = (untilMin: number) => {
       if (emptyStart === null) return;
       const span = untilMin - emptyStart;
@@ -326,7 +343,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
         return;
       }
       if (span > ELIDE_THRESHOLD_MIN) {
-        segments.push({
+        out.push({
           type: "elide",
           startMin: emptyStart,
           endMin: untilMin,
@@ -336,7 +353,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
         yCursor += ELIDE_BAND_PX;
       } else {
         const liveH = (span / SNAP_SLOT_MIN) * pxPerSlot;
-        segments.push({
+        out.push({
           type: "live",
           startMin: emptyStart,
           endMin: untilMin,
@@ -347,13 +364,12 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       }
       emptyStart = null;
     };
-
     for (let slot = 0; slot < MINUTES_PER_DAY; slot += SNAP_SLOT_MIN) {
       const required = slotRequiredH.get(slot);
       if (required !== undefined) {
         flushEmpty(slot);
         const h = Math.max(pxPerSlot, required);
-        segments.push({
+        out.push({
           type: "live",
           startMin: slot,
           endMin: slot + SNAP_SLOT_MIN,
@@ -366,7 +382,50 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       }
     }
     flushEmpty(MINUTES_PER_DAY);
+    return out;
+  };
+
+  // Per-card compact decision: room = time-distance to the next card in
+  // this lane × pxPerMinute. For the last item in a lane there's no next,
+  // so room is treated as "rest of day" — practically unlimited, so
+  // glance. The rule is linear in zoom: at pxPerMinute=0.6 a 2-hour event
+  // has 72 px of room (compact), at 1.5 it has 180 px (glance).
+  const itemsByLane = new Map<string, Item[]>();
+  for (const item of items) {
+    if (item.isNightBar) continue;
+    const lane = laneByNode.get(item.node.id) ?? 0;
+    const key = `${item.dayKey}|${lane}`;
+    const arr = itemsByLane.get(key) ?? [];
+    arr.push(item);
+    itemsByLane.set(key, arr);
   }
+  for (const arr of itemsByLane.values()) {
+    arr.sort((a, b) => a.startMin - b.startMin);
+  }
+  for (const arr of itemsByLane.values()) {
+    for (let i = 0; i < arr.length; i++) {
+      const cur = arr[i]!;
+      const next = arr[i + 1];
+      const gapMin = next ? next.startMin - cur.startMin : MINUTES_PER_DAY;
+      const room = gapMin * pxPerMinute;
+      cur.compact = room < GLANCE_MIN_HEIGHT_PX;
+      const measured = cardHeights?.get(cur.node.id);
+      const fallback = cur.compact ? compactFallbackH : CARD_FALLBACK_H;
+      cur.cardH =
+        typeof measured === "number" && measured > 0 ? measured : fallback;
+    }
+  }
+
+  // Final slot heights using each card's chosen form.
+  const slotRequiredH = new Map<number, number>();
+  for (const item of items) {
+    if (item.isNightBar) continue;
+    if (excludeNodeId && item.node.id === excludeNodeId) continue;
+    const required = item.cardH + VERTICAL_PAD;
+    const cur = slotRequiredH.get(item.startMin) ?? 0;
+    if (required > cur) slotRequiredH.set(item.startMin, required);
+  }
+  const segments = buildSegments(slotRequiredH);
 
   // Day column x positions — one column per day. Width grows with lane count
   // so a day with two side-by-side cards reserves room for both.
@@ -375,7 +434,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   for (const dm of daysMeta) {
     const dayIndex = dayIndexByDate.get(dm.date) ?? 0;
     const laneCount = dayLaneCount.get(dm.date) ?? 1;
-    const lanesWidth = laneCount * LANE_WIDTH + (laneCount - 1) * LANE_GAP;
+    const lanesWidth = laneCount * laneWidth + (laneCount - 1) * LANE_GAP;
     const columnWidth = lanesWidth + NIGHT_BAR_GAP + NIGHT_BAR_WIDTH;
     days.push({
       date: dm.date,
@@ -414,8 +473,8 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       );
       barH = Math.max(item.cardH, totalSegHeight - y);
     } else {
-      x = baseX + lane * (LANE_WIDTH + LANE_GAP);
-      w = LANE_WIDTH;
+      x = baseX + lane * (laneWidth + LANE_GAP);
+      w = laneWidth;
       y = mapMinuteToY(item.startMin, segments);
       // Duration bar y-span: how tall the event reads on this non-linear
       // axis. May extend well past the card body when an event covers many
@@ -437,6 +496,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       w,
       cardH: item.cardH,
       barH,
+      compact: item.compact,
     };
     if (item.isNightBar) positioned.nightBar = true;
     const group = altGroupByNode.get(item.node.id);

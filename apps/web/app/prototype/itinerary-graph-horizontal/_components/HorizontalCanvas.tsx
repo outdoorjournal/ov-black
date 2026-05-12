@@ -317,6 +317,7 @@ export function HorizontalCanvas({
                   onAccept={() => onAcceptProposal(p.node.id)}
                   onDismiss={() => onDismissProposal(p.node.id)}
                   tzOffsetHours={tzOffsetHours}
+                  compact={p.compact}
                 />
               );
             })}
@@ -478,6 +479,7 @@ function CardWrap({
   onAccept,
   onDismiss,
   tzOffsetHours,
+  compact,
 }: {
   p: PositionedHNode;
   axisWidth: number;
@@ -492,6 +494,7 @@ function CardWrap({
   onAccept: () => void;
   onDismiss: () => void;
   tzOffsetHours: number;
+  compact: boolean;
 }) {
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
     id: p.node.id,
@@ -558,6 +561,7 @@ function CardWrap({
               tzOffsetHours={tzOffsetHours}
               onClick={onClick}
               flash={isFlashing}
+              compact={compact}
             />
           </motion.div>
           {isProposal ? (
