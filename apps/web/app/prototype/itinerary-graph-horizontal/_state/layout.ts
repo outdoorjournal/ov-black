@@ -6,27 +6,20 @@
 // horizontally to compare "what was I doing at 10am on each day" and the
 // shared sun gradient + weather strip on the left labels them once.
 //
-// Strategy: **snap + min-row-height** (vs. the earlier "live/elide + stretches"
-// approach).
+// Strategy: **uniform timeline with elision**. Live regions scale linearly
+// with zoom — `(end−start) × pxPerMinute` — so the timeline compresses
+// evenly when the user zooms out. Dead overnight stretches (no card within
+// `ELIDE_THRESHOLD_MIN` of either edge) collapse to a fixed elision band so
+// the day fits at any zoom. No per-slot min-row-height inflation: a slot
+// containing a tall glance card doesn't add real-estate. Start times still
+// snap to a 15-minute grid for clean lane assignment. To stop short events
+// from visually overlapping their neighbors at low zoom, each card
+// independently switches to a compact strip form when its time-distance to
+// the next card in lane × pxPerMinute drops below `GLANCE_MIN_HEIGHT_PX`.
 //
-//   1. Every card's start_time is rounded to a `SNAP_SLOT_MIN` slot (default
-//      15). Lane assignment + y placement work off the snapped value.
-//
-//   2. The global y axis is a sequence of slot segments. Each occupied slot
-//      (any day, any lane has a card there) gets a row whose height is
-//      max(pxPerSlot, tallest card-in-this-slot + padding). Same-day-different-
-//      lane cards never push each other vertically (they sit side-by-side);
-//      same-slot cards across days share the slot's height so they stay aligned.
-//
-//   3. Empty slots between two occupied slots stay "live" if the gap is short,
-//      and collapse to a fixed elision band if it exceeds `ELIDE_THRESHOLD_MIN`.
-//      This preserves the current prototype's compact feel for overnight gaps
-//      while killing the stretch-injection loop that the earlier algorithm
-//      needed when card heights exceeded the time gap between starts.
-//
-// Night bars (overnight sleep) don't take card-width and don't enter slot
-// height calculations; they render as a thin colored strip pinned to the
-// right edge of each day column from local-21:00 to the column's bottom.
+// Night bars (overnight sleep) don't take card-width; they render as a thin
+// colored strip pinned to the right edge of each day column from local-21:00
+// to the column's bottom.
 
 import type { EdgeResponse, NodeResponse } from "../_lib/types";
 import { getHMeta } from "../_lib/types";
@@ -53,27 +46,22 @@ export const LANE_GAP = 12;
 export const COL_WIDTH = LANE_WIDTH;
 
 // Per-card compact rule: room = (nextInLane.startMin − this.startMin) ×
-// pxPerMinute. Pure time-distance in pixels — no slot inflation — so the
-// rule scales linearly with zoom. Long-duration cards stay glance at
-// normal zoom (120 min × 1.2 = 144 px ≥ 100); short cards collapse; and
-// zooming all the way out forces *everything* compact. A two-pass
-// "actual rendered room" rule was tried and rejected: when many days'
-// cards land at the same minute-of-day, intermediate global slots get
-// occupied (~52 px each) regardless of zoom, leaving plenty of room for
-// glance even when the user wants everything compressed.
-export const GLANCE_MIN_HEIGHT_PX = 100;
+// effectivePxPerMin. Pure time-distance in pixels — no slot inflation —
+// so the rule scales linearly with zoom (down to the floor where the
+// compact tile fits in 15 min). Threshold is roughly the upper end of a
+// glance card body: experience cards with image + chips are ~230 px,
+// transit/hotel ~166 px, so 180 catches all but the tallest with a
+// little overlap acceptable for outliers.
+export const GLANCE_MIN_HEIGHT_PX = 180;
 export const COL_GAP = 20;
 export const NIGHT_BAR_WIDTH = 6;
 export const NIGHT_BAR_GAP = 4;
 export const CARD_FALLBACK_H = 132;
 export const VERTICAL_PAD = 8;
 
-// Snap grid. Start times round to the nearest `SNAP_SLOT_MIN` minutes; the
-// axis y is built one slot at a time. `MIN_SLOT_PX` is the floor for an
-// empty/short slot at low zoom so the axis still reads as time even when
-// pxPerMinute is tiny.
+// Snap grid. Start times round to the nearest `SNAP_SLOT_MIN` minutes so
+// lane assignment and card positions land on clean quarter-hour boundaries.
 export const SNAP_SLOT_MIN = 15;
-export const MIN_SLOT_PX = 6;
 
 // Empty runs longer than this collapse to a fixed-height elision band.
 const ELIDE_THRESHOLD_MIN = 90;
@@ -324,67 +312,6 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     if (excludeNodeId) laneByNode.set(excludeNodeId, 0);
   }
 
-  const pxPerSlot = Math.max(MIN_SLOT_PX, pxPerMinute * SNAP_SLOT_MIN);
-
-  // Helper: build segments slot-by-slot from a map of slot → required
-  // height. Reused twice — once with everyone-glance heights to estimate
-  // per-card room, once with the final per-card chosen-form heights.
-  const buildSegments = (
-    slotRequiredH: Map<number, number>,
-  ): TimelineSegment[] => {
-    const out: TimelineSegment[] = [];
-    let yCursor = 0;
-    let emptyStart: number | null = null;
-    const flushEmpty = (untilMin: number) => {
-      if (emptyStart === null) return;
-      const span = untilMin - emptyStart;
-      if (span <= 0) {
-        emptyStart = null;
-        return;
-      }
-      if (span > ELIDE_THRESHOLD_MIN) {
-        out.push({
-          type: "elide",
-          startMin: emptyStart,
-          endMin: untilMin,
-          yStart: yCursor,
-          yEnd: yCursor + ELIDE_BAND_PX,
-        });
-        yCursor += ELIDE_BAND_PX;
-      } else {
-        const liveH = (span / SNAP_SLOT_MIN) * pxPerSlot;
-        out.push({
-          type: "live",
-          startMin: emptyStart,
-          endMin: untilMin,
-          yStart: yCursor,
-          yEnd: yCursor + liveH,
-        });
-        yCursor += liveH;
-      }
-      emptyStart = null;
-    };
-    for (let slot = 0; slot < MINUTES_PER_DAY; slot += SNAP_SLOT_MIN) {
-      const required = slotRequiredH.get(slot);
-      if (required !== undefined) {
-        flushEmpty(slot);
-        const h = Math.max(pxPerSlot, required);
-        out.push({
-          type: "live",
-          startMin: slot,
-          endMin: slot + SNAP_SLOT_MIN,
-          yStart: yCursor,
-          yEnd: yCursor + h,
-        });
-        yCursor += h;
-      } else {
-        if (emptyStart === null) emptyStart = slot;
-      }
-    }
-    flushEmpty(MINUTES_PER_DAY);
-    return out;
-  };
-
   // Per-card compact decision: room = time-distance to the next card in
   // this lane × pxPerMinute. For the last item in a lane there's no next,
   // so room is treated as "rest of day" — practically unlimited, so
@@ -402,12 +329,23 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   for (const arr of itemsByLane.values()) {
     arr.sort((a, b) => a.startMin - b.startMin);
   }
+  // Floor the effective scale so a 15-minute live span is at least as tall
+  // as a compact tile. Below this, the user's slider stops compressing the
+  // timeline — there's no useful way to render two compact cards 15 min
+  // apart in fewer pixels than the cards themselves occupy. Compact
+  // decisions use the same effective scale so the rule and the rendering
+  // stay consistent.
+  const effectivePxPerMin = Math.max(
+    pxPerMinute,
+    compactFallbackH / SNAP_SLOT_MIN,
+  );
+
   for (const arr of itemsByLane.values()) {
     for (let i = 0; i < arr.length; i++) {
       const cur = arr[i]!;
       const next = arr[i + 1];
       const gapMin = next ? next.startMin - cur.startMin : MINUTES_PER_DAY;
-      const room = gapMin * pxPerMinute;
+      const room = gapMin * effectivePxPerMin;
       cur.compact = room < GLANCE_MIN_HEIGHT_PX;
       const measured = cardHeights?.get(cur.node.id);
       const fallback = cur.compact ? compactFallbackH : CARD_FALLBACK_H;
@@ -416,16 +354,73 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     }
   }
 
-  // Final slot heights using each card's chosen form.
-  const slotRequiredH = new Map<number, number>();
-  for (const item of items) {
-    if (item.isNightBar) continue;
-    if (excludeNodeId && item.node.id === excludeNodeId) continue;
-    const required = item.cardH + VERTICAL_PAD;
-    const cur = slotRequiredH.get(item.startMin) ?? 0;
-    if (required > cur) slotRequiredH.set(item.startMin, required);
-  }
-  const segments = buildSegments(slotRequiredH);
+  // Uniform timeline with elision. Live regions (where any card lands,
+  // plus a small buffer) scale linearly with zoom: `(end−start) ×
+  // pxPerMinute`. Dead stretches longer than ELIDE_THRESHOLD_MIN
+  // (overnight) collapse to a fixed-height band so the day fits.
+  const segments: TimelineSegment[] = (() => {
+    const NODE_BUFFER_MIN = 15;
+    const intervals: Array<[number, number]> = [];
+    for (const item of items) {
+      if (item.isNightBar) continue;
+      intervals.push([
+        Math.max(0, item.startMin - NODE_BUFFER_MIN),
+        Math.min(
+          MINUTES_PER_DAY,
+          item.startMin + item.durationMin + NODE_BUFFER_MIN,
+        ),
+      ]);
+    }
+    intervals.sort((a, b) => a[0] - b[0]);
+    const merged: Array<[number, number]> = [];
+    for (const [s, e] of intervals) {
+      const last = merged[merged.length - 1];
+      if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+      else merged.push([s, e]);
+    }
+    const out: TimelineSegment[] = [];
+    let yCursor = 0;
+    let cursorMin = 0;
+    const pushGap = (s: number, e: number) => {
+      const span = e - s;
+      if (span <= 0) return;
+      if (span > ELIDE_THRESHOLD_MIN) {
+        out.push({
+          type: "elide",
+          startMin: s,
+          endMin: e,
+          yStart: yCursor,
+          yEnd: yCursor + ELIDE_BAND_PX,
+        });
+        yCursor += ELIDE_BAND_PX;
+      } else {
+        const liveH = span * effectivePxPerMin;
+        out.push({
+          type: "live",
+          startMin: s,
+          endMin: e,
+          yStart: yCursor,
+          yEnd: yCursor + liveH,
+        });
+        yCursor += liveH;
+      }
+    };
+    for (const [s, e] of merged) {
+      pushGap(cursorMin, s);
+      const liveH = (e - s) * effectivePxPerMin;
+      out.push({
+        type: "live",
+        startMin: s,
+        endMin: e,
+        yStart: yCursor,
+        yEnd: yCursor + liveH,
+      });
+      yCursor += liveH;
+      cursorMin = e;
+    }
+    pushGap(cursorMin, MINUTES_PER_DAY);
+    return out;
+  })();
 
   // Day column x positions — one column per day. Width grows with lane count
   // so a day with two side-by-side cards reserves room for both.
@@ -515,24 +510,23 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   }
   const totalHeight = segHeight + 80;
 
-  // Time markers: one per occupied snapped slot, plus hour boundaries that
-  // fall inside live segments and aren't already covered. Cards anchor to
-  // their snapped slot's top y, so the label sits exactly at the card row.
+  // Time markers: hour boundaries across the full day, plus per-card
+  // snapped start times so each card has a label next to it. The TimeAxis
+  // dedupe handles cases where a card lands on the hour.
   const labelByMinute = new Map<number, { y: number; label: string }>();
-  for (const slot of slotRequiredH.keys()) {
-    const y = mapMinuteToY(slot, segments);
-    labelByMinute.set(slot, { y, label: formatMinuteOfDay(slot) });
-  }
   for (let h = 0; h < 24; h++) {
     const min = h * 60;
-    if (labelByMinute.has(min)) continue;
-    const live = segments.some(
-      (s) => s.startMin <= min && min < s.endMin && s.type === "live",
-    );
-    if (!live) continue;
     labelByMinute.set(min, {
       y: mapMinuteToY(min, segments),
       label: formatMinuteOfDay(min),
+    });
+  }
+  for (const item of items) {
+    if (item.isNightBar) continue;
+    if (labelByMinute.has(item.startMin)) continue;
+    labelByMinute.set(item.startMin, {
+      y: mapMinuteToY(item.startMin, segments),
+      label: formatMinuteOfDay(item.startMin),
     });
   }
   const timeMarkers: TimeMarker[] = Array.from(labelByMinute.values()).sort(
