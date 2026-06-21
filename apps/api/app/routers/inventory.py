@@ -83,6 +83,30 @@ async def search_inventory_endpoint(
     ),
     keyword: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
+    origin: str | None = Query(
+        default=None,
+        description=(
+            "Flight origin IATA code (e.g. ``LHR``). Flight providers (Duffel) "
+            "require origin + destination + departure_date together."
+        ),
+    ),
+    destination: str | None = Query(
+        default=None, description="Flight destination IATA code (e.g. ``JFK``)."
+    ),
+    departure_date: str | None = Query(
+        default=None, description="Flight departure date, ``YYYY-MM-DD``."
+    ),
+    return_date: str | None = Query(
+        default=None,
+        description="Optional return date, ``YYYY-MM-DD`` — present ⇒ round trip.",
+    ),
+    cabin_class: str | None = Query(
+        default=None,
+        description="Flight cabin: ``economy`` | ``premium_economy`` | ``business`` | ``first``.",
+    ),
+    adults: int | None = Query(
+        default=None, ge=1, le=9, description="Adult passenger count for a flight search."
+    ),
     user: AuthenticatedUser = Depends(require_user),
     registry: InventoryProviderRegistry = Depends(get_inventory_registry),
 ) -> SearchInventoryResponse:
@@ -92,6 +116,19 @@ async def search_inventory_endpoint(
     filters: dict = {}
     if effective_limit is not None:
         filters["limit"] = effective_limit
+    # Flight-search params ride in ``filters``; providers that don't consume
+    # them (OV, mock) ignore unknown keys. Only non-empty values are forwarded.
+    for key, value in (
+        ("origin", origin),
+        ("destination", destination),
+        ("departure_date", departure_date),
+        ("return_date", return_date),
+        ("cabin_class", cabin_class),
+    ):
+        if value:
+            filters[key] = value
+    if adults is not None:
+        filters["adults"] = adults
 
     try:
         items = await search_inventory(

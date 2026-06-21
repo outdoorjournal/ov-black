@@ -83,12 +83,30 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    duffel_base_url: str = Field(
+        default="https://api.duffel.com",
+        description="Base URL for the Duffel flights API.",
+    )
+    duffel_api_key: str = Field(
+        default="",
+        description=(
+            "Duffel access token, forwarded as the Authorization: Bearer "
+            "header. When empty the Duffel provider stays registered but "
+            "every search returns []. NEVER log this value."
+        ),
+        repr=False,
+    )
+    duffel_api_version: str = Field(
+        default="v2",
+        description="Duffel API version sent as the Duffel-Version header.",
+    )
+
     inventory_providers_enabled: str = Field(
         default="ov,mock",
         description=(
             "Comma-separated list of inventory provider sources to register at "
-            "startup. Known values: 'ov', 'mock'. Unknown names are skipped "
-            "with a warning so a typo doesn't crash the whole boot."
+            "startup. Known values: 'ov', 'mock', 'duffel'. Unknown names are "
+            "skipped with a warning so a typo doesn't crash the whole boot."
         ),
     )
 

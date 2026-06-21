@@ -111,7 +111,7 @@ state files reflect the branch.*
 | Slice | Goal | Deliverables / touches | Acceptance |
 |---|---|---|---|
 | **B1 — Google Places live** | Replace the stub with the live API. | Wire `routers/integrations/google_places.py` to live Text Search + Details (key in Secrets); add a **Places inventory adapter** so `search_inventory(kinds=['meal','experience'])` dispatches to it; normalize to `InventoryItem`. | Agent proposes a real restaurant card by name+geo; provenance `source='google_places'`; stub path removed. |
-| **B2 — Duffel flights provider** | Flight search as an inventory adapter. | New `inventory/providers/duffel.py` (offer search → `InventoryItem` flight variant); map to the `flight` card type + `FlightCardAttrs`; register via `INVENTORY_PROVIDERS_ENABLED`. Reference `voyage-site` `src/utils/duffel-client.ts` patterns. | `search_inventory(kinds=['flight'])` returns live Duffel offers; a flight node renders with cabin/seat/times. |
+| **B2 — Duffel flights provider** 🔨 *adapter landed — see §8* | Flight search as an inventory adapter. | New `inventory/providers/duffel.py` (offer search → `InventoryItem` flight variant); map to the `flight` card type + `FlightCardAttrs`; register via `INVENTORY_PROVIDERS_ENABLED`. Reference `voyage-site` `src/utils/duffel-client.ts` patterns. | `search_inventory(kinds=['flight'])` returns live Duffel offers; a flight node renders with cabin/seat/times. |
 | **B3 — Ratehawk hotels provider** | Hotel search as an inventory adapter. | New `inventory/providers/ratehawk.py` (availability + rates → `InventoryItem` hotel variant); map to `hotel` card + `HotelCardAttrs`. (No `voyage-site` reference — net-new; build adapter + fixture like OV.) | `search_inventory(kinds=['hotel'])` returns live Ratehawk rates; hotel node renders room/nights/check-in. |
 | **B4 — First-class node cost** | Make cost real (unblocks M005). | Migration: `nodes.cost_amount numeric`, `nodes.cost_currency text`, optional `cost_kind` (per_person/total); populate from each provider adapter; surface in `card_attrs` + linearization; advisor can edit. **Deprecate free-text `metadata.price` for bookables.** | A bookable node has numeric cost+currency from the provider; advisor surface shows/edits it; sum-of-costs computable. |
 | **B5 — Analyze (shallow + standard)** | Feasibility backbone for Fill + reconcile. | Migration: `analyses` + `analysis_findings` (per `TravelGraph_Analysis` §8 / `phase5_analyze_handoff.md`); `services/analyze.py` async state machine; endpoints `POST /itinerary/{id}/analyze`, `GET .../analyses[/{id}]`, cancel. Shallow = structural; standard = `tstzrange` overlap + geo-flux by mode (uses 0014 PostGIS) + weather stub. **No deep/real-time yet.** | Running standard analyze on the Japan seed flags an impossible drive-time gap as a `warn` finding with evidence. |
@@ -190,4 +190,103 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 2. Lock **D-COST**, **D-FORK**, **D-PAY** (they gate the spine).
 3. Start **M002/B1 + B2 + B3** (providers, parallel) and **M002/B4** (node cost) — the highest-leverage,
    most-independent work, and the foundation everything money-related sits on.
+
+---
+
+## 8. Progress log (append-only, newest first)
+
+> Running ledger of what's actually landed against the slices above, so any
+> session can resume mid-slice without re-deriving state. Each entry: date ·
+> slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-21 — M002/B2 Duffel flights provider — **adapter layer landed (behind tests)**
+
+**What landed (all in `apps/api`, deliberately disjoint from the in-flight
+timezone work in `services/itineraries.py` / `services/japan_template.py` /
+`apps/web/.../itinerary-graph/` — do not touch those here):**
+- `app/inventory/providers/duffel.py` — `DuffelProvider(InventoryProvider)`,
+  `source="duffel"`. Two-step Duffel flow: `POST /air/offer_requests`
+  (`return_offers=false`) → `GET /air/offers?offer_request_id=…&sort=total_amount`.
+  Pure helpers `normalize_duffel_offer` (offer → `FlightItem`, full offer kept
+  in `raw`) and `summarize_offer` (headline facts: iata_from/to, flight_code,
+  carrier, cabin, depart/arrive, stops — exported for the later card mapping).
+  Error posture mirrors `OVProvider`: `search()` degrades to `[]` + a warning
+  on any failure (no creds, missing route params, timeout, non-2xx, malformed);
+  `get_detail()` → `None` on 404, raises `ProviderUpstreamError` otherwise.
+  Auth via `Authorization: Bearer`, `Duffel-Version` header; key never logged.
+- `app/config.py` — `duffel_base_url` (`https://api.duffel.com`), `duffel_api_key`
+  (`repr=False`), `duffel_api_version` (`v2`). Keyless ⇒ registered but every
+  search returns `[]` (degrade, don't crash boot).
+- `app/main.py` — registers `DuffelProvider` when `duffel` ∈
+  `INVENTORY_PROVIDERS_ENABLED` (still defaults to `ov,mock`, so off until opted in).
+- `tests/fixtures/duffel_offers.json` — recorded-shape LAX→HND offer-list (2 offers).
+- `tests/test_inventory_duffel_provider.py` — 17 tests (pure normalize/summarize,
+  two-step search incl. round-trip slice + passenger count, all guard paths,
+  get_detail happy/404/500/conn-error, api-key redaction). **73 passed** across
+  the full inventory suite; `app.main` imports clean with duffel enabled.
+
+**Flight search params** ride in the registry `filters` dict (not `keyword`):
+`origin`, `destination`, `departure_date` (required trio), plus optional
+`return_date`, `cabin_class`, `adults`, `limit`.
+
+**Plumbing landed (same day):**
+- `app/routers/inventory.py` — `GET /search-inventory` now accepts flight params
+  (`origin`, `destination`, `departure_date`, `return_date`, `cabin_class`,
+  `adults`) and forwards non-empty ones into `filters`. OV/mock ignore unknown
+  keys. +2 router tests (passthrough + omitted-when-unset); 36 passing.
+- `apps/agent/src/agent/tools/inventory.py` — agent `search_inventory` tool
+  widened with the same flight params + flight-search guidance in the docstring.
+  Agent suite: 34 passing.
+- API client regenerated (`pnpm -C packages/api-client generate`) — note
+  `packages/api-client/src/generated/` is **gitignored** (CI regenerates; not
+  committed). `apps/web` typecheck clean.
+
+**Live validation (sandbox):** ran the adapter against the real Duffel API with
+the `duffel_test_*` token from `~/work/voyage-site/.env.local`. `search` returned
+3 real LHR→JFK business offers, normalized correctly (title, EUR price, carrier/
+cabin/nonstop tags, flight_code + times via `summarize_offer`, origin-airport
+geo). Confirms field names match the fixture and `Duffel-Version: v2`. (Live
+results came back in EUR — multi-currency display deferred per D-COST.)
+
+**What remains to call B2 fully "done" (resume hooks):**
+1. **Flight node → `FlightCardAttrs`.** Map a proposed Duffel `FlightItem` to the
+   `flight` card (use `summarize_offer` for iata_from/to, flight_code, cabin,
+   depart/arrive) so "flight node renders with cabin/seat/times" holds. Touches
+   the proposal path (`propose_card`) / card-attrs — coordinate with whoever
+   owns the itinerary-graph files (timezone work in flight). **See the flight-
+   offer-lifecycle design note below — the flight card/node must carry the
+   offer's `expires_at` + `priced_at`, not just static fields.**
+2. **Verify script** `scripts/verify-sB2.sh` against staging (matches M001 discipline).
+
+### 2026-06-21 — Design note (founder): flight offers are time-boxed & repriceable
+
+> Captured to shape **B4** (cost), **M004/G1** (status gates), and **M005**
+> (invoice + money gate). Do not lose this — it changes the money-gate design.
+
+Flights differ fundamentally from experiences/hotels: a Duffel **offer is a
+price HELD for a fixed window** (`expires_at`, typically ~20–30 min), not a
+stable listing price. The quote metadata is attached in a *pre-booking* state,
+is expected to **go stale**, and **changes when refreshed**. Implications:
+
+- **Two distinct price-bearing states.** A flight node carries OFFER metadata
+  (`offer_id`, `priced_at`, `expires_at`, `amount`, `currency`) that is
+  explicitly transient — separate from a final, committed BOOKED price. The
+  adapter now surfaces `total_amount`/`total_currency`/`expires_at` in
+  `summarize_offer` so this freshness is first-class, not buried in `raw`.
+- **Booking is a separate supplier step, not just a status flip.** Duffel
+  booking is `POST /air/orders` (optionally a *hold* order + `POST /air/payments`
+  before the hold expires) — not editing node status. Before `approved → booked`
+  the offer must be **re-priced/refreshed**; the new amount may differ from what
+  an invoice was issued at.
+- **This stresses the M005 money-gate invariant** (Σ paid invoice lines ⇔ Σ
+  booked node costs): for flights the cost is **not stable** between invoice
+  issue and payment/booking. M005 needs a re-price/refresh step that surfaces a
+  **price delta** for advisor/traveler confirmation before committing, and the
+  invoice line must reconcile against the *re-priced / held-fare* amount, not the
+  original search quote.
+- **Booked nodes need STRUCTURED booking metadata** (not the current free-text
+  `metadata.snapshot`): supplier order id / PNR, payment + transaction refs,
+  charged amount + currency, `booked_at`, actor, and change/cancel terms —
+  linking node ↔ invoice line ↔ payment ↔ supplier order. Design this typed
+  "booking record" in B4/M005 and lock it booked-immutable in G1.
 </content>

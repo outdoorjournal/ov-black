@@ -326,6 +326,49 @@ def test_search_zero_limit_rejected_by_validation(
     assert resp.status_code == 422
 
 
+# ── Flight-search params → filters ─────────────────────────────────────────
+
+
+def test_search_forwards_flight_params_into_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    # The flight (Duffel) route + date + cabin ride in ``filters``; providers
+    # that don't consume them ignore the extra keys.
+    resp = client.get(
+        "/search-inventory?source=ov&origin=LHR&destination=JFK"
+        "&departure_date=2026-07-12&return_date=2026-07-20"
+        "&cabin_class=business&adults=2",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    assert filters["origin"] == "LHR"
+    assert filters["destination"] == "JFK"
+    assert filters["departure_date"] == "2026-07-12"
+    assert filters["return_date"] == "2026-07-20"
+    assert filters["cabin_class"] == "business"
+    assert filters["adults"] == 2
+
+
+def test_search_omits_unset_flight_params_from_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    # A plain keyword search must not inject empty flight keys into filters.
+    resp = client.get("/search-inventory?source=ov&keyword=como", headers=auth_headers)
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    for key in ("origin", "destination", "departure_date", "return_date", "cabin_class", "adults"):
+        assert key not in filters
+
+
 # ── Actor context threading ────────────────────────────────────────────────
 
 
