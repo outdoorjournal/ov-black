@@ -165,6 +165,27 @@ describe("toItineraryTimeline — days + tz", () => {
     expect(tl.id).toBe("it-1");
   });
 
+  test("buckets each node by its OWN offset (multi-tz trip)", () => {
+    // A trip spans timezones: a late-night LA node and a next-morning Tokyo
+    // node. By instant, Tokyo (23:00Z on the 20th) precedes LA (06:00Z on the
+    // 21st) — but by LOCAL date LA is the 20th and Tokyo the 21st.
+    const la = makeNode("la", {
+      starts_at: "2024-06-20T23:00:00-07:00",
+    });
+    const tokyo = makeNode("tokyo", {
+      starts_at: "2024-06-21T08:00:00+09:00",
+    });
+    const tl = toItineraryTimeline(ITINERARY, [la, tokyo], []);
+    const byId = new Map(tl.nodes.map((n) => [n.id, n]));
+    // Each node keeps its own offset on start_time.
+    expect(meta(byId.get("la")!).start_time).toBe("2024-06-20T23:00:00-07:00");
+    expect(meta(byId.get("tokyo")!).start_time).toBe(
+      "2024-06-21T08:00:00+09:00",
+    );
+    // Days span the two LOCAL dates, not the instant order.
+    expect(tl.days.map((d) => d.date)).toEqual(["2024-06-20", "2024-06-21"]);
+  });
+
   test("every returned node carries start_time + duration_minutes", () => {
     const nodes = [
       makeNode("a", { starts_at: "2024-06-20T09:00:00+00:00" }),

@@ -17,6 +17,8 @@ export {
   startOfDayIso,
   hourOfDay,
   formatDayTile,
+  offsetHoursOf,
+  offsetHoursOr,
 } from "./time";
 
 import { parseIso } from "./time";

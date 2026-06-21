@@ -102,6 +102,15 @@ async def build_japan_template(session: AsyncSession) -> CardTemplate:
         first_in_day: uuid.UUID | None = None
         for item in day.items:
             metadata = item.attrs.model_dump(mode="json", exclude_none=True)
+            # Stamp the item's local UTC offset (minutes) so the read side
+            # can re-emit starts_at in wall-clock for this leg. A trip spans
+            # multiple zones (LAX→Tokyo: departure PDT, everything after JST),
+            # and the tstzrange column normalizes to UTC, losing the offset.
+            utcoffset = item.starts_at.utcoffset()
+            if utcoffset is not None:
+                metadata["tz_offset_minutes"] = int(
+                    utcoffset.total_seconds() // 60
+                )
             tnode = await add_template_node(
                 session,
                 template_id=template.id,

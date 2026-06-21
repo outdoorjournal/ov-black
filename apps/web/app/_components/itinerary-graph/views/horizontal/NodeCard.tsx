@@ -21,7 +21,11 @@ import {
   type StatusKind,
 } from "../../shared/cards/tokens";
 
-import { formatClock, formatDuration } from "../../model/horizontalTime";
+import {
+  formatClock,
+  formatDuration,
+  offsetHoursOr,
+} from "../../model/horizontalTime";
 import type { HorizontalNodeMeta, NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
 
@@ -107,7 +111,7 @@ export function NodeCard({
   const width = compact ? "compact" : "glance";
   const meta = getHMeta(node);
   const start = meta.start_time
-    ? formatClock(meta.start_time, tzOffsetHours)
+    ? formatClock(meta.start_time, offsetHoursOr(meta.start_time, tzOffsetHours))
     : null;
   const dur =
     typeof meta.duration_minutes === "number"
@@ -143,7 +147,7 @@ function CardBody({
 }) {
   const meta = getHMeta(node);
   const start = meta.start_time
-    ? formatClock(meta.start_time, tzOffsetHours)
+    ? formatClock(meta.start_time, offsetHoursOr(meta.start_time, tzOffsetHours))
     : null;
   const dur =
     typeof meta.duration_minutes === "number"

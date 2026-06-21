@@ -46,6 +46,7 @@ from app.services.itineraries import (
     ItineraryError,
     ItineraryOutcome,
     _serialize_starts_at,
+    _tz_offset_from_metadata,
     acquire_lock,
     add_edge,
     add_node,
@@ -427,7 +428,9 @@ async def create_node_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    starts_at, duration_minutes = _serialize_starts_at(result.starts_at)
+    starts_at, duration_minutes = _serialize_starts_at(
+        result.starts_at, _tz_offset_from_metadata(result.metadata_)
+    )
     return NodeResponse(
         id=result.id,
         itinerary_id=result.itinerary_id,
@@ -463,7 +466,9 @@ async def update_node_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    starts_at, duration_minutes = _serialize_starts_at(result.starts_at)
+    starts_at, duration_minutes = _serialize_starts_at(
+        result.starts_at, _tz_offset_from_metadata(result.metadata_)
+    )
     return NodeResponse(
         id=result.id,
         itinerary_id=result.itinerary_id,

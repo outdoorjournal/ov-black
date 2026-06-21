@@ -27,6 +27,7 @@ import {
   MINUTES_PER_DAY,
   formatMinuteOfDay,
   localMinuteOfDay,
+  offsetHoursOr,
   tzDayKey,
 } from "../../model/horizontalTime";
 
@@ -231,10 +232,14 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   for (const n of nodes) {
     const m = getHMeta(n);
     if (!m.start_time) continue;
-    const dayKey = tzDayKey(m.start_time, tzOffsetHours);
+    // Each node is placed by ITS OWN local wall-clock (a trip spans tzs), so
+    // resolve the offset from the node's start_time and only fall back to the
+    // trip-level default when the string carries none.
+    const nodeTz = offsetHoursOr(m.start_time, tzOffsetHours);
+    const dayKey = tzDayKey(m.start_time, nodeTz);
     const dayIndex = dayIndexByDate.get(dayKey);
     if (dayIndex === undefined) continue;
-    const rawStartMin = localMinuteOfDay(m.start_time, tzOffsetHours);
+    const rawStartMin = localMinuteOfDay(m.start_time, nodeTz);
     const isNightBar = Boolean(m.night_bar);
     // Night bars aren't snapped: they pin to the column edge and don't
     // contribute to slot height; snapping them would just shift their top

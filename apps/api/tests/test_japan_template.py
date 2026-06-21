@@ -222,6 +222,19 @@ async def test_build_japan_template_is_idempotent(
         ).scalar_one()
         assert second_node_count == first_node_count
         assert second_edge_count == first_edge_count
+
+        # Every built template node stamps its local UTC offset (JST → 540)
+        # in metadata so the read side can re-emit starts_at in wall-clock.
+        scheduled = (
+            await db_session.execute(
+                select(TemplateNode.metadata_).where(
+                    TemplateNode.template_id == first.id,
+                    TemplateNode.starts_at_offset_minutes.is_not(None),
+                )
+            )
+        ).scalars().all()
+        assert scheduled  # the fixture has scheduled items
+        assert all(m.get("tz_offset_minutes") == 540 for m in scheduled)
     finally:
         await _delete_japan_template_if_exists()
 
@@ -264,7 +277,7 @@ async def test_japan_instantiation_linearizes_chronologically(
                 await db_session.execute(
                     text(
                         """
-                        select template_id, template_version
+                        select template_id, template_version, metadata
                           from public.nodes
                          where id = :id
                         """
@@ -274,6 +287,9 @@ async def test_japan_instantiation_linearizes_chronologically(
             ).mappings().one()
             assert row["template_id"] == template.id
             assert row["template_version"] == template.version
+            # The per-node tz offset was copied from the template metadata
+            # onto the instantiated node (JST → 540).
+            assert row["metadata"].get("tz_offset_minutes") == 540
     finally:
         if itinerary is not None:
             await _delete_itinerary(itinerary.id)

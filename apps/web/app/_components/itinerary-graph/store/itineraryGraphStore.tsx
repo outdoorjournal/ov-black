@@ -33,6 +33,7 @@ import {
 
 import { createStoreContext } from "@/lib/store/createStoreContext";
 
+import { offsetHoursOr } from "../model/horizontalTime";
 import type {
   EdgeResponse,
   ItineraryTimeline,
@@ -428,13 +429,18 @@ export const itineraryGraphStore = createStoreContext<
         },
         moveNode: (id, dayKey, minuteOfDay) => {
           const s = get();
-          const tz = s.sample.timezoneOffsetHours;
           const apply = (n: NodeResponse): NodeResponse => {
             if (n.id !== id) return n;
             const meta = n.metadata as {
               start_time?: string;
               [k: string]: unknown;
             };
+            // Preserve the node's OWN offset (the trip spans tzs) so a Tokyo
+            // node stays +09:00 after a drag; fall back to the trip default.
+            const tz = offsetHoursOr(
+              meta.start_time ?? "",
+              s.sample.timezoneOffsetHours,
+            );
             const newStart =
               minuteOfDay !== null
                 ? rebaseStartToDayAndMinute(dayKey, minuteOfDay, tz)

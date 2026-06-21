@@ -11,7 +11,7 @@ import { AnimatePresence, motion, useAnimate } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
 
 import { NodeCard } from "./NodeCard";
-import { formatDayTile } from "../../model/horizontalTime";
+import { formatDayTile, offsetHoursOr } from "../../model/horizontalTime";
 import { type NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
 import { itineraryGraphStore } from "../../store/itineraryGraphStore";
@@ -44,7 +44,8 @@ export function MobileDayList({
     for (const n of all) {
       const m = getHMeta(n);
       if (!m.start_time) continue;
-      const ms = new Date(m.start_time).getTime() + tzOffsetHours * 3600 * 1000;
+      const nodeTz = offsetHoursOr(m.start_time, tzOffsetHours);
+      const ms = new Date(m.start_time).getTime() + nodeTz * 3600 * 1000;
       const d = new Date(ms);
       const y = d.getUTCFullYear();
       const mo = String(d.getUTCMonth() + 1).padStart(2, "0");

@@ -2,6 +2,24 @@ export function parseIso(iso: string): number {
   return new Date(iso).getTime();
 }
 
+// The UTC offset (in hours, may be fractional) encoded in an ISO string, or
+// null if it carries none. A trip spans timezones — each node's scheduled time
+// is stored as an offset-bearing local ISO (e.g. "…16:10:00+09:00"), so the
+// layout reads each node's OWN offset rather than one trip-wide value.
+export function offsetHoursOf(iso: string): number | null {
+  if (/Z$/.test(iso)) return 0;
+  const m = /([+-])(\d{2}):?(\d{2})$/.exec(iso);
+  if (!m) return null;
+  const sign = m[1] === "-" ? -1 : 1;
+  return sign * (Number(m[2]) + Number(m[3]) / 60);
+}
+
+// Resolve a node's own offset, falling back to a trip-level default when the
+// string carries none (e.g. a UTC-only `starts_at` with no known tz).
+export function offsetHoursOr(iso: string, fallbackHours: number): number {
+  return offsetHoursOf(iso) ?? fallbackHours;
+}
+
 export function minutesBetween(fromIso: string, toIso: string): number {
   return (parseIso(toIso) - parseIso(fromIso)) / 60000;
 }

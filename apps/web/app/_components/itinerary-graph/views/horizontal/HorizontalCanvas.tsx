@@ -25,7 +25,11 @@ import {
   type HLayoutResult,
   type PositionedHNode,
 } from "./layout";
-import { formatDayTile, localMinuteOfDay } from "../../model/horizontalTime";
+import {
+  formatDayTile,
+  localMinuteOfDay,
+  offsetHoursOr,
+} from "../../model/horizontalTime";
 import type { NodeResponse, NodeStatus, NodeType } from "../../model/horizontalTypes";
 
 const LOCKED_STATUSES: ReadonlySet<NodeStatus> = new Set(["approved", "confirmed"]);
@@ -334,7 +338,10 @@ export function HorizontalCanvas({
           .map((p, i) => {
             const meta = p.metadata as { start_time?: string };
             const min = meta.start_time
-              ? localMinuteOfDay(meta.start_time, tzOffsetHours)
+              ? localMinuteOfDay(
+                  meta.start_time,
+                  offsetHoursOr(meta.start_time, tzOffsetHours),
+                )
               : 720;
             const y = mapMinuteToY(min, layout.segments);
             const x = innerWidth - COL_WIDTH - 24 - i * 12;

@@ -20,7 +20,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple, TypedDict
 
 from sqlalchemy import delete, func, or_, select, text, update
@@ -193,7 +193,9 @@ def _parse_range_bound(raw: str) -> datetime | None:
         return None
 
 
-def _serialize_starts_at(value: Any) -> tuple[str | None, int | None]:
+def _serialize_starts_at(
+    value: Any, tz_offset_minutes: int | None = None
+) -> tuple[str | None, int | None]:
     """(iso_start, duration_minutes) from a tstzrange value, or (None, None).
 
     Handles three runtime forms defensively:
@@ -205,6 +207,15 @@ def _serialize_starts_at(value: Any) -> tuple[str | None, int | None]:
     - The Postgres text literal form
       ``'["2024-06-20 16:10:00+09","2024-06-20 16:40:00+09")'`` (in case a
       raw CTE column surfaces the string) — parsed via :func:`_parse_range_bound`.
+
+    ``tz_offset_minutes`` is the node's LOCAL UTC offset (minutes), recorded
+    at template build time in the node's metadata. A trip spans multiple
+    zones (a LAX→Tokyo flight departs PDT, everything after is JST), and the
+    tstzrange column stores instants in UTC — so without this the original
+    wall-clock offset is lost. When provided, ``iso_start`` is emitted in a
+    fixed-offset timezone (e.g. ``"2024-06-20T16:10:00+09:00"``) representing
+    the same instant; when None, the lower bound's own offset (UTC for a CTE
+    column) is used. ``duration_minutes`` (range width) is unaffected.
     """
     if value is None:
         return (None, None)
@@ -226,11 +237,27 @@ def _serialize_starts_at(value: Any) -> tuple[str | None, int | None]:
 
     if lower is None:
         return (None, None)
-    iso_start = lower.isoformat()
+    if tz_offset_minutes is not None:
+        local_tz = timezone(timedelta(minutes=tz_offset_minutes))
+        iso_start = lower.astimezone(local_tz).isoformat()
+    else:
+        iso_start = lower.isoformat()
     if upper is None:
         return (iso_start, None)
     duration = round((upper - lower).total_seconds() / 60)
     return (iso_start, duration)
+
+
+def _tz_offset_from_metadata(metadata: Any) -> int | None:
+    """Pull the node's local UTC offset (minutes) out of its metadata.
+
+    Returns None if the key is absent or not an int — callers then fall back
+    to the lower bound's own (UTC) offset.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    offset = metadata.get("tz_offset_minutes")
+    return offset if isinstance(offset, int) else None
 
 
 async def _write_node_history(
@@ -417,7 +444,10 @@ async def get_itinerary_graph(
     node_rows = (await session.execute(cte_sql, {"iid": itinerary_id})).all()
     nodes: list[NodeOut] = []
     for row in node_rows:
-        iso_start, duration_minutes = _serialize_starts_at(row.starts_at)
+        row_metadata = row.metadata or {}
+        iso_start, duration_minutes = _serialize_starts_at(
+            row.starts_at, _tz_offset_from_metadata(row_metadata)
+        )
         nodes.append(
             NodeOut(
                 id=row.id,
@@ -428,7 +458,7 @@ async def get_itinerary_graph(
                 title=row.title,
                 source=row.source,
                 source_id=row.source_id,
-                metadata=row.metadata,
+                metadata=row_metadata,
                 starts_at=iso_start,
                 duration_minutes=duration_minutes,
                 depth=row.depth,

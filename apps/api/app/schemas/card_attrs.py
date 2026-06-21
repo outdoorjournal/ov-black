@@ -436,6 +436,13 @@ CardAttributes = Annotated[
 
 _CARD_ADAPTER: TypeAdapter[CardAttributes] = TypeAdapter(CardAttributes)
 
+# Node-level metadata keys that are NOT card attributes. These are stamped on
+# a node's jsonb metadata by the scheduling / templating layer (e.g.
+# ``tz_offset_minutes`` records the node's local UTC offset so the read side
+# can re-emit starts_at in wall-clock). The card-attrs models use
+# ``extra="forbid"``, so these must be stripped before validation.
+_NON_CARD_METADATA_KEYS = frozenset({"tz_offset_minutes"})
+
 
 def parse_card_attrs(node_type: str, raw: dict | None) -> CardAttributes:
     """Validate ``raw`` metadata against the model that matches ``node_type``.
@@ -445,9 +452,17 @@ def parse_card_attrs(node_type: str, raw: dict | None) -> CardAttributes:
     raises a ValidationError because Pydantic enforces the discriminator
     match.
 
+    Node-level metadata keys (``_NON_CARD_METADATA_KEYS``) are dropped first
+    so they don't trip the ``extra="forbid"`` card-attrs models.
+
     A ``raw`` of ``None`` or ``{}`` is fine — every field is optional.
     """
-    payload = {**(raw or {}), "kind": node_type}
+    cleaned = {
+        k: v
+        for k, v in (raw or {}).items()
+        if k not in _NON_CARD_METADATA_KEYS
+    }
+    payload = {**cleaned, "kind": node_type}
     return _CARD_ADAPTER.validate_python(payload)
 
 

@@ -244,9 +244,13 @@ export function toItineraryTimeline(
   }
 
   // Resolve each node's start/duration, synthesizing for the undated ones.
+  // Bucket each node into a day by ITS OWN offset (the trip spans tzs).
+  const localDayKey = (iso: string): string =>
+    tzDayKey(iso, parseOffsetHours(iso) ?? tzOffsetHours);
+
   const dated = timed.filter((n) => explicitStart(n) !== null);
   const anchorFromData = dated
-    .map((n) => tzDayKey(explicitStart(n) as string, tzOffsetHours))
+    .map((n) => localDayKey(explicitStart(n) as string))
     .sort()[0];
   const synthAnchor =
     opts.synthAnchorDate ?? anchorFromData ?? todayKey();
@@ -281,7 +285,7 @@ export function toItineraryTimeline(
   const dayKeys = resolvedNodes
     .map((n) => (n.metadata as NodeMetaTiming).start_time)
     .filter((s): s is string => typeof s === "string")
-    .map((s) => tzDayKey(s, tzOffsetHours))
+    .map((s) => localDayKey(s))
     .sort();
   const firstDay = dayKeys[0] ?? synthAnchor;
   const lastDay = dayKeys[dayKeys.length - 1] ?? firstDay;

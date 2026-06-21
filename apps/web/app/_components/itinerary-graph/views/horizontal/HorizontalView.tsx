@@ -42,7 +42,7 @@ import {
 import { Card } from "../../shared/ExpandedCard";
 import type { ItineraryTimeline, NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
-import { tzDayKey } from "../../model/horizontalTime";
+import { offsetHoursOr, tzDayKey } from "../../model/horizontalTime";
 import {
   computeHorizontalLayout,
   DAY_HEADER_HEIGHT,
@@ -151,7 +151,7 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
     if (!activeNode) return null;
     const start = getHMeta(activeNode).start_time;
     if (!start) return null;
-    return tzDayKey(start, timeline.timezoneOffsetHours);
+    return tzDayKey(start, offsetHoursOr(start, timeline.timezoneOffsetHours));
   }, [activeNode, timeline.timezoneOffsetHours]);
 
   const ghostNode: NodeResponse | null = useMemo(() => {
@@ -161,9 +161,10 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
     const minute = drag.overMinute;
     // If the pointer hasn't been measured yet, fall back to the source
     // minute so the very first frame is still meaningful.
+    const nodeTz = offsetHoursOr(meta.start_time, timeline.timezoneOffsetHours);
     const fallbackMinute = (() => {
       const start = new Date(meta.start_time).getTime();
-      const local = new Date(start + timeline.timezoneOffsetHours * 3600 * 1000);
+      const local = new Date(start + nodeTz * 3600 * 1000);
       return local.getUTCHours() * 60 + local.getUTCMinutes();
     })();
     // No ghost when hovering over the source day at the source minute —
@@ -190,7 +191,7 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
         start_time: buildIsoOnDayAtMinute(
           drag.overDayKey,
           previewMinute,
-          timeline.timezoneOffsetHours,
+          nodeTz,
         ),
       },
     } satisfies NodeResponse;

@@ -153,6 +153,29 @@ def test_serialize_starts_at_string_unbounded_upper() -> None:
     assert duration is None
 
 
+def test_serialize_starts_at_applies_tz_offset_minutes() -> None:
+    """A UTC-stored instant (as a CTE column surfaces it) is re-emitted in the
+    node's local offset when tz_offset_minutes is supplied, same instant.
+    """
+    utc = timezone.utc
+    # 07:10Z is the UTC normalization of JST 16:10 — what the tstzrange stores.
+    lower = datetime(2024, 6, 20, 7, 10, tzinfo=utc)
+    upper = datetime(2024, 6, 20, 7, 40, tzinfo=utc)
+    iso, duration = _serialize_starts_at(_FakeRange(lower, upper), 540)
+    assert iso == "2024-06-20T16:10:00+09:00"
+    assert iso.endswith("+09:00")
+    assert datetime.fromisoformat(iso) == lower  # same instant
+    assert duration == 30
+
+
+def test_serialize_starts_at_none_offset_keeps_utc() -> None:
+    """No tz_offset_minutes → the lower bound's own (UTC) offset is kept."""
+    utc = timezone.utc
+    lower = datetime(2024, 6, 20, 7, 10, tzinfo=utc)
+    iso, _ = _serialize_starts_at(_FakeRange(lower, None), None)
+    assert iso == "2024-06-20T07:10:00+00:00"
+
+
 # ── Router tests (service stubbed, JWT real) ───────────────────────────────
 
 
@@ -968,13 +991,19 @@ async def test_get_itinerary_graph_assembles_subgraph(
         # Stamp a JST tstzrange on the root so we can assert the CTE
         # serializes starts_at + duration_minutes. add_node doesn't take a
         # range, so set it directly. The child is left without a schedule.
+        # Also stamp tz_offset_minutes=540 (JST) in metadata so the CTE
+        # re-emits the local wall-clock offset instead of UTC.
         jst = timezone(timedelta(hours=9))
         lower = datetime(2024, 6, 20, 16, 10, tzinfo=jst)
         upper = datetime(2024, 6, 20, 16, 40, tzinfo=jst)
         await db_session.execute(
             text(
                 "update public.nodes set starts_at = "
-                "tstzrange(:lo, :hi, '[)') where id = :id"
+                "tstzrange(:lo, :hi, '[)'), "
+                "metadata = jsonb_set("
+                "  coalesce(metadata, '{}'::jsonb), "
+                "  '{tz_offset_minutes}', '540'"
+                ") where id = :id"
             ),
             {"lo": lower, "hi": upper, "id": root.id},
         )
@@ -993,8 +1022,10 @@ async def test_get_itinerary_graph_assembles_subgraph(
         # integer minute span; unscheduled nodes stay (None, None).
         root_out = by_id[root.id]
         assert isinstance(root_out.starts_at, str)
-        # tstzrange stores instants in UTC, so the serialized lower bound is the
-        # JST 16:10 normalized to 07:10Z — assert the instant, not the offset.
+        # tstzrange stores instants in UTC, but the node's metadata carries
+        # tz_offset_minutes=540, so the serialized lower bound is re-emitted in
+        # the JST wall-clock offset — same instant, "+09:00" tail preserved.
+        assert root_out.starts_at.endswith("+09:00")
         assert datetime.fromisoformat(root_out.starts_at) == lower
         assert root_out.duration_minutes == 30
         assert by_id[child.id].starts_at is None
