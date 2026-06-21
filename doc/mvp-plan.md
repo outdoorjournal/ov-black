@@ -181,6 +181,7 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 - **D-COST** (before M002/B4): **first-class `nodes.cost_amount` + `cost_currency`**; minimal multi-currency (store native, one display currency).
 - **D-VAULT** (before M003/V3): **S3 + SSE-KMS** + presigned, access-scoped; expiry in Postgres; client-side encryption deferred.
 - **D-ANALYZE** (before M002/B5): **shallow + standard only**; defer deep/real-time external calls.
+- **D-BOOK** (before M005; informs M002/B4 + M004/G1): booking state = two structured tables — **`node_offers`** (transient, time-boxed supplier quotes with `expires_at` + refresh lineage) + **`bookings`** (committed record: order/PNR, charged amount, links to offer + invoice line). Flight offers **re-priced before `approved → booked`**; money gate reconciles the re-priced amount + surfaces a delta. Recorded as **D024**; draft schema in §8 below.
 
 ---
 
@@ -289,4 +290,101 @@ is expected to **go stale**, and **changes when refreshed**. Implications:
   charged amount + currency, `booked_at`, actor, and change/cancel terms —
   linking node ↔ invoice line ↔ payment ↔ supplier order. Design this typed
   "booking record" in B4/M005 and lock it booked-immutable in G1.
+
+#### Draft schema — `node_offers` + `bookings` (decision **D024** / **D-BOOK**)
+
+> **DRAFT — not yet migrated.** Belongs to M005 (needs B4 cost + G1 gates first);
+> recorded now so the design isn't lost. Conventions follow D003 (Supabase CLI
+> owns raw-SQL DDL; SQLAlchemy is query-layer only), D005 (relational + append-
+> only, not JSONB blobs), and D020 (Postgres-native `ENUM` for new enums). Two
+> tables sit beside the existing `nodes` (status enum `idea→proposed→approved→
+> booked→confirmed` is unchanged — it stays the lifecycle axis; money/booking
+> detail lives here). `invoice_line_items` is defined by M005/I1.
+
+```sql
+-- ── node_offers: the transient, time-boxed supplier QUOTE (pre-booking) ─────
+-- A flight (and any repriceable supplier item) is quoted, not listed: price +
+-- availability are HELD only until expires_at. Attached while the node is
+-- pre-booking; expected to go stale; re-fetched/re-priced before booking — and
+-- the amount can change. Each refresh inserts a new row (refreshed_from_id),
+-- so the offer history is auditable; the lone 'active' row is the live quote.
+create type public.offer_status as enum (
+    'active',      -- within its hold window; usable to book
+    'expired',     -- past expires_at; must be refreshed before booking
+    'superseded',  -- replaced by a newer refresh of the same logical offer
+    'booked'       -- converted into a booking (terminal)
+);
+
+create table public.node_offers (
+    id                uuid primary key default gen_random_uuid(),
+    node_id           uuid not null references public.nodes (id) on delete cascade,
+    itinerary_id      uuid not null references public.itineraries (id) on delete cascade,
+    source            text not null,                 -- 'duffel', 'ratehawk', ...
+    source_offer_id   text not null,                 -- e.g. Duffel off_...
+    status            public.offer_status not null default 'active',
+    amount            numeric(12,2) not null,        -- held quote; native currency (D-COST)
+    currency          text not null,                 -- ISO 4217
+    priced_at         timestamptz not null default now(),
+    expires_at        timestamptz,                   -- null = no explicit hold window
+    refreshed_from_id uuid references public.node_offers (id) on delete set null,
+    raw               jsonb not null default '{}'::jsonb,  -- supplier payload for re-price/book
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now()
+);
+-- At most one live quote per node.
+create unique index node_offers_one_active
+    on public.node_offers (node_id) where status = 'active';
+
+-- ── bookings: the committed BOOKING record (the money-committed state) ───────
+-- Created when a node goes approved -> booked with the supplier. Single
+-- structured home for "everything about the booking": supplier order/PNR, the
+-- amount ACTUALLY charged (may differ from the search quote after a re-price),
+-- who/when, change-cancel terms, and links to the offer it booked from + the
+-- covering invoice line. Booked/confirmed nodes are immutable (G1); this is
+-- their backing data.
+create type public.booking_status as enum (
+    'pending',    -- order placed with supplier, awaiting confirmation/ticketing
+    'confirmed',  -- supplier confirmed (PNR/ticket issued)  -> node 'confirmed'
+    'cancelled',  -- cancelled via advisor demotion/cancellation flow
+    'failed'      -- supplier order failed (price changed / sold out)
+);
+
+create table public.bookings (
+    id                   uuid primary key default gen_random_uuid(),
+    node_id              uuid not null references public.nodes (id) on delete restrict,
+    itinerary_id         uuid not null references public.itineraries (id) on delete cascade,
+    booked_from_offer_id uuid references public.node_offers (id) on delete set null,
+    status               public.booking_status not null default 'pending',
+    source               text not null,                 -- 'duffel', ...
+    supplier_order_id    text,                           -- Duffel ord_...
+    confirmation_code    text,                           -- PNR / record locator
+    charged_amount       numeric(12,2),                  -- reconciles vs invoice line (M005)
+    charged_currency     text,
+    invoice_line_item_id uuid references public.invoice_line_items (id) on delete set null,
+    terms                jsonb not null default '{}'::jsonb,  -- change/cancel terms
+    raw                  jsonb not null default '{}'::jsonb,  -- supplier confirmation payload
+    booked_by            uuid references auth.users (id) on delete set null,
+    booked_at            timestamptz not null default now(),
+    cancelled_at         timestamptz,
+    created_at           timestamptz not null default now(),
+    updated_at           timestamptz not null default now()
+);
+-- A node has at most one live booking (a cancelled/failed one frees it).
+create unique index bookings_one_live_per_node
+    on public.bookings (node_id) where status in ('pending', 'confirmed');
+```
+
+**How it ties together (for M005):**
+- **Status mapping:** a live `bookings` row (`pending`/`confirmed`) ⇒ node `booked`;
+  `bookings.status='confirmed'` ⇒ node `confirmed`. Node status stays the axis the
+  graph/UI read; `bookings` is the detail + audit.
+- **Transactions** live on the M005 invoice/payment side (Braintree per D-PAY);
+  `bookings.invoice_line_item_id` is the link, so the booking record references the
+  money movement rather than duplicating it.
+- **Re-price step (flights):** before `approved → booked`, refresh the offer
+  (`node_offers` new row); compare the latest `active` amount to the invoice line
+  amount; if it differs, surface the **delta** for advisor/traveler confirmation,
+  then book against the held amount. `charged_amount` records what was actually taken.
+- **Money-gate invariant (restated):** Σ(`charged_amount` of live bookings) ⇔
+  Σ(paid invoice lines) — reconciled against the re-priced amount, not the search quote.
 </content>

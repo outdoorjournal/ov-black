@@ -219,6 +219,7 @@ These shape the plan; recommendations carried into [mvp-plan.md](./mvp-plan.md) 
 | **D-COST** | Where node cost lives. | New **first-class `nodes.cost_amount numeric` + `cost_currency`** columns; deprecate free-text `metadata.price` for bookables. Multi-currency handling minimal (store native; one display currency). |
 | **D-VAULT** | Document storage + encryption. | **S3 + SSE-KMS**, presigned upload/download, access-scoped to client + assigned advisor; expiry tracked in Postgres. (PRD says client-side encryption; recommend SSE-KMS for MVP, client-side later.) |
 | **D-ANALYZE** | How much of Phase 5 Analyze to build for the MVP. | Build **shallow + standard** depth only — enough to back AI Fill and fork-reconcile feasibility. Defer deep/real-time. |
+| **D-BOOK** | How booking state + the repriceable supplier-offer lifecycle are modeled (esp. flights). | Two structured tables separate from node status: **`node_offers`** (transient time-boxed quotes — `expires_at`/`priced_at`/amount/refresh lineage) attached pre-booking, and **`bookings`** (committed record — supplier order/PNR, charged amount, links to the offer + covering invoice line). Flight offers are quotes valid only until `expires_at` and **re-priced before `approved → booked`**; the money gate reconciles against the re-priced amount and surfaces any price delta. Booking detail is never free-text `metadata`. See **D024** + draft schema in [mvp-plan.md](./mvp-plan.md) §8. |
 
 ---
 
