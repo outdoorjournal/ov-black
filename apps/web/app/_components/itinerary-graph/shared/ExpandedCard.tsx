@@ -176,8 +176,24 @@ function Sub({ children }: { children: ReactNode }) {
   return <p className="mt-0.5 text-[11px] text-ink/60">{children}</p>;
 }
 
+// HH:MM from an ISO datetime string (offset-bearing or naive), reading the
+// wall-clock as written — no Date() so we don't shift across the viewer's zone.
+function clockOf(iso: string | undefined): string | null {
+  return iso?.match(/T(\d{2}:\d{2})/)?.[1] ?? null;
+}
+
+// "premium_economy" → "Premium economy".
+function cabinLabel(cabin: string | undefined): string | null {
+  if (!cabin) return null;
+  const words = cabin.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
+}
+
 function FlightFace({ node }: { node: NodeResponse }) {
   const meta = getMeta(node);
+  const depart = clockOf(meta.depart_at);
+  const arrive = clockOf(meta.arrive_at);
+  const cabin = cabinLabel(meta.cabin);
   return (
     <>
       <Title>{node.title}</Title>
@@ -205,6 +221,19 @@ function FlightFace({ node }: { node: NodeResponse }) {
       ) : (
         <Sub>{meta.snapshot?.price ?? "Private charter"}</Sub>
       )}
+      {depart || arrive || cabin || meta.seat ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/70">
+          {depart || arrive ? (
+            <span className="font-mono tracking-wide">
+              {depart ?? "—"} → {arrive ?? "—"}
+            </span>
+          ) : null}
+          {cabin ? <span>{cabin}</span> : null}
+          {meta.seat ? (
+            <span className="font-mono">Seat {meta.seat}</span>
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
 }

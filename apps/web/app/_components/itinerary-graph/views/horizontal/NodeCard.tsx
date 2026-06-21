@@ -156,7 +156,15 @@ function CardBody({
 
   switch (kind) {
     case "flight":
-      return <FlightBody node={node} meta={meta} start={start} dur={dur} />;
+      return (
+        <FlightBody
+          node={node}
+          meta={meta}
+          start={start}
+          dur={dur}
+          tzOffsetHours={tzOffsetHours}
+        />
+      );
     case "subway":
     case "train":
     case "boat":
@@ -188,34 +196,98 @@ function CardBody({
   }
 }
 
+// Strip a trailing " (IATA)" parenthetical from an airport label so the city
+// reads cleanly under its code.
+function cityOnly(label: string | undefined): string | null {
+  if (!label) return null;
+  return label.replace(/\s*\([^)]*\)\s*$/, "").trim() || null;
+}
+
+// "premium_economy" → "Premium economy"; "business" → "Business".
+function cabinLabel(cabin: string | undefined): string | null {
+  if (!cabin) return null;
+  const words = cabin.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
+}
+
 function FlightBody({
   node,
   meta,
   start,
   dur,
+  tzOffsetHours,
 }: {
   node: NodeResponse;
   meta: HorizontalNodeMeta;
   start: string | null;
   dur: string | null;
+  tzOffsetHours: number;
 }) {
   const t = TYPE_TOKENS.flight;
   const from = meta.iata_from ?? "—";
   const to = meta.iata_to ?? "—";
+  const fromCity = cityOnly(meta.from_location?.label);
+  const toCity = cityOnly(meta.to_location?.label);
+  // Prefer the flight's own depart/arrive wall-clock; fall back to the node's
+  // scheduled start. Each end reads its OWN offset (a leg crosses zones).
+  const depart = meta.depart_at
+    ? formatClock(meta.depart_at, offsetHoursOr(meta.depart_at, tzOffsetHours))
+    : start;
+  const arrive = meta.arrive_at
+    ? formatClock(meta.arrive_at, offsetHoursOr(meta.arrive_at, tzOffsetHours))
+    : null;
+  const cabin = cabinLabel(meta.cabin);
+
   return (
     <>
       <Title>{node.title}</Title>
-      <div className="mt-2 flex items-center gap-2 font-mono text-[13px] tracking-widest text-ink/85">
-        <span>{from}</span>
+
+      {/* Route — IATA codes anchored left/right with the great-circle arc and
+          city names beneath, reading like a boarding pass. */}
+      <div className="mt-2.5 flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-col">
+          <span className="font-mono text-[15px] leading-none tracking-[0.18em] text-ink">
+            {from}
+          </span>
+          {fromCity ? (
+            <span className="mt-1 max-w-[88px] truncate text-[10px] text-ink/55">
+              {fromCity}
+            </span>
+          ) : null}
+        </div>
         <FlightArc accent={t.accent} />
-        <span>{to}</span>
+        <div className="flex min-w-0 flex-col items-end">
+          <span className="font-mono text-[15px] leading-none tracking-[0.18em] text-ink">
+            {to}
+          </span>
+          {toCity ? (
+            <span className="mt-1 max-w-[88px] truncate text-right text-[10px] text-ink/55">
+              {toCity}
+            </span>
+          ) : null}
+        </div>
       </div>
-      <div className="mt-1 flex items-center justify-between">
+
+      {/* Depart → duration → arrive, the timing strip. */}
+      {depart || arrive ? (
+        <div className="mt-2.5 flex items-center justify-between font-mono text-[11px] text-ink/75">
+          <span>{depart ?? "—"}</span>
+          {dur ? (
+            <span className="text-[10px] tracking-wide text-ink/40">{dur}</span>
+          ) : null}
+          <span>{arrive ?? "—"}</span>
+        </div>
+      ) : null}
+
+      {/* Flight number + cabin/seat — the operating detail. */}
+      <div className="mt-2 flex items-center justify-between gap-2">
         <Sub>{meta.flight_code ?? "Direct"}</Sub>
-        <span className="text-[11px] text-ink/60">
-          {start ? `${start}` : ""}
-          {dur ? ` · ${dur}` : ""}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {cabin ? <Chip tint={t.tint}>{cabin}</Chip> : null}
+          {meta.seat ? (
+            <span className="font-mono text-[10px] text-ink/65">{meta.seat}</span>
+          ) : null}
+        </div>
       </div>
     </>
   );

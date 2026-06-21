@@ -30,6 +30,12 @@ export interface NodeMeta {
   iata_from?: string;
   iata_to?: string;
   flight_code?: string;
+  cabin?: string;
+  seat?: string;
+  // Flight wall-clock endpoints (offset-bearing or Duffel-local ISO). The
+  // flight card reads these for the depart → arrive line + jet-bridge timing.
+  depart_at?: string;
+  arrive_at?: string;
   nights?: number;
   mode?: string;
   time_of_day?: "morning" | "lunch" | "afternoon" | "evening" | "night";
