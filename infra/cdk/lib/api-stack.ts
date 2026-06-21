@@ -175,6 +175,11 @@ export class ApiStack extends Stack {
         // The AgentCore runtime lives wherever it was provisioned (default us-west-2),
         // independent of this ECS stack's region.
         AWS_REGION: props.agentcoreRegion,
+        // Real providers only. The default 'ov,mock' would CRASH boot here: the mock
+        // provider eagerly loads tests/fixtures/mock_inventory.json in __init__, and
+        // the image excludes tests/ (.dockerignore). M002 extends this to
+        // 'ov,google_places,duffel,ratehawk' once those keys land — see the runbook.
+        INVENTORY_PROVIDERS_ENABLED: 'ov',
         // Hand the ARNs to the app for reference/observability; the live values are
         // injected via the `secrets` block below (ECS native), NEVER baked into env.
         // The task role above is the only principal that can read them.
