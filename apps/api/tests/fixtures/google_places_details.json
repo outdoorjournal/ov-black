@@ -1,0 +1,41 @@
+{
+  "id": "ChIJ8Rfu99kIAWARRZ5jLrUJ0Hk",
+  "types": [
+    "tourist_attraction",
+    "place_of_worship",
+    "shinto_shrine",
+    "point_of_interest",
+    "establishment"
+  ],
+  "primaryType": "tourist_attraction",
+  "formattedAddress": "68 Fukakusa Yabunouchichō, Fushimi Ward, Kyoto, 612-0882, Japan",
+  "location": { "latitude": 34.9671312, "longitude": 135.7727099 },
+  "rating": 4.7,
+  "userRatingCount": 92134,
+  "displayName": { "text": "Fushimi Inari Taisha", "languageCode": "en" },
+  "editorialSummary": {
+    "text": "Sprawling shrine famed for its endless vermilion torii gates.",
+    "languageCode": "en"
+  },
+  "websiteUri": "http://inari.jp.example/",
+  "internationalPhoneNumber": "+81 75-641-7331",
+  "regularOpeningHours": {
+    "openNow": true,
+    "weekdayDescriptions": [
+      "Monday: Open 24 hours",
+      "Tuesday: Open 24 hours",
+      "Wednesday: Open 24 hours",
+      "Thursday: Open 24 hours",
+      "Friday: Open 24 hours",
+      "Saturday: Open 24 hours",
+      "Sunday: Open 24 hours"
+    ]
+  },
+  "photos": [
+    {
+      "name": "places/ChIJ8Rfu99kIAWARRZ5jLrUJ0Hk/photos/AeY30wM-inari-1",
+      "widthPx": 4800,
+      "heightPx": 3200
+    }
+  ]
+}

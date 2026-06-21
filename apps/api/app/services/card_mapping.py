@@ -7,19 +7,39 @@ A node's ``metadata`` IS the card-attrs dict the frontend reads directly
 the inventory-sourced counterpart so a node created from a Duffel offer (or
 any provider item) renders the same way a seeded card does.
 
-Flights map to the typed :class:`FlightCardAttrs`. Other kinds fall back to
-the legacy ``{"snapshot": …}`` shape the experience cards already consume —
-enough to render a title/photo/price while their typed mappings land in
-later slices (B1 Places, B3 Ratehawk hotels).
+Flights map to the typed :class:`FlightCardAttrs`, hotels to
+:class:`HotelCardAttrs`, and Google-Places meals to :class:`MealCardAttrs`.
+Remaining kinds (experience, destination, …) fall back to the legacy
+``{"snapshot": …}`` shape the experience cards already consume — enough to
+render a title/photo/price. A Places *experience* (attraction) deliberately
+stays on that shared snapshot path: it renders identically to an OV
+experience, and ``parse_card_attrs`` re-inflates the snapshot into an
+:class:`ExperienceCardAttrs` on read, so no provider-specific typing is
+needed there.
 """
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from app.inventory.providers.duffel import summarize_offer
-from app.inventory.schemas import FlightItem, InventoryItem, Location
-from app.schemas.card_attrs import FlightCardAttrs, GeoPoint
+from app.inventory.providers.google_places import summarize_place
+from app.inventory.providers.ratehawk import summarize_hotel
+from app.inventory.schemas import (
+    FlightItem,
+    HotelItem,
+    InventoryItem,
+    Location,
+    MealItem,
+)
+from app.schemas.card_attrs import (
+    CardSnapshot,
+    FlightCardAttrs,
+    GeoPoint,
+    HotelCardAttrs,
+    MealCardAttrs,
+)
 
 
 def _geo(lat: Any, lng: Any, label: str | None) -> GeoPoint | None:
@@ -90,6 +110,136 @@ def flight_item_to_card_attrs(item: FlightItem) -> FlightCardAttrs:
     )
 
 
+def _as_date(value: Any) -> date | None:
+    """Coerce a datetime / date / ISO string to a ``date`` (or ``None``)."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _hotel_price_label(item: HotelItem) -> str | None:
+    if item.price is None:
+        return None
+    amount = item.price.amount_min
+    currency = item.price.currency
+    if amount is None or not currency:
+        return None
+    return f"{currency} {amount:,.0f}"
+
+
+def _hotel_snapshot(item: HotelItem, summary: dict[str, Any]) -> CardSnapshot:
+    """The chip-strip preview, mirroring the seed's hotel ``CardSnapshot``."""
+    activities = [
+        str(v)
+        for v in (summary.get("room_type"), summary.get("bedding"), summary.get("board"))
+        if v
+    ]
+    label = item.location.label if item.location and item.location.label else None
+    return CardSnapshot(
+        title=item.title,
+        cover_image=item.photos[0] if item.photos else None,
+        price=_hotel_price_label(item),
+        location=label,
+        activities=activities,
+    )
+
+
+def hotel_item_to_card_attrs(
+    item: HotelItem,
+    *,
+    check_in: Any = None,
+    check_out: Any = None,
+) -> HotelCardAttrs:
+    """Map a Ratehawk-sourced :class:`HotelItem` to :class:`HotelCardAttrs`.
+
+    Reads the headline facts via :func:`summarize_hotel` (name, room_type,
+    bedding, nights, board) and the geo anchor from the item's normalized
+    ``location``. ``check_in`` / ``check_out`` are NOT in the ETG per-hotel
+    response — they're the originating *search* dates, so the caller threads
+    them in (str / datetime accepted); when both are present ``nights`` is
+    recomputed from the stay length, otherwise it falls back to the rate's
+    nightly-price count. ``night_bar`` mirrors the seed: lodging spans the
+    night, so the renderer draws the softer night band.
+    """
+    s = summarize_hotel(item.raw)
+    nights = s["nights"]
+    in_date, out_date = _as_date(check_in), _as_date(check_out)
+    if in_date is not None and out_date is not None and out_date > in_date:
+        nights = (out_date - in_date).days
+    return HotelCardAttrs(
+        name=s["name"] or item.title,
+        room_type=s["room_type"] or s["room_name"],
+        bedding=s["bedding"],
+        nights=nights,
+        check_in=check_in,
+        check_out=check_out,
+        location=_geo_from_location(item.location),
+        ambient_image=item.photos[0] if item.photos else None,
+        description=item.description,
+        night_bar=True,
+        snapshot=_hotel_snapshot(item, s),
+    )
+
+
+def _cuisine_class(primary_type: str | None) -> str | None:
+    """``sushi_restaurant`` → ``sushi``; ``coffee_shop`` → ``coffee shop``.
+
+    Strips the ``_restaurant`` suffix (Google's long tail of cuisine types)
+    to a bare cuisine word; a generic ``restaurant`` / ``food`` collapses to
+    ``None`` (nothing useful to show). Other dining types (cafe, bar, …)
+    humanize as-is.
+    """
+    if not primary_type:
+        return None
+    if primary_type in ("restaurant", "food"):
+        return None
+    base = primary_type[: -len("_restaurant")] if primary_type.endswith(
+        "_restaurant"
+    ) else primary_type
+    cleaned = base.replace("_", " ").strip()
+    return cleaned or None
+
+
+def _meal_snapshot(item: MealItem, summary: dict[str, Any]) -> CardSnapshot:
+    """The chip-strip preview, mirroring the seed's meal ``CardSnapshot``."""
+    cuisine = _cuisine_class(summary.get("primary_type"))
+    label = item.location.label if item.location and item.location.label else None
+    return CardSnapshot(
+        title=item.title,
+        cover_image=item.photos[0] if item.photos else None,
+        price=summary.get("price_symbol"),
+        location=label,
+        activities=[cuisine] if cuisine else [],
+    )
+
+
+def meal_item_to_card_attrs(item: MealItem) -> MealCardAttrs:
+    """Map a Google-Places-sourced :class:`MealItem` to :class:`MealCardAttrs`.
+
+    Reads the headline facts via :func:`summarize_place` (primary type → a
+    cuisine class, the coarse ``priceLevel`` → a ``$``-symbol) and the geo
+    anchor from the item's normalized ``location``. Places gives no bookable
+    amount, no seating time, and no reservation, so those typed fields stay
+    ``None`` — they're filled conversationally once a table is actually held.
+    """
+    s = summarize_place(item.raw)
+    return MealCardAttrs(
+        cuisine_class=_cuisine_class(s.get("primary_type")),
+        price=s.get("price_symbol"),
+        location=_geo_from_location(item.location),
+        ambient_image=item.photos[0] if item.photos else None,
+        description=item.description,
+        snapshot=_meal_snapshot(item, s),
+    )
+
+
 def _snapshot_fallback(item: InventoryItem) -> dict[str, Any]:
     """Legacy ``snapshot`` shape for kinds without a typed mapping yet.
 
@@ -112,11 +262,20 @@ def _snapshot_fallback(item: InventoryItem) -> dict[str, Any]:
 def inventory_item_to_card_metadata(item: InventoryItem) -> dict[str, Any]:
     """Node ``metadata`` for an inventory-sourced node, keyed off ``kind``.
 
-    Flights get typed ``FlightCardAttrs``; everything else gets the snapshot
-    fallback until its typed mapping lands.
+    Flights get typed ``FlightCardAttrs``, hotels ``HotelCardAttrs``, and
+    Places meals ``MealCardAttrs``; everything else (experiences, destinations)
+    gets the snapshot fallback that ``parse_card_attrs`` re-inflates on read.
     """
     if isinstance(item, FlightItem):
         return flight_item_to_card_attrs(item).model_dump(
+            mode="json", exclude_none=True
+        )
+    if isinstance(item, HotelItem):
+        return hotel_item_to_card_attrs(item).model_dump(
+            mode="json", exclude_none=True
+        )
+    if isinstance(item, MealItem):
+        return meal_item_to_card_attrs(item).model_dump(
             mode="json", exclude_none=True
         )
     return _snapshot_fallback(item)

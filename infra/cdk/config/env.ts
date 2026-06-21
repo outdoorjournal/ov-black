@@ -16,6 +16,20 @@ export interface EnvConfig {
   readonly availabilityZones: string[];
   readonly publicSubnetIds: string[];
   readonly privateSubnetIds: string[];
+  /**
+   * Origin of the advisor/client web app (e.g. https://staging.ov.black). Injected
+   * as WEB_ORIGIN so the API builds correct magic-link redirect_to targets and CORS
+   * allow-lists. Empty until the web app's staging origin exists — the API then keeps
+   * its own localhost default and is NOT injected (see api-stack.ts).
+   */
+  readonly webOrigin: string;
+  /**
+   * Region where the Bedrock AgentCore runtime is provisioned. Injected as AWS_REGION
+   * so apps/api's boto3 agentcore client targets the runtime. Defaults to us-west-2
+   * (AgentCore early-availability + apps/api's own default) — it does NOT have to match
+   * the ECS deploy region, and the runtime ARN encodes its own region regardless.
+   */
+  readonly agentcoreRegion: string;
 }
 
 interface RawEnvConfig {
@@ -25,6 +39,8 @@ interface RawEnvConfig {
   availabilityZones?: string[];
   publicSubnetIds?: string[];
   privateSubnetIds?: string[];
+  webOrigin?: string;
+  agentcoreRegion?: string;
 }
 
 const DUMMY = {
@@ -66,6 +82,12 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
       ? raw.privateSubnetIds
       : [...DUMMY.privateSubnets];
 
+  // WEB_ORIGIN has no safe dummy — an empty value means "operator hasn't wired the
+  // web app's staging origin yet", and api-stack.ts skips injecting it so the API
+  // keeps its own default rather than booting with WEB_ORIGIN=''.
+  const webOrigin = raw.webOrigin ?? '';
+  const agentcoreRegion = raw.agentcoreRegion || 'us-west-2';
+
   return {
     envName,
     account,
@@ -74,5 +96,7 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
     availabilityZones,
     publicSubnetIds,
     privateSubnetIds,
+    webOrigin,
+    agentcoreRegion,
   };
 }

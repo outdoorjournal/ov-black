@@ -29,8 +29,13 @@ export interface ApiStackProps extends StackProps {
   readonly privateSubnetIds: string[];
   readonly supabaseServiceRoleSecret: SmSecret;
   readonly supabaseJwtSecret: SmSecret;
+  readonly databaseUrlSecret: SmSecret;
   readonly bedrockAgentCoreRuntimeArnSecret: SmSecret;
   readonly agentTokenSigningSecret: SmSecret;
+  /** Web app origin → WEB_ORIGIN. Empty means "not wired yet"; we skip injection then. */
+  readonly webOrigin: string;
+  /** Region of the Bedrock AgentCore runtime → AWS_REGION for apps/api's boto3 client. */
+  readonly agentcoreRegion: string;
   /** Image tag to deploy. Defaults to `latest`; CI overrides via `-c imageTag=...`. */
   readonly imageTag?: string;
 }
@@ -114,6 +119,7 @@ export class ApiStack extends Stack {
         resources: [
           props.supabaseServiceRoleSecret.secretArn,
           props.supabaseJwtSecret.secretArn,
+          props.databaseUrlSecret.secretArn,
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
           props.agentTokenSigningSecret.secretArn,
         ],
@@ -160,20 +166,40 @@ export class ApiStack extends Stack {
       }),
       environment: {
         OV_BLACK_ENV: props.envName,
-        // Hand the ARNs to the app so it can fetch the live values at boot;
-        // the values themselves are NEVER baked into env. The task role above
-        // is the only thing that can read them.
+        // apps/api binds Settings.env to the ENV var (pydantic env_prefix=''); its
+        // Literal is local|staging|production, so 'prod' must become 'production' or
+        // boot fails validation. Without this, Settings.env silently stayed 'local'
+        // in staging (OV_BLACK_ENV above is not read by the app).
+        ENV: props.envName === 'prod' ? 'production' : props.envName,
+        // apps/api's boto3 agentcore client reads AWS_REGION (Settings.aws_region).
+        // The AgentCore runtime lives wherever it was provisioned (default us-west-2),
+        // independent of this ECS stack's region.
+        AWS_REGION: props.agentcoreRegion,
+        // Hand the ARNs to the app for reference/observability; the live values are
+        // injected via the `secrets` block below (ECS native), NEVER baked into env.
+        // The task role above is the only principal that can read them.
         SUPABASE_SERVICE_ROLE_SECRET_ARN: props.supabaseServiceRoleSecret.secretArn,
         SUPABASE_JWT_SECRET_ARN: props.supabaseJwtSecret.secretArn,
+        DATABASE_URL_SECRET_ARN: props.databaseUrlSecret.secretArn,
         BEDROCK_AGENTCORE_RUNTIME_ARN_SECRET_ARN:
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
         AGENT_TOKEN_SIGNING_SECRET_ARN: props.agentTokenSigningSecret.secretArn,
+        // WEB_ORIGIN drives invite redirect_to + CORS. Only injected once the web
+        // app's staging origin is known; until then apps/api keeps its own default
+        // rather than booting with WEB_ORIGIN='' (which would break both).
+        ...(props.webOrigin ? { WEB_ORIGIN: props.webOrigin } : {}),
       },
       secrets: {
-        // ECS also natively injects the secret values as envvars. Apps that
-        // prefer SDK-side fetch can ignore these and use the ARNs above.
+        // ECS natively injects each secret value as an env var the moment the task
+        // starts. apps/api reads these directly (pydantic-settings) — there is no
+        // boot-time Secrets Manager fetch, so the env names MUST match Settings.
+        DATABASE_URL: EcsSecret.fromSecretsManager(props.databaseUrlSecret),
         SUPABASE_SERVICE_ROLE_KEY: EcsSecret.fromSecretsManager(props.supabaseServiceRoleSecret),
-        SUPABASE_JWT: EcsSecret.fromSecretsManager(props.supabaseJwtSecret),
+        // The supabase-jwt secret is JSON {url, issuer, jwks_url}; extract each field
+        // into the flat env var apps/api's config + auth middleware actually read.
+        SUPABASE_URL: EcsSecret.fromSecretsManager(props.supabaseJwtSecret, 'url'),
+        SUPABASE_JWT_ISSUER: EcsSecret.fromSecretsManager(props.supabaseJwtSecret, 'issuer'),
+        SUPABASE_JWKS_URL: EcsSecret.fromSecretsManager(props.supabaseJwtSecret, 'jwks_url'),
         BEDROCK_AGENTCORE_RUNTIME_ARN: EcsSecret.fromSecretsManager(
           props.bedrockAgentCoreRuntimeArnSecret,
         ),

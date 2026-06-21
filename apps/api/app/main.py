@@ -15,8 +15,10 @@ from app.auth import PUBLIC_PATHS, AuthenticatedUser, JWTAuthMiddleware, require
 from app.config import get_settings
 from app.db import dispose_engine
 from app.inventory.providers.duffel import DuffelProvider
+from app.inventory.providers.google_places import GooglePlacesProvider
 from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
+from app.inventory.providers.ratehawk import RatehawkProvider
 from app.inventory.registry import get_registry
 from app.routers.advisor_itineraries import router as advisor_itineraries_router
 from app.routers.agent import router as agent_router
@@ -73,6 +75,12 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         elif name == "duffel":
             registry.register(DuffelProvider(settings=settings))
             registered.append("duffel")
+        elif name == "ratehawk":
+            registry.register(RatehawkProvider(settings=settings))
+            registered.append("ratehawk")
+        elif name == "google_places":
+            registry.register(GooglePlacesProvider(settings=settings))
+            registered.append("google_places")
         else:
             logger.warning(
                 "inventory.providers.unknown",

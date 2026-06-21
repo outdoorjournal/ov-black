@@ -105,7 +105,66 @@ async def search_inventory_endpoint(
         description="Flight cabin: ``economy`` | ``premium_economy`` | ``business`` | ``first``.",
     ),
     adults: int | None = Query(
-        default=None, ge=1, le=9, description="Adult passenger count for a flight search."
+        default=None,
+        ge=1,
+        le=9,
+        description=(
+            "Adult count — flight passengers or hotel guests (Ratehawk)."
+        ),
+    ),
+    region_id: int | None = Query(
+        default=None,
+        ge=1,
+        description=(
+            "Ratehawk region id for a hotel search. Supply with checkin + "
+            "checkout; alternative to latitude + longitude."
+        ),
+    ),
+    latitude: float | None = Query(
+        default=None,
+        ge=-90.0,
+        le=90.0,
+        description="Hotel-search latitude (paired with longitude) for a geo search.",
+    ),
+    longitude: float | None = Query(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Hotel-search longitude (paired with latitude) for a geo search.",
+    ),
+    checkin: str | None = Query(
+        default=None, description="Hotel check-in date, ``YYYY-MM-DD`` (Ratehawk)."
+    ),
+    checkout: str | None = Query(
+        default=None, description="Hotel check-out date, ``YYYY-MM-DD`` (Ratehawk)."
+    ),
+    residency: str | None = Query(
+        default=None,
+        description="Hotel guest residency, ISO-3166 alpha-2 lowercase (e.g. ``us``).",
+    ),
+    currency: str | None = Query(
+        default=None, description="Hotel display currency, ISO 4217 (e.g. ``USD``)."
+    ),
+    near_lat: float | None = Query(
+        default=None,
+        ge=-90.0,
+        le=90.0,
+        description=(
+            "Google Places location-bias latitude (paired with near_lng). "
+            "Optional — biases meal/experience results toward this point."
+        ),
+    ),
+    near_lng: float | None = Query(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Google Places location-bias longitude (paired with near_lat).",
+    ),
+    radius_m: int | None = Query(
+        default=None,
+        ge=1,
+        le=50_000,
+        description="Google Places location-bias radius in metres (default 5km).",
     ),
     user: AuthenticatedUser = Depends(require_user),
     registry: InventoryProviderRegistry = Depends(get_inventory_registry),
@@ -116,19 +175,40 @@ async def search_inventory_endpoint(
     filters: dict = {}
     if effective_limit is not None:
         filters["limit"] = effective_limit
-    # Flight-search params ride in ``filters``; providers that don't consume
-    # them (OV, mock) ignore unknown keys. Only non-empty values are forwarded.
+    # Flight (Duffel) + hotel (Ratehawk) search params ride in ``filters``;
+    # providers that don't consume them (OV, mock) ignore unknown keys. Only
+    # non-empty values are forwarded.
     for key, value in (
         ("origin", origin),
         ("destination", destination),
         ("departure_date", departure_date),
         ("return_date", return_date),
         ("cabin_class", cabin_class),
+        ("checkin", checkin),
+        ("checkout", checkout),
+        ("residency", residency),
+        ("currency", currency),
     ):
         if value:
             filters[key] = value
+    # ``adults`` is shared (flight passengers / hotel guests); the rest are
+    # numeric hotel-location params forwarded only when present.
     if adults is not None:
         filters["adults"] = adults
+    if region_id is not None:
+        filters["region_id"] = region_id
+    if latitude is not None:
+        filters["latitude"] = latitude
+    if longitude is not None:
+        filters["longitude"] = longitude
+    # Google Places location bias (distinct from the Ratehawk hotel-geo
+    # latitude/longitude above — an optional "search near here" hint).
+    if near_lat is not None:
+        filters["near_lat"] = near_lat
+    if near_lng is not None:
+        filters["near_lng"] = near_lng
+    if radius_m is not None:
+        filters["radius_m"] = radius_m
 
     try:
         items = await search_inventory(

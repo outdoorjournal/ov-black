@@ -1,8 +1,10 @@
-"""Tests for the third-party integration stubs (Phase 4).
+"""Tests for the third-party integration surfaces (Phase 4).
 
-These endpoints are placeholders that return canned data shaped like
-the live integrations they'll one day proxy (Google Places, weather,
-flight status). The tests confirm:
+Weather + flight-status are still canned stubs; Google Places is now live
+(B1) and proxied through ``GooglePlacesProvider``. The Places tests inject a
+``MockTransport``-backed provider via the ``get_google_places_provider``
+dependency override so the suite stays offline while exercising the real
+router → provider → mapping path. The stub tests confirm:
 
 - Routes are wired and JWT-gated.
 - Canned responses are stable across calls (deterministic — important
@@ -12,16 +14,24 @@ flight status). The tests confirm:
 
 from __future__ import annotations
 
+import json
 import uuid
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import Settings
+from app.inventory.providers.google_places import GooglePlacesProvider
 from app.main import app as fastapi_app
+from app.routers.integrations.google_places import get_google_places_provider
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture()
@@ -37,42 +47,96 @@ def auth_headers(make_token: "Callable[..., str]") -> dict[str, str]:
     }
 
 
-# ── Google Places ─────────────────────────────────────────────────────
+# ── Google Places (live, mock-transport) ───────────────────────────────
 
 
-def test_google_places_search_finds_known_query(
+def _override_places(handler) -> None:
+    """Point the router's provider dependency at a ``MockTransport`` provider."""
+
+    def _factory() -> GooglePlacesProvider:
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport, timeout=5.0)
+        settings = Settings(
+            google_places_base_url="https://places.googleapis.com",
+            google_places_api_key="test-places-key",
+        )
+        return GooglePlacesProvider(client=client, settings=settings)
+
+    fastapi_app.dependency_overrides[get_google_places_provider] = _factory
+
+
+@pytest.fixture(autouse=True)
+def _clear_places_override() -> "Iterator[None]":
+    yield
+    fastapi_app.dependency_overrides.pop(get_google_places_provider, None)
+
+
+def _load_fixture(name: str) -> dict[str, Any]:
+    return json.loads((_FIXTURE_DIR / name).read_text())
+
+
+def test_google_places_search_maps_results(
     http_client: TestClient, auth_headers: dict[str, str]
 ) -> None:
+    fixture = _load_fixture("google_places_searchtext.json")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/places:searchText"
+        return httpx.Response(200, json=fixture)
+
+    _override_places(handler)
     resp = http_client.post(
         "/integrations/google-places/search",
-        json={"query": "Aman"},
+        json={"query": "Tokyo"},
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert len(body["results"]) == 1
-    assert body["results"][0]["place_id"] == "stub-aman-tokyo"
-    assert body["results"][0]["name"] == "Aman Tokyo"
+    results = resp.json()["results"]
+    # All three fixture places carry geo → three summaries.
+    assert len(results) == 3
+    names = {r["name"] for r in results}
+    assert "Sushi Saito" in names
+    first = next(r for r in results if r["name"] == "Sushi Saito")
+    assert first["place_id"] == "ChIJ87Sl-zaLGGARsNzac9NJ2Lc"
+    assert first["location"]["lat"] == pytest.approx(35.6647321)
+    assert "restaurant" in first["types"]
 
 
-def test_google_places_search_empty_for_unknown_query(
+def test_google_places_search_forwards_location_bias(
     http_client: TestClient, auth_headers: dict[str, str]
 ) -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"places": []})
+
+    _override_places(handler)
     resp = http_client.post(
         "/integrations/google-places/search",
-        json={"query": "nowhere-in-particular-xyz"},
+        json={"query": "sushi", "near": {"lat": 35.66, "lng": 139.73}, "radius_m": 1200},
         headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json() == {"results": []}
+    circle = captured["body"]["locationBias"]["circle"]
+    assert circle["center"] == {"latitude": 35.66, "longitude": 139.73}
+    assert circle["radius"] == pytest.approx(1200.0)
 
 
 def test_google_places_search_blank_query_empty(
     http_client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    """A whitespace-only query is a no-op, not a 400 — mirrors how
-    real Places "Text Search" handles a blank input.
+    """A whitespace-only query is a no-op (no upstream call), not a 400 —
+    mirrors how Text Search treats a blank input.
     """
+    called = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        called["n"] += 1
+        return httpx.Response(200, json={"places": []})
+
+    _override_places(handler)
     resp = http_client.post(
         "/integrations/google-places/search",
         json={"query": "   "},
@@ -80,32 +144,62 @@ def test_google_places_search_blank_query_empty(
     )
     assert resp.status_code == 200
     assert resp.json() == {"results": []}
+    assert called["n"] == 0
 
 
 def test_google_places_details_returns_full_record(
     http_client: TestClient, auth_headers: dict[str, str]
 ) -> None:
+    fixture = _load_fixture("google_places_details.json")
+    place_id = fixture["id"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/v1/places/{place_id}"
+        return httpx.Response(200, json=fixture)
+
+    _override_places(handler)
     resp = http_client.get(
-        "/integrations/google-places/details/stub-fushimi-inari",
+        f"/integrations/google-places/details/{place_id}",
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["place_id"] == "stub-fushimi-inari"
+    assert body["place_id"] == place_id
     assert body["name"] == "Fushimi Inari Taisha"
     assert "tourist_attraction" in body["types"]
-    assert body["photos"][0]["photo_reference"]
+    # New-API photo refs are resource names, surfaced as photo_reference.
+    assert body["photos"][0]["photo_reference"].startswith("places/")
+    assert body["opening_hours"]
 
 
 def test_google_places_details_404_for_unknown(
     http_client: TestClient, auth_headers: dict[str, str]
 ) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": {"message": "not found"}})
+
+    _override_places(handler)
     resp = http_client.get(
-        "/integrations/google-places/details/stub-unknown",
+        "/integrations/google-places/details/missing-id",
         headers=auth_headers,
     )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "place_not_found"
+
+
+def test_google_places_details_502_on_upstream_error(
+    http_client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"message": "boom"}})
+
+    _override_places(handler)
+    resp = http_client.get(
+        "/integrations/google-places/details/abc",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "place_upstream_error"
 
 
 def test_google_places_requires_auth(http_client: TestClient) -> None:

@@ -18,6 +18,7 @@ export interface SecretsStackProps extends StackProps {
 export class SecretsStack extends Stack {
   readonly supabaseServiceRole: Secret;
   readonly supabaseJwt: Secret;
+  readonly databaseUrl: Secret;
   readonly bedrockAgentCoreRuntimeArn: Secret;
   readonly agentTokenSigningSecret: Secret;
 
@@ -40,13 +41,32 @@ export class SecretsStack extends Stack {
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
+    // Three JSON fields, each extracted into its own env var by ApiStack
+    // (apps/api reads flat SUPABASE_URL / SUPABASE_JWT_ISSUER / SUPABASE_JWKS_URL —
+    // there is no boot-time secrets-fetch shim, so the shapes must line up). All
+    // three keys are seeded (empty) so the ECS json-field extraction resolves even
+    // before the operator populates real values.
     this.supabaseJwt = new Secret(this, 'SupabaseJwt', {
       secretName: `${namePrefix}/supabase-jwt`,
       description:
-        'Supabase JWT issuer + JWKS URL consumed by apps/api auth middleware to verify user tokens on every non-/health route.',
+        'Supabase project URL + JWT issuer + JWKS URL consumed by apps/api auth middleware (verify user tokens) and the admin-API auth routes. JSON: {url, issuer, jwks_url}.',
       secretStringValue: SecretValue.unsafePlainText(
-        JSON.stringify({ issuer: '', jwks_url: '' }),
+        JSON.stringify({ url: '', issuer: '', jwks_url: '' }),
       ),
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
+    // The async SQLAlchemy DSN apps/api connects with (asyncpg driver, Supabase
+    // Postgres — D003). Without this the container falls back to its
+    // localhost:54322 default and every DB-backed request fails in staging, so it
+    // is a hard prerequisite for a functioning deploy. Carries the DB password →
+    // NEVER log. Shape:
+    //   postgresql+asyncpg://postgres.<ref>:<password>@<pooler-host>:6543/postgres
+    this.databaseUrl = new Secret(this, 'DatabaseUrl', {
+      secretName: `${namePrefix}/database-url`,
+      description:
+        'Async SQLAlchemy DSN (postgresql+asyncpg://...) apps/api uses to reach the Supabase Postgres instance. NEVER log this value.',
+      secretStringValue: SecretValue.unsafePlainText(PLACEHOLDER),
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
@@ -87,8 +107,14 @@ export class SecretsStack extends Stack {
 
     new CfnOutput(this, 'SupabaseJwtArn', {
       value: this.supabaseJwt.secretArn,
-      description: 'ARN of the Supabase JWT issuer + JWKS URL secret.',
+      description: 'ARN of the Supabase URL + JWT issuer + JWKS URL secret.',
       exportName: `ov-black-${props.envName}-supabase-jwt-arn`,
+    });
+
+    new CfnOutput(this, 'DatabaseUrlArn', {
+      value: this.databaseUrl.secretArn,
+      description: 'ARN of the Supabase Postgres DSN secret consumed by apps/api.',
+      exportName: `ov-black-${props.envName}-database-url-arn`,
     });
 
     new CfnOutput(this, 'BedrockAgentCoreRuntimeArnArn', {

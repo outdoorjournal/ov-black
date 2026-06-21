@@ -101,12 +101,51 @@ class Settings(BaseSettings):
         description="Duffel API version sent as the Duffel-Version header.",
     )
 
+    ratehawk_base_url: str = Field(
+        default="https://api.worldota.net/api/b2b/v3",
+        description="Base URL for the Ratehawk (ETG / Worldota) B2B hotels API.",
+    )
+    ratehawk_key_id: str = Field(
+        default="",
+        description=(
+            "Ratehawk (ETG) key id — the username half of the HTTP Basic "
+            "credential. Paired with ratehawk_api_key; both must be set for "
+            "the provider to issue calls."
+        ),
+    )
+    ratehawk_api_key: str = Field(
+        default="",
+        description=(
+            "Ratehawk (ETG) API key — the password half of the HTTP Basic "
+            "credential, sent in the Authorization header. When empty (or the "
+            "key id is empty) the Ratehawk provider stays registered but every "
+            "search returns []. NEVER log this value."
+        ),
+        repr=False,
+    )
+
+    google_places_base_url: str = Field(
+        default="https://places.googleapis.com",
+        description="Base URL for the Google Places API (New) — places.googleapis.com/v1.",
+    )
+    google_places_api_key: str = Field(
+        default="",
+        description=(
+            "Google Places API key, forwarded as the X-Goog-Api-Key header. "
+            "When empty the Google Places provider stays registered but every "
+            "search returns []. NEVER log this value — and it must never leak "
+            "into a client-facing URL (photo media needs a keyed backend proxy)."
+        ),
+        repr=False,
+    )
+
     inventory_providers_enabled: str = Field(
         default="ov,mock",
         description=(
             "Comma-separated list of inventory provider sources to register at "
-            "startup. Known values: 'ov', 'mock', 'duffel'. Unknown names are "
-            "skipped with a warning so a typo doesn't crash the whole boot."
+            "startup. Known values: 'ov', 'mock', 'duffel', 'ratehawk', "
+            "'google_places'. Unknown names are skipped with a warning so a typo "
+            "doesn't crash the boot."
         ),
     )
 

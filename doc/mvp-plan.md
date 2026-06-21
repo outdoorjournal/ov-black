@@ -200,6 +200,191 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
 
+### 2026-06-21 — M002/B1 Google Places live — **provider + live router landed (behind tests)**
+
+**What landed (all in `apps/api`, net-new files plus additive, localized edits
+to the shared config/main seams — deliberately disjoint from B2's Duffel and
+B3's Ratehawk work, and from the in-flight itinerary-graph timezone files):**
+- `app/inventory/providers/google_places.py` — `GooglePlacesProvider(InventoryProvider)`,
+  `source="google_places"`. Targets the **Places API (New)** (`places.googleapis.com/v1`):
+  single-POST `POST /v1/places:searchText` (`{textQuery, includedType?,
+  maxResultCount, locationBias?}` → `{places:[…]}`) and `GET /v1/places/{id}`.
+  Auth via the `X-Goog-Api-Key` header; the response is shaped by a shared
+  `X-Goog-FieldMask` (search masks fields under `places.`, detail unprefixed —
+  built from one `_FIELDS` list so they can't drift). Pure helpers:
+  per-field wire accessors (`display_name_of` … `photos_of`), `classify_kind`
+  (dining type / `*_restaurant` suffix → `meal`, else `experience`),
+  `summarize_place`, and `normalize_place` (→ `MealItem` | `ExperienceItem`,
+  full place kept in `raw`). The accessors are **exported and reused by the
+  integration router** so router + provider read one wire shape.
+- **Two honesty calls (documented in the module docstring):**
+  (1) **price** — Places quotes only a coarse `priceLevel` enum, never a
+  bookable amount, so items carry `price=None` and the level rides in `tags`
+  as a `$`-symbol (meals/experiences aren't first-class bookable cost — that's
+  B4 flights/hotels); (2) **photos** — a Places (New) photo is a resource
+  *name*, not a URL, and resolving it needs a keyed `…/media` fetch, so
+  `photos` is left `[]` (refs preserved in `raw`) to keep the API key
+  server-side. A keyed backend photo-proxy is the follow-up.
+- Error posture mirrors the other providers: `search()` / `text_search()`
+  degrade to `[]` + a warning on every failure (no key, missing query, timeout,
+  non-2xx, malformed); `place_details()` / `get_detail()` → `None` on 404,
+  raise `ProviderUpstreamError` otherwise. Text Search **requires** a
+  `textQuery` — a keyword-less call returns `[]` (a no-query browse legitimately
+  has no Places hits). Key never logged (`repr=False` on the settings field).
+- `app/config.py` — `google_places_base_url` (`https://places.googleapis.com`),
+  `google_places_api_key` (`repr=False`). Keyless ⇒ registered but every search
+  returns `[]` (degrade, don't crash boot). `INVENTORY_PROVIDERS_ENABLED`
+  docstring updated to list `google_places` (still defaults to `ov,mock`, so
+  off until opted in).
+- `app/main.py` — registers `GooglePlacesProvider` when `google_places` ∈
+  `INVENTORY_PROVIDERS_ENABLED`.
+- **`app/routers/integrations/google_places.py` rewired stub → live.** The
+  canned `_CATALOGUE` is gone; `/search` + `/details/{id}` now delegate to the
+  provider's public `text_search` / `place_details` (one shared HTTP layer) and
+  map the raw place into the **unchanged** `PlaceSummary` / `PlaceDetail`
+  response contract (so the generated client surface is identical — only the
+  route `summary=` strings changed). Provider injected via a
+  `get_google_places_provider` FastAPI dependency so tests swap a
+  `MockTransport`-backed provider. `/details` returns 404 (absent) / 502
+  (upstream broken).
+
+**What's tested:**
+- `tests/fixtures/google_places_searchtext.json` (3-place Tokyo/Kyoto Text
+  Search: Sushi Saito = meal, Fushimi Inari + Aman Tokyo = experiences) +
+  `google_places_details.json` (single Fushimi Inari detail).
+- `tests/test_inventory_google_places_provider.py` — 27 tests: pure classify /
+  normalize / summarize, search request-shape (textQuery, includedType
+  narrowing per single kind, location-bias circle, maxResultCount clamp), kind
+  filtering, every degrade path, get_detail happy/404/empty/500/conn-error/
+  no-creds, key redaction.
+- `tests/test_integrations.py` — Google Places section rewritten from the stub
+  to the live router (mock-transport): result mapping, location-bias
+  passthrough, blank-query no-op, detail full-record, 404, 502, auth gate.
+- **Full `apps/api` suite green (473 passed) + `apps/agent` suite green (34).**
+  `app.main` imports clean with `google_places` enabled. `scripts/verify-sB1.sh`
+  runs the acceptance bullets + a static "stub removed" guard offline, with an
+  optional staging live probe (soft-skips without creds).
+
+**Follow-up landed same day (the two cross-file hooks, after B2/B3 finished):**
+- **Meal → `MealCardAttrs` card mapping.** `services/card_mapping.py` now maps a
+  Places `MealItem` → typed `MealCardAttrs` (cuisine class from the place's
+  primary type, coarse `priceLevel` → a `$`-symbol, geo anchor, snapshot chip
+  strip); `inventory_item_to_card_metadata` routes `MealItem` to it, so a
+  restaurant proposed via `POST /{id}/nodes/from-inventory` renders as a typed
+  `meal` card. A Places *experience* (attraction) deliberately stays on the
+  shared snapshot path — `parse_card_attrs` re-inflates it into an
+  `ExperienceCardAttrs` on read, identical to an OV experience. +3 tests in
+  `tests/test_card_mapping.py`.
+- **Location-bias plumbing.** `/search-inventory` (route) + the agent
+  `search_inventory` tool gained optional `near_lat`/`near_lng`/`radius_m`
+  params, forwarded into `filters` (distinct from Ratehawk's hotel-geo
+  `latitude`/`longitude`); the provider already consumed them. +2 route tests
+  in `tests/test_search_inventory.py`.
+
+**What remains to call B1 fully "done" (resume hooks):**
+1. **Live validation (real key).** No Google Places key in `voyage-site` or the
+   ov-black env (net-new, like B3) — spike a key, run the provider against the
+   real API, and **re-record both fixtures** from a live call (the committed
+   ones are recorded-*shape*, hand-built from real places). Then enable
+   `google_places` in the staging `INVENTORY_PROVIDERS_ENABLED` + add the
+   `GOOGLE_PLACES_API_KEY` secret (F2) and run `verify-sB1.sh`'s live probe.
+2. **Photo proxy (genuinely a small follow-up slice, not a quick win).** A
+   Places (New) photo is a resource *name* needing a keyed `…/media` fetch — but
+   an `<img src>` can't carry the Supabase JWT, so a naive proxy endpoint would
+   401 (or, if public, leak the key to abuse). It needs a **signed short-lived
+   URL** scheme (token in the query string) before `photos` can be populated
+   from the refs preserved in `raw`. Cards render imageless until then.
+
+### 2026-06-21 — M002/B3 Ratehawk hotels provider — **adapter layer landed (behind tests)**
+
+**What landed (all in `apps/api`, deliberately disjoint from B2's in-flight
+Duffel card-mapping / timezone work — net-new files plus additive, localized
+edits to the shared config/main/router/agent-tool seams):**
+- `app/inventory/providers/ratehawk.py` — `RatehawkProvider(InventoryProvider)`,
+  `source="ratehawk"`. Single-POST ETG (Emerging Travel Group / Worldota) B2B
+  v3 SERP flow: `POST /search/serp/region/` (when `region_id` present) or
+  `POST /search/serp/geo/` (when `latitude`+`longitude` present). Pure helpers
+  `normalize_ratehawk_hotel` (hotel → `HotelItem`, full hotel incl. every rate
+  kept in `raw`) and `summarize_hotel` (headline facts: name, star_rating,
+  geo, room_name/type, bedding, nights, board, amount/currency,
+  free_cancellation_before, book_hash — exported for the later card mapping).
+  Each hotel headlines off its **cheapest rate** (min display `show_amount`).
+  Error posture mirrors `OVProvider`/`DuffelProvider`: `search()` degrades to
+  `[]` + a warning on any failure (no creds, missing params, timeout, non-2xx,
+  malformed) **and on a non-`ok` ETG envelope** (status≠ok / populated error —
+  ETG returns HTTP 200 for business errors); `get_detail()` → `None` when the
+  hotel is absent, raises `ProviderUpstreamError` on transport/HTTP errors.
+  Auth via HTTP **Basic** (`key_id`:`api_key`); key never logged.
+- `app/config.py` — `ratehawk_base_url` (`https://api.worldota.net/api/b2b/v3`),
+  `ratehawk_key_id`, `ratehawk_api_key` (`repr=False`). Missing either half ⇒
+  registered but every search returns `[]` (degrade, don't crash boot).
+- `app/main.py` — registers `RatehawkProvider` when `ratehawk` ∈
+  `INVENTORY_PROVIDERS_ENABLED` (still defaults to `ov,mock`, so off until opted in).
+- `tests/fixtures/ratehawk_hotels.json` — recorded-shape Lake Como region SERP
+  (2 five-star hotels, multi-rate). **Fixture honesty:** the real ETG SERP
+  carries only `id`/`hid`/`rates` per hotel; name/geo/star/images come from a
+  separate static store. The fixture inlines that static content under
+  `static_vm` so the full name→geo→price mapping is exercised offline (and
+  `get_detail` reuses the same extractor via `/hotel/info/`).
+- `tests/test_inventory_ratehawk_provider.py` — 22 tests (pure
+  normalize/summarize incl. cheapest-rate + static-less fallbacks, region +
+  geo search, guests/children, all guard paths, envelope-error,
+  get_detail happy/not-found/500/conn-error/no-creds, key redaction).
+
+**Hotel search params** ride in the registry `filters` dict (not `keyword`):
+`region_id` **or** (`latitude`+`longitude`), plus `checkin`+`checkout`
+(required), and optional `adults`, `children` (ages), `residency`, `currency`,
+`language`, `radius`, `limit`.
+
+**Plumbing landed (same day, additive to B2's edits):**
+- `app/routers/inventory.py` — `GET /search-inventory` now accepts hotel params
+  (`region_id`, `latitude`, `longitude`, `checkin`, `checkout`, `residency`,
+  `currency`; `adults` is shared with flights) and forwards non-empty ones into
+  `filters`. OV/mock ignore unknown keys. +3 router tests (region passthrough,
+  geo passthrough, omitted-when-unset).
+- `apps/agent/src/agent/tools/inventory.py` — agent `search_inventory` tool
+  widened with the same hotel params + hotel-search guidance in the docstring.
+
+**Card mapping landed (same session, creds-independent — closes the "hotel node
+renders room/nights/check-in" acceptance bullet):**
+- `app/services/card_mapping.py` — `hotel_item_to_card_attrs(item, *, check_in,
+  check_out)` maps a `HotelItem` → typed `HotelCardAttrs` (name, room_type,
+  bedding, nights, geo, `night_bar`, seed-shaped `CardSnapshot`) via
+  `summarize_hotel`; `inventory_item_to_card_metadata` now dispatches
+  `HotelItem` → typed (alongside B2's `FlightItem`). `check_in`/`check_out` are
+  the *search-request* dates (NOT in the ETG per-hotel response), threaded by
+  the caller; when both present `nights` is recomputed from the stay length.
+  Like B2's flight mapping, this is **tested but not yet wired into the live
+  `propose_card` path** — that wiring (threading search dates through to the
+  node) is shared follow-up with B2.
+- `tests/test_card_mapping.py` — +4 hotel tests (room/nights/geo, date→nights
+  override, metadata shape, sparse/static-less hotel).
+- `scripts/verify-sB3.sh` — 11 offline acceptance bullets (region + geo search,
+  cheapest-rate, source provenance, hotel-node room/nights/check-in, router
+  passthrough, no-creds + non-ok-envelope degrade, key redaction, registry
+  wiring) + an optional staging live probe that soft-skips without creds
+  (mirrors `verify-sB1.sh`). Runs green offline: **11 passed, 0 failed**.
+
+**Tested:** full `apps/api` suite **464 passed**; full `apps/agent` suite
+**34 passed**; `app.main` imports clean with `ov,mock,duffel,ratehawk` enabled.
+(No live ETG validation — no sandbox credentials available; see resume hook 1.)
+
+**What remains to call B3 fully "done" (resume hooks):**
+1. **Credential spike + live re-capture (the only creds-blocked item).** Get ETG
+   sandbox creds, confirm the real SERP/`hotel/info/` field shapes, wire the
+   **static-content join** the fixture currently inlines as `static_vm` (content
+   dump vs. per-hotel `/hotel/info/`), re-record `ratehawk_hotels.json` from a
+   live call, enable `ratehawk` in the staging `INVENTORY_PROVIDERS_ENABLED` +
+   add `RATEHAWK_KEY_ID`/`RATEHAWK_API_KEY` secrets (F2), and run
+   `verify-sB3.sh`'s live probe. (mvp-plan §5: "Ratehawk has no reference impl —
+   spike credentials early".)
+2. **Wire the typed mapping into `propose_card`** (shared with B2's flight
+   mapping): thread the originating search dates so a proposed hotel node stamps
+   `check_in`/`check_out`. Touches the proposal path / itinerary-graph files.
+
+   *Done this session:* ~~Hotel `HotelItem` → `HotelCardAttrs` mapping~~ and
+   ~~`scripts/verify-sB3.sh`~~ — both landed above.
+
 ### 2026-06-21 — M002/B2 Duffel flights provider — **adapter layer landed (behind tests)**
 
 **What landed (all in `apps/api`, deliberately disjoint from the in-flight
@@ -249,15 +434,30 @@ cabin/nonstop tags, flight_code + times via `summarize_offer`, origin-airport
 geo). Confirms field names match the fixture and `Duffel-Version: v2`. (Live
 results came back in EUR — multi-currency display deferred per D-COST.)
 
-**What remains to call B2 fully "done" (resume hooks):**
-1. **Flight node → `FlightCardAttrs`.** Map a proposed Duffel `FlightItem` to the
-   `flight` card (use `summarize_offer` for iata_from/to, flight_code, cabin,
-   depart/arrive) so "flight node renders with cabin/seat/times" holds. Touches
-   the proposal path (`propose_card`) / card-attrs — coordinate with whoever
-   owns the itinerary-graph files (timezone work in flight). **See the flight-
-   offer-lifecycle design note below — the flight card/node must carry the
-   offer's `expires_at` + `priced_at`, not just static fields.**
-2. **Verify script** `scripts/verify-sB2.sh` against staging (matches M001 discipline).
+**UPDATE (later same day) — render + wiring landed; B2 acceptance met.**
+Both acceptance clauses now hold end-to-end (behind tests):
+- **Render clause** (`a1bfcb0`): `services/card_mapping.py`
+  `flight_item_to_card_attrs` (FlightItem → `FlightCardAttrs` via `summarize_offer`
+  + airport geometry) and a generic `inventory_item_to_card_metadata`; the flight
+  Node card (`NodeCard` FlightBody + `ExpandedCard` FlightFace) renders route +
+  cities + cabin chip + seat + depart→arrive wall-clock (each end its own offset),
+  with lifecycle status carried by `CardShell`. `NodeMeta` gains
+  cabin/seat/depart_at/arrive_at. 5 api mapping tests + 3 web render tests.
+- **Wiring clause** (`4266e2a`): `POST /itinerary/{id}/nodes/from-inventory`
+  fetches the item via the registry (Duffel re-fetch = offer refresh, D024),
+  derives typed card metadata, maps kind→NodeType, and creates the node through
+  the normal `add_node` write path; agent tool `propose_flight(source, source_id)`
+  registered in the planning set. 4 router tests. Multi-kind for free (hotels via
+  the shared `card_mapping`, co-developed with B3).
+
+**Still owed (small):**
+1. **Flight card → offer-freshness status.** The card is the surface to show the
+   time-boxed quote ("fare held until …" / repriced) per the design note + D024.
+   Needs `node_offers` (M005) threaded into the card (`expires_at`/`priced_at`);
+   today the card shows cabin/seat/times + lifecycle status only.
+2. **Client regen for the new endpoint** — deferred to the B1/B3 batch
+   (`generated/` is gitignored; the agent path uses raw HTTP, so nothing is blocked).
+3. **Verify script** `scripts/verify-sB2.sh` against staging (after F2).
 
 ### 2026-06-21 — Design note (founder): flight offers are time-boxed & repriceable
 

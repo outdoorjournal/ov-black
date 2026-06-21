@@ -1,0 +1,108 @@
+{
+  "places": [
+    {
+      "id": "ChIJ87Sl-zaLGGARsNzac9NJ2Lc",
+      "types": [
+        "sushi_restaurant",
+        "fine_dining_restaurant",
+        "restaurant",
+        "food",
+        "point_of_interest",
+        "establishment"
+      ],
+      "primaryType": "sushi_restaurant",
+      "formattedAddress": "Japan, 〒106-0032 Tokyo, Minato City, Roppongi, 1-chōme−4−5 ３Ｆ",
+      "location": { "latitude": 35.6647321, "longitude": 139.7339211 },
+      "rating": 4.6,
+      "userRatingCount": 421,
+      "displayName": { "text": "Sushi Saito", "languageCode": "en" },
+      "priceLevel": "PRICE_LEVEL_VERY_EXPENSIVE",
+      "editorialSummary": {
+        "text": "Refined omakase sushi served at an intimate three-seat counter.",
+        "languageCode": "en"
+      },
+      "websiteUri": "https://sushisaito.example/",
+      "internationalPhoneNumber": "+81 3-3589-4412",
+      "regularOpeningHours": {
+        "openNow": false,
+        "weekdayDescriptions": [
+          "Monday: 12:00 – 1:30 PM, 5:00 – 9:00 PM",
+          "Tuesday: 12:00 – 1:30 PM, 5:00 – 9:00 PM",
+          "Wednesday: Closed",
+          "Thursday: 12:00 – 1:30 PM, 5:00 – 9:00 PM",
+          "Friday: 12:00 – 1:30 PM, 5:00 – 9:00 PM",
+          "Saturday: 12:00 – 1:30 PM, 5:00 – 9:00 PM",
+          "Sunday: Closed"
+        ]
+      },
+      "photos": [
+        {
+          "name": "places/ChIJ87Sl-zaLGGARsNzac9NJ2Lc/photos/AeY30wM-saito-1",
+          "widthPx": 4032,
+          "heightPx": 3024,
+          "authorAttributions": [
+            { "displayName": "A Diner", "uri": "https://maps.example/contrib/1" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ChIJ8Rfu99kIAWARRZ5jLrUJ0Hk",
+      "types": [
+        "tourist_attraction",
+        "place_of_worship",
+        "shinto_shrine",
+        "point_of_interest",
+        "establishment"
+      ],
+      "primaryType": "tourist_attraction",
+      "formattedAddress": "68 Fukakusa Yabunouchichō, Fushimi Ward, Kyoto, 612-0882, Japan",
+      "location": { "latitude": 34.9671312, "longitude": 135.7727099 },
+      "rating": 4.7,
+      "userRatingCount": 92134,
+      "displayName": { "text": "Fushimi Inari Taisha", "languageCode": "en" },
+      "editorialSummary": {
+        "text": "Sprawling shrine famed for its endless vermilion torii gates.",
+        "languageCode": "en"
+      },
+      "websiteUri": "http://inari.jp.example/",
+      "regularOpeningHours": {
+        "openNow": true,
+        "weekdayDescriptions": [
+          "Monday: Open 24 hours",
+          "Tuesday: Open 24 hours",
+          "Wednesday: Open 24 hours",
+          "Thursday: Open 24 hours",
+          "Friday: Open 24 hours",
+          "Saturday: Open 24 hours",
+          "Sunday: Open 24 hours"
+        ]
+      },
+      "photos": [
+        {
+          "name": "places/ChIJ8Rfu99kIAWARRZ5jLrUJ0Hk/photos/AeY30wM-inari-1",
+          "widthPx": 4800,
+          "heightPx": 3200
+        }
+      ]
+    },
+    {
+      "id": "ChIJ77J7Zx-MGGARPnz6oxlQK8s",
+      "types": [
+        "lodging",
+        "spa",
+        "point_of_interest",
+        "establishment"
+      ],
+      "primaryType": "lodging",
+      "formattedAddress": "The Otemachi Tower, 1-5-6 Otemachi, Chiyoda City, Tokyo 100-0004, Japan",
+      "location": { "latitude": 35.6889783, "longitude": 139.7672501 },
+      "rating": 4.8,
+      "userRatingCount": 1342,
+      "displayName": { "text": "Aman Tokyo", "languageCode": "en" },
+      "priceLevel": "PRICE_LEVEL_VERY_EXPENSIVE",
+      "websiteUri": "https://www.aman.example/hotels/aman-tokyo",
+      "internationalPhoneNumber": "+81 3-5224-3333"
+    }
+  ]
+}

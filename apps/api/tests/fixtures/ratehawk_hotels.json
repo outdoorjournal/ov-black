@@ -1,0 +1,219 @@
+{
+  "data": {
+    "total_hotels": 2,
+    "hotels": [
+      {
+        "id": "grand_hotel_tremezzo",
+        "hid": 7654321,
+        "static_vm": {
+          "id": "grand_hotel_tremezzo",
+          "name": "Grand Hotel Tremezzo",
+          "star_rating": 5,
+          "latitude": 45.98765,
+          "longitude": 9.22891,
+          "address": "Via Regina 8, Tremezzina, Lake Como, Italy",
+          "kind": "Resort",
+          "images": [
+            "https://cdn.worldota.net/t/{size}/content/01/grand_tremezzo/1.jpg",
+            "https://cdn.worldota.net/t/{size}/content/01/grand_tremezzo/2.jpg"
+          ],
+          "region": {
+            "id": 2381,
+            "name": "Lake Como",
+            "country_code": "IT"
+          }
+        },
+        "rates": [
+          {
+            "match_hash": "m-3f9c1d20-aaaa-4d8e-9b21-tremezzo-prestige",
+            "daily_prices": ["1450.00", "1450.00"],
+            "meal": "breakfast",
+            "payment_options": {
+              "payment_types": [
+                {
+                  "amount": "2900.00",
+                  "show_amount": "3190.00",
+                  "currency_code": "EUR",
+                  "show_currency_code": "USD",
+                  "by": null,
+                  "is_need_credit_card_data": true,
+                  "is_need_cvc": false,
+                  "type": "deposit",
+                  "cancellation_penalties": {
+                    "free_cancellation_before": "2026-09-08T12:00:00",
+                    "policies": [
+                      {
+                        "start_at": null,
+                        "end_at": "2026-09-08T12:00:00",
+                        "amount_charge": "0.00",
+                        "amount_show": "0.00"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "room_name": "Lake View Prestige Room",
+            "room_data_trans": {
+              "main_room_type": "Prestige Room",
+              "main_name": "Lake View Prestige Room",
+              "bathroom": null,
+              "bedding_type": "king bed",
+              "misc_room_type": null
+            },
+            "rg_ext": {
+              "class": 5,
+              "quality": 5,
+              "sex": 0,
+              "bathroom": 2,
+              "bedding": 4,
+              "family": 0,
+              "capacity": 2,
+              "club": 0,
+              "bedrooms": 0,
+              "balcony": 1,
+              "view": 3,
+              "floor": 0
+            },
+            "amenities_data": ["non-smoking", "lake-view", "balcony"],
+            "allotment": 3,
+            "book_hash": "h-3f9c1d20-aaaa-tremezzo-prestige"
+          },
+          {
+            "match_hash": "m-3f9c1d20-aaab-4d8e-9b21-tremezzo-suite",
+            "daily_prices": ["1850.00", "1850.00"],
+            "meal": "half-board",
+            "payment_options": {
+              "payment_types": [
+                {
+                  "amount": "3700.00",
+                  "show_amount": "4070.00",
+                  "currency_code": "EUR",
+                  "show_currency_code": "USD",
+                  "by": null,
+                  "is_need_credit_card_data": true,
+                  "is_need_cvc": false,
+                  "type": "deposit",
+                  "cancellation_penalties": {
+                    "free_cancellation_before": null,
+                    "policies": [
+                      {
+                        "start_at": null,
+                        "end_at": null,
+                        "amount_charge": "3700.00",
+                        "amount_show": "4070.00"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "room_name": "Rooftop Suite Lake Como",
+            "room_data_trans": {
+              "main_room_type": "Suite",
+              "main_name": "Rooftop Suite Lake Como",
+              "bathroom": null,
+              "bedding_type": "king bed",
+              "misc_room_type": null
+            },
+            "rg_ext": {
+              "class": 5,
+              "quality": 5,
+              "capacity": 3,
+              "balcony": 1,
+              "view": 3
+            },
+            "amenities_data": ["non-smoking", "lake-view", "terrace"],
+            "allotment": 1,
+            "book_hash": "h-3f9c1d20-aaab-tremezzo-suite"
+          }
+        ]
+      },
+      {
+        "id": "il_sereno_lago_di_como",
+        "hid": 7654322,
+        "static_vm": {
+          "id": "il_sereno_lago_di_como",
+          "name": "Il Sereno Lago di Como",
+          "star_rating": 5,
+          "latitude": 45.96672,
+          "longitude": 9.25418,
+          "address": "Via Torrazza 10, Torno, Lake Como, Italy",
+          "kind": "Boutique",
+          "images": [
+            "https://cdn.worldota.net/t/{size}/content/02/il_sereno/1.jpg"
+          ],
+          "region": {
+            "id": 2381,
+            "name": "Lake Como",
+            "country_code": "IT"
+          }
+        },
+        "rates": [
+          {
+            "match_hash": "m-7a2e8b41-bbbb-4c10-8e55-sereno-lakesuite",
+            "daily_prices": ["1620.00", "1620.00"],
+            "meal": "nomeal",
+            "payment_options": {
+              "payment_types": [
+                {
+                  "amount": "3240.00",
+                  "show_amount": "3564.00",
+                  "currency_code": "EUR",
+                  "show_currency_code": "USD",
+                  "by": null,
+                  "is_need_credit_card_data": true,
+                  "is_need_cvc": false,
+                  "type": "deposit",
+                  "cancellation_penalties": {
+                    "free_cancellation_before": "2026-09-05T12:00:00",
+                    "policies": [
+                      {
+                        "start_at": null,
+                        "end_at": "2026-09-05T12:00:00",
+                        "amount_charge": "0.00",
+                        "amount_show": "0.00"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "room_name": "Lake Suite",
+            "room_data_trans": {
+              "main_room_type": "Suite",
+              "main_name": "Lake Suite",
+              "bathroom": null,
+              "bedding_type": "king bed",
+              "misc_room_type": null
+            },
+            "rg_ext": {
+              "class": 5,
+              "quality": 5,
+              "capacity": 2,
+              "view": 3
+            },
+            "amenities_data": ["non-smoking", "lake-view", "designer"],
+            "allotment": 2,
+            "book_hash": "h-7a2e8b41-bbbb-sereno-lakesuite"
+          }
+        ]
+      }
+    ]
+  },
+  "debug": {
+    "request": {
+      "checkin": "2026-09-12",
+      "checkout": "2026-09-14",
+      "residency": "us",
+      "language": "en",
+      "currency": "USD",
+      "guests": [{"adults": 2, "children": []}],
+      "region_id": 2381
+    },
+    "key_id": 1000,
+    "validation_error": null
+  },
+  "status": "ok",
+  "error": null
+}

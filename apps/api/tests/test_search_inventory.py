@@ -369,6 +369,104 @@ def test_search_omits_unset_flight_params_from_filters(
         assert key not in filters
 
 
+# ── Hotel-search params → filters ──────────────────────────────────────────
+
+
+def test_search_forwards_hotel_params_into_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    # The hotel (Ratehawk) location + dates ride in ``filters``; providers
+    # that don't consume them ignore the extra keys.
+    resp = client.get(
+        "/search-inventory?source=ov&region_id=2381"
+        "&checkin=2026-09-12&checkout=2026-09-14"
+        "&adults=2&residency=us&currency=USD",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    assert filters["region_id"] == 2381
+    assert filters["checkin"] == "2026-09-12"
+    assert filters["checkout"] == "2026-09-14"
+    assert filters["adults"] == 2
+    assert filters["residency"] == "us"
+    assert filters["currency"] == "USD"
+
+
+def test_search_forwards_hotel_geo_params_into_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.get(
+        "/search-inventory?source=ov&latitude=45.98&longitude=9.25"
+        "&checkin=2026-09-12&checkout=2026-09-14",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    assert filters["latitude"] == 45.98
+    assert filters["longitude"] == 9.25
+
+
+def test_search_omits_unset_hotel_params_from_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.get("/search-inventory?source=ov&keyword=como", headers=auth_headers)
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    for key in ("region_id", "latitude", "longitude", "checkin", "checkout", "residency", "currency"):
+        assert key not in filters
+
+
+# ── Places location-bias params → filters ──────────────────────────────────
+
+
+def test_search_forwards_places_location_bias_into_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    # The Google Places location bias rides in ``filters`` under near_* keys
+    # (distinct from the Ratehawk hotel-geo latitude/longitude).
+    resp = client.get(
+        "/search-inventory?source=ov&kinds=meal&keyword=sushi"
+        "&near_lat=35.66&near_lng=139.73&radius_m=1200",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    assert filters["near_lat"] == 35.66
+    assert filters["near_lng"] == 139.73
+    assert filters["radius_m"] == 1200
+
+
+def test_search_omits_unset_places_params_from_filters(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.get("/search-inventory?source=ov&keyword=como", headers=auth_headers)
+    assert resp.status_code == 200
+    provider = override_registry.get("ov")
+    assert isinstance(provider, FakeOVProvider)
+    filters = provider.search_calls[-1]["filters"]
+    for key in ("near_lat", "near_lng", "radius_m"):
+        assert key not in filters
+
+
 # ── Actor context threading ────────────────────────────────────────────────
 
 
