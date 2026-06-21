@@ -13,7 +13,7 @@ from agent.schemas import Mode
 from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
 from agent.tools.mutations import update_node_status
-from agent.tools.proposals import assemble_draft, propose_card
+from agent.tools.proposals import assemble_draft, propose_card, propose_flight
 from agent.tools.set_mood import set_mood
 from agent.tools.traveler import (
     get_traveler_context,
@@ -41,6 +41,7 @@ _TOOLS_PLANNING = [
     search_inventory,
     get_inventory_detail,
     propose_card,
+    propose_flight,
     assemble_draft,
     update_node_status,
     set_mood,

@@ -59,8 +59,13 @@ from app.services.itineraries import (
     release_lock,
     update_node,
 )
+from app.inventory.registry import InventoryCtx, UnknownSourceError
+from app.routers.inventory import get_inventory_registry
+from app.services.card_mapping import inventory_item_to_card_metadata
+from app.services.inventory import get_inventory_detail
 
 if TYPE_CHECKING:
+    from app.inventory.registry import InventoryProviderRegistry
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -95,6 +100,24 @@ class CreateNodeRequest(BaseModel):
     source: str | None = None
     source_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateNodeFromInventoryRequest(BaseModel):
+    """Create a graph node from a live inventory item by (source, source_id).
+
+    The server fetches the current item through the provider registry and
+    derives the typed card metadata (e.g. a Duffel flight → FlightCardAttrs),
+    so callers never hand-shape card attrs. For flights this re-fetch is a
+    natural offer refresh (D024). ``status`` defaults to ``proposed`` — the
+    item is a candidate on the board, not a stray idea.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    source_id: str
+    status: NodeStatus = NodeStatus.proposed
+    parent_subgraph_id: uuid.UUID | None = None
 
 
 class UpdateNodeRequest(BaseModel):
@@ -425,6 +448,80 @@ async def create_node_endpoint(
         source=payload.source,
         source_id=payload.source_id,
         metadata=payload.metadata,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    starts_at, duration_minutes = _serialize_starts_at(
+        result.starts_at, _tz_offset_from_metadata(result.metadata_)
+    )
+    return NodeResponse(
+        id=result.id,
+        itinerary_id=result.itinerary_id,
+        parent_subgraph_id=result.parent_subgraph_id,
+        type=result.type,
+        status=result.status,
+        title=result.title,
+        source=result.source,
+        source_id=result.source_id,
+        metadata=result.metadata_,
+        starts_at=starts_at,
+        duration_minutes=duration_minutes,
+    )
+
+
+@router.post(
+    "/{itinerary_id}/nodes/from-inventory",
+    status_code=status.HTTP_201_CREATED,
+    response_model=NodeResponse,
+    summary="Create a node from a live inventory item (typed card metadata).",
+)
+async def create_node_from_inventory_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: CreateNodeFromInventoryRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: "AsyncSession" = Depends(get_session),
+    registry: "InventoryProviderRegistry" = Depends(get_inventory_registry),
+) -> NodeResponse:
+    """Fetch the item, derive its card metadata, and add it as a node.
+
+    The provider lookup is the single source of card semantics: a Duffel
+    flight becomes a ``flight`` node carrying ``FlightCardAttrs`` (cabin /
+    seat / depart-arrive), a Ratehawk stay a ``hotel`` node, etc. Goes
+    through the same ``add_node`` write path as a hand-built node, so the
+    lock/queue + history invariants are unchanged.
+    """
+    actor = _actor_from_user(user)
+    ctx = InventoryCtx(actor_kind="user", actor_id=user.sub)
+    try:
+        item = await get_inventory_detail(
+            registry, source=payload.source, source_id=payload.source_id, ctx=ctx
+        )
+    except UnknownSourceError as exc:
+        logger.info("itinerary.from_inventory.unknown_source", extra={"source": exc.source})
+        raise HTTPException(status_code=400, detail="unknown_source") from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="inventory_not_found")
+
+    # ``InventoryItem.kind`` is a 1:1 subset of NodeType (flight, hotel, meal,
+    # experience, destination, transit, note); guard so an unmapped kind is a
+    # clean 422 rather than a 500 deep in add_node.
+    try:
+        node_type = NodeType(item.kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="unmappable_inventory_kind") from exc
+
+    metadata = inventory_item_to_card_metadata(item)
+    result = await add_node(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        type=node_type,
+        status=payload.status,
+        title=item.title,
+        parent_subgraph_id=payload.parent_subgraph_id,
+        source=item.source,
+        source_id=item.source_id,
+        metadata=metadata,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)

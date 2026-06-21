@@ -66,6 +66,38 @@ async def propose_card(
 
 
 @tool
+async def propose_flight(source: str, source_id: str) -> dict:
+    """Add a flight (or other inventory item) to the itinerary as a typed card.
+
+    Use this instead of ``propose_card`` for results that carry rich
+    structured detail — flights especially. The ``source``/``source_id``
+    pair must come from a prior ``search_inventory`` result (e.g.
+    ``source='duffel'``). The backend re-fetches the item and derives the
+    card metadata server-side — for a flight that means cabin, seat, and
+    depart/arrive times land on the node automatically; for a Duffel offer
+    the re-fetch also refreshes the (time-boxed) quote.
+
+    Like ``propose_card``, this auto-creates and pins a draft itinerary if
+    the session has none. Returns the persisted node; the entrypoint yields
+    a ``card_proposed`` frame to the UI.
+    """
+    pin = pin_ctx.get() or {}
+    itinerary_id = pin.get("itinerary_id")
+
+    if itinerary_id is None:
+        created = await post_json("/itinerary", json={"title": "Concierge draft"})
+        itinerary_id = created.get("id")
+        if not itinerary_id:
+            raise BackendError(status=None, reason="itinerary_create_failed")
+        pin_ctx.set({**pin, "itinerary_id": itinerary_id})
+
+    return await post_json(
+        f"/itinerary/{itinerary_id}/nodes/from-inventory",
+        json={"source": source, "source_id": source_id},
+    )
+
+
+@tool
 async def assemble_draft(day_plan: list[dict]) -> dict:
     """Stitch proposed cards into a day-by-day sequence.
 
