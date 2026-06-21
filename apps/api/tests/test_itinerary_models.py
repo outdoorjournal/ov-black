@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
+    CostKind,
     Edge,
     EdgeHistory,
     EdgeType,
@@ -36,6 +37,7 @@ from app.models import (
     NodeType,
 )
 from app.models.itinerary import (
+    cost_kind_enum,
     edge_type_enum,
     node_role_enum,
     node_status_enum,
@@ -66,6 +68,7 @@ def test_saenum_create_type_is_false_for_all_graph_enums() -> None:
         node_status_enum,
         edge_type_enum,
         node_role_enum,
+        cost_kind_enum,
     ):
         assert sa_enum.create_type is False, (
             f"Postgres ENUM {sa_enum.name!r} must have create_type=False so "
@@ -116,6 +119,10 @@ def test_node_type_enum_values_match_migration() -> None:
     assert {m.value for m in NodeRole} == {
         "destination",
         "terminus",
+    }
+    assert {m.value for m in CostKind} == {
+        "per_person",
+        "total",
     }
 
 

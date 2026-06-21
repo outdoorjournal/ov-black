@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -32,6 +33,7 @@ from app.auth_guards import require_advisor
 from app.db import get_session, get_sessionmaker
 from app.models import (
     Client,
+    CostKind,
     EdgeType,
     ItineraryStatus,
     NodeStatus,
@@ -63,6 +65,7 @@ from app.inventory.registry import InventoryCtx, UnknownSourceError
 from app.routers.inventory import get_inventory_registry
 from app.services.card_mapping import inventory_item_to_card_metadata
 from app.services.inventory import get_inventory_detail
+from app.services.node_cost import cost_from_inventory_item
 
 if TYPE_CHECKING:
     from app.inventory.registry import InventoryProviderRegistry
@@ -100,6 +103,10 @@ class CreateNodeRequest(BaseModel):
     source: str | None = None
     source_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # First-class cost (D-COST). amount + currency must be set together.
+    cost_amount: Decimal | None = None
+    cost_currency: str | None = None
+    cost_kind: CostKind | None = None
 
 
 class CreateNodeFromInventoryRequest(BaseModel):
@@ -135,6 +142,11 @@ class UpdateNodeRequest(BaseModel):
     source: str | None = None
     source_id: str | None = None
     metadata: dict[str, Any] | None = None
+    # First-class cost (D-COST). Advisor edits land here; amount + currency
+    # must be set/cleared together (service-layer + DB CHECK enforce it).
+    cost_amount: Decimal | None = None
+    cost_currency: str | None = None
+    cost_kind: CostKind | None = None
 
 
 class NodeResponse(BaseModel):
@@ -147,6 +159,13 @@ class NodeResponse(BaseModel):
     source: str | None
     source_id: str | None
     metadata: dict[str, Any]
+    # First-class node cost (D-COST). ``cost_amount`` is a native-currency
+    # decimal (serialized as a JSON string to avoid float precision loss);
+    # ``cost_currency`` is ISO 4217; ``cost_kind`` is per_person|total. All
+    # None for a node without a cost.
+    cost_amount: Decimal | None = None
+    cost_currency: str | None = None
+    cost_kind: CostKind | None = None
     # Scheduled timing, derived from the node's ``starts_at`` tstzrange.
     # ``starts_at`` is the ISO-8601 lower bound; ``duration_minutes`` is the
     # whole-minute span (upper - lower), or None when there is no upper bound
@@ -302,6 +321,62 @@ def _raise_for_error(err: ItineraryError) -> None:
     raise HTTPException(status_code=500, detail="internal_error")
 
 
+# ── Node response builders ──────────────────────────────────────────────────
+
+
+def _node_response_from_out(n: Any) -> NodeResponse:
+    """Build a NodeResponse from a service ``NodeOut`` (graph-read shape).
+
+    ``NodeOut`` already carries the serialized ``starts_at`` / cost fields, so
+    this is a straight field copy. Used by the graph-read + assemble endpoints.
+    """
+    return NodeResponse(
+        id=n.id,
+        itinerary_id=n.itinerary_id,
+        parent_subgraph_id=n.parent_subgraph_id,
+        type=n.type,
+        status=n.status,
+        title=n.title,
+        source=n.source,
+        source_id=n.source_id,
+        metadata=n.metadata,
+        cost_amount=n.cost_amount,
+        cost_currency=n.cost_currency,
+        cost_kind=n.cost_kind,
+        starts_at=n.starts_at,
+        duration_minutes=n.duration_minutes,
+        depth=n.depth,
+    )
+
+
+def _node_response_from_node(node: Any) -> NodeResponse:
+    """Build a NodeResponse from a persisted ``Node`` ORM row (write shape).
+
+    The single-node write endpoints (create / update / from-inventory) return
+    a ``Node`` whose ``starts_at`` is still a raw tstzrange, so it's serialized
+    here with the node's recorded local offset.
+    """
+    starts_at, duration_minutes = _serialize_starts_at(
+        node.starts_at, _tz_offset_from_metadata(node.metadata_)
+    )
+    return NodeResponse(
+        id=node.id,
+        itinerary_id=node.itinerary_id,
+        parent_subgraph_id=node.parent_subgraph_id,
+        type=node.type,
+        status=node.status,
+        title=node.title,
+        source=node.source,
+        source_id=node.source_id,
+        metadata=node.metadata_,
+        cost_amount=node.cost_amount,
+        cost_currency=node.cost_currency,
+        cost_kind=node.cost_kind,
+        starts_at=starts_at,
+        duration_minutes=duration_minutes,
+    )
+
+
 # ── Routes ──────────────────────────────────────────────────────────────────
 
 
@@ -393,23 +468,7 @@ async def get_itinerary_endpoint(
             approved_by=result.itinerary.approved_by,
             approved_at=result.itinerary.approved_at,
         ),
-        nodes=[
-            NodeResponse(
-                id=n.id,
-                itinerary_id=n.itinerary_id,
-                parent_subgraph_id=n.parent_subgraph_id,
-                type=n.type,
-                status=n.status,
-                title=n.title,
-                source=n.source,
-                source_id=n.source_id,
-                metadata=n.metadata,
-                starts_at=n.starts_at,
-                duration_minutes=n.duration_minutes,
-                depth=n.depth,
-            )
-            for n in result.nodes
-        ],
+        nodes=[_node_response_from_out(n) for n in result.nodes],
         edges=[
             EdgeResponse(
                 id=e.id,
@@ -448,25 +507,13 @@ async def create_node_endpoint(
         source=payload.source,
         source_id=payload.source_id,
         metadata=payload.metadata,
+        cost_amount=payload.cost_amount,
+        cost_currency=payload.cost_currency,
+        cost_kind=payload.cost_kind,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    starts_at, duration_minutes = _serialize_starts_at(
-        result.starts_at, _tz_offset_from_metadata(result.metadata_)
-    )
-    return NodeResponse(
-        id=result.id,
-        itinerary_id=result.itinerary_id,
-        parent_subgraph_id=result.parent_subgraph_id,
-        type=result.type,
-        status=result.status,
-        title=result.title,
-        source=result.source,
-        source_id=result.source_id,
-        metadata=result.metadata_,
-        starts_at=starts_at,
-        duration_minutes=duration_minutes,
-    )
+    return _node_response_from_node(result)
 
 
 @router.post(
@@ -511,6 +558,11 @@ async def create_node_from_inventory_endpoint(
         raise HTTPException(status_code=422, detail="unmappable_inventory_kind") from exc
 
     metadata = inventory_item_to_card_metadata(item)
+    # Promote the provider's price to first-class cost columns (B4 / D-COST):
+    # a Duffel flight or Ratehawk hotel lands with a queryable numeric cost,
+    # not just a snapshot string. ``None`` for a price-less item (e.g. a
+    # Google-Places meal) — the node simply carries no cost.
+    cost = cost_from_inventory_item(item)
     result = await add_node(
         session,
         actor,
@@ -522,25 +574,13 @@ async def create_node_from_inventory_endpoint(
         source=item.source,
         source_id=item.source_id,
         metadata=metadata,
+        cost_amount=cost.amount if cost else None,
+        cost_currency=cost.currency if cost else None,
+        cost_kind=cost.kind if cost else None,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    starts_at, duration_minutes = _serialize_starts_at(
-        result.starts_at, _tz_offset_from_metadata(result.metadata_)
-    )
-    return NodeResponse(
-        id=result.id,
-        itinerary_id=result.itinerary_id,
-        parent_subgraph_id=result.parent_subgraph_id,
-        type=result.type,
-        status=result.status,
-        title=result.title,
-        source=result.source,
-        source_id=result.source_id,
-        metadata=result.metadata_,
-        starts_at=starts_at,
-        duration_minutes=duration_minutes,
-    )
+    return _node_response_from_node(result)
 
 
 @router.patch(
@@ -563,22 +603,7 @@ async def update_node_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    starts_at, duration_minutes = _serialize_starts_at(
-        result.starts_at, _tz_offset_from_metadata(result.metadata_)
-    )
-    return NodeResponse(
-        id=result.id,
-        itinerary_id=result.itinerary_id,
-        parent_subgraph_id=result.parent_subgraph_id,
-        type=result.type,
-        status=result.status,
-        title=result.title,
-        source=result.source,
-        source_id=result.source_id,
-        metadata=result.metadata_,
-        starts_at=starts_at,
-        duration_minutes=duration_minutes,
-    )
+    return _node_response_from_node(result)
 
 
 @router.delete(
@@ -714,23 +739,7 @@ async def assemble_itinerary_endpoint(
         _raise_for_error(result)
     return GraphResponse(
         itinerary=_itinerary_to_response(result.itinerary),
-        nodes=[
-            NodeResponse(
-                id=n.id,
-                itinerary_id=n.itinerary_id,
-                parent_subgraph_id=n.parent_subgraph_id,
-                type=n.type,
-                status=n.status,
-                title=n.title,
-                source=n.source,
-                source_id=n.source_id,
-                metadata=n.metadata,
-                starts_at=n.starts_at,
-                duration_minutes=n.duration_minutes,
-                depth=n.depth,
-            )
-            for n in result.nodes
-        ],
+        nodes=[_node_response_from_out(n) for n in result.nodes],
         edges=[
             EdgeResponse(
                 id=e.id,

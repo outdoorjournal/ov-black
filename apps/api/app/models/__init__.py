@@ -31,6 +31,7 @@ from app.models.dossier_fact import (  # noqa: E402,F401  (re-exported)
 )
 from app.models.invite import Invite  # noqa: E402,F401  (re-exported)
 from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
+    CostKind,
     Edge,
     EdgeHistory,
     EdgeType,
@@ -68,6 +69,7 @@ __all__ = [
     "ClientContact",
     "ContactChannel",
     "ContactKind",
+    "CostKind",
     "Dossier",
     "DossierFact",
     "DossierFactKind",

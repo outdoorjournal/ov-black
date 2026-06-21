@@ -78,6 +78,9 @@ def captured_add_node(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             source=kwargs["source"],
             source_id=kwargs["source_id"],
             metadata_=kwargs["metadata"],
+            cost_amount=kwargs.get("cost_amount"),
+            cost_currency=kwargs.get("cost_currency"),
+            cost_kind=kwargs.get("cost_kind"),
             starts_at=None,
         )
 
@@ -150,10 +153,22 @@ def test_creates_flight_node_with_card_attrs(
     assert meta["iata_to"] == "HND"
     assert meta["cabin"] == "business"
     assert meta["depart_at"].startswith("2026-07-10T11:05:00")
+    # B4: the Duffel offer's total_amount is promoted to first-class cost
+    # columns (a flight is a whole-booking total, D-COST cost_kind=total).
+    from decimal import Decimal
+
+    from app.models import CostKind
+
+    assert captured_add_node["cost_amount"] == Decimal("6420.50")
+    assert captured_add_node["cost_currency"] == "USD"
+    assert captured_add_node["cost_kind"] is CostKind.total
     # Response echoes the persisted node.
     body = resp.json()
     assert body["type"] == "flight"
     assert body["metadata"]["cabin"] == "business"
+    assert body["cost_amount"] == "6420.50"
+    assert body["cost_currency"] == "USD"
+    assert body["cost_kind"] == "total"
 
 
 def test_unknown_item_returns_404(

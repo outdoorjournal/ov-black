@@ -3,10 +3,11 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, func, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, func, text
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -62,6 +63,19 @@ class NodeStatus(str, enum.Enum):
     discarded = "discarded"
 
 
+class CostKind(str, enum.Enum):
+    """Mirrors the public.cost_kind Postgres enum (0016).
+
+    Whether a node's ``cost_amount`` is quoted per traveler (``per_person``)
+    or as a single total for the node (``total``). Inventory providers that
+    quote a whole-booking price (Duffel offer total, Ratehawk stay total) map
+    to ``total``; OV-style per-person experiences map to ``per_person``.
+    """
+
+    per_person = "per_person"
+    total = "total"
+
+
 class EdgeType(str, enum.Enum):
     """Mirrors the public.edge_type Postgres enum."""
 
@@ -102,6 +116,14 @@ node_status_enum = PGEnum(
 edge_type_enum = PGEnum(
     EdgeType,
     name="edge_type",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
+cost_kind_enum = PGEnum(
+    CostKind,
+    name="cost_kind",
     schema="public",
     create_type=False,
     values_callable=lambda e: [m.value for m in e],
@@ -243,6 +265,20 @@ class Node(Base):
         nullable=True,
     )
     template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 0016 — first-class node cost (D-COST). Promotes a bookable node's price
+    # from free-text metadata to queryable columns so M005 invoicing + the
+    # money gate can SUM(cost). ``cost_amount`` (native major units) and
+    # ``cost_currency`` (ISO 4217) travel together — the DB CHECK
+    # ``nodes_cost_amount_currency_together`` enforces both-or-neither.
+    # ``cost_kind`` is independent. A flight's amount is a repriceable quote
+    # (D024); the transient offer history lives in ``node_offers`` (M005).
+    cost_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    cost_currency: Mapped[str | None] = mapped_column(nullable=True)
+    cost_kind: Mapped[CostKind | None] = mapped_column(
+        cost_kind_enum, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -21,6 +21,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, NamedTuple, TypedDict
 
 from sqlalchemy import delete, func, or_, select, text, update
@@ -28,6 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    CostKind,
     Edge,
     EdgeHistory,
     EdgeType,
@@ -102,6 +104,9 @@ class NodeOut(NamedTuple):
     source: str | None
     source_id: str | None
     metadata: dict[str, Any]
+    cost_amount: Decimal | None
+    cost_currency: str | None
+    cost_kind: CostKind | None
     starts_at: str | None
     duration_minutes: int | None
     depth: int
@@ -157,6 +162,14 @@ def _snapshot_node(node: Node) -> dict[str, Any]:
         "source": node.source,
         "source_id": node.source_id,
         "metadata": node.metadata_,
+        # Money fields are JSON-safe: Decimal → str (lossless), enum → value.
+        "cost_amount": str(node.cost_amount) if node.cost_amount is not None else None,
+        "cost_currency": node.cost_currency,
+        "cost_kind": (
+            node.cost_kind.value
+            if isinstance(node.cost_kind, CostKind)
+            else node.cost_kind
+        ),
     }
 
 
@@ -331,6 +344,23 @@ def _check_provenance(
     return None
 
 
+def _check_cost(
+    cost_amount: Decimal | None, cost_currency: str | None
+) -> ItineraryError | None:
+    """Amount and currency must travel together (mirrors provenance).
+
+    A guardrail in front of the ``nodes_cost_amount_currency_together`` DB
+    CHECK so a half-specified cost surfaces as a deterministic 400 instead of
+    an integrity error. ``cost_kind`` is independent and not checked here.
+    """
+    if (cost_amount is None) != (cost_currency is None):
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="cost_amount and cost_currency must be provided together",
+        )
+    return None
+
+
 # ── Lock gate ───────────────────────────────────────────────────────────────
 
 
@@ -420,23 +450,26 @@ async def get_itinerary_graph(
         """
         with recursive subgraph(
             id, itinerary_id, parent_subgraph_id, type, status, title,
-            source, source_id, metadata, starts_at, depth
+            source, source_id, metadata, cost_amount, cost_currency, cost_kind,
+            starts_at, depth
         ) as (
             select n.id, n.itinerary_id, n.parent_subgraph_id, n.type, n.status,
-                   n.title, n.source, n.source_id, n.metadata, n.starts_at, 0
+                   n.title, n.source, n.source_id, n.metadata, n.cost_amount,
+                   n.cost_currency, n.cost_kind, n.starts_at, 0
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
             union all
             select c.id, c.itinerary_id, c.parent_subgraph_id, c.type, c.status,
-                   c.title, c.source, c.source_id, c.metadata, c.starts_at,
-                   s.depth + 1
+                   c.title, c.source, c.source_id, c.metadata, c.cost_amount,
+                   c.cost_currency, c.cost_kind, c.starts_at, s.depth + 1
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
         )
         select id, itinerary_id, parent_subgraph_id, type, status, title,
-               source, source_id, metadata, starts_at, depth
+               source, source_id, metadata, cost_amount, cost_currency,
+               cost_kind, starts_at, depth
           from subgraph
          order by depth, id
         """
@@ -459,6 +492,9 @@ async def get_itinerary_graph(
                 source=row.source,
                 source_id=row.source_id,
                 metadata=row_metadata,
+                cost_amount=row.cost_amount,
+                cost_currency=row.cost_currency,
+                cost_kind=CostKind(row.cost_kind) if row.cost_kind else None,
                 starts_at=iso_start,
                 duration_minutes=duration_minutes,
                 depth=row.depth,
@@ -499,11 +535,18 @@ async def add_node(
     source: str | None = None,
     source_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    cost_amount: Decimal | None = None,
+    cost_currency: str | None = None,
+    cost_kind: CostKind | None = None,
 ) -> Node | ItineraryError:
     """Insert a node + its history row in the same transaction."""
     prov_err = _check_provenance(source, source_id)
     if prov_err is not None:
         return prov_err
+
+    cost_err = _check_cost(cost_amount, cost_currency)
+    if cost_err is not None:
+        return cost_err
 
     # Confirm parent itinerary exists up front so we return NOT_FOUND
     # instead of an FK violation.
@@ -540,6 +583,9 @@ async def add_node(
         source=source,
         source_id=source_id,
         metadata_=metadata or {},
+        cost_amount=cost_amount,
+        cost_currency=cost_currency,
+        cost_kind=cost_kind,
     )
     session.add(node)
     try:
@@ -605,7 +651,17 @@ async def update_node(
     if lock_err is not None:
         return lock_err
 
-    allowed = {"type", "status", "title", "source", "source_id", "metadata"}
+    allowed = {
+        "type",
+        "status",
+        "title",
+        "source",
+        "source_id",
+        "metadata",
+        "cost_amount",
+        "cost_currency",
+        "cost_kind",
+    }
     updates: dict[str, Any] = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return node  # No-op update is idempotent — don't write history.
@@ -615,6 +671,12 @@ async def update_node(
     prov_err = _check_provenance(new_source, new_source_id)
     if prov_err is not None:
         return prov_err
+
+    new_cost_amount = updates.get("cost_amount", node.cost_amount)
+    new_cost_currency = updates.get("cost_currency", node.cost_currency)
+    cost_err = _check_cost(new_cost_amount, new_cost_currency)
+    if cost_err is not None:
+        return cost_err
 
     before = _snapshot_node(node)
     for key, value in updates.items():
@@ -1092,6 +1154,7 @@ def _integrity_detail(exc: IntegrityError) -> str:
     msg = str(getattr(exc, "orig", exc))
     for name in (
         "nodes_provenance_complete",
+        "nodes_cost_amount_currency_together",
         "edges_no_self_loop",
     ):
         if name in msg:

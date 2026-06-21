@@ -17,6 +17,7 @@ from __future__ import annotations
 import socket
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -32,6 +33,7 @@ from sqlalchemy.ext.asyncio import (
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import (
+    CostKind,
     Edge,
     EdgeHistory,
     EdgeType,
@@ -375,6 +377,9 @@ def test_get_itinerary_assembles_graph(
                 source="ov",
                 source_id="t-1",
                 metadata={},
+                cost_amount=Decimal("1200.00"),
+                cost_currency="USD",
+                cost_kind=CostKind.per_person,
                 starts_at="2024-06-20T16:10:00+09:00",
                 duration_minutes=30,
                 depth=0,
@@ -389,6 +394,9 @@ def test_get_itinerary_assembles_graph(
                 source=None,
                 source_id=None,
                 metadata={},
+                cost_amount=None,
+                cost_currency=None,
+                cost_kind=None,
                 starts_at=None,
                 duration_minutes=None,
                 depth=1,
@@ -417,6 +425,11 @@ def test_get_itinerary_assembles_graph(
     assert body["nodes"][0]["duration_minutes"] == 30
     assert body["nodes"][1]["starts_at"] is None
     assert body["nodes"][1]["duration_minutes"] is None
+    # First-class cost is serialized through the graph-read path (B4).
+    assert body["nodes"][0]["cost_amount"] == "1200.00"
+    assert body["nodes"][0]["cost_currency"] == "USD"
+    assert body["nodes"][0]["cost_kind"] == "per_person"
+    assert body["nodes"][1]["cost_amount"] is None
     assert len(body["edges"]) == 1
     assert body["edges"][0]["type"] == "alternative_to"
 
@@ -514,6 +527,49 @@ def test_update_node_forbids_unknown_fields(
         headers=auth_headers,
     )
     assert resp.status_code == 422
+
+
+def test_patch_node_forwards_cost_fields(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """B4: the advisor PATCH surface forwards first-class cost to update_node."""
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.patch(
+        f"/itinerary/{iid}/nodes/{nid}",
+        json={"cost_amount": "1234.50", "cost_currency": "USD", "cost_kind": "total"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    call = stub_service["calls"]["update_node"][-1]
+    assert call["cost_amount"] == Decimal("1234.50")
+    assert call["cost_currency"] == "USD"
+    assert call["cost_kind"] is CostKind.total
+
+
+def test_create_node_forwards_cost_fields(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """A hand-built node can carry cost too (advisor authoring, B7)."""
+    iid = uuid.uuid4()
+    resp = client.post(
+        f"/itinerary/{iid}/nodes",
+        json={
+            "type": "experience",
+            "cost_amount": "300.00",
+            "cost_currency": "USD",
+            "cost_kind": "per_person",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    call = stub_service["calls"]["add_node"][-1]
+    assert call["cost_amount"] == Decimal("300.00")
+    assert call["cost_currency"] == "USD"
+    assert call["cost_kind"] is CostKind.per_person
 
 
 def test_delete_node_returns_204(

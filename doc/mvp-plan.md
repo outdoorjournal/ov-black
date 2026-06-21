@@ -200,6 +200,74 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
 
+### 2026-06-21 — M002/B4 First-class node cost — **cost columns + provider population + sum landed (behind tests)**
+
+**Decision locked:** D-COST — first-class `nodes.cost_amount` + `cost_currency`,
+store native currency (one display currency deferred), optional `cost_kind`
+(`per_person`|`total`). Unblocks M005 invoicing + the money gate.
+
+**What landed (all `apps/api` + one migration; net-new files plus additive
+edits to the uncontended cost surfaces — disjoint from the B1/B2/B3 provider
+work):**
+- **Migration `supabase/migrations/0016_node_cost.sql`** (D003 raw SQL,
+  idempotent like 0014/0015): new `public.cost_kind` ENUM (`per_person`/`total`,
+  D020 Postgres-native), `nodes.cost_amount numeric(12,2)` + `nodes.cost_currency
+  text` + `nodes.cost_kind`. CHECK `nodes_cost_amount_currency_together`
+  (amount ⇔ currency, mirrors `nodes_provenance_complete`); partial index
+  `nodes_cost_idx (itinerary_id, cost_currency) where cost_amount is not null`
+  for the M005 per-currency SUM. All nullable — non-bookable/idea nodes carry
+  no cost. **Applied to the local Supabase DB.**
+- **Model** `models/itinerary.py`: `CostKind` enum + `cost_kind_enum` PGEnum
+  (create_type=False) + the three columns on `Node` (cost_amount→`Decimal`).
+  Exported `CostKind` from `app.models`; D020 regression guard + a value-match
+  assertion extended to cover `cost_kind`.
+- **Reads/writes** `services/itineraries.py`: `NodeOut` gains the three cost
+  fields; the recursive graph CTE selects them; `_snapshot_node` records them
+  in node_history (Decimal→str, enum→value); `add_node`/`update_node` persist
+  them (cost in the update whitelist); new `_check_cost` both-or-neither guard
+  (→ VALIDATION_ERROR/400, suspenders to the DB CHECK, whose name
+  `_integrity_detail` now surfaces).
+- **HTTP surface** `routers/itineraries.py`: `NodeResponse` carries
+  `cost_amount` (Decimal→JSON string) / `cost_currency` / `cost_kind`;
+  `CreateNodeRequest` + `UpdateNodeRequest` accept them (advisor edits land via
+  PATCH); two `_node_response_from_*` builders de-duplicate the 5 construction
+  sites so cost can't drift between endpoints.
+- **Provider population** at the `POST /itinerary/{id}/nodes/from-inventory`
+  seam (commit 4266e2a): new uncontended module `services/node_cost.py` with
+  `cost_from_inventory_item(item)` — maps `InventoryItem.price` → (amount,
+  currency, kind); flights/hotels = `total`, OV-style per-person experiences =
+  `per_person`; price-less items (Google-Places meals) → no cost. The endpoint
+  threads the derived cost into `add_node`. A Duffel flight's amount is the
+  agreed cost at proposal — a **repriceable** quote (D024); the transient offer
+  lives in `node_offers` (M005), not here.
+- **Sum helper** `services/node_cost.py::sum_node_costs(session, itinerary_id,
+  *, statuses=None)` → `{currency: Decimal}` grouped by currency over selected,
+  non-discarded priced nodes (optional status filter for the M005 money gate;
+  per-person amounts summed at face value — party-size expansion is M005).
+
+**What's tested:**
+- `tests/test_node_cost.py` — 16 tests: pure `cost_from_inventory_item`
+  (flight/hotel=total, experience=per_person, amount_max fallback, 2dp
+  ROUND_HALF_UP, no-price/half-price → None), `_check_cost` matrix, and DB
+  integration (add_node persists + graph-read surfaces cost; update edits +
+  clears; half-specified cost rejected; `sum_node_costs` per-currency grouping
+  with discarded/deselected-alt exclusion + status filter).
+- `tests/test_nodes_from_inventory.py` — fixture flight now asserts
+  `6420.50 USD total` promoted to cost columns + echoed in the response.
+- `tests/test_itineraries.py` — PATCH + POST forward cost to update_node/
+  add_node; graph-read serializes cost through. `test_itinerary_models.py` —
+  enum guard/value tests extended for `cost_kind`.
+- **Full `apps/api` suite green (492 passed).** API client regenerated
+  (`CostKind` + cost fields present; `generated/` gitignored); `apps/web`
+  typecheck clean.
+
+**What remains (resume hooks):**
+1. **Web render of cost** — the cost columns flow to the client surface but no
+   card component shows a price line yet (B7 advisor authoring + cards).
+2. **M005 wiring** — `sum_node_costs` + `node_offers`/`bookings` (D024 draft in
+   §8) feed invoices + the money gate; flight re-price-before-book delta.
+3. **`scripts/verify-sB4.sh`** offline acceptance harness (mirror sB1/sB3).
+
 ### 2026-06-21 — M002/B1 Google Places live — **provider + live router landed (behind tests)**
 
 **What landed (all in `apps/api`, net-new files plus additive, localized edits
