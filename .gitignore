@@ -26,6 +26,8 @@ coverage/
 .cache/
 tmp/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # ── Monorepo tooling ──
 .turbo/

@@ -17,7 +17,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from app.inventory.providers.ov import (
     OVProvider,
     ProviderUpstreamError,
@@ -26,9 +25,7 @@ from app.inventory.providers.ov import (
 from app.inventory.registry import InventoryCtx
 from app.inventory.schemas import ExperienceItem
 
-FIXTURE_PATH = (
-    Path(__file__).parent / "fixtures" / "ov_search_como.json"
-)
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "ov_search_como.json"
 
 
 @pytest.fixture(scope="module")
@@ -115,9 +112,7 @@ async def test_search_happy_path_returns_experience_items(
 
     provider = _build_provider(handler)
     try:
-        items = await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -142,9 +137,7 @@ async def test_search_includes_trips_and_extra_trips(
 
     provider = _build_provider(handler)
     try:
-        items = await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -169,17 +162,13 @@ async def test_search_skips_malformed_entry_keeps_rest(
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.ov")
     try:
-        items = await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
     expected = (len(ov_fixture_copy["trips"]) - 1) + len(ov_fixture_copy["extraTrips"])
     assert len(items) == expected
-    assert any(
-        rec.message == "inventory.provider.malformed" for rec in caplog.records
-    )
+    assert any(rec.message == "inventory.provider.malformed" for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -197,9 +186,7 @@ async def test_search_wrong_key_fixture_skips_entries(
 
     provider = _build_provider(handler)
     try:
-        items = await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -219,16 +206,12 @@ async def test_search_500_returns_empty_and_logs(
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.ov")
     try:
-        items = await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
     assert items == []
-    error_logs = [
-        rec for rec in caplog.records if rec.message == "inventory.provider.error"
-    ]
+    error_logs = [rec for rec in caplog.records if rec.message == "inventory.provider.error"]
     assert len(error_logs) == 1
     assert getattr(error_logs[0], "upstream_status", None) == 500
 
@@ -243,9 +226,7 @@ async def test_search_504_timeout_returns_empty(
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.ov")
     try:
-        items = await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -269,9 +250,7 @@ async def test_search_empty_keyword_passthrough(
 
     provider = _build_provider(handler)
     try:
-        items = await provider.search(
-            kinds=None, keyword=None, filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword=None, filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -363,9 +342,7 @@ async def test_api_key_never_logged(
     provider = OVProvider(client=client, settings=settings)
     caplog.set_level(logging.DEBUG, logger="ov_black.inventory.ov")
     try:
-        await provider.search(
-            kinds=None, keyword="como", filters={}, ctx=InventoryCtx()
-        )
+        await provider.search(kinds=None, keyword="como", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 

@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-
 from app.inventory import (
     InventoryCtx,
     InventoryItem,
@@ -20,6 +18,7 @@ from app.inventory import (
     UnknownSourceError,
 )
 from app.inventory.schemas import ExperienceItem
+from pydantic import TypeAdapter, ValidationError
 
 
 class _FakeProvider(InventoryProvider):

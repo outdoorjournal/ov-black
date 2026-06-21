@@ -17,7 +17,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from app.config import Settings
 from app.inventory.providers.duffel import (
     DuffelProvider,
@@ -147,7 +146,9 @@ def test_normalize_offer_missing_id_raises(offers_fixture_copy: dict[str, Any]) 
 
 def test_normalize_offer_tolerates_sparse_shape() -> None:
     # An offer with no slices/owner should still normalize (defensive .get()).
-    item = normalize_duffel_offer({"id": "off_sparse", "total_amount": "100.00", "total_currency": "GBP"})
+    item = normalize_duffel_offer(
+        {"id": "off_sparse", "total_amount": "100.00", "total_currency": "GBP"}
+    )
     assert item.source_id == "off_sparse"
     assert item.title == "Flight"
     assert item.location is None
@@ -196,9 +197,7 @@ async def test_search_round_trip_adds_return_slice(offers_fixture: dict[str, Any
     provider = _build_provider(_two_step_handler(offers_fixture, captured=captured))
     filters = {**_SEARCH_FILTERS, "return_date": "2026-07-20", "adults": 2}
     try:
-        await provider.search(
-            kinds=["flight"], keyword=None, filters=filters, ctx=InventoryCtx()
-        )
+        await provider.search(kinds=["flight"], keyword=None, filters=filters, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -233,9 +232,7 @@ async def test_search_missing_params_returns_empty(caplog: pytest.LogCaptureFixt
         await provider.aclose()
 
     assert items == []
-    assert any(
-        getattr(rec, "reason", None) == "missing_search_params" for rec in caplog.records
-    )
+    assert any(getattr(rec, "reason", None) == "missing_search_params" for rec in caplog.records)
 
 
 @pytest.mark.asyncio

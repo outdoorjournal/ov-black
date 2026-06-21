@@ -13,19 +13,14 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from app.inventory.providers.mock import MockProvider, _load_fixture
 from app.inventory.providers.ov import normalize_ov_entry
 from app.inventory.registry import InventoryCtx
 from app.inventory.schemas import ExperienceItem
+from pydantic import ValidationError
 
-MOCK_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "mock_inventory.json"
-)
-OV_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "ov_search_como.json"
-)
+MOCK_FIXTURE = Path(__file__).parent / "fixtures" / "mock_inventory.json"
+OV_FIXTURE = Path(__file__).parent / "fixtures" / "ov_search_como.json"
 
 
 @pytest.fixture()
@@ -77,21 +72,15 @@ async def test_search_keyword_matches_title_case_insensitive(
     assert "mock-dest-patagonia" not in ids
 
 
-async def test_search_keyword_matches_tag(
-    provider: MockProvider, ctx: InventoryCtx
-) -> None:
-    results = await provider.search(
-        kinds=None, keyword="via ferrata", filters={}, ctx=ctx
-    )
+async def test_search_keyword_matches_tag(provider: MockProvider, ctx: InventoryCtx) -> None:
+    results = await provider.search(kinds=None, keyword="via ferrata", filters={}, ctx=ctx)
     assert [item.source_id for item in results] == ["mock-exp-dolomites-01"]
 
 
 async def test_search_keyword_no_matches_returns_empty(
     provider: MockProvider, ctx: InventoryCtx
 ) -> None:
-    results = await provider.search(
-        kinds=None, keyword="nonexistent-xyz", filters={}, ctx=ctx
-    )
+    results = await provider.search(kinds=None, keyword="nonexistent-xyz", filters={}, ctx=ctx)
     assert results == []
 
 
@@ -101,9 +90,7 @@ async def test_search_keyword_no_matches_returns_empty(
 async def test_search_kinds_filter_narrows_results(
     provider: MockProvider, ctx: InventoryCtx
 ) -> None:
-    results = await provider.search(
-        kinds=["destination"], keyword=None, filters={}, ctx=ctx
-    )
+    results = await provider.search(kinds=["destination"], keyword=None, filters={}, ctx=ctx)
     assert {item.kind for item in results} == {"destination"}
     assert len(results) == 2
 
@@ -112,27 +99,19 @@ async def test_search_kinds_with_no_fixture_entries_returns_empty(
     provider: MockProvider, ctx: InventoryCtx
 ) -> None:
     # Negative test — fixture has no hotels, so the filter must return [].
-    results = await provider.search(
-        kinds=["hotel"], keyword=None, filters={}, ctx=ctx
-    )
+    results = await provider.search(kinds=["hotel"], keyword=None, filters={}, ctx=ctx)
     assert results == []
 
 
-async def test_search_combined_kinds_and_keyword(
-    provider: MockProvider, ctx: InventoryCtx
-) -> None:
-    results = await provider.search(
-        kinds=["experience"], keyword="como", filters={}, ctx=ctx
-    )
+async def test_search_combined_kinds_and_keyword(provider: MockProvider, ctx: InventoryCtx) -> None:
+    results = await provider.search(kinds=["experience"], keyword="como", filters={}, ctx=ctx)
     assert [item.source_id for item in results] == ["mock-exp-como-01"]
 
 
 # ── get_detail ────────────────────────────────────────────────────────────
 
 
-async def test_get_detail_known_source_id(
-    provider: MockProvider, ctx: InventoryCtx
-) -> None:
+async def test_get_detail_known_source_id(provider: MockProvider, ctx: InventoryCtx) -> None:
     item = await provider.get_detail(source_id="mock-exp-como-01", ctx=ctx)
     assert item is not None
     assert item.title == "Lakeside Walks Around Lake Como"
@@ -255,8 +234,7 @@ async def test_experience_item_shape_matches_across_adapters(
         if ov_val is None or mock_val is None:
             continue
         assert type(ov_val) is type(mock_val), (
-            f"type mismatch for {key!r}: OV={type(ov_val).__name__} "
-            f"Mock={type(mock_val).__name__}"
+            f"type mismatch for {key!r}: OV={type(ov_val).__name__} Mock={type(mock_val).__name__}"
         )
 
     # Discriminator must resolve identically — the union picked the same

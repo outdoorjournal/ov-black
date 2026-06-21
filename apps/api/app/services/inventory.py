@@ -12,6 +12,8 @@ them to a deterministic HTTP 400.
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.inventory.registry import (
     InventoryCtx,
     InventoryProviderRegistry,
@@ -33,7 +35,7 @@ async def search_inventory(
     sources: list[str] | None,
     kinds: list[str] | None,
     keyword: str | None,
-    filters: dict,
+    filters: dict[str, Any],
     ctx: InventoryCtx,
 ) -> list[InventoryItem]:
     """Search inventory across one or more sources.
@@ -45,9 +47,7 @@ async def search_inventory(
     """
     if sources and len(sources) == 1:
         provider = registry.get(sources[0])
-        return await provider.search(
-            kinds=kinds, keyword=keyword, filters=filters, ctx=ctx
-        )
+        return await provider.search(kinds=kinds, keyword=keyword, filters=filters, ctx=ctx)
     normalized_sources = sources if sources else None
     return await registry.search_all(
         sources=normalized_sources,

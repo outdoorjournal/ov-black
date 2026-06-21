@@ -69,7 +69,7 @@ async def rate_limit_redeem() -> None:
 )
 async def redeem_invite_endpoint(
     payload: RedeemInviteRequest,
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     _rl: None = Depends(rate_limit_redeem),
 ) -> Response:
     result = await redeem_invite(

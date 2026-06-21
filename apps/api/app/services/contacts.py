@@ -42,12 +42,16 @@ async def list_client_contacts(
 ) -> list[ClientContact]:
     """Return every contact row for a client, oldest-first."""
     rows = (
-        await session.execute(
-            select(ClientContact)
-            .where(ClientContact.client_id == client_id)
-            .order_by(ClientContact.created_at.asc())
+        (
+            await session.execute(
+                select(ClientContact)
+                .where(ClientContact.client_id == client_id)
+                .order_by(ClientContact.created_at.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return list(rows)
 
 
@@ -58,9 +62,7 @@ async def create_client_contact(
     client_id: uuid.UUID,
     payload: ClientContactCreate,
 ) -> ContactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return ContactResult(ContactOutcome.CLIENT_NOT_FOUND)
     row = ClientContact(
@@ -83,9 +85,7 @@ async def update_client_contact(
     contact_id: uuid.UUID,
     payload: ClientContactUpdate,
 ) -> ContactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return ContactResult(ContactOutcome.CLIENT_NOT_FOUND)
     row = (
@@ -113,9 +113,7 @@ async def delete_client_contact(
     client_id: uuid.UUID,
     contact_id: uuid.UUID,
 ) -> ContactOutcome:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return ContactOutcome.CLIENT_NOT_FOUND
     result = await session.execute(

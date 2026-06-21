@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -39,7 +40,7 @@ class Party(Base):
     )
     label: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
     member_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    attrs: Mapped[dict] = mapped_column(
+    attrs: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         server_default=text("'{}'::jsonb"),
@@ -73,7 +74,7 @@ class Traveler(Base):
     )
     name: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    profile_attrs: Mapped[dict] = mapped_column(
+    profile_attrs: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         server_default=text("'{}'::jsonb"),

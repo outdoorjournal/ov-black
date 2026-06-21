@@ -40,9 +40,7 @@ def test_prompt_embeds_context_block() -> None:
 def test_prompt_starts_with_voice() -> None:
     """Every prompt opens with the concierge voice framing."""
     prompt = build_system_prompt("")
-    assert prompt.startswith(
-        "You are Outdoor Voyage's Black-tier concierge agent."
-    )
+    assert prompt.startswith("You are Outdoor Voyage's Black-tier concierge agent.")
 
 
 def test_prompt_is_deterministic() -> None:

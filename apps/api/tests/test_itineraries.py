@@ -16,20 +16,12 @@ from __future__ import annotations
 
 import socket
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from fastapi.testclient import TestClient
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import (
@@ -43,7 +35,6 @@ from app.models import (
     NodeStatus,
     NodeType,
 )
-from app.services import itineraries as itineraries_service
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
@@ -58,6 +49,13 @@ from app.services.itineraries import (
     delete_node,
     get_itinerary_graph,
     update_node,
+)
+from fastapi.testclient import TestClient
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 if TYPE_CHECKING:
@@ -159,7 +157,7 @@ def test_serialize_starts_at_applies_tz_offset_minutes() -> None:
     """A UTC-stored instant (as a CTE column surfaces it) is re-emitted in the
     node's local offset when tz_offset_minutes is supplied, same instant.
     """
-    utc = timezone.utc
+    utc = UTC
     # 07:10Z is the UTC normalization of JST 16:10 — what the tstzrange stores.
     lower = datetime(2024, 6, 20, 7, 10, tzinfo=utc)
     upper = datetime(2024, 6, 20, 7, 40, tzinfo=utc)
@@ -172,7 +170,7 @@ def test_serialize_starts_at_applies_tz_offset_minutes() -> None:
 
 def test_serialize_starts_at_none_offset_keeps_utc() -> None:
     """No tz_offset_minutes → the lower bound's own (UTC) offset is kept."""
-    utc = timezone.utc
+    utc = UTC
     lower = datetime(2024, 6, 20, 7, 10, tzinfo=utc)
     iso, _ = _serialize_starts_at(_FakeRange(lower, None), None)
     assert iso == "2024-06-20T07:10:00+00:00"
@@ -182,7 +180,7 @@ def test_serialize_starts_at_none_offset_keeps_utc() -> None:
 
 
 @pytest.fixture()
-def auth_headers(make_token: "Callable[..., str]") -> dict[str, str]:
+def auth_headers(make_token: Callable[..., str]) -> dict[str, str]:
     """Mint a valid JWT for router tests that require auth."""
     return {"Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"}
 
@@ -216,13 +214,11 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def _get_graph(_session: Any, itinerary_id: uuid.UUID) -> Any:
         calls["get_itinerary_graph"].append({"itinerary_id": itinerary_id})
-        return returns.get("get_itinerary_graph", ItineraryError(
-            outcome=ItineraryOutcome.NOT_FOUND
-        ))
+        return returns.get(
+            "get_itinerary_graph", ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+        )
 
-    async def _add_node(
-        _session: Any, actor: ActorContext, **kwargs: Any
-    ) -> Any:
+    async def _add_node(_session: Any, actor: ActorContext, **kwargs: Any) -> Any:
         calls["add_node"].append({"actor": actor, **kwargs})
         if "add_node" in returns:
             return returns["add_node"]
@@ -238,9 +234,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             metadata_=kwargs.get("metadata") or {},
         )
 
-    async def _update_node(
-        _session: Any, actor: ActorContext, **kwargs: Any
-    ) -> Any:
+    async def _update_node(_session: Any, actor: ActorContext, **kwargs: Any) -> Any:
         calls["update_node"].append({"actor": actor, **kwargs})
         if "update_node" in returns:
             return returns["update_node"]
@@ -256,15 +250,11 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             metadata_={},
         )
 
-    async def _delete_node(
-        _session: Any, actor: ActorContext, **kwargs: Any
-    ) -> Any:
+    async def _delete_node(_session: Any, actor: ActorContext, **kwargs: Any) -> Any:
         calls["delete_node"].append({"actor": actor, **kwargs})
         return returns.get("delete_node")  # None = success by default
 
-    async def _add_edge(
-        _session: Any, actor: ActorContext, **kwargs: Any
-    ) -> Any:
+    async def _add_edge(_session: Any, actor: ActorContext, **kwargs: Any) -> Any:
         calls["add_edge"].append({"actor": actor, **kwargs})
         if "add_edge" in returns:
             return returns["add_edge"]
@@ -277,9 +267,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             metadata_=kwargs.get("metadata") or {},
         )
 
-    async def _delete_edge(
-        _session: Any, actor: ActorContext, **kwargs: Any
-    ) -> Any:
+    async def _delete_edge(_session: Any, actor: ActorContext, **kwargs: Any) -> Any:
         calls["delete_edge"].append({"actor": actor, **kwargs})
         return returns.get("delete_edge")
 
@@ -295,7 +283,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(routers_itineraries, "delete_edge", _delete_edge)
 
     # Also override the session dependency so no DB is required.
-    async def _dep() -> "Iterator[object]":
+    async def _dep() -> Iterator[object]:
         yield object()
 
     fastapi_app.dependency_overrides[get_session] = _dep
@@ -305,9 +293,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         fastapi_app.dependency_overrides.pop(get_session, None)
 
 
-def test_create_itinerary_requires_jwt(
-    client: TestClient, stub_service: dict[str, Any]
-) -> None:
+def test_create_itinerary_requires_jwt(client: TestClient, stub_service: dict[str, Any]) -> None:
     resp = client.post("/itinerary", json={"title": "Como"})
     assert resp.status_code == 401
 
@@ -316,7 +302,7 @@ def test_create_itinerary_returns_201_and_forwards_actor(
     client: TestClient,
     stub_service: dict[str, Any],
     auth_headers: dict[str, str],
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     sub = str(uuid.uuid4())
     headers = {"Authorization": f"Bearer {make_token(sub=sub)}"}
@@ -332,7 +318,7 @@ def test_create_itinerary_returns_201_and_forwards_actor(
 def test_create_itinerary_with_non_uuid_sub_still_succeeds(
     client: TestClient,
     stub_service: dict[str, Any],
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     # Some Supabase user ids may not be UUIDs in dev; the router must not 500
     # — it records the string in actor_id and leaves user_id NULL.
@@ -578,9 +564,7 @@ def test_delete_node_returns_204(
     auth_headers: dict[str, str],
 ) -> None:
     iid, nid = uuid.uuid4(), uuid.uuid4()
-    resp = client.delete(
-        f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers
-    )
+    resp = client.delete(f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers)
     assert resp.status_code == 204
     assert resp.content == b""
 
@@ -590,13 +574,9 @@ def test_delete_node_not_found_returns_404(
     stub_service: dict[str, Any],
     auth_headers: dict[str, str],
 ) -> None:
-    stub_service["returns"]["delete_node"] = ItineraryError(
-        outcome=ItineraryOutcome.NOT_FOUND
-    )
+    stub_service["returns"]["delete_node"] = ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
     iid, nid = uuid.uuid4(), uuid.uuid4()
-    resp = client.delete(
-        f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers
-    )
+    resp = client.delete(f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers)
     assert resp.status_code == 404
 
 
@@ -625,9 +605,7 @@ def test_delete_edge_returns_204(
     auth_headers: dict[str, str],
 ) -> None:
     iid, eid = uuid.uuid4(), uuid.uuid4()
-    resp = client.delete(
-        f"/itinerary/{iid}/edges/{eid}", headers=auth_headers
-    )
+    resp = client.delete(f"/itinerary/{iid}/edges/{eid}", headers=auth_headers)
     assert resp.status_code == 204
 
 
@@ -658,7 +636,7 @@ def test_itinerary_routes_are_behind_jwt(client: TestClient) -> None:
 
 
 @pytest_asyncio.fixture()
-async def db_session() -> "AsyncSession":
+async def db_session() -> AsyncSession:
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -694,9 +672,7 @@ async def _cleanup(_session: AsyncSession, itinerary_id: uuid.UUID) -> None:
 
 
 def _actor() -> ActorContext:
-    return ActorContext(
-        user_id=None, kind=ActorKind.SYSTEM, actor_id="test-actor"
-    )
+    return ActorContext(user_id=None, kind=ActorKind.SYSTEM, actor_id="test-actor")
 
 
 @integration
@@ -707,9 +683,7 @@ async def test_create_itinerary_persists_row(db_session: AsyncSession) -> None:
     try:
         assert itinerary.id is not None
         fetched = (
-            await db_session.execute(
-                select(Itinerary).where(Itinerary.id == itinerary.id)
-            )
+            await db_session.execute(select(Itinerary).where(Itinerary.id == itinerary.id))
         ).scalar_one()
         assert fetched.title == "Como trip"
     finally:
@@ -735,10 +709,10 @@ async def test_add_node_writes_history_in_same_transaction(
         )
         assert isinstance(node, Node)
         rows = (
-            await db_session.execute(
-                select(NodeHistory).where(NodeHistory.node_id == node.id)
-            )
-        ).scalars().all()
+            (await db_session.execute(select(NodeHistory).where(NodeHistory.node_id == node.id)))
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
         assert rows[0].op == "insert"
         assert rows[0].before is None
@@ -776,12 +750,16 @@ async def test_update_node_captures_before_and_after(
         assert isinstance(updated, Node)
         assert updated.title == "new title"
         rows = (
-            await db_session.execute(
-                select(NodeHistory)
-                .where(NodeHistory.node_id == node.id)
-                .order_by(NodeHistory.occurred_at)
+            (
+                await db_session.execute(
+                    select(NodeHistory)
+                    .where(NodeHistory.node_id == node.id)
+                    .order_by(NodeHistory.occurred_at)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [r.op for r in rows] == ["insert", "update"]
         assert rows[1].before["title"] == "orig"
         assert rows[1].after["title"] == "new title"
@@ -814,12 +792,16 @@ async def test_delete_node_writes_before_snapshot(
         )
         assert err is None
         rows = (
-            await db_session.execute(
-                select(NodeHistory)
-                .where(NodeHistory.node_id == node_id)
-                .order_by(NodeHistory.occurred_at)
+            (
+                await db_session.execute(
+                    select(NodeHistory)
+                    .where(NodeHistory.node_id == node_id)
+                    .order_by(NodeHistory.occurred_at)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [r.op for r in rows] == ["insert", "delete"]
         assert rows[1].before is not None
         assert rows[1].before["title"] == "doomed"
@@ -834,12 +816,8 @@ async def test_add_edge_writes_history(db_session: AsyncSession) -> None:
     actor = _actor()
     itinerary = await create_itinerary(db_session, actor, title="edge test")
     try:
-        a = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
-        )
-        b = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
-        )
+        a = await add_node(db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience)
+        b = await add_node(db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience)
         assert isinstance(a, Node) and isinstance(b, Node)
         edge = await add_edge(
             db_session,
@@ -851,10 +829,10 @@ async def test_add_edge_writes_history(db_session: AsyncSession) -> None:
         )
         assert isinstance(edge, Edge)
         rows = (
-            await db_session.execute(
-                select(EdgeHistory).where(EdgeHistory.edge_id == edge.id)
-            )
-        ).scalars().all()
+            (await db_session.execute(select(EdgeHistory).where(EdgeHistory.edge_id == edge.id)))
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
         assert rows[0].op == "insert"
         assert rows[0].after["from_node_id"] == str(a.id)
@@ -870,12 +848,8 @@ async def test_delete_edge_writes_before_snapshot(
     actor = _actor()
     itinerary = await create_itinerary(db_session, actor, title="edge del")
     try:
-        a = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
-        )
-        b = await add_node(
-            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience
-        )
+        a = await add_node(db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience)
+        b = await add_node(db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience)
         assert isinstance(a, Node) and isinstance(b, Node)
         edge = await add_edge(
             db_session,
@@ -895,12 +869,16 @@ async def test_delete_edge_writes_before_snapshot(
         )
         assert err is None
         rows = (
-            await db_session.execute(
-                select(EdgeHistory)
-                .where(EdgeHistory.edge_id == edge_id)
-                .order_by(EdgeHistory.occurred_at)
+            (
+                await db_session.execute(
+                    select(EdgeHistory)
+                    .where(EdgeHistory.edge_id == edge_id)
+                    .order_by(EdgeHistory.occurred_at)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [r.op for r in rows] == ["insert", "delete"]
         assert rows[1].after is None
         assert rows[1].before is not None
@@ -992,7 +970,7 @@ async def test_cross_itinerary_parent_rejected(
 async def test_unknown_itinerary_not_found(
     db_session: AsyncSession,
 ) -> None:
-    actor = _actor()
+    _actor()
     result = await get_itinerary_graph(db_session, uuid.uuid4())
     assert isinstance(result, ItineraryError)
     assert result.outcome is ItineraryOutcome.NOT_FOUND
@@ -1124,12 +1102,16 @@ async def test_concurrent_updates_each_land_history_rows(
             title="v2",
         )
         rows = (
-            await db_session.execute(
-                select(NodeHistory)
-                .where(NodeHistory.node_id == node.id)
-                .order_by(NodeHistory.occurred_at)
+            (
+                await db_session.execute(
+                    select(NodeHistory)
+                    .where(NodeHistory.node_id == node.id)
+                    .order_by(NodeHistory.occurred_at)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [r.op for r in rows] == ["insert", "update", "update"]
         assert rows[-1].after["title"] == "v2"
     finally:

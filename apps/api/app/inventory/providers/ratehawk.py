@@ -168,13 +168,14 @@ def _hotel_location(static: dict[str, Any]) -> Location | None:
         label: str | None = f"{name}, {region}"
     else:
         label = name or region
-    has_geo = isinstance(lat, (int, float)) and not isinstance(lat, bool)
-    has_geo = has_geo and isinstance(lng, (int, float)) and not isinstance(lng, bool)
+    lat_f = float(lat) if isinstance(lat, (int, float)) and not isinstance(lat, bool) else None
+    lng_f = float(lng) if isinstance(lng, (int, float)) and not isinstance(lng, bool) else None
+    has_geo = lat_f is not None and lng_f is not None
     if not has_geo and label is None:
         return None
     return Location(
-        lat=float(lat) if has_geo else None,
-        lng=float(lng) if has_geo else None,
+        lat=lat_f if has_geo else None,
+        lng=lng_f if has_geo else None,
         label=label,
     )
 
@@ -288,9 +289,7 @@ def summarize_hotel(hotel: dict[str, Any]) -> dict[str, Any]:
         "longitude": static.get("longitude")
         if isinstance(static.get("longitude"), (int, float))
         else None,
-        "address": static.get("address")
-        if isinstance(static.get("address"), str)
-        else None,
+        "address": static.get("address") if isinstance(static.get("address"), str) else None,
         "room_name": _rate_room_name(cheapest),
         "room_type": _rate_room_type(cheapest),
         "bedding": _rate_bedding(cheapest),
@@ -399,7 +398,7 @@ class RatehawkProvider(InventoryProvider):
             "Content-Type": "application/json",
         }
 
-    def _build_search(self, filters: dict) -> tuple[str, dict[str, Any]] | None:
+    def _build_search(self, filters: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
         """Pick the SERP endpoint + request body from ``filters``.
 
         Region search wins when ``region_id`` is present; otherwise a geo
@@ -409,16 +408,12 @@ class RatehawkProvider(InventoryProvider):
         """
         checkin = filters.get("checkin")
         checkout = filters.get("checkout")
-        if not (
-            isinstance(checkin, str) and checkin and isinstance(checkout, str) and checkout
-        ):
+        if not (isinstance(checkin, str) and checkin and isinstance(checkout, str) and checkout):
             return None
 
         adults = filters.get("adults")
         adult_count = adults if isinstance(adults, int) and adults > 0 else 1
-        children = [
-            age for age in _as_list(filters.get("children")) if isinstance(age, int)
-        ]
+        children = [age for age in _as_list(filters.get("children")) if isinstance(age, int)]
 
         residency = filters.get("residency")
         currency = filters.get("currency")
@@ -429,12 +424,8 @@ class RatehawkProvider(InventoryProvider):
             "residency": residency
             if isinstance(residency, str) and residency
             else _DEFAULT_RESIDENCY,
-            "language": language
-            if isinstance(language, str) and language
-            else _DEFAULT_LANGUAGE,
-            "currency": currency
-            if isinstance(currency, str) and currency
-            else _DEFAULT_CURRENCY,
+            "language": language if isinstance(language, str) and language else _DEFAULT_LANGUAGE,
+            "currency": currency if isinstance(currency, str) and currency else _DEFAULT_CURRENCY,
             "guests": [{"adults": adult_count, "children": children}],
         }
 
@@ -465,7 +456,7 @@ class RatehawkProvider(InventoryProvider):
         *,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]:
         """Return :class:`HotelItem` records (cheapest rate each); ``[]`` on failure.
@@ -505,14 +496,22 @@ class RatehawkProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "ratehawk", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "ratehawk",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             return []
 
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "ratehawk", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "ratehawk",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
             return []
 
@@ -521,7 +520,11 @@ class RatehawkProvider(InventoryProvider):
         except ValueError:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "ratehawk", "upstream_status": resp.status_code, "reason": "invalid_json"},
+                extra={
+                    "source": "ratehawk",
+                    "upstream_status": resp.status_code,
+                    "reason": "invalid_json",
+                },
             )
             return []
 
@@ -617,7 +620,11 @@ class RatehawkProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "ratehawk", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "ratehawk",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             raise ProviderUpstreamError("ratehawk_detail_network_error") from exc
 
@@ -626,9 +633,15 @@ class RatehawkProvider(InventoryProvider):
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "ratehawk", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "ratehawk",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
-            raise ProviderUpstreamError("ratehawk_detail_upstream_error", status_code=resp.status_code)
+            raise ProviderUpstreamError(
+                "ratehawk_detail_upstream_error", status_code=resp.status_code
+            )
 
         try:
             payload = resp.json()
@@ -656,6 +669,10 @@ class RatehawkProvider(InventoryProvider):
         except (ValidationError, ValueError, TypeError) as exc:
             logger.warning(
                 "inventory.provider.malformed",
-                extra={"source": "ratehawk", "source_id": source_id, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "ratehawk",
+                    "source_id": source_id,
+                    "reason": exc.__class__.__name__,
+                },
             )
             raise ProviderUpstreamError("ratehawk_detail_malformed") from exc

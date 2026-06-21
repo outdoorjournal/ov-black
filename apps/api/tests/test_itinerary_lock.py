@@ -15,13 +15,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
 from app.models import Itinerary, ItineraryStatus, Node, NodeType
 from app.services.itineraries import (
     ActorContext,
@@ -35,6 +28,12 @@ from app.services.itineraries import (
     create_itinerary,
     release_lock,
     update_node,
+)
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 if TYPE_CHECKING:
@@ -63,7 +62,7 @@ integration = pytest.mark.skipif(
 
 
 @pytest_asyncio.fixture()
-async def db_session() -> "AsyncSession":
+async def db_session() -> AsyncSession:
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -73,9 +72,7 @@ async def db_session() -> "AsyncSession":
         await engine.dispose()
 
 
-async def _cleanup(
-    itinerary_id: uuid.UUID, user_ids: list[uuid.UUID] | None = None
-) -> None:
+async def _cleanup(itinerary_id: uuid.UUID, user_ids: list[uuid.UUID] | None = None) -> None:
     """Tear down fixture rows on a fresh engine so prior errors don't leak."""
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
     try:
@@ -93,9 +90,7 @@ async def _cleanup(
                 {"i": itinerary_id},
             )
             for uid in user_ids or []:
-                await conn.execute(
-                    text("delete from auth.users where id = :i"), {"i": uid}
-                )
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": uid})
     finally:
         await engine.dispose()
 
@@ -140,9 +135,7 @@ async def test_acquire_lock_on_unlocked_itinerary_flips_locked_by(
     advisor_id = await _seed_user(db_session, uuid.uuid4())
     itinerary = await create_itinerary(db_session, _system(), title="lock-a")
     try:
-        result = await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        result = await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         assert isinstance(result, Itinerary)
         assert result.locked_by == advisor_id
         assert result.locked_at is not None
@@ -163,14 +156,10 @@ async def test_acquire_lock_by_different_user_returns_locked(
     itinerary = await create_itinerary(db_session, _system(), title="lock-b")
     itinerary_id = itinerary.id  # stash before commits inside acquire_lock expire state
     try:
-        first_res = await acquire_lock(
-            db_session, _advisor(first), itinerary_id=itinerary_id
-        )
+        first_res = await acquire_lock(db_session, _advisor(first), itinerary_id=itinerary_id)
         assert isinstance(first_res, Itinerary)
 
-        second_res = await acquire_lock(
-            db_session, _advisor(second), itinerary_id=itinerary_id
-        )
+        second_res = await acquire_lock(db_session, _advisor(second), itinerary_id=itinerary_id)
         assert isinstance(second_res, ItineraryError)
         assert second_res.outcome is ItineraryOutcome.LOCKED
         assert second_res.detail == "already_locked"
@@ -189,13 +178,9 @@ async def test_same_user_reacquire_is_idempotent(
     advisor_id = await _seed_user(db_session, uuid.uuid4())
     itinerary = await create_itinerary(db_session, _system(), title="lock-c")
     try:
-        first = await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        first = await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         assert isinstance(first, Itinerary)
-        second = await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        second = await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         assert isinstance(second, Itinerary)
         assert second.locked_by == advisor_id
     finally:
@@ -211,19 +196,13 @@ async def test_release_lock_is_idempotent(db_session: AsyncSession) -> None:
     advisor_id = await _seed_user(db_session, uuid.uuid4())
     itinerary = await create_itinerary(db_session, _system(), title="lock-d")
     try:
-        await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
-        first = await release_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
+        first = await release_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         assert isinstance(first, Itinerary)
         assert first.locked_by is None
         assert first.locked_at is None
 
-        second = await release_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        second = await release_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         assert isinstance(second, Itinerary)
         assert second.locked_by is None
     finally:
@@ -245,9 +224,7 @@ async def test_approve_itinerary_flips_status_and_rejects_second_call(
     # trip SA's async/greenlet guard.
     itinerary_id = itinerary.id
     try:
-        first = await approve_itinerary(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
-        )
+        first = await approve_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
         assert isinstance(first, Itinerary)
         assert first.status == ItineraryStatus.approved
         assert first.approved_by == advisor_id
@@ -262,18 +239,14 @@ async def test_approve_itinerary_flips_status_and_rejects_second_call(
 
         # Confirm status persisted (fresh engine to dodge expired-state lazy
         # loads on the committed session).
-        verify_engine = create_async_engine(
-            LOCAL_DB_URL, pool_pre_ping=False, future=True
-        )
+        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
         try:
             verify_maker = async_sessionmaker(
                 bind=verify_engine, expire_on_commit=False, class_=AsyncSession
             )
             async with verify_maker() as vs:
                 fresh = (
-                    await vs.execute(
-                        select(Itinerary).where(Itinerary.id == itinerary_id)
-                    )
+                    await vs.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
                 ).scalar_one()
                 assert fresh.status == ItineraryStatus.approved
         finally:
@@ -294,9 +267,7 @@ async def test_add_node_by_non_advisor_while_locked_returns_locked(
     other_user_id = uuid.uuid4()  # does not need to be in auth.users (no FK use)
     itinerary = await create_itinerary(db_session, _system(), title="lock-f")
     try:
-        await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         err = await add_node(
             db_session,
             _user(other_user_id),
@@ -322,9 +293,7 @@ async def test_add_node_by_advisor_while_locked_succeeds(
     advisor_id = await _seed_user(db_session, uuid.uuid4())
     itinerary = await create_itinerary(db_session, _system(), title="lock-g")
     try:
-        await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
         node = await add_node(
             db_session,
             _advisor(advisor_id),
@@ -361,9 +330,7 @@ async def test_update_node_by_non_advisor_while_locked_returns_locked(
         assert isinstance(node, Node)
 
         # Advisor takes the lock.
-        await acquire_lock(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary.id
-        )
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
 
         err = await update_node(
             db_session,

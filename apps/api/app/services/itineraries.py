@@ -151,13 +151,9 @@ def _snapshot_node(node: Node) -> dict[str, Any]:
     return {
         "id": str(node.id),
         "itinerary_id": str(node.itinerary_id),
-        "parent_subgraph_id": (
-            str(node.parent_subgraph_id) if node.parent_subgraph_id else None
-        ),
+        "parent_subgraph_id": (str(node.parent_subgraph_id) if node.parent_subgraph_id else None),
         "type": node.type.value if isinstance(node.type, NodeType) else node.type,
-        "status": (
-            node.status.value if isinstance(node.status, NodeStatus) else node.status
-        ),
+        "status": (node.status.value if isinstance(node.status, NodeStatus) else node.status),
         "title": node.title,
         "source": node.source,
         "source_id": node.source_id,
@@ -166,9 +162,7 @@ def _snapshot_node(node: Node) -> dict[str, Any]:
         "cost_amount": str(node.cost_amount) if node.cost_amount is not None else None,
         "cost_currency": node.cost_currency,
         "cost_kind": (
-            node.cost_kind.value
-            if isinstance(node.cost_kind, CostKind)
-            else node.cost_kind
+            node.cost_kind.value if isinstance(node.cost_kind, CostKind) else node.cost_kind
         ),
     }
 
@@ -333,9 +327,7 @@ async def _write_edge_history(
 # ── Provenance gate ─────────────────────────────────────────────────────────
 
 
-def _check_provenance(
-    source: str | None, source_id: str | None
-) -> ItineraryError | None:
+def _check_provenance(source: str | None, source_id: str | None) -> ItineraryError | None:
     if (source is None) != (source_id is None):
         return ItineraryError(
             outcome=ItineraryOutcome.INVALID_PROVENANCE,
@@ -344,9 +336,7 @@ def _check_provenance(
     return None
 
 
-def _check_cost(
-    cost_amount: Decimal | None, cost_currency: str | None
-) -> ItineraryError | None:
+def _check_cost(cost_amount: Decimal | None, cost_currency: str | None) -> ItineraryError | None:
     """Amount and currency must travel together (mirrors provenance).
 
     A guardrail in front of the ``nodes_cost_amount_currency_together`` DB
@@ -380,9 +370,7 @@ async def _check_lock(
     if actor.kind is ActorKind.ADVISOR:
         return None
     row = (
-        await session.execute(
-            select(Itinerary.locked_by).where(Itinerary.id == itinerary_id)
-        )
+        await session.execute(select(Itinerary.locked_by).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()
     if row is None:
         return None
@@ -502,12 +490,14 @@ async def get_itinerary_graph(
         )
 
     edge_rows = (
-        await session.execute(
-            select(Edge)
-            .where(Edge.itinerary_id == itinerary_id)
-            .order_by(Edge.created_at)
+        (
+            await session.execute(
+                select(Edge).where(Edge.itinerary_id == itinerary_id).order_by(Edge.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     edges: list[EdgeOut] = [
         EdgeOut(
             id=edge.id,
@@ -551,9 +541,7 @@ async def add_node(
     # Confirm parent itinerary exists up front so we return NOT_FOUND
     # instead of an FK violation.
     itinerary_exists = (
-        await session.execute(
-            select(Itinerary.id).where(Itinerary.id == itinerary_id)
-        )
+        await session.execute(select(Itinerary.id).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
@@ -564,9 +552,7 @@ async def add_node(
 
     if parent_subgraph_id is not None:
         parent = (
-            await session.execute(
-                select(Node).where(Node.id == parent_subgraph_id)
-            )
+            await session.execute(select(Node).where(Node.id == parent_subgraph_id))
         ).scalar_one_or_none()
         if parent is None or parent.itinerary_id != itinerary_id:
             return ItineraryError(
@@ -780,9 +766,7 @@ async def add_edge(
 ) -> Edge | ItineraryError:
     """Insert an edge + its history row. The DB enforces no self-loops."""
     itinerary_exists = (
-        await session.execute(
-            select(Itinerary.id).where(Itinerary.id == itinerary_id)
-        )
+        await session.execute(select(Itinerary.id).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
@@ -959,9 +943,7 @@ async def release_lock(
     row = result.scalar_one_or_none()
     if row is None:
         current = (
-            await session.execute(
-                select(Itinerary).where(Itinerary.id == itinerary_id)
-            )
+            await session.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
         ).scalar_one_or_none()
         if current is None:
             return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
@@ -1004,9 +986,7 @@ async def assemble_initial_draft(
     router layer.
     """
     itinerary_exists = (
-        await session.execute(
-            select(Itinerary.id).where(Itinerary.id == itinerary_id)
-        )
+        await session.execute(select(Itinerary.id).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
@@ -1022,9 +1002,7 @@ async def assemble_initial_draft(
     if referenced_ids:
         rows = (
             await session.execute(
-                select(Node.id, Node.itinerary_id, Node.status).where(
-                    Node.id.in_(referenced_ids)
-                )
+                select(Node.id, Node.itinerary_id, Node.status).where(Node.id.in_(referenced_ids))
             )
         ).all()
         by_id = {row.id: row for row in rows}
@@ -1044,7 +1022,7 @@ async def assemble_initial_draft(
     edge_count = 0
     for slot in day_plan:
         ordered = slot["node_ids_in_order"]
-        for left, right in zip(ordered, ordered[1:]):
+        for left, right in zip(ordered, ordered[1:], strict=False):
             edge = Edge(
                 itinerary_id=itinerary_id,
                 from_node_id=left,
@@ -1129,9 +1107,7 @@ async def approve_itinerary(
     await session.commit()
     await session.refresh(row)
     node_count = (
-        await session.execute(
-            select(func.count(Node.id)).where(Node.itinerary_id == itinerary_id)
-        )
+        await session.execute(select(func.count(Node.id)).where(Node.itinerary_id == itinerary_id))
     ).scalar_one()
     logger.info(
         "itinerary.approved",

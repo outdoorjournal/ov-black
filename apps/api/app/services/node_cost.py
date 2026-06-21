@@ -92,11 +92,7 @@ def cost_from_inventory_item(item: InventoryItem) -> NodeCost | None:
     currency = price.currency if isinstance(price.currency, str) and price.currency else None
     if amount is None or currency is None:
         return None
-    kind = (
-        CostKind.total
-        if isinstance(item, _TOTAL_PRICED_KINDS)
-        else CostKind.per_person
-    )
+    kind = CostKind.total if isinstance(item, _TOTAL_PRICED_KINDS) else CostKind.per_person
     return NodeCost(amount=amount, currency=currency, kind=kind)
 
 
@@ -137,7 +133,5 @@ async def sum_node_costs(
     )
     rows = (await session.execute(stmt)).all()
     return {
-        currency: total
-        for currency, total in rows
-        if currency is not None and total is not None
+        currency: total for currency, total in rows if currency is not None and total is not None
     }

@@ -22,7 +22,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from app.config import Settings
 from app.inventory.providers.ratehawk import (
     ProviderUpstreamError,
@@ -220,9 +219,7 @@ async def test_search_geo_uses_geo_endpoint(hotels_fixture: dict[str, Any]) -> N
         "children": [7],
     }
     try:
-        await provider.search(
-            kinds=["hotel"], keyword=None, filters=filters, ctx=InventoryCtx()
-        )
+        await provider.search(kinds=["hotel"], keyword=None, filters=filters, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -270,9 +267,7 @@ async def test_search_missing_dates_returns_empty(caplog: pytest.LogCaptureFixtu
         await provider.aclose()
 
     assert items == []
-    assert any(
-        getattr(rec, "reason", None) == "missing_search_params" for rec in caplog.records
-    )
+    assert any(getattr(rec, "reason", None) == "missing_search_params" for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -295,9 +290,7 @@ async def test_search_missing_region_and_geo_returns_empty(
         await provider.aclose()
 
     assert items == []
-    assert any(
-        getattr(rec, "reason", None) == "missing_search_params" for rec in caplog.records
-    )
+    assert any(getattr(rec, "reason", None) == "missing_search_params" for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -440,9 +433,7 @@ async def test_get_detail_happy_path(hotels_fixture: dict[str, Any]) -> None:
 
     provider = _build_provider(handler)
     try:
-        item = await provider.get_detail(
-            source_id="grand_hotel_tremezzo", ctx=InventoryCtx()
-        )
+        item = await provider.get_detail(source_id="grand_hotel_tremezzo", ctx=InventoryCtx())
     finally:
         await provider.aclose()
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,9 +74,7 @@ async def redeem_invite(
         return RedeemResult(RedeemOutcome.UNKNOWN_CODE)
 
     invite = (
-        await session.execute(
-            select(Invite).where(Invite.code == normalized_code)
-        )
+        await session.execute(select(Invite).where(Invite.code == normalized_code))
     ).scalar_one_or_none()
 
     if invite is None:
@@ -102,7 +100,7 @@ async def redeem_invite(
         logger.info("invite.redeem.wrong_email", extra={"code_hint": normalized_code[:4]})
         return RedeemResult(RedeemOutcome.WRONG_EMAIL)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     consumed = await session.execute(
         update(Invite)
         .where(

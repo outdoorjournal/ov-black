@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from app.agent.traveler_context import assemble_traveler_context
 from app.models import (
     ContactChannel,
@@ -32,8 +31,7 @@ from app.models import (
     ProfileFactKind,
 )
 
-
-_NOW = datetime(2026, 4, 25, tzinfo=timezone.utc)
+_NOW = datetime(2026, 4, 25, tzinfo=UTC)
 
 
 def _dossier(*, net_worth: int | None = 250_000_000) -> Dossier:
@@ -50,7 +48,9 @@ def _dossier(*, net_worth: int | None = 250_000_000) -> Dossier:
     )
 
 
-def _dossier_fact(text: str, *, source_kind: FactSourceKind = FactSourceKind.advisor) -> DossierFact:
+def _dossier_fact(
+    text: str, *, source_kind: FactSourceKind = FactSourceKind.advisor
+) -> DossierFact:
     return DossierFact(
         id=uuid.uuid4(),
         client_id=uuid.uuid4(),
@@ -163,9 +163,7 @@ def test_dossier_inferred_facts_render_distinctly_from_advisor() -> None:
         dossier=_dossier(),
         dossier_facts=[
             _dossier_fact("seeded_by_advisor", source_kind=FactSourceKind.advisor),
-            _dossier_fact(
-                "inferred_by_agent", source_kind=FactSourceKind.agent_inferred
-            ),
+            _dossier_fact("inferred_by_agent", source_kind=FactSourceKind.agent_inferred),
         ],
         profile_facts=[],
         osint_facts=[],
@@ -204,8 +202,7 @@ def _assert_no_leak(records: list[logging.LogRecord]) -> None:
         )
         for sentinel in _LEAK_SWEEP_SUBSTRINGS:
             assert sentinel not in assembled, (
-                f"{sentinel!r} leaked into log record {rec.name} {rec.levelname}: "
-                f"{assembled[:200]}"
+                f"{sentinel!r} leaked into log record {rec.name} {rec.levelname}: {assembled[:200]}"
             )
 
 

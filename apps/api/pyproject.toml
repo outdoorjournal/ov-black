@@ -21,6 +21,8 @@ dev = [
     "pytest>=8.3,<9",
     "pytest-asyncio>=0.24,<0.25",
     "anyio>=4.6,<5",
+    "ruff>=0.15,<0.16",
+    "mypy>=1.18,<2",
 ]
 
 [tool.pytest.ini_options]
@@ -29,3 +31,45 @@ asyncio_mode = "auto"
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I isort, UP pyupgrade, B bugbear, SIM flake8-simplify,
+# C4 comprehensions. UP042 (StrEnum) is excluded — switching `(str, Enum)` to
+# `StrEnum` changes `str()` semantics and risks subtle serialization regressions.
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4"]
+ignore = ["UP042"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are constructed in defaults by design,
+# so they are immutable for B008 purposes — without this every route trips B008.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Body",
+    "fastapi.Form",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Security",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests lean on broad `pytest.raises(Exception)` and unsorted local imports.
+"tests/**" = ["B017"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["app"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Third-party packages that ship no type information / stubs.
+module = ["boto3.*", "botocore.*", "asyncpg.*"]
+ignore_missing_imports = true

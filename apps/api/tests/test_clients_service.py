@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from sqlalchemy.exc import IntegrityError
-
 from app.models import Client, Dossier, DossierFact, DossierFactKind, FactSourceKind, Invite
 from app.schemas.clients import ClientCreatePayload
 from app.schemas.dossier import DossierPayload, DossierTyped
@@ -25,7 +23,7 @@ from app.services.clients import (
     create_client_with_dossier,
 )
 from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
-
+from sqlalchemy.exc import IntegrityError
 
 # --- Fakes ------------------------------------------------------------------
 
@@ -221,9 +219,7 @@ def test_invite_code_generator_shape() -> None:
     """``secrets.token_urlsafe(16)`` produces URL-safe ~22-char strings."""
     codes = {clients_service._generate_invite_code() for _ in range(100)}
     assert len(codes) == 100
-    url_safe = set(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-    )
+    url_safe = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
     for code in codes:
         assert 20 <= len(code) <= 24
         assert set(code).issubset(url_safe)

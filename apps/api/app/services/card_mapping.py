@@ -200,9 +200,11 @@ def _cuisine_class(primary_type: str | None) -> str | None:
         return None
     if primary_type in ("restaurant", "food"):
         return None
-    base = primary_type[: -len("_restaurant")] if primary_type.endswith(
-        "_restaurant"
-    ) else primary_type
+    base = (
+        primary_type[: -len("_restaurant")]
+        if primary_type.endswith("_restaurant")
+        else primary_type
+    )
     cleaned = base.replace("_", " ").strip()
     return cleaned or None
 
@@ -267,15 +269,9 @@ def inventory_item_to_card_metadata(item: InventoryItem) -> dict[str, Any]:
     gets the snapshot fallback that ``parse_card_attrs`` re-inflates on read.
     """
     if isinstance(item, FlightItem):
-        return flight_item_to_card_attrs(item).model_dump(
-            mode="json", exclude_none=True
-        )
+        return flight_item_to_card_attrs(item).model_dump(mode="json", exclude_none=True)
     if isinstance(item, HotelItem):
-        return hotel_item_to_card_attrs(item).model_dump(
-            mode="json", exclude_none=True
-        )
+        return hotel_item_to_card_attrs(item).model_dump(mode="json", exclude_none=True)
     if isinstance(item, MealItem):
-        return meal_item_to_card_attrs(item).model_dump(
-            mode="json", exclude_none=True
-        )
+        return meal_item_to_card_attrs(item).model_dump(mode="json", exclude_none=True)
     return _snapshot_fallback(item)

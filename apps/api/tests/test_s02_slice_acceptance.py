@@ -23,15 +23,6 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import TypeAdapter
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
 from app.config import Settings
 from app.db import get_session
 from app.inventory.providers.mock import MockProvider
@@ -40,6 +31,14 @@ from app.inventory.registry import InventoryProviderRegistry
 from app.inventory.schemas import InventoryItem
 from app.main import app as fastapi_app
 from app.routers.inventory import get_inventory_registry
+from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -113,12 +112,8 @@ def overrides(
     """
 
     async def _session_dep():
-        eng = create_async_engine(
-            LOCAL_DB_URL, pool_pre_ping=False, future=True
-        )
-        maker = async_sessionmaker(
-            bind=eng, expire_on_commit=False, class_=AsyncSession
-        )
+        eng = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        maker = async_sessionmaker(bind=eng, expire_on_commit=False, class_=AsyncSession)
         try:
             async with maker() as s:
                 yield s
@@ -167,9 +162,7 @@ def auth_headers(make_token) -> Iterator[dict[str, str]]:
 
     async def _drop(eng: Any) -> None:
         async with eng.begin() as conn:
-            await conn.execute(
-                text("delete from auth.users where id = :i"), {"i": user_id}
-            )
+            await conn.execute(text("delete from auth.users where id = :i"), {"i": user_id})
 
     _run_with_engine(_seed)
     try:
@@ -190,9 +183,7 @@ def _run_with_engine(coro_fn) -> Any:
     import asyncio
 
     async def _go() -> Any:
-        eng = create_async_engine(
-            LOCAL_DB_URL, pool_pre_ping=False, future=True
-        )
+        eng = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
         try:
             return await coro_fn(eng)
         finally:
@@ -237,9 +228,7 @@ def _fetch_scalars(sql: str, **params: Any) -> list[Any]:
 
     async def _do(eng) -> list[Any]:
         async with eng.begin() as conn:
-            return list(
-                (await conn.execute(text(sql), params)).scalars().all()
-            )
+            return list((await conn.execute(text(sql), params)).scalars().all())
 
     return _run_with_engine(_do)
 
@@ -280,9 +269,7 @@ def test_search_inventory_keyword_como_returns_ov_items(
 
     Uses httpx.MockTransport seeded from the committed fixture.
     """
-    resp = client.get(
-        "/search-inventory?source=ov&keyword=como", headers=auth_headers
-    )
+    resp = client.get("/search-inventory?source=ov&keyword=como", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     items = body["items"]
@@ -305,12 +292,8 @@ def test_search_inventory_mock_scope_returns_same_shape(
     items — that is the contract that lets downstream consumers (cards,
     api-client, agent tools) treat the two sources identically.
     """
-    ov_resp = client.get(
-        "/search-inventory?source=ov&keyword=como", headers=auth_headers
-    )
-    mock_resp = client.get(
-        "/search-inventory?source=mock", headers=auth_headers
-    )
+    ov_resp = client.get("/search-inventory?source=ov&keyword=como", headers=auth_headers)
+    mock_resp = client.get("/search-inventory?source=mock", headers=auth_headers)
     assert ov_resp.status_code == 200, ov_resp.text
     assert mock_resp.status_code == 200, mock_resp.text
 
@@ -421,9 +404,7 @@ def test_get_itinerary_graph_returns_assembled_view(
         )
         assert edge.status_code == 201, edge.text
 
-        graph = client.get(
-            f"/itinerary/{itinerary_id}", headers=auth_headers
-        )
+        graph = client.get(f"/itinerary/{itinerary_id}", headers=auth_headers)
         assert graph.status_code == 200, graph.text
         body = graph.json()
         assert body["itinerary"]["id"] == str(itinerary_id)
@@ -512,13 +493,11 @@ def test_every_mutation_produces_history_row(
         #   node_history(n2): insert                   → 1 row
         #   edge_history(edge): insert, delete         → 2 rows
         node_ops = _fetch_scalars(
-            "select op from public.node_history "
-            "where itinerary_id = :i order by occurred_at",
+            "select op from public.node_history where itinerary_id = :i order by occurred_at",
             i=itinerary_id,
         )
         edge_ops = _fetch_scalars(
-            "select op from public.edge_history "
-            "where itinerary_id = :i order by occurred_at",
+            "select op from public.edge_history where itinerary_id = :i order by occurred_at",
             i=itinerary_id,
         )
         # 4 node mutations: insert n1, insert n2, update n1, delete n1.
@@ -572,14 +551,10 @@ def test_inventory_sourced_nodes_carry_source_and_source_id(
         assert body["source"] == "ov"
         assert body["source_id"] == src_id
 
-        graph = client.get(
-            f"/itinerary/{itinerary_id}", headers=auth_headers
-        )
+        graph = client.get(f"/itinerary/{itinerary_id}", headers=auth_headers)
         assert graph.status_code == 200
         nodes = graph.json()["nodes"]
-        assert any(
-            n["source"] == "ov" and n["source_id"] == src_id for n in nodes
-        )
+        assert any(n["source"] == "ov" and n["source_id"] == src_id for n in nodes)
 
         # Provenance asymmetry: source set, source_id null → 400 with the
         # constraint name surfaced in detail.
@@ -597,8 +572,6 @@ def test_inventory_sourced_nodes_carry_source_and_source_id(
         # either the static message or the DB constraint name. Either should
         # mention source_id so a future agent can grep the failure.
         detail = bad.json()["detail"]
-        assert (
-            "source_id" in detail or detail == "nodes_provenance_complete"
-        ), detail
+        assert "source_id" in detail or detail == "nodes_provenance_complete", detail
     finally:
         _cleanup(itinerary_id)

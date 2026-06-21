@@ -33,9 +33,10 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select, text as sql_text, update
+from sqlalchemy import func, select, update
+from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,7 +158,7 @@ async def create_client_with_dossier(
     )
     session.add(dossier)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for fact_payload in payload.dossier_facts:
         session.add(
             DossierFact(
@@ -170,27 +171,27 @@ async def create_client_with_dossier(
                 recorded_by=advisor_id,
             )
         )
-    for fact_payload in payload.profile_facts:
+    for profile_payload in payload.profile_facts:
         session.add(
             ProfileFact(
                 client_id=client.id,
-                kind=fact_payload.kind,
-                text=fact_payload.text,
-                source_kind=fact_payload.source_kind,
-                source_ref=fact_payload.source_ref,
-                observed_at=fact_payload.observed_at or now,
+                kind=profile_payload.kind,
+                text=profile_payload.text,
+                source_kind=profile_payload.source_kind,
+                source_ref=profile_payload.source_ref,
+                observed_at=profile_payload.observed_at or now,
                 recorded_by=advisor_id,
             )
         )
-    for fact_payload in payload.osint_facts:
+    for osint_payload in payload.osint_facts:
         session.add(
             OsintFact(
                 client_id=client.id,
-                kind=fact_payload.kind,
-                text=fact_payload.text,
-                source_kind=fact_payload.source_kind,
-                source_ref=fact_payload.source_ref,
-                observed_at=fact_payload.observed_at or now,
+                kind=osint_payload.kind,
+                text=osint_payload.text,
+                source_kind=osint_payload.source_kind,
+                source_ref=osint_payload.source_ref,
+                observed_at=osint_payload.observed_at or now,
                 recorded_by=advisor_id,
             )
         )
@@ -373,9 +374,7 @@ async def reissue_client_invite(
     """
     settings = settings or get_settings()
 
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return InviteReissueResult(InviteReissueOutcome.CLIENT_NOT_FOUND)
 
@@ -396,7 +395,7 @@ async def reissue_client_invite(
         )
         return InviteReissueResult(InviteReissueOutcome.ALREADY_REDEEMED)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Supersede every currently-active row for this (email, advisor). In
     # practice there is at most one, but we stamp any strays defensively so
     # the re-issue produces a single live code.
@@ -472,13 +471,11 @@ async def cancel_client_invite(
     has already cancelled/superseded the outstanding one. Reissue still
     works in that case by inserting a fresh row.
     """
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return InviteCancelResult(InviteCancelOutcome.CLIENT_NOT_FOUND)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await session.execute(
         update(Invite)
         .where(

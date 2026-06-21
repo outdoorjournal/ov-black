@@ -34,6 +34,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from app.agent.bedrock import AgentRuntimeError, MockAgentRuntimeClient
+from app.db import get_session
+from app.main import app as fastapi_app
+from app.routers import agent as agent_router_module
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -41,11 +45,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-
-from app.agent.bedrock import AgentRuntimeError, MockAgentRuntimeClient
-from app.db import get_session
-from app.main import app as fastapi_app
-from app.routers import agent as agent_router_module
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -80,9 +79,7 @@ def _run_with_engine(coro_fn) -> Any:
     """
 
     async def _go() -> Any:
-        eng = create_async_engine(
-            LOCAL_DB_URL, pool_pre_ping=False, future=True
-        )
+        eng = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
         try:
             return await coro_fn(eng)
         finally:
@@ -136,9 +133,7 @@ def _seed_advisor_client_dossier(
             await _insert_auth_user(conn, advisor_id, advisor_email)
             await _insert_auth_user(conn, client_id, client_email)
             await conn.execute(
-                text(
-                    "insert into public.profiles (id, role) values (:id, 'advisor')"
-                ),
+                text("insert into public.profiles (id, role) values (:id, 'advisor')"),
                 {"id": advisor_id},
             )
             await conn.execute(
@@ -189,9 +184,12 @@ def _seed_advisor_client_dossier(
                     },
                 )
             for key, value in (osint_notes or {}).items():
-                kind = key if key in (
-                    "linkedin", "facebook", "instagram", "press", "company", "public_record"
-                ) else "other"
+                kind = (
+                    key
+                    if key
+                    in ("linkedin", "facebook", "instagram", "press", "company", "public_record")
+                    else "other"
+                )
                 await conn.execute(
                     text(
                         """
@@ -270,9 +268,7 @@ def _fresh_sessionmaker() -> async_sessionmaker[AsyncSession]:
     (engines are cheap enough for tests; they leak until GC).
     """
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
-    return async_sessionmaker(
-        bind=engine, expire_on_commit=False, class_=AsyncSession
-    )
+    return async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
 
 
 # ── App fixtures (runtime override + fresh session + JWT) ──────────────────
@@ -294,9 +290,7 @@ class _RuntimeProxy:
     def _target(self) -> Any:
         target = self._slot["runtime"]
         if target is None:
-            raise AssertionError(
-                "test did not arm a MockAgentRuntimeClient before POSTing"
-            )
+            raise AssertionError("test did not arm a MockAgentRuntimeClient before POSTing")
         return target
 
     def __getattr__(self, name: str) -> Any:
@@ -333,12 +327,8 @@ def session_override() -> Iterator[None]:
     original = agent_router_module.get_sessionmaker
 
     async def _session_dep() -> AsyncIterator[AsyncSession]:
-        eng = create_async_engine(
-            LOCAL_DB_URL, pool_pre_ping=False, future=True
-        )
-        maker = async_sessionmaker(
-            bind=eng, expire_on_commit=False, class_=AsyncSession
-        )
+        eng = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        maker = async_sessionmaker(bind=eng, expire_on_commit=False, class_=AsyncSession)
         try:
             async with maker() as s:
                 yield s
@@ -394,9 +384,7 @@ def _happy_script(text_chunk: str) -> list[dict]:
 def _open_session(
     client: TestClient, headers: dict[str, str], client_id: uuid.UUID
 ) -> tuple[uuid.UUID, str]:
-    resp = client.post(
-        "/sessions", json={"client_id": str(client_id)}, headers=headers
-    )
+    resp = client.post("/sessions", json={"client_id": str(client_id)}, headers=headers)
     assert resp.status_code == 201, resp.text
     body = resp.json()
     return uuid.UUID(body["session_id"]), body["agentcore_session_id"]
@@ -462,9 +450,7 @@ def test_scripted_five_turn_onboarding_persists_all_turns(
         "Fourth reply.",
         "Fifth reply.",
     ]
-    runtime = MockAgentRuntimeClient(
-        events=[_happy_script(t) for t in assistant_texts]
-    )
+    runtime = MockAgentRuntimeClient(events=[_happy_script(t) for t in assistant_texts])
     runtime_slot["runtime"] = runtime
 
     try:
@@ -483,9 +469,7 @@ def test_scripted_five_turn_onboarding_persists_all_turns(
         # Every invoke carried the SAME runtimeSessionId.
         assert len(runtime.calls) == 5
         ac_ids = {call["agentcore_session_id"] for call in runtime.calls}
-        assert ac_ids == {ac_id}, (
-            "runtimeSessionId drifted across turns — hybrid state broken"
-        )
+        assert ac_ids == {ac_id}, "runtimeSessionId drifted across turns — hybrid state broken"
 
         # 10 rows, alternating roles, turn_index 0..9.
         rows = _fetch_rows(
@@ -701,9 +685,7 @@ def test_retries_exhausted_surfaces_crafted_fallback(
         body = resp.text
 
         # SSE stream must carry the crafted fallback frame exactly.
-        assert (
-            'data: {"type":"error","reason":"upstream_unavailable"}' in body
-        ), body
+        assert 'data: {"type":"error","reason":"upstream_unavailable"}' in body, body
 
         # Both attempts were made.
         assert len(runtime.calls) == 2
@@ -790,8 +772,7 @@ def test_traveler_context_never_appears_in_logs(
                 f"{record.name} {record.getMessage()!r}"
             )
             assert not _record_leaks(record, osint_str), (
-                "osint fact text leaked into log record: "
-                f"{record.name} {record.getMessage()!r}"
+                f"osint fact text leaked into log record: {record.name} {record.getMessage()!r}"
             )
     finally:
         _cleanup_seed(seed.advisor_id, seed.client_id)

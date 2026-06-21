@@ -18,6 +18,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 from app.inventory.schemas import InventoryItem
 
@@ -64,7 +65,7 @@ class InventoryProvider(ABC):
         *,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]: ...
 
@@ -104,7 +105,7 @@ class InventoryProviderRegistry:
         sources: list[str] | None,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]:
         """Fan out a search across sources and return a stably-sorted list.
@@ -124,9 +125,7 @@ class InventoryProviderRegistry:
 
         results = await asyncio.gather(
             *(
-                provider.search(
-                    kinds=kinds, keyword=keyword, filters=filters, ctx=ctx
-                )
+                provider.search(kinds=kinds, keyword=keyword, filters=filters, ctx=ctx)
                 for provider in selected
             )
         )

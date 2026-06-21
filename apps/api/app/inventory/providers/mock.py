@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from pydantic import TypeAdapter
 
@@ -40,9 +41,7 @@ def _load_fixture(path: Path) -> list[InventoryItem]:
     raw = path.read_text(encoding="utf-8")
     payload = json.loads(raw)
     if not isinstance(payload, list):
-        raise ValueError(
-            f"mock inventory fixture at {path} must be a JSON array of items"
-        )
+        raise ValueError(f"mock inventory fixture at {path} must be a JSON array of items")
     # ``validate_python`` surfaces ``ValidationError`` on any bad ``kind`` or
     # missing required field — exactly the loud-startup behavior we want.
     return _ITEMS_ADAPTER.validate_python(payload)
@@ -70,7 +69,7 @@ class MockProvider(InventoryProvider):
         *,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]:
         kinds_set = set(kinds) if kinds else None

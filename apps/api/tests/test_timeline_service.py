@@ -29,15 +29,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from app.seed_data.japan_itinerary import FixtureItem, all_items
+from app.services.timeline import Card, TimelineView, linearize
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-
-from app.services.timeline import Card, TimelineView, linearize
-from app.seed_data.japan_itinerary import FixtureItem, all_items
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -79,11 +78,9 @@ def test_timeline_view_empty_shape() -> None:
 
 
 @pytest_asyncio.fixture()
-async def db_session() -> "AsyncIterator[AsyncSession]":
+async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
-    maker = async_sessionmaker(
-        bind=engine, expire_on_commit=False, class_=AsyncSession
-    )
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with maker() as s:
             yield s
@@ -156,29 +153,19 @@ async def _insert_node(
     return nid
 
 
-async def _create_party(
-    session: AsyncSession, *, itinerary_id: uuid.UUID, label: str
-) -> uuid.UUID:
+async def _create_party(session: AsyncSession, *, itinerary_id: uuid.UUID, label: str) -> uuid.UUID:
     pid = uuid.uuid4()
     await session.execute(
-        text(
-            "insert into public.parties (id, itinerary_id, label) "
-            "values (:id, :iid, :l)"
-        ),
+        text("insert into public.parties (id, itinerary_id, label) values (:id, :iid, :l)"),
         {"id": pid, "iid": itinerary_id, "l": label},
     )
     await session.commit()
     return pid
 
 
-async def _attach_party(
-    session: AsyncSession, *, node_id: uuid.UUID, party_id: uuid.UUID
-) -> None:
+async def _attach_party(session: AsyncSession, *, node_id: uuid.UUID, party_id: uuid.UUID) -> None:
     await session.execute(
-        text(
-            "insert into public.node_parties (node_id, party_id) "
-            "values (:n, :p)"
-        ),
+        text("insert into public.node_parties (node_id, party_id) values (:n, :p)"),
         {"n": node_id, "p": party_id},
     )
     await session.commit()
@@ -193,15 +180,11 @@ async def _cleanup_itinerary(itinerary_id: uuid.UUID) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text(
-                    "delete from public.node_history where itinerary_id = :i"
-                ),
+                text("delete from public.node_history where itinerary_id = :i"),
                 {"i": itinerary_id},
             )
             await conn.execute(
-                text(
-                    "delete from public.edge_history where itinerary_id = :i"
-                ),
+                text("delete from public.edge_history where itinerary_id = :i"),
                 {"i": itinerary_id},
             )
             await conn.execute(
@@ -357,9 +340,7 @@ async def test_selected_branches_only_drops_unselected(
         assert ids_default == {chosen}
 
         # Renderer wanting to show all branches flips the flag.
-        view_all = await linearize(
-            db_session, itinerary_id=iid, selected_branches_only=False
-        )
+        view_all = await linearize(db_session, itinerary_id=iid, selected_branches_only=False)
         ids_all = {c.node_id for c in view_all.cards}
         assert ids_all == {chosen, rejected}
     finally:
@@ -397,9 +378,7 @@ async def test_structural_role_excluded_by_default(
         view_default = await linearize(db_session, itinerary_id=iid)
         assert {c.node_id for c in view_default.cards} == {regular}
 
-        view_with = await linearize(
-            db_session, itinerary_id=iid, include_structural=True
-        )
+        view_with = await linearize(db_session, itinerary_id=iid, include_structural=True)
         assert {c.node_id for c in view_with.cards} == {regular, marker}
     finally:
         await _cleanup_itinerary(iid)
@@ -416,12 +395,8 @@ async def test_party_filter_implicit_all_default(
     """
     iid = await _create_itinerary(db_session, title="parties")
     try:
-        kids_party = await _create_party(
-            db_session, itinerary_id=iid, label="kids"
-        )
-        adults_party = await _create_party(
-            db_session, itinerary_id=iid, label="adults"
-        )
+        kids_party = await _create_party(db_session, itinerary_id=iid, label="kids")
+        adults_party = await _create_party(db_session, itinerary_id=iid, label="adults")
 
         for_all = await _insert_node(
             db_session,
@@ -439,24 +414,18 @@ async def test_party_filter_implicit_all_default(
             starts_lower=_at(hour=10),
             starts_upper=_at(hour=11),
         )
-        await _attach_party(
-            db_session, node_id=kids_only, party_id=kids_party
-        )
+        await _attach_party(db_session, node_id=kids_only, party_id=kids_party)
 
         # No filter → both visible.
         view_no = await linearize(db_session, itinerary_id=iid)
         assert {c.node_id for c in view_no.cards} == {for_all, kids_only}
 
         # Kids filter → both visible (default-all + kids-only).
-        view_kids = await linearize(
-            db_session, itinerary_id=iid, party_id=kids_party
-        )
+        view_kids = await linearize(db_session, itinerary_id=iid, party_id=kids_party)
         assert {c.node_id for c in view_kids.cards} == {for_all, kids_only}
 
         # Adults filter → only the all-default; kids-only excluded.
-        view_adults = await linearize(
-            db_session, itinerary_id=iid, party_id=adults_party
-        )
+        view_adults = await linearize(db_session, itinerary_id=iid, party_id=adults_party)
         assert {c.node_id for c in view_adults.cards} == {for_all}
     finally:
         await _cleanup_itinerary(iid)
@@ -554,18 +523,12 @@ async def test_japan_fixture_linearizes_in_chronological_order(
         expected_titles = [item.title for item in items]
         actual_titles = [card.title for card in view.cards]
         assert actual_titles == expected_titles, (
-            f"linearization order drift\n"
-            f"expected: {expected_titles}\n"
-            f"actual:   {actual_titles}"
+            f"linearization order drift\nexpected: {expected_titles}\nactual:   {actual_titles}"
         )
 
         # Spot-check: the day-05 Shinkansen card carries the parsed
         # train attributes (Cards Style Guide signature detail).
-        shinkansen = next(
-            c
-            for c in view.cards
-            if c.title == "Shinkansen Hikari #635 → Kyoto"
-        )
+        shinkansen = next(c for c in view.cards if c.title == "Shinkansen Hikari #635 → Kyoto")
         assert shinkansen.attrs.kind == "train"
         # Mt. Fuji scenery callout survives the round-trip.
         callouts = getattr(shinkansen.attrs, "scenery_callouts", [])

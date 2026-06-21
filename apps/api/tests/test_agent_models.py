@@ -19,11 +19,10 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
+from app.models import AgentSession, AgentTurn, Client, TurnRole
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from app.models import AgentSession, AgentTurn, Client, TurnRole
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -89,12 +88,8 @@ async def _cleanup(
 ) -> None:
     # agent_sessions and agent_turns cascade on clients delete.
     if client_id is not None:
-        await session.execute(
-            text("delete from public.clients where id = :id"), {"id": client_id}
-        )
-    await session.execute(
-        text("delete from auth.users where id = :id"), {"id": advisor_id}
-    )
+        await session.execute(text("delete from public.clients where id = :id"), {"id": client_id})
+    await session.execute(text("delete from auth.users where id = :id"), {"id": advisor_id})
     await session.commit()
 
 
@@ -116,9 +111,7 @@ async def test_agent_session_round_trip(session: AsyncSession) -> None:
         await session.refresh(agent_session)
 
         fetched = (
-            await session.execute(
-                select(AgentSession).where(AgentSession.id == agent_session.id)
-            )
+            await session.execute(select(AgentSession).where(AgentSession.id == agent_session.id))
         ).scalar_one()
         assert fetched.client_id == client_id
         assert fetched.agentcore_session_id == "runtime-session-abc123"
@@ -157,9 +150,7 @@ async def test_agent_turn_round_trip_with_defaults(session: AsyncSession) -> Non
         await session.commit()
 
         fetched = (
-            await session.execute(
-                select(AgentTurn).where(AgentTurn.session_id == agent_session.id)
-            )
+            await session.execute(select(AgentTurn).where(AgentTurn.session_id == agent_session.id))
         ).scalar_one()
 
         assert fetched.turn_index == 0
@@ -216,12 +207,16 @@ async def test_turn_role_enum_accepts_all_five_variants(session: AsyncSession) -
         await session.commit()
 
         rows = (
-            await session.execute(
-                select(AgentTurn.role)
-                .where(AgentTurn.session_id == agent_session.id)
-                .order_by(AgentTurn.turn_index)
+            (
+                await session.execute(
+                    select(AgentTurn.role)
+                    .where(AgentTurn.session_id == agent_session.id)
+                    .order_by(AgentTurn.turn_index)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert rows == roles
     finally:
         await _cleanup(session, advisor_id, client_id)
@@ -336,7 +331,7 @@ async def test_rls_posture_agent_tables(session: AsyncSession) -> None:
             )
         )
     ).all()
-    rls = {tbl: enabled for tbl, enabled in rows}
+    rls = dict(rows)
     assert rls == {"agent_sessions": True, "agent_turns": True}
 
     count = (
@@ -352,6 +347,5 @@ async def test_rls_posture_agent_tables(session: AsyncSession) -> None:
         )
     ).scalar_one()
     assert count == 0, (
-        "agent_sessions and agent_turns must ship with zero policies "
-        "(deny-by-default RLS posture)"
+        "agent_sessions and agent_turns must ship with zero policies (deny-by-default RLS posture)"
     )

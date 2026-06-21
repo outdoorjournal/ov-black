@@ -4,9 +4,8 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, func, text
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,7 +23,7 @@ class ContactChannel(str, enum.Enum):
 
 # Reuse the Postgres-side enum types — SQLAlchemy must not try to CREATE TYPE,
 # the migration owns that. native_enum=True + create_type=False enforces this.
-contact_channel_enum = SAEnum(
+contact_channel_enum: SAEnum = SAEnum(
     ContactChannel,
     name="contact_channel",
     schema="public",

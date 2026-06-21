@@ -18,7 +18,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from app.config import Settings
 from app.inventory.providers.google_places import (
     GooglePlacesProvider,
@@ -313,9 +312,7 @@ async def test_search_missing_keyword_returns_empty(
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.google_places")
     try:
-        items = await provider.search(
-            kinds=None, keyword="   ", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="   ", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -339,9 +336,7 @@ async def test_search_no_credentials_returns_empty(
     provider = _build_provider(handler, api_key="")
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.google_places")
     try:
-        items = await provider.search(
-            kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -363,16 +358,12 @@ async def test_search_500_returns_empty_and_logs(
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.google_places")
     try:
-        items = await provider.search(
-            kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
     assert items == []
-    error_logs = [
-        rec for rec in caplog.records if rec.message == "inventory.provider.error"
-    ]
+    error_logs = [rec for rec in caplog.records if rec.message == "inventory.provider.error"]
     assert any(getattr(rec, "upstream_status", None) == 500 for rec in error_logs)
 
 
@@ -384,9 +375,7 @@ async def test_search_timeout_returns_empty(caplog: pytest.LogCaptureFixture) ->
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.google_places")
     try:
-        items = await provider.search(
-            kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -412,9 +401,7 @@ async def test_search_skips_malformed_place_keeps_rest(
     provider = _build_provider(handler)
     caplog.set_level(logging.WARNING, logger="ov_black.inventory.google_places")
     try:
-        items = await provider.search(
-            kinds=None, keyword="tokyo", filters={}, ctx=InventoryCtx()
-        )
+        items = await provider.search(kinds=None, keyword="tokyo", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 
@@ -509,9 +496,7 @@ async def test_get_detail_connection_error_raises_upstream_error() -> None:
 
 @pytest.mark.asyncio
 async def test_get_detail_no_credentials_raises() -> None:
-    provider = _build_provider(
-        lambda r: httpx.Response(200, json={}), api_key=""
-    )
+    provider = _build_provider(lambda r: httpx.Response(200, json={}), api_key="")
     try:
         with pytest.raises(ProviderUpstreamError):
             await provider.get_detail(source_id="abc", ctx=InventoryCtx())
@@ -528,14 +513,10 @@ async def test_api_key_never_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     secret = "super-secret-places-key"
-    provider = _build_provider(
-        lambda r: httpx.Response(200, json=search_fixture), api_key=secret
-    )
+    provider = _build_provider(lambda r: httpx.Response(200, json=search_fixture), api_key=secret)
     caplog.set_level(logging.DEBUG, logger="ov_black.inventory.google_places")
     try:
-        await provider.search(
-            kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx()
-        )
+        await provider.search(kinds=None, keyword="sushi", filters={}, ctx=InventoryCtx())
     finally:
         await provider.aclose()
 

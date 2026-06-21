@@ -16,8 +16,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Iterable, Sequence
-from typing import Any, Protocol
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from typing import Any, Protocol, cast
 
 import anyio
 
@@ -58,9 +58,8 @@ class AgentRuntimeClient(Protocol):
         self,
         *,
         agentcore_session_id: str,
-        payload: dict,
-    ) -> AsyncIterator[dict]:
-        ...
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any]]: ...
 
     async def create_event(
         self,
@@ -69,11 +68,10 @@ class AgentRuntimeClient(Protocol):
         agentcore_session_id: str,
         user_text: str,
         assistant_text: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
-def _parse_sse_line(line: bytes | str) -> dict | None:
+def _parse_sse_line(line: bytes | str) -> dict[str, Any] | None:
     """Parse one ``data: {...}`` SSE line into a dict.
 
     Returns ``None`` for non-data frames (comments, empty keep-alives) and
@@ -139,8 +137,8 @@ class Boto3AgentRuntimeClient:
         self,
         *,
         agentcore_session_id: str,
-        payload: dict,
-    ) -> AsyncIterator[dict]:
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any]]:
         arn = self._settings.bedrock_agentcore_runtime_arn
         if not arn:
             raise AgentRuntimeError(reason="runtime_arn_unset")
@@ -262,8 +260,8 @@ class LocalAgentRuntimeClient:
         self,
         *,
         agentcore_session_id: str,
-        payload: dict,
-    ) -> AsyncIterator[dict]:
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any]]:
         import httpx
 
         started = time.monotonic()
@@ -274,30 +272,30 @@ class LocalAgentRuntimeClient:
             "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": agentcore_session_id,
         }
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                async with client.stream(
+            async with (
+                httpx.AsyncClient(timeout=self._timeout) as client,
+                client.stream(
                     "POST",
                     f"{self._base_url}/invocations",
                     json=payload,
                     headers=headers,
-                ) as response:
-                    if response.status_code >= 400:
-                        raise AgentRuntimeError(
-                            reason=f"http_{response.status_code}"
-                        )
-                    first_token_emitted = False
-                    async for line in response.aiter_lines():
-                        parsed = _parse_sse_line(line.encode("utf-8"))
-                        if parsed is None:
-                            continue
-                        kind = parsed.get("type")
-                        if kind == "delta" and not first_token_emitted:
-                            first_token_emitted = True
-                            elapsed_ms = int((time.monotonic() - started) * 1000)
-                            yield {"type": "first_token", "ms": elapsed_ms}
-                        yield parsed
-                        if kind == "done":
-                            return
+                ) as response,
+            ):
+                if response.status_code >= 400:
+                    raise AgentRuntimeError(reason=f"http_{response.status_code}")
+                first_token_emitted = False
+                async for line in response.aiter_lines():
+                    parsed = _parse_sse_line(line.encode("utf-8"))
+                    if parsed is None:
+                        continue
+                    kind = parsed.get("type")
+                    if kind == "delta" and not first_token_emitted:
+                        first_token_emitted = True
+                        elapsed_ms = int((time.monotonic() - started) * 1000)
+                        yield {"type": "first_token", "ms": elapsed_ms}
+                    yield parsed
+                    if kind == "done":
+                        return
         except httpx.HTTPError as exc:
             raise AgentRuntimeError(reason=exc.__class__.__name__) from exc
 
@@ -330,30 +328,34 @@ class MockAgentRuntimeClient:
 
     def __init__(
         self,
-        events: Sequence[dict] | list[Sequence[dict]] | None = None,
+        events: Sequence[dict[str, Any]] | list[Sequence[dict[str, Any]]] | None = None,
         *,
         raise_on_invoke: Sequence[BaseException | None] | None = None,
     ) -> None:
         self._events = events or []
         self._raises = list(raise_on_invoke) if raise_on_invoke else []
-        self.calls: list[dict] = []
-        self.create_event_calls: list[dict] = []
+        self.calls: list[dict[str, Any]] = []
+        self.create_event_calls: list[dict[str, Any]] = []
         self.create_event_raises: BaseException | None = None
 
-    def _script_for_call(self, attempt_index: int) -> Sequence[dict]:
+    def _script_for_call(self, attempt_index: int) -> Sequence[dict[str, Any]]:
         events = self._events
-        # Per-call scripts: list of lists.
+        # Per-call scripts: list of lists. The ``isinstance`` guard on the
+        # first element establishes the nested shape; cast to surface it to
+        # the type checker (mypy can't narrow the whole sequence from one
+        # element check).
         if events and isinstance(events[0], list):
             idx = min(attempt_index, len(events) - 1)
-            return events[idx]
-        return events  # type: ignore[return-value]
+            return cast("Sequence[dict[str, Any]]", events[idx])
+        # Single shared script: ``events`` is a flat ``Sequence[dict]`` here.
+        return cast("Sequence[dict[str, Any]]", events)
 
     async def invoke_stream(
         self,
         *,
         agentcore_session_id: str,
-        payload: dict,
-    ) -> AsyncIterator[dict]:
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any]]:
         attempt_index = len(self.calls)
         self.calls.append(
             {

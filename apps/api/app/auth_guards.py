@@ -49,9 +49,7 @@ async def require_advisor(
         )
         raise HTTPException(status_code=403, detail="advisor_only") from None
 
-    result = await session.execute(
-        select(Profile).where(Profile.id == sub_uuid)
-    )
+    result = await session.execute(select(Profile).where(Profile.id == sub_uuid))
     profile = result.scalar_one_or_none()
 
     if profile is None:

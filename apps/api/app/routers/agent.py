@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -50,6 +50,8 @@ from app.services.agent import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.models import AgentSession, Client
+
 logger = logging.getLogger("ov_black.routers.agent")
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -67,15 +69,13 @@ def get_agent_runtime(request: Request) -> AgentRuntimeClient:
     """
     runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:  # pragma: no cover — guarded by lifespan startup
-        raise HTTPException(
-            status_code=503, detail="agent_runtime_not_configured"
-        )
-    return runtime
+        raise HTTPException(status_code=503, detail="agent_runtime_not_configured")
+    return cast(AgentRuntimeClient, runtime)
 
 
 async def _actor_for_user(
     user: AuthenticatedUser,
-    session: "AsyncSession",
+    session: AsyncSession,
 ) -> ActorContext:
     """Build an ActorContext by resolving the caller's role from public.profiles.
 
@@ -93,9 +93,7 @@ async def _actor_for_user(
     result = await session.execute(select(Profile).where(Profile.id == sub_uuid))
     profile = result.scalar_one_or_none()
     if profile is not None and profile.role is UserRole.advisor:
-        return ActorContext(
-            user_id=sub_uuid, actor_kind="advisor", actor_id=user.sub
-        )
+        return ActorContext(user_id=sub_uuid, actor_kind="advisor", actor_id=user.sub)
     return ActorContext(user_id=sub_uuid, actor_kind="user", actor_id=user.sub)
 
 
@@ -115,7 +113,7 @@ async def _actor_for_user(
 async def create_session_endpoint(
     payload: OpenSessionRequest,
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> OpenSessionResponse:
     actor = await _actor_for_user(user, session)
     outcome, agent_session, itinerary_id = await open_or_reuse_session(
@@ -141,9 +139,9 @@ async def create_session_endpoint(
 
 
 async def _load_session_with_client(
-    session: "AsyncSession",
+    session: AsyncSession,
     session_id: uuid.UUID,
-):
+) -> tuple[AgentSession, Client] | tuple[None, None]:
     """Return (agent_session, client) or (None, None) on miss."""
     from app.models import AgentSession, Client  # local import to avoid cycles
 
@@ -161,7 +159,7 @@ async def _load_session_with_client(
 
 def _pre_stream_authz(
     actor: ActorContext,
-    client_row,
+    client_row: Client,
 ) -> TurnOutcome:
     """Mirror the service's _authorize_actor check BEFORE opening the stream.
 
@@ -172,9 +170,10 @@ def _pre_stream_authz(
     if actor.actor_kind == "advisor":
         if actor.user_id is None or client_row.owner_id != actor.user_id:
             return TurnOutcome.SESSION_NOT_YOURS
-    elif actor.actor_kind == "user":
-        if actor.user_id is None or client_row.auth_user_id != actor.user_id:
-            return TurnOutcome.SESSION_NOT_YOURS
+    elif actor.actor_kind == "user" and (
+        actor.user_id is None or client_row.auth_user_id != actor.user_id
+    ):
+        return TurnOutcome.SESSION_NOT_YOURS
     return TurnOutcome.OK
 
 
@@ -195,7 +194,7 @@ async def turn_endpoint(
     payload: TurnRequest,
     request: Request,
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     # Pre-stream auth/existence check — we must return a JSON 404 rather
     # than opening an SSE stream if the session doesn't belong to the
@@ -212,9 +211,7 @@ async def turn_endpoint(
     # Authorization on its tool callbacks. Middleware has already
     # validated the JWT once; we simply strip the scheme here.
     raw_auth = request.headers.get("authorization", "")
-    auth_bearer = (
-        raw_auth.split(" ", 1)[1] if raw_auth.lower().startswith("bearer ") else ""
-    )
+    auth_bearer = raw_auth.split(" ", 1)[1] if raw_auth.lower().startswith("bearer ") else ""
     body_stream = stream_turn(
         get_sessionmaker(),
         runtime,
@@ -247,7 +244,7 @@ async def turn_endpoint(
 async def list_turns_endpoint(
     session_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> list[AgentTurnSummary]:
     actor = await _actor_for_user(user, session)
     result = await list_turns(session, actor=actor, session_id=session_id)

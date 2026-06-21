@@ -19,7 +19,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-
 from app.agent.bedrock import MockAgentRuntimeClient
 from app.config import Settings
 from app.models import AgentSession, Itinerary
@@ -43,16 +42,12 @@ async def _collect(stream: AsyncIterator[bytes]) -> list[bytes]:
 
 
 def _parse_frames(joined: bytes) -> list[dict[str, Any]]:
-    lines = [
-        line[len(b"data: "):]
-        for line in joined.split(b"\n")
-        if line.startswith(b"data: ")
-    ]
+    lines = [line[len(b"data: ") :] for line in joined.split(b"\n") if line.startswith(b"data: ")]
     return [json.loads(line.decode("utf-8")) for line in lines]
 
 
 async def test_assemble_draft_roundtrips_with_edges_created(
-    factory: "FakeFactory",
+    factory: FakeFactory,
     advisor_actor: ActorContext,
     agent_session: AgentSession,
     settings: Settings,
@@ -163,7 +158,7 @@ async def test_assemble_draft_roundtrips_with_edges_created(
 
 
 async def test_assemble_draft_failure_forwards_zero_edges(
-    factory: "FakeFactory",
+    factory: FakeFactory,
     advisor_actor: ActorContext,
     agent_session: AgentSession,
     settings: Settings,
@@ -219,16 +214,13 @@ async def test_assemble_draft_failure_forwards_zero_edges(
     assert len(assembles) == 1
     assert assembles[0]["edges_created"] == 0
 
-    failed = [
-        r for r in caplog.records
-        if r.getMessage() == "agent.assemble_draft.failed"
-    ]
+    failed = [r for r in caplog.records if r.getMessage() == "agent.assemble_draft.failed"]
     assert len(failed) == 1
     assert getattr(failed[0], "reason", None) == "validation_error"
 
 
 async def test_assemble_draft_malformed_payload_short_circuits(
-    factory: "FakeFactory",
+    factory: FakeFactory,
     advisor_actor: ActorContext,
     agent_session: AgentSession,
     settings: Settings,
@@ -276,8 +268,5 @@ async def test_assemble_draft_malformed_payload_short_circuits(
     assert assembles[0]["edges_created"] == 0
     assert call_count["n"] == 0
 
-    malformed = [
-        r for r in caplog.records
-        if r.getMessage() == "agent.assemble_draft.malformed"
-    ]
+    malformed = [r for r in caplog.records if r.getMessage() == "agent.assemble_draft.malformed"]
     assert len(malformed) == 1

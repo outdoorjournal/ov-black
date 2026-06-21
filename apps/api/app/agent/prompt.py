@@ -50,9 +50,4 @@ def build_system_prompt(traveler_context: str) -> str:
     log it. The runtime appends its own mode-specific rubric on top of
     this text to form the final system prompt.
     """
-    return (
-        f"{_VOICE}\n\n"
-        f"{_DISCLOSURE_RULES}\n\n"
-        f"Traveler context (private):\n"
-        f"{traveler_context}"
-    )
+    return f"{_VOICE}\n\n{_DISCLOSURE_RULES}\n\nTraveler context (private):\n{traveler_context}"

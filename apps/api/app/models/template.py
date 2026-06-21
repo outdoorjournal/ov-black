@@ -49,9 +49,7 @@ class CardTemplate(Base):
     )
     slug: Mapped[str] = mapped_column(nullable=False, unique=True)
     name: Mapped[str] = mapped_column(nullable=False)
-    description: Mapped[str] = mapped_column(
-        nullable=False, server_default=text("''")
-    )
+    description: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
     version: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -114,9 +112,7 @@ class TemplateNode(Base):
     type: Mapped[NodeType] = mapped_column(node_type_enum, nullable=False)
     role: Mapped[NodeRole | None] = mapped_column(node_role_enum, nullable=True)
     title: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
-    starts_at_offset_minutes: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
-    )
+    starts_at_offset_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     altitude_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_selected_alt: Mapped[bool] = mapped_column(

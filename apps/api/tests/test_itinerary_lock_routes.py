@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import Itinerary, ItineraryStatus
@@ -27,7 +25,7 @@ from app.services.itineraries import (
     ItineraryError,
     ItineraryOutcome,
 )
-
+from fastapi.testclient import TestClient
 
 # ── Shared fixtures ────────────────────────────────────────────────────────
 
@@ -38,9 +36,7 @@ def advisor_sub() -> str:
 
 
 @pytest.fixture()
-def advisor_headers(
-    make_token: "Callable[..., str]", advisor_sub: str
-) -> dict[str, str]:
+def advisor_headers(make_token: Callable[..., str], advisor_sub: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(sub=advisor_sub)}"}
 
 
@@ -50,9 +46,7 @@ def client_sub() -> str:
 
 
 @pytest.fixture()
-def client_headers(
-    make_token: "Callable[..., str]", client_sub: str
-) -> dict[str, str]:
+def client_headers(make_token: Callable[..., str], client_sub: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(sub=client_sub)}"}
 
 
@@ -69,10 +63,10 @@ def _new_itinerary(
         created_by=None,
         title="",
         locked_by=locked_by,
-        locked_at=datetime.now(timezone.utc) if locked_by else None,
+        locked_at=datetime.now(UTC) if locked_by else None,
         status=status,
         approved_by=approved_by,
-        approved_at=datetime.now(timezone.utc) if approved_by else None,
+        approved_at=datetime.now(UTC) if approved_by else None,
     )
 
 
@@ -126,25 +120,17 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         return bool(returns.get("is_requester_advisor", False))
 
     async def _resolve_auth(_s: Any, client_id: uuid.UUID) -> uuid.UUID | None:
-        calls.setdefault("resolve_client_auth_user_id", []).append(
-            {"client_id": client_id}
-        )
+        calls.setdefault("resolve_client_auth_user_id", []).append({"client_id": client_id})
         return returns.get("resolve_client_auth_user_id")
 
     monkeypatch.setattr(routers_itineraries, "acquire_lock", _acquire)
     monkeypatch.setattr(routers_itineraries, "release_lock", _release)
     monkeypatch.setattr(routers_itineraries, "approve_itinerary", _approve)
-    monkeypatch.setattr(
-        routers_itineraries, "assemble_initial_draft", _assemble
-    )
+    monkeypatch.setattr(routers_itineraries, "assemble_initial_draft", _assemble)
     monkeypatch.setattr(routers_itineraries, "drain_queue", _drain)
     monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _graph)
-    monkeypatch.setattr(
-        routers_itineraries, "_is_requester_advisor", _is_advisor
-    )
-    monkeypatch.setattr(
-        routers_itineraries, "_resolve_client_auth_user_id", _resolve_auth
-    )
+    monkeypatch.setattr(routers_itineraries, "_is_requester_advisor", _is_advisor)
+    monkeypatch.setattr(routers_itineraries, "_resolve_client_auth_user_id", _resolve_auth)
 
     async def _session_dep() -> Iterator[object]:
         yield object()
@@ -180,9 +166,8 @@ def as_advisor() -> Iterator[None]:
 @pytest.fixture()
 def as_non_advisor() -> Iterator[None]:
     """Make ``require_advisor`` 403 with ``advisor_only``."""
-    from fastapi import HTTPException
-
     from app.auth_guards import require_advisor
+    from fastapi import HTTPException
 
     async def _reject() -> Any:
         raise HTTPException(status_code=403, detail="advisor_only")
@@ -197,9 +182,7 @@ def as_non_advisor() -> Iterator[None]:
 # ── POST /itinerary/{id}/lock ──────────────────────────────────────────────
 
 
-def test_lock_requires_jwt(
-    client: TestClient, stub_routes: dict[str, Any]
-) -> None:
+def test_lock_requires_jwt(client: TestClient, stub_routes: dict[str, Any]) -> None:
     resp = client.post(f"/itinerary/{uuid.uuid4()}/lock")
     assert resp.status_code == 401
 
@@ -210,9 +193,7 @@ def test_lock_non_advisor_gets_403(
     advisor_headers: dict[str, str],
     as_non_advisor: None,
 ) -> None:
-    resp = client.post(
-        f"/itinerary/{uuid.uuid4()}/lock", headers=advisor_headers
-    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/lock", headers=advisor_headers)
     assert resp.status_code == 403
     assert resp.json()["detail"] == "advisor_only"
 
@@ -248,9 +229,7 @@ def test_lock_already_locked_409(
     stub_routes["returns"]["acquire_lock"] = ItineraryError(
         outcome=ItineraryOutcome.LOCKED, detail="already_locked"
     )
-    resp = client.post(
-        f"/itinerary/{uuid.uuid4()}/lock", headers=advisor_headers
-    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/lock", headers=advisor_headers)
     assert resp.status_code == 409
     assert resp.json()["detail"] == "already_locked"
 
@@ -261,12 +240,8 @@ def test_lock_not_found_404(
     advisor_headers: dict[str, str],
     as_advisor: None,
 ) -> None:
-    stub_routes["returns"]["acquire_lock"] = ItineraryError(
-        outcome=ItineraryOutcome.NOT_FOUND
-    )
-    resp = client.post(
-        f"/itinerary/{uuid.uuid4()}/lock", headers=advisor_headers
-    )
+    stub_routes["returns"]["acquire_lock"] = ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/lock", headers=advisor_headers)
     assert resp.status_code == 404
 
 
@@ -300,9 +275,7 @@ def test_release_non_advisor_gets_403(
     advisor_headers: dict[str, str],
     as_non_advisor: None,
 ) -> None:
-    resp = client.post(
-        f"/itinerary/{uuid.uuid4()}/release", headers=advisor_headers
-    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/release", headers=advisor_headers)
     assert resp.status_code == 403
 
 
@@ -340,9 +313,7 @@ def test_approve_already_approved_409(
         outcome=ItineraryOutcome.VALIDATION_ERROR,
         detail="already_approved",
     )
-    resp = client.post(
-        f"/itinerary/{uuid.uuid4()}/approve", headers=advisor_headers
-    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/approve", headers=advisor_headers)
     assert resp.status_code == 409
     assert resp.json()["detail"] == "already_approved"
 
@@ -353,9 +324,7 @@ def test_approve_non_advisor_gets_403(
     advisor_headers: dict[str, str],
     as_non_advisor: None,
 ) -> None:
-    resp = client.post(
-        f"/itinerary/{uuid.uuid4()}/approve", headers=advisor_headers
-    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/approve", headers=advisor_headers)
     assert resp.status_code == 403
 
 
@@ -364,9 +333,7 @@ def test_approve_non_advisor_gets_403(
 
 def _graph_view_for(iid: uuid.UUID, status: ItineraryStatus) -> GraphView:
     return GraphView(
-        itinerary=Itinerary(
-            id=iid, title="", client_id=None, created_by=None, status=status
-        ),
+        itinerary=Itinerary(id=iid, title="", client_id=None, created_by=None, status=status),
         nodes=[],
         edges=[],
     )
@@ -379,9 +346,7 @@ def test_assemble_happy_path_advisor(
 ) -> None:
     iid = uuid.uuid4()
     stub_routes["returns"]["is_requester_advisor"] = True
-    stub_routes["returns"]["assemble_initial_draft"] = _graph_view_for(
-        iid, ItineraryStatus.draft
-    )
+    stub_routes["returns"]["assemble_initial_draft"] = _graph_view_for(iid, ItineraryStatus.draft)
     resp = client.post(
         f"/itinerary/{iid}/assemble",
         headers=advisor_headers,
@@ -413,9 +378,7 @@ def test_assemble_as_regular_user_stamps_user_actor(
 ) -> None:
     iid = uuid.uuid4()
     stub_routes["returns"]["is_requester_advisor"] = False
-    stub_routes["returns"]["assemble_initial_draft"] = _graph_view_for(
-        iid, ItineraryStatus.draft
-    )
+    stub_routes["returns"]["assemble_initial_draft"] = _graph_view_for(iid, ItineraryStatus.draft)
     resp = client.post(
         f"/itinerary/{iid}/assemble",
         headers=client_headers,
@@ -488,7 +451,7 @@ def _graph_with_client(
 def test_get_draft_as_owning_client_200(
     client: TestClient,
     stub_routes: dict[str, Any],
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     # clients.id and auth.users.id live in different UUID namespaces, so
     # the test distinguishes them. The owning-client path passes when
@@ -500,9 +463,7 @@ def test_get_draft_as_owning_client_200(
         iid, client_id=client_row_id, status=ItineraryStatus.draft
     )
     stub_routes["returns"]["resolve_client_auth_user_id"] = caller_auth_user_id
-    headers = {
-        "Authorization": f"Bearer {make_token(sub=str(caller_auth_user_id))}"
-    }
+    headers = {"Authorization": f"Bearer {make_token(sub=str(caller_auth_user_id))}"}
     resp = client.get(f"/itinerary/{iid}", headers=headers)
     assert resp.status_code == 200
     # No advisor lookup needed — we matched on owning client path.
@@ -512,7 +473,7 @@ def test_get_draft_as_owning_client_200(
 def test_get_draft_as_non_owning_non_advisor_403(
     client: TestClient,
     stub_routes: dict[str, Any],
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     client_row_id = uuid.uuid4()
     caller_auth_user_id = uuid.uuid4()
@@ -524,9 +485,7 @@ def test_get_draft_as_non_owning_non_advisor_403(
     # The clients row's auth_user_id is some OTHER user, not our caller.
     stub_routes["returns"]["resolve_client_auth_user_id"] = different_auth_user_id
     stub_routes["returns"]["is_requester_advisor"] = False
-    headers = {
-        "Authorization": f"Bearer {make_token(sub=str(caller_auth_user_id))}"
-    }
+    headers = {"Authorization": f"Bearer {make_token(sub=str(caller_auth_user_id))}"}
     resp = client.get(f"/itinerary/{iid}", headers=headers)
     assert resp.status_code == 403
     assert resp.json()["detail"] == "forbidden"
@@ -535,7 +494,7 @@ def test_get_draft_as_non_owning_non_advisor_403(
 def test_get_draft_as_advisor_200(
     client: TestClient,
     stub_routes: dict[str, Any],
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     client_row_id = uuid.uuid4()
     advisor_id = uuid.uuid4()
@@ -554,7 +513,7 @@ def test_get_draft_as_advisor_200(
 def test_get_approved_as_non_owning_user_200(
     client: TestClient,
     stub_routes: dict[str, Any],
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     # Once status=approved, the draft gate is bypassed — any authenticated
     # caller reads (broader ACLs are out of S08 scope).
@@ -563,9 +522,7 @@ def test_get_approved_as_non_owning_user_200(
     stub_routes["returns"]["get_itinerary_graph"] = _graph_with_client(
         iid, client_id=owner_id, status=ItineraryStatus.approved
     )
-    headers = {
-        "Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"
-    }
+    headers = {"Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"}
     resp = client.get(f"/itinerary/{iid}", headers=headers)
     assert resp.status_code == 200
     # No advisor lookup fired — the gate only runs on status=draft.

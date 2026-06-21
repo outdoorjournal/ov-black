@@ -79,7 +79,7 @@ class AdvisorItinerariesResponse(BaseModel):
 )
 async def list_advisor_itineraries_endpoint(
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> AdvisorItinerariesResponse:
     advisor_id = _advisor_id(user)
 

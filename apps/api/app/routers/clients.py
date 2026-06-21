@@ -2,11 +2,11 @@
 
 Five routes, all gated by :func:`app.auth_guards.require_advisor`:
 
-- ``POST   /clients``                           create client + Dossier (+ optional initial dossier_facts) + invite (atomic)
-- ``GET    /clients``                           advisor's own clients, newest-first
-- ``GET    /clients/{id}``                      full client + dossier + active facts (?include_redacted=1 to include redacted)
-- ``POST   /clients/{id}/invite/reissue``       supersede the live invite and email a fresh one
-- ``POST   /clients/{id}/invite/cancel``        mark the live invite cancelled (no email)
+- ``POST   /clients`` — create client + Dossier (+ optional dossier_facts) + invite (atomic)
+- ``GET    /clients`` — advisor's own clients, newest-first
+- ``GET    /clients/{id}`` — client + dossier + active facts (``?include_redacted=1`` opt-in)
+- ``POST   /clients/{id}/invite/reissue`` — supersede the live invite and email a fresh one
+- ``POST   /clients/{id}/invite/cancel`` — mark the live invite cancelled (no email)
 
 The POST path delegates to :func:`create_client_with_dossier` and maps
 ``ClientCreateOutcome`` to HTTP status codes the same way ``routers/auth.py``
@@ -106,6 +106,7 @@ class ClientSessionsResponse(BaseModel):
 
     sessions: list[ClientSessionSummary]
 
+
 router = APIRouter(prefix="/clients", tags=["clients"])
 
 
@@ -153,9 +154,7 @@ def _derive_invite_status(invites: list[Invite]) -> InviteStatus:
     if any(inv.consumed_at is not None for inv in invites):
         return "consumed"
     if any(
-        inv.consumed_at is None
-        and inv.cancelled_at is None
-        and inv.superseded_at is None
+        inv.consumed_at is None and inv.cancelled_at is None and inv.superseded_at is None
         for inv in invites
     ):
         return "pending"
@@ -178,7 +177,7 @@ def _build_invite_history(invites: list[Invite]) -> list[InviteEvent]:
 
 
 async def _load_invites_for_advisor(
-    session: "AsyncSession",
+    session: AsyncSession,
     advisor_id: uuid.UUID,
 ) -> dict[str, list[Invite]]:
     """Fetch every client-role invite this advisor issued, grouped by email.
@@ -214,12 +213,10 @@ async def _load_invites_for_advisor(
 async def create_client_endpoint(
     payload: ClientCreatePayload,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> ClientCreateResponse:
     advisor_id = _advisor_id(user)
-    result = await create_client_with_dossier(
-        session, advisor_id=advisor_id, payload=payload
-    )
+    result = await create_client_with_dossier(session, advisor_id=advisor_id, payload=payload)
 
     if result.outcome is ClientCreateOutcome.OK:
         assert result.client_id is not None  # guaranteed by OK contract
@@ -232,9 +229,7 @@ async def create_client_endpoint(
     if result.outcome is ClientCreateOutcome.UPSTREAM_UNAVAILABLE:
         raise HTTPException(status_code=502, detail="auth_upstream_unavailable")
     # Defensive — every enum value is handled above.
-    logger.error(
-        "clients.router.unhandled_outcome", extra={"outcome": result.outcome.value}
-    )
+    logger.error("clients.router.unhandled_outcome", extra={"outcome": result.outcome.value})
     raise HTTPException(status_code=500, detail="internal_error")
 
 
@@ -245,7 +240,7 @@ async def create_client_endpoint(
 )
 async def list_clients_endpoint(
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> list[ClientSummary]:
     advisor_id = _advisor_id(user)
 
@@ -301,7 +296,7 @@ def _dossier_detail(dossier: Dossier | None) -> DossierDetail | None:
 async def get_client_endpoint(
     client_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     include_redacted: bool = Query(
         default=False,
         description=(
@@ -314,18 +309,14 @@ async def get_client_endpoint(
     advisor_id = _advisor_id(user)
 
     client_result = await session.execute(
-        select(Client).where(
-            Client.id == client_id, Client.owner_id == advisor_id
-        )
+        select(Client).where(Client.id == client_id, Client.owner_id == advisor_id)
     )
     client = client_result.scalar_one_or_none()
     if client is None:
         # Collapsed shape (S01 D015) — never 403 on cross-advisor.
         raise HTTPException(status_code=404, detail="client_not_found")
 
-    ctx = await load_agent_context(
-        session, client_id=client.id, include_redacted=include_redacted
-    )
+    ctx = await load_agent_context(session, client_id=client.id, include_redacted=include_redacted)
     # ``ctx`` is None only if the client row vanished between the two
     # selects; treat that as a 404 to keep the shape consistent.
     if ctx is None:
@@ -351,10 +342,18 @@ async def get_client_endpoint(
         created_at=client.created_at,
         updated_at=client.updated_at,
         dossier=_dossier_detail(ctx.dossier),
-        dossier_facts=[DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts],
-        profile_facts=[ProfileFactDetail.model_validate(f, from_attributes=True) for f in ctx.profile_facts],
-        osint_facts=[OsintFactDetail.model_validate(f, from_attributes=True) for f in ctx.osint_facts],
-        contacts=[ClientContactDetail.model_validate(c, from_attributes=True) for c in contact_rows],
+        dossier_facts=[
+            DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts
+        ],
+        profile_facts=[
+            ProfileFactDetail.model_validate(f, from_attributes=True) for f in ctx.profile_facts
+        ],
+        osint_facts=[
+            OsintFactDetail.model_validate(f, from_attributes=True) for f in ctx.osint_facts
+        ],
+        contacts=[
+            ClientContactDetail.model_validate(c, from_attributes=True) for c in contact_rows
+        ],
     )
 
 
@@ -373,12 +372,10 @@ async def get_client_endpoint(
 async def reissue_client_invite_endpoint(
     client_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> Response:
     advisor_id = _advisor_id(user)
-    result = await reissue_client_invite(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=client_id)
 
     if result.outcome is InviteReissueOutcome.OK:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -414,12 +411,10 @@ async def reissue_client_invite_endpoint(
 async def cancel_client_invite_endpoint(
     client_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> Response:
     advisor_id = _advisor_id(user)
-    result = await cancel_client_invite(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    result = await cancel_client_invite(session, advisor_id=advisor_id, client_id=client_id)
 
     if result.outcome is InviteCancelOutcome.OK:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -445,7 +440,7 @@ async def cancel_client_invite_endpoint(
 async def list_client_sessions_endpoint(
     client_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> ClientSessionsResponse:
     advisor_id = _advisor_id(user)
 
@@ -521,7 +516,7 @@ async def create_client_contact_endpoint(
     client_id: uuid.UUID,
     payload: ClientContactCreate,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> ClientContactDetail:
     result = await create_client_contact(
         session,
@@ -544,7 +539,7 @@ async def update_client_contact_endpoint(
     contact_id: uuid.UUID,
     payload: ClientContactUpdate,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> ClientContactDetail:
     result = await update_client_contact(
         session,
@@ -568,7 +563,7 @@ async def delete_client_contact_endpoint(
     client_id: uuid.UUID,
     contact_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> Response:
     outcome = await delete_client_contact(
         session,

@@ -12,17 +12,15 @@ machine without Docker should be able to run the rest of the suite.
 
 from __future__ import annotations
 
-import asyncio
 import socket
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
+from app.models import Invite, Profile, UserRole
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from app.models import Invite, Profile, UserRole
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -96,17 +94,13 @@ async def test_profile_round_trip(session: AsyncSession) -> None:
         session.add(profile)
         await session.commit()
 
-        fetched = (
-            await session.execute(select(Profile).where(Profile.id == user_id))
-        ).scalar_one()
+        fetched = (await session.execute(select(Profile).where(Profile.id == user_id))).scalar_one()
         assert fetched.id == user_id
         assert fetched.role is UserRole.advisor
         assert isinstance(fetched.created_at, datetime)
         assert fetched.created_at.tzinfo is not None  # timestamptz
     finally:
-        await session.execute(
-            text("delete from public.profiles where id = :id"), {"id": user_id}
-        )
+        await session.execute(text("delete from public.profiles where id = :id"), {"id": user_id})
         await _cleanup(session, user_id, None)
 
 
@@ -126,9 +120,7 @@ async def test_invite_round_trip(session: AsyncSession) -> None:
         session.add(invite)
         await session.commit()
 
-        fetched = (
-            await session.execute(select(Invite).where(Invite.code == code))
-        ).scalar_one()
+        fetched = (await session.execute(select(Invite).where(Invite.code == code))).scalar_one()
         assert fetched.code == code
         assert fetched.role is UserRole.client
         assert fetched.email == "guest@example.com"
@@ -137,7 +129,7 @@ async def test_invite_round_trip(session: AsyncSession) -> None:
         assert isinstance(fetched.created_at, datetime)
 
         # Mark consumed — exercise the nullable → timestamptz transition.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         fetched.consumed_at = now
         await session.commit()
         await session.refresh(fetched)
@@ -162,7 +154,7 @@ async def test_rls_enabled_on_profiles_and_invites(session: AsyncSession) -> Non
             )
         )
     ).all()
-    rls = {tbl: enabled for tbl, enabled in rows}
+    rls = dict(rows)
     assert rls == {"invites": True, "profiles": True}
 
 

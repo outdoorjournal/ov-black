@@ -14,7 +14,6 @@ import uuid
 
 import jwt
 import pytest
-
 from app.config import Settings
 from app.services.agent_token import (
     AgentTokenError,

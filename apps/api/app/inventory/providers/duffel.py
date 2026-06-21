@@ -163,12 +163,8 @@ def summarize_offer(offer: dict[str, Any]) -> dict[str, Any]:
         "flight_code": flight_code,
         "carrier": _carrier_name(offer),
         "cabin": cabins[0] if cabins else None,
-        "depart_at": seg.get("departing_at")
-        if isinstance(seg.get("departing_at"), str)
-        else None,
-        "arrive_at": seg.get("arriving_at")
-        if isinstance(seg.get("arriving_at"), str)
-        else None,
+        "depart_at": seg.get("departing_at") if isinstance(seg.get("departing_at"), str) else None,
+        "arrive_at": seg.get("arriving_at") if isinstance(seg.get("arriving_at"), str) else None,
         "stops": _stop_count(offer),
         "total_amount": offer.get("total_amount")
         if isinstance(offer.get("total_amount"), str)
@@ -176,9 +172,7 @@ def summarize_offer(offer: dict[str, Any]) -> dict[str, Any]:
         "total_currency": offer.get("total_currency")
         if isinstance(offer.get("total_currency"), str)
         else None,
-        "expires_at": offer.get("expires_at")
-        if isinstance(offer.get("expires_at"), str)
-        else None,
+        "expires_at": offer.get("expires_at") if isinstance(offer.get("expires_at"), str) else None,
     }
 
 
@@ -310,7 +304,7 @@ class DuffelProvider(InventoryProvider):
             "Content-Type": "application/json",
         }
 
-    def _build_slices(self, filters: dict) -> list[dict[str, str]] | None:
+    def _build_slices(self, filters: dict[str, Any]) -> list[dict[str, str]] | None:
         origin = filters.get("origin")
         destination = filters.get("destination")
         departure_date = filters.get("departure_date")
@@ -346,7 +340,7 @@ class DuffelProvider(InventoryProvider):
         *,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]:
         """Return ranked :class:`FlightItem` offers; ``[]`` on any failure.
@@ -432,14 +426,22 @@ class DuffelProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             return None
 
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
             return None
 
@@ -448,7 +450,11 @@ class DuffelProvider(InventoryProvider):
         except ValueError:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": resp.status_code, "reason": "invalid_json"},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": resp.status_code,
+                    "reason": "invalid_json",
+                },
             )
             return None
 
@@ -456,7 +462,11 @@ class DuffelProvider(InventoryProvider):
         if not isinstance(offer_request_id, str) or not offer_request_id:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": resp.status_code, "reason": "missing_offer_request_id"},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": resp.status_code,
+                    "reason": "missing_offer_request_id",
+                },
             )
             return None
         return offer_request_id
@@ -480,14 +490,22 @@ class DuffelProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             return []
 
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
             return []
 
@@ -496,7 +514,11 @@ class DuffelProvider(InventoryProvider):
         except ValueError:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": resp.status_code, "reason": "invalid_json"},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": resp.status_code,
+                    "reason": "invalid_json",
+                },
             )
             return []
 
@@ -532,7 +554,11 @@ class DuffelProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             raise ProviderUpstreamError("duffel_detail_network_error") from exc
 
@@ -541,9 +567,15 @@ class DuffelProvider(InventoryProvider):
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "duffel", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "duffel",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
-            raise ProviderUpstreamError("duffel_detail_upstream_error", status_code=resp.status_code)
+            raise ProviderUpstreamError(
+                "duffel_detail_upstream_error", status_code=resp.status_code
+            )
 
         try:
             body = resp.json()
@@ -559,6 +591,10 @@ class DuffelProvider(InventoryProvider):
         except (ValidationError, ValueError, TypeError) as exc:
             logger.warning(
                 "inventory.provider.malformed",
-                extra={"source": "duffel", "source_id": source_id, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "duffel",
+                    "source_id": source_id,
+                    "reason": exc.__class__.__name__,
+                },
             )
             raise ProviderUpstreamError("duffel_detail_malformed") from exc

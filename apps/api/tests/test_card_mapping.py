@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from app.inventory.providers.duffel import normalize_duffel_offer
 from app.inventory.providers.google_places import normalize_place
 from app.inventory.providers.ratehawk import normalize_ratehawk_hotel
@@ -30,9 +29,7 @@ from app.services.card_mapping import (
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "duffel_offers.json"
 HOTEL_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "ratehawk_hotels.json"
-PLACES_FIXTURE_PATH = (
-    Path(__file__).parent / "fixtures" / "google_places_searchtext.json"
-)
+PLACES_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "google_places_searchtext.json"
 
 
 @pytest.fixture(scope="module")
@@ -154,9 +151,7 @@ def test_hotel_item_to_card_attrs_carries_room_nights_geo(
 def test_hotel_check_in_out_recompute_nights(hotel_item: HotelItem) -> None:
     # check_in/check_out aren't in the ETG response — the caller threads the
     # search dates, and nights is recomputed from the stay length.
-    attrs = hotel_item_to_card_attrs(
-        hotel_item, check_in="2026-09-12", check_out="2026-09-15"
-    )
+    attrs = hotel_item_to_card_attrs(hotel_item, check_in="2026-09-12", check_out="2026-09-15")
     assert attrs.check_in == datetime.fromisoformat("2026-09-12T00:00:00")
     assert attrs.check_out == datetime.fromisoformat("2026-09-15T00:00:00")
     assert attrs.nights == 3  # 12→15, overriding the 2-night daily_prices count

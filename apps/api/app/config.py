@@ -188,6 +188,16 @@ class Settings(BaseSettings):
             "runs don't require a provisioned Memory resource."
         ),
     )
+    analyze_reaper_max_running_seconds: int = Field(
+        default=600,
+        ge=30,
+        description=(
+            "Startup reaper threshold (Phase 5 Analyze): a 'running' analyses "
+            "row older than this is marked 'failed' (abandoned_at_restart). "
+            "10 min leaves headroom for slow live providers without leaving "
+            "genuinely orphaned rows around for hours."
+        ),
+    )
     agent_local_url: str = Field(
         default="",
         description=(

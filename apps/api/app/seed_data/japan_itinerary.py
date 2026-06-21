@@ -38,9 +38,9 @@ from app.schemas.card_attrs import (
     HotelCardAttrs,
     MealCardAttrs,
     NoteCardAttrs,
+    SceneryCallout,
     SubwayCardAttrs,
     TrainCardAttrs,
-    SceneryCallout,
 )
 
 # Tokyo wall-clock to UTC. The trip is in JST (+09:00) and the JS fixture
@@ -146,10 +146,7 @@ DAY_01 = FixtureDay(
             starts_at=_at("2024-06-20", "18:30"),
             duration_minutes=30,
             attrs=NoteCardAttrs(
-                body=(
-                    "Assistant helps with self-check-in, then service ends. "
-                    "Dinner excluded."
-                ),
+                body=("Assistant helps with self-check-in, then service ends. Dinner excluded."),
                 author_role="advisor",
             ),
         ),
@@ -203,9 +200,7 @@ DAY_02 = FixtureDay(
             duration_minutes=120,
             attrs=ExperienceCardAttrs(
                 category="food_tour",
-                location=GeoPoint(
-                    lat=35.6654, lng=139.7707, label="Tsukiji Outer Market"
-                ),
+                location=GeoPoint(lat=35.6654, lng=139.7707, label="Tsukiji Outer Market"),
                 energy_required=2,
                 energy_after="neutral",
                 snapshot=CardSnapshot(
@@ -240,9 +235,7 @@ DAY_02 = FixtureDay(
                 cuisine_class="chanko-nabe",
                 location=SUMO_CLUB,
                 ambient_image="/japan/day02_asakusa_sumo_stable.jpg",
-                description=(
-                    "Chanko-nabe with retired sumo wrestlers plus a live show."
-                ),
+                description=("Chanko-nabe with retired sumo wrestlers plus a live show."),
                 time_of_day="lunch",
                 price="Included",
                 seating_at=_at("2024-06-21", "12:00"),
@@ -264,8 +257,7 @@ DAY_02 = FixtureDay(
                 location=GeoPoint(lat=35.7104, lng=139.7970),
                 ambient_image="/japan/day02_samurai_ninja_experience.jpg",
                 description=(
-                    "Order #S535502 · dress in samurai attire, katana "
-                    "handling, ninja demo."
+                    "Order #S535502 · dress in samurai attire, katana handling, ninja demo."
                 ),
                 energy_required=2,
                 gear_list=["Comfortable socks (worn over tabi)"],
@@ -306,13 +298,9 @@ DAY_05 = FixtureDay(
                 from_location=SHINAGAWA,
                 to_location=KYOTO,
                 location=KYOTO,
-                pass_eligibility=(
-                    "JR Pass: Hikari covered; Nozomi/Mizuho not covered."
-                ),
+                pass_eligibility=("JR Pass: Hikari covered; Nozomi/Mizuho not covered."),
                 mode="JR Pass · reserved seats",
-                description=(
-                    "Hikari is covered by JR Pass; Nozomi/Mizuho are not."
-                ),
+                description=("Hikari is covered by JR Pass; Nozomi/Mizuho are not."),
                 depart_at=_at("2024-06-24", "08:40"),
                 arrive_at=_at("2024-06-24", "11:13"),
                 scenery_callouts=[

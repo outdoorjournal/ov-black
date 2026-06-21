@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -53,9 +53,7 @@ class JapanInstantiateRequest(BaseModel):
     client_id: uuid.UUID
     trip_start_at: datetime | None = Field(
         default=None,
-        description=(
-            "Trip start anchor. Defaults to 30 days from now at midnight UTC."
-        ),
+        description=("Trip start anchor. Defaults to 30 days from now at midnight UTC."),
     )
     title: str | None = None
 
@@ -70,15 +68,13 @@ class JapanInstantiateResponse(BaseModel):
 
 
 def _default_trip_start() -> datetime:
-    now = datetime.now(timezone.utc)
-    midnight = datetime(
-        now.year, now.month, now.day, 0, 0, tzinfo=timezone.utc
-    )
+    now = datetime.now(UTC)
+    midnight = datetime(now.year, now.month, now.day, 0, 0, tzinfo=UTC)
     return midnight + timedelta(days=DEFAULT_TRIP_LEAD_DAYS)
 
 
 async def _resolve_client_owned_by(
-    session: "AsyncSession",
+    session: AsyncSession,
     *,
     client_id: uuid.UUID,
     advisor_user_id: uuid.UUID,
@@ -102,7 +98,7 @@ async def _resolve_client_owned_by(
 async def instantiate_japan_demo(
     payload: JapanInstantiateRequest,
     user: AuthenticatedUser = Depends(require_advisor),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> JapanInstantiateResponse:
     """Create a fresh draft itinerary for ``client_id`` from the Japan
     template. The advisor must own the client; the response carries
@@ -111,9 +107,7 @@ async def instantiate_japan_demo(
     try:
         advisor_uuid = uuid.UUID(user.sub)
     except (ValueError, AttributeError) as exc:
-        raise HTTPException(
-            status_code=400, detail="invalid_user_sub"
-        ) from exc
+        raise HTTPException(status_code=400, detail="invalid_user_sub") from exc
 
     client = await _resolve_client_owned_by(
         session, client_id=payload.client_id, advisor_user_id=advisor_uuid
@@ -135,14 +129,10 @@ async def instantiate_japan_demo(
     from app.models import Edge, Node  # local import to keep top-level light
 
     node_count = (
-        await session.execute(
-            select(Node.id).where(Node.itinerary_id == itinerary.id)
-        )
+        await session.execute(select(Node.id).where(Node.itinerary_id == itinerary.id))
     ).all()
     edge_count = (
-        await session.execute(
-            select(Edge.id).where(Edge.itinerary_id == itinerary.id)
-        )
+        await session.execute(select(Edge.id).where(Edge.itinerary_id == itinerary.id))
     ).all()
 
     logger.info(

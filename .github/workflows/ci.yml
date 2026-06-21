@@ -48,6 +48,40 @@ jobs:
       - name: Turbo test
         run: pnpm turbo run test
 
+  # ── Python/FastAPI: ruff lint + format + mypy strict for apps/api ──
+  api-lint:
+    name: apps/api lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Sync dependencies (frozen)
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run mypy
+
   # ── Python/FastAPI: uv-managed pytest for apps/api ──
   api-pytest:
     name: apps/api pytest (uv)
@@ -105,7 +139,7 @@ jobs:
   deploy-staging:
     name: Deploy to staging (manual approval)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [workspaces, api-pytest, cdk-synth]
+    needs: [workspaces, api-lint, api-pytest, cdk-synth]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:

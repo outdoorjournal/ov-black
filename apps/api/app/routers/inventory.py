@@ -20,6 +20,7 @@ dependency) so tests can swap in a seeded fake without monkey-patching
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -108,9 +109,7 @@ async def search_inventory_endpoint(
         default=None,
         ge=1,
         le=9,
-        description=(
-            "Adult count — flight passengers or hotel guests (Ratehawk)."
-        ),
+        description=("Adult count — flight passengers or hotel guests (Ratehawk)."),
     ),
     region_id: int | None = Query(
         default=None,
@@ -172,7 +171,7 @@ async def search_inventory_endpoint(
     ctx = _ctx_from_user(user)
     # Server-side cap — the slice plan's 10x breakpoint note.
     effective_limit = min(limit, _MAX_LIMIT) if isinstance(limit, int) else None
-    filters: dict = {}
+    filters: dict[str, Any] = {}
     if effective_limit is not None:
         filters["limit"] = effective_limit
     # Flight (Duffel) + hotel (Ratehawk) search params ride in ``filters``;
@@ -253,9 +252,7 @@ async def get_inventory_detail_endpoint(
 ) -> InventoryItem:
     ctx = _ctx_from_user(user)
     try:
-        item = await get_inventory_detail(
-            registry, source=source, source_id=source_id, ctx=ctx
-        )
+        item = await get_inventory_detail(registry, source=source, source_id=source_id, ctx=ctx)
     except UnknownSourceError as exc:
         logger.info(
             "inventory.detail.unknown_source",

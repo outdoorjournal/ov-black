@@ -17,11 +17,10 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from app.models import Itinerary, ItineraryStatus
 from app.models.itinerary import itinerary_status_enum
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -74,9 +73,7 @@ async def session() -> AsyncSession:
 
 
 async def _cleanup(session: AsyncSession, itinerary_id: uuid.UUID) -> None:
-    await session.execute(
-        text("delete from public.itineraries where id = :i"), {"i": itinerary_id}
-    )
+    await session.execute(text("delete from public.itineraries where id = :i"), {"i": itinerary_id})
     await session.commit()
 
 
@@ -94,9 +91,7 @@ async def test_freshly_inserted_itinerary_defaults_to_draft(
         await session.commit()
 
         fetched = (
-            await session.execute(
-                select(Itinerary).where(Itinerary.id == itinerary_id)
-            )
+            await session.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
         ).scalar_one()
         assert fetched.status is ItineraryStatus.draft
         assert fetched.approved_by is None

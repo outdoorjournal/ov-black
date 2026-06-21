@@ -356,18 +356,18 @@ def normalize_place(place: dict[str, Any]) -> InventoryItem:
     location = _build_location(place)
     tags = _build_tags(summary)
 
-    common = dict(
-        source="google_places",
-        source_id=source_id,
-        title=title,
-        description=description,
-        photos=[],  # see photo-honesty note in the module docstring
-        location=location,
-        price=None,  # Places gives only a coarse priceLevel, never an amount
-        editorial_links=[],
-        tags=tags,
-        raw=place,
-    )
+    common = {
+        "source": "google_places",
+        "source_id": source_id,
+        "title": title,
+        "description": description,
+        "photos": [],  # see photo-honesty note in the module docstring
+        "location": location,
+        "price": None,  # Places gives only a coarse priceLevel, never an amount
+        "editorial_links": [],
+        "tags": tags,
+        "raw": place,
+    }
     if classify_kind(place) == "meal":
         return MealItem(**common)
     return ExperienceItem(**common)
@@ -408,7 +408,7 @@ class GooglePlacesProvider(InventoryProvider):
         }
 
     @staticmethod
-    def _location_bias(filters: dict) -> dict[str, Any] | None:
+    def _location_bias(filters: dict[str, Any]) -> dict[str, Any] | None:
         """Build a ``locationBias`` circle from ``near_lat`` + ``near_lng``.
 
         Optional ``radius_m`` (metres) narrows it; absent ⇒ a default radius.
@@ -449,7 +449,7 @@ class GooglePlacesProvider(InventoryProvider):
         *,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]:
         """Return classified :class:`MealItem` / :class:`ExperienceItem` records.
@@ -462,7 +462,11 @@ class GooglePlacesProvider(InventoryProvider):
         if not self._has_credentials:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": None, "reason": "no_credentials"},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": None,
+                    "reason": "no_credentials",
+                },
             )
             return []
 
@@ -534,7 +538,11 @@ class GooglePlacesProvider(InventoryProvider):
         if not self._has_credentials:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": None, "reason": "no_credentials"},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": None,
+                    "reason": "no_credentials",
+                },
             )
             return []
 
@@ -561,14 +569,22 @@ class GooglePlacesProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             return []
 
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
             return []
 
@@ -577,7 +593,11 @@ class GooglePlacesProvider(InventoryProvider):
         except ValueError:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": resp.status_code, "reason": "invalid_json"},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": resp.status_code,
+                    "reason": "invalid_json",
+                },
             )
             return []
 
@@ -605,7 +625,11 @@ class GooglePlacesProvider(InventoryProvider):
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": None, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
             )
             raise ProviderUpstreamError("google_places_detail_network_error") from exc
 
@@ -614,7 +638,11 @@ class GooglePlacesProvider(InventoryProvider):
         if resp.status_code >= 400:
             logger.warning(
                 "inventory.provider.error",
-                extra={"source": "google_places", "upstream_status": resp.status_code, "reason": "non_2xx"},
+                extra={
+                    "source": "google_places",
+                    "upstream_status": resp.status_code,
+                    "reason": "non_2xx",
+                },
             )
             raise ProviderUpstreamError(
                 "google_places_detail_upstream_error", status_code=resp.status_code
@@ -649,6 +677,10 @@ class GooglePlacesProvider(InventoryProvider):
         except (ValidationError, ValueError, TypeError) as exc:
             logger.warning(
                 "inventory.provider.malformed",
-                extra={"source": "google_places", "source_id": source_id, "reason": exc.__class__.__name__},
+                extra={
+                    "source": "google_places",
+                    "source_id": source_id,
+                    "reason": exc.__class__.__name__,
+                },
             )
             raise ProviderUpstreamError("google_places_detail_malformed") from exc

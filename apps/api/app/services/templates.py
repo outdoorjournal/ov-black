@@ -44,7 +44,6 @@ from app.models import (
     EdgeType,
     Itinerary,
     ItineraryStatus,
-    Node,
     NodeRole,
     NodeStatus,
     NodeType,
@@ -73,9 +72,7 @@ async def find_or_create_template(
     call this so reruns don't duplicate.
     """
     existing = (
-        await session.execute(
-            select(CardTemplate).where(CardTemplate.slug == slug)
-        )
+        await session.execute(select(CardTemplate).where(CardTemplate.slug == slug))
     ).scalar_one_or_none()
     if existing is not None:
         return existing, False
@@ -152,18 +149,14 @@ async def add_template_edge(
     return edge
 
 
-async def has_subgraph(
-    session: AsyncSession, *, template_id: uuid.UUID
-) -> bool:
+async def has_subgraph(session: AsyncSession, *, template_id: uuid.UUID) -> bool:
     """Quick check used by seed builders: does this template already
     have any nodes? Lets the builder no-op the costly subgraph step
     on rerun.
     """
     return (
         await session.execute(
-            select(TemplateNode.id)
-            .where(TemplateNode.template_id == template_id)
-            .limit(1)
+            select(TemplateNode.id).where(TemplateNode.template_id == template_id).limit(1)
         )
     ).scalar_one_or_none() is not None
 
@@ -185,11 +178,7 @@ def _starts_at_lower_upper(
     if offset_minutes is None:
         return None, None
     lower = trip_start_at + timedelta(minutes=offset_minutes)
-    upper = (
-        lower + timedelta(minutes=duration_minutes)
-        if duration_minutes is not None
-        else lower
-    )
+    upper = lower + timedelta(minutes=duration_minutes) if duration_minutes is not None else lower
     return lower, upper
 
 
@@ -227,15 +216,15 @@ async def instantiate_template(
 
     # Load every template_node + edge in one round-trip each.
     template_nodes = (
-        await session.execute(
-            select(TemplateNode).where(TemplateNode.template_id == template.id)
-        )
-    ).scalars().all()
+        (await session.execute(select(TemplateNode).where(TemplateNode.template_id == template.id)))
+        .scalars()
+        .all()
+    )
     template_edges = (
-        await session.execute(
-            select(TemplateEdge).where(TemplateEdge.template_id == template.id)
-        )
-    ).scalars().all()
+        (await session.execute(select(TemplateEdge).where(TemplateEdge.template_id == template.id)))
+        .scalars()
+        .all()
+    )
 
     # Topological order: a node's parent or attached host must already
     # exist in the lookup before we insert it. The dependency graph is
@@ -317,9 +306,7 @@ async def instantiate_template(
                 "id": new_id,
                 "iid": itinerary.id,
                 "parent": (
-                    str(new_id_by_template_node[tn.parent_id])
-                    if tn.parent_id is not None
-                    else None
+                    str(new_id_by_template_node[tn.parent_id]) if tn.parent_id is not None else None
                 ),
                 "type": tn.type.value,
                 "status": NodeStatus.proposed.value,
@@ -331,11 +318,7 @@ async def instantiate_template(
                 "hi": upper,
                 "alt": tn.altitude_m,
                 "att": (
-                    str(
-                        new_id_by_template_node[
-                            tn.attached_to_template_node_id
-                        ]
-                    )
+                    str(new_id_by_template_node[tn.attached_to_template_node_id])
                     if tn.attached_to_template_node_id is not None
                     else None
                 ),

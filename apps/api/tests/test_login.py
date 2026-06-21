@@ -17,11 +17,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.services import login as login_service
 from app.services.login import LoginOutcome, request_login_link
 from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     pass
@@ -184,9 +183,7 @@ async def test_service_4xx_rejection_collapses_to_no_account(
     status_code: int,
 ) -> None:
     async def _fake(email: str, **_kwargs: Any) -> MagicLinkIssued:
-        raise SupabaseAdminError(
-            "supabase_admin_rejected", status_code=status_code
-        )
+        raise SupabaseAdminError("supabase_admin_rejected", status_code=status_code)
 
     monkeypatch.setattr(login_service, "generate_magic_link", _fake)
     result = await request_login_link("unknown@example.com")
@@ -200,9 +197,7 @@ async def test_service_5xx_rejection_is_upstream_unavailable(
     status_code: int,
 ) -> None:
     async def _fake(email: str, **_kwargs: Any) -> MagicLinkIssued:
-        raise SupabaseAdminError(
-            "supabase_admin_rejected", status_code=status_code
-        )
+        raise SupabaseAdminError("supabase_admin_rejected", status_code=status_code)
 
     monkeypatch.setattr(login_service, "generate_magic_link", _fake)
     result = await request_login_link("user@example.com")

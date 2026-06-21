@@ -4,7 +4,6 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-
 from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, func, text
@@ -97,7 +96,7 @@ class ItineraryStatus(str, enum.Enum):
 # the migration owns that. postgresql.ENUM surfaces create_type as a real
 # attribute (the generic sqlalchemy.Enum silently drops it), so tests can
 # regression-guard D003 directly. create_type=False is load-bearing here.
-node_type_enum = PGEnum(
+node_type_enum: PGEnum = PGEnum(
     NodeType,
     name="node_type",
     schema="public",
@@ -105,7 +104,7 @@ node_type_enum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
-node_status_enum = PGEnum(
+node_status_enum: PGEnum = PGEnum(
     NodeStatus,
     name="node_status",
     schema="public",
@@ -113,7 +112,7 @@ node_status_enum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
-edge_type_enum = PGEnum(
+edge_type_enum: PGEnum = PGEnum(
     EdgeType,
     name="edge_type",
     schema="public",
@@ -121,7 +120,7 @@ edge_type_enum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
-cost_kind_enum = PGEnum(
+cost_kind_enum: PGEnum = PGEnum(
     CostKind,
     name="cost_kind",
     schema="public",
@@ -129,7 +128,7 @@ cost_kind_enum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
-node_role_enum = PGEnum(
+node_role_enum: PGEnum = PGEnum(
     NodeRole,
     name="node_role",
     schema="public",
@@ -137,7 +136,7 @@ node_role_enum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
-itinerary_status_enum = PGEnum(
+itinerary_status_enum: PGEnum = PGEnum(
     ItineraryStatus,
     name="itinerary_status",
     schema="public",
@@ -228,7 +227,7 @@ class Node(Base):
     title: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
     source: Mapped[str | None] = mapped_column(nullable=True)
     source_id: Mapped[str | None] = mapped_column(nullable=True)
-    metadata_: Mapped[dict] = mapped_column(
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata",
         JSONB,
         nullable=False,
@@ -272,13 +271,9 @@ class Node(Base):
     # ``nodes_cost_amount_currency_together`` enforces both-or-neither.
     # ``cost_kind`` is independent. A flight's amount is a repriceable quote
     # (D024); the transient offer history lives in ``node_offers`` (M005).
-    cost_amount: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 2), nullable=True
-    )
+    cost_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     cost_currency: Mapped[str | None] = mapped_column(nullable=True)
-    cost_kind: Mapped[CostKind | None] = mapped_column(
-        cost_kind_enum, nullable=True
-    )
+    cost_kind: Mapped[CostKind | None] = mapped_column(cost_kind_enum, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -317,7 +312,7 @@ class Edge(Base):
         nullable=False,
     )
     type: Mapped[EdgeType] = mapped_column(edge_type_enum, nullable=False)
-    metadata_: Mapped[dict] = mapped_column(
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata",
         JSONB,
         nullable=False,
@@ -350,8 +345,8 @@ class NodeHistory(Base):
     )
     actor_kind: Mapped[str] = mapped_column(nullable=False)
     actor_id: Mapped[str | None] = mapped_column(nullable=True)
-    before: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -374,8 +369,8 @@ class EdgeHistory(Base):
     )
     actor_kind: Mapped[str] = mapped_column(nullable=False)
     actor_id: Mapped[str | None] = mapped_column(nullable=True)
-    before: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -19,18 +19,17 @@ from __future__ import annotations
 import socket
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import Invite, UserRole
 from app.services import invites as invites_service
 from app.services.invites import RedeemOutcome, redeem_invite
 from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -91,9 +90,9 @@ class FakeSession:
                 return _ExecResult(None)
             if self.race_losing_code == code:
                 # Simulate a concurrent redeemer — the row now looks consumed.
-                invite.consumed_at = datetime.now(timezone.utc)
+                invite.consumed_at = datetime.now(UTC)
                 return _ExecResult(None)
-            invite.consumed_at = datetime.now(timezone.utc)
+            invite.consumed_at = datetime.now(UTC)
             return _ExecResult(invite.code)
 
         raise AssertionError(f"unexpected statement: {compiled}")
@@ -120,11 +119,11 @@ def _invite(
         created_by=uuid.uuid4(),
     )
     if consumed:
-        inv.consumed_at = datetime.now(timezone.utc)
+        inv.consumed_at = datetime.now(UTC)
     if cancelled:
-        inv.cancelled_at = datetime.now(timezone.utc)
+        inv.cancelled_at = datetime.now(UTC)
     if superseded:
-        inv.superseded_at = datetime.now(timezone.utc)
+        inv.superseded_at = datetime.now(UTC)
     return inv
 
 
@@ -132,11 +131,11 @@ def _invite(
 
 
 @pytest.fixture()
-def override_session() -> "Iterator[FakeSession]":
+def override_session() -> Iterator[FakeSession]:
     """Replace the session dependency with a FakeSession for the test."""
     fake = FakeSession()
 
-    async def _dep() -> "Iterator[FakeSession]":
+    async def _dep() -> Iterator[FakeSession]:
         yield fake
 
     fastapi_app.dependency_overrides[get_session] = _dep
@@ -272,9 +271,7 @@ def test_redeem_invite_wrong_email_collapses_to_404(
 ) -> None:
     # Wrong-email must NOT disclose that the code exists — same 404 body as
     # an unknown code. Otherwise an attacker can enumerate live codes.
-    override_session.invites["INV-PIN"] = _invite(
-        "INV-PIN", email="expected@example.com"
-    )
+    override_session.invites["INV-PIN"] = _invite("INV-PIN", email="expected@example.com")
     resp = client.post(
         "/auth/redeem-invite",
         json={"code": "INV-PIN", "email": "attacker@example.com"},
@@ -289,9 +286,7 @@ def test_redeem_invite_pinned_email_matches_case_insensitively(
     override_session: FakeSession,
     stub_magic_link: list[str],
 ) -> None:
-    override_session.invites["INV-CASE"] = _invite(
-        "INV-CASE", email="User@Example.COM"
-    )
+    override_session.invites["INV-CASE"] = _invite("INV-CASE", email="User@Example.COM")
     resp = client.post(
         "/auth/redeem-invite",
         json={"code": "INV-CASE", "email": "user@example.com"},
@@ -385,9 +380,7 @@ async def test_service_already_consumed(stub_admin_in_service: list[str]) -> Non
 
 @pytest.mark.asyncio
 async def test_service_wrong_email(stub_admin_in_service: list[str]) -> None:
-    session = FakeSession(
-        invites={"X": _invite("X", email="expected@example.com")}
-    )
+    session = FakeSession(invites={"X": _invite("X", email="expected@example.com")})
     result = await redeem_invite(session, code="X", email="other@example.com")
     assert result.outcome is RedeemOutcome.WRONG_EMAIL
     assert stub_admin_in_service == []
@@ -469,10 +462,7 @@ async def test_service_real_supabase_round_trip(
     try:
         async with maker() as setup:
             await setup.execute(
-                text(
-                    "insert into public.invites (code, role, email) "
-                    "values (:c, 'advisor', NULL)"
-                ),
+                text("insert into public.invites (code, role, email) values (:c, 'advisor', NULL)"),
                 {"c": code},
             )
             await setup.commit()
@@ -486,8 +476,6 @@ async def test_service_real_supabase_round_trip(
             assert second.outcome is RedeemOutcome.ALREADY_CONSUMED
     finally:
         async with maker() as cleanup:
-            await cleanup.execute(
-                text("delete from public.invites where code = :c"), {"c": code}
-            )
+            await cleanup.execute(text("delete from public.invites where code = :c"), {"c": code})
             await cleanup.commit()
         await engine.dispose()

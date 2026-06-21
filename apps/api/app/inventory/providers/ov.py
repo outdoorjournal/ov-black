@@ -72,9 +72,14 @@ def _extract_photos(entry: dict[str, Any]) -> list[str]:
             photos.append(url)
     images = entry.get("images") or []
     if isinstance(images, list):
+
+        def _index_key(img: dict[str, Any]) -> int:
+            idx = img.get("index")
+            return idx if isinstance(idx, int) else 0
+
         ordered = sorted(
             (img for img in images if isinstance(img, dict)),
-            key=lambda img: img.get("index") if isinstance(img.get("index"), int) else 0,
+            key=_index_key,
         )
         for img in ordered:
             url = img.get("accessUrl")
@@ -226,7 +231,7 @@ class OVProvider(InventoryProvider):
         *,
         kinds: list[str] | None,
         keyword: str | None,
-        filters: dict,
+        filters: dict[str, Any],
         ctx: InventoryCtx,
     ) -> list[InventoryItem]:
         """Return matching :class:`ExperienceItem` records; [] on upstream error."""

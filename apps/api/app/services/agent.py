@@ -33,14 +33,14 @@ import random
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Literal
-
 from contextlib import aclosing
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Literal, cast
 
 import anyio
-from sqlalchemy import func, select, text as sql_text, update
+from sqlalchemy import CursorResult, func, select, update
+from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -55,7 +55,6 @@ from app.models import (
     Dossier,
     Itinerary,
     ItineraryStatus,
-    Node,
     NodeStatus,
     NodeType,
     TurnRole,
@@ -113,9 +112,7 @@ class ActorContext:
 
 # Sentinel frame the router inspects before committing the upstream-ok
 # path. The exact bytes are part of the SSE contract with the browser.
-_FALLBACK_FRAME: bytes = (
-    b'data: {"type":"error","reason":"upstream_unavailable"}\n\n'
-)
+_FALLBACK_FRAME: bytes = b'data: {"type":"error","reason":"upstream_unavailable"}\n\n'
 
 
 def _sse_encode(event: dict[str, Any]) -> bytes:
@@ -160,9 +157,10 @@ async def _enforce_client_access(
     if actor.actor_kind == "advisor":
         if actor.user_id is None or client.owner_id != actor.user_id:
             return SessionOutcome.FORBIDDEN
-    elif actor.actor_kind == "user":
-        if actor.user_id is None or client.auth_user_id != actor.user_id:
-            return SessionOutcome.FORBIDDEN
+    elif actor.actor_kind == "user" and (
+        actor.user_id is None or client.auth_user_id != actor.user_id
+    ):
+        return SessionOutcome.FORBIDDEN
     # actor_kind == 'agent' is internal — no additional gate here.
     return SessionOutcome.OK
 
@@ -261,11 +259,12 @@ async def dismiss_onboarding(
         if actor.actor_kind == "advisor":
             if actor.user_id is None or client.owner_id != actor.user_id:
                 return SessionOutcome.FORBIDDEN
-        elif actor.actor_kind == "user":
-            if actor.user_id is None or client.auth_user_id != actor.user_id:
-                return SessionOutcome.FORBIDDEN
+        elif actor.actor_kind == "user" and (
+            actor.user_id is None or client.auth_user_id != actor.user_id
+        ):
+            return SessionOutcome.FORBIDDEN
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await session.execute(
             update(AgentSession)
             .where(
@@ -274,14 +273,12 @@ async def dismiss_onboarding(
             )
             .values(ended_at=now)
         )
-        ended_count = int(result.rowcount or 0)
+        ended_count = int(cast("CursorResult[Any]", result).rowcount or 0)
 
         if ended_count == 0:
             any_existing = (
                 await session.execute(
-                    select(AgentSession.id)
-                    .where(AgentSession.client_id == client_id)
-                    .limit(1)
+                    select(AgentSession.id).where(AgentSession.client_id == client_id).limit(1)
                 )
             ).scalar_one_or_none()
             if any_existing is None:
@@ -337,11 +334,7 @@ async def open_or_reuse_session(
         # JIT-backfill the client↔auth.users link on the first POST /sessions
         # made by the client themself.
         backfilled = False
-        if (
-            actor.actor_kind == "user"
-            and actor.user_id is not None
-            and client.auth_user_id is None
-        ):
+        if actor.actor_kind == "user" and actor.user_id is not None and client.auth_user_id is None:
             backfilled = await _jit_backfill_client_auth_user_id(
                 session, client=client, user_id=actor.user_id
             )
@@ -350,9 +343,10 @@ async def open_or_reuse_session(
         if actor.actor_kind == "advisor":
             if actor.user_id is None or client.owner_id != actor.user_id:
                 return SessionOutcome.FORBIDDEN, None, None
-        elif actor.actor_kind == "user":
-            if actor.user_id is None or client.auth_user_id != actor.user_id:
-                return SessionOutcome.FORBIDDEN, None, None
+        elif actor.actor_kind == "user" and (
+            actor.user_id is None or client.auth_user_id != actor.user_id
+        ):
+            return SessionOutcome.FORBIDDEN, None, None
         # actor_kind == 'agent' is internal — no additional gate here.
 
         # If the caller is pinning the session, verify the itinerary
@@ -458,28 +452,28 @@ async def list_turns(
     404 / 403 without leaking DB internals.
     """
     agent_session = (
-        await session.execute(
-            select(AgentSession).where(AgentSession.id == session_id)
-        )
+        await session.execute(select(AgentSession).where(AgentSession.id == session_id))
     ).scalar_one_or_none()
     if agent_session is None:
         return TurnOutcome.SESSION_NOT_FOUND
 
-    access = await _enforce_client_access(
-        session, actor=actor, client_id=agent_session.client_id
-    )
+    access = await _enforce_client_access(session, actor=actor, client_id=agent_session.client_id)
     if access is SessionOutcome.CLIENT_NOT_FOUND:
         return TurnOutcome.SESSION_NOT_FOUND
     if access is SessionOutcome.FORBIDDEN:
         return TurnOutcome.SESSION_NOT_YOURS
 
     rows = (
-        await session.execute(
-            select(AgentTurn)
-            .where(AgentTurn.session_id == session_id)
-            .order_by(AgentTurn.turn_index)
+        (
+            await session.execute(
+                select(AgentTurn)
+                .where(AgentTurn.session_id == session_id)
+                .order_by(AgentTurn.turn_index)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return list(rows)
 
 
@@ -511,9 +505,7 @@ async def _detect_mode(
     try:
         if itinerary_id is not None:
             status = (
-                await session.execute(
-                    select(Itinerary.status).where(Itinerary.id == itinerary_id)
-                )
+                await session.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
             ).scalar_one_or_none()
             if status is ItineraryStatus.approved:
                 return "qa"
@@ -612,15 +604,11 @@ async def _next_turn_index(
     remains the belt in case any caller bypasses this helper.
     """
     await session.execute(
-        select(AgentSession.id)
-        .where(AgentSession.id == session_id)
-        .with_for_update()
+        select(AgentSession.id).where(AgentSession.id == session_id).with_for_update()
     )
     current_max = (
         await session.execute(
-            select(func.max(AgentTurn.turn_index)).where(
-                AgentTurn.session_id == session_id
-            )
+            select(func.max(AgentTurn.turn_index)).where(AgentTurn.session_id == session_id)
         )
     ).scalar_one()
     return 0 if current_max is None else int(current_max) + 1
@@ -640,11 +628,7 @@ async def _ensure_itinerary_for_client(
     SELECT first, INSERT only if absent.
     """
     existing = (
-        await session.execute(
-            select(Itinerary.id)
-            .where(Itinerary.client_id == client_id)
-            .limit(1)
-        )
+        await session.execute(select(Itinerary.id).where(Itinerary.client_id == client_id).limit(1))
     ).scalar_one_or_none()
     if existing is not None:
         return existing
@@ -796,13 +780,8 @@ async def _persist_proposed_card(
     # Lock gate: if an advisor holds the lock, queue the mutation and bail
     # before ``add_node`` so no partial state leaks to the DB. The helper is
     # side-effect-free so reading it mid-transaction is safe.
-    lock_err = await itineraries_service._check_lock(
-        session, itinerary_id, card_actor
-    )
-    if (
-        lock_err is not None
-        and lock_err.outcome is itineraries_service.ItineraryOutcome.LOCKED
-    ):
+    lock_err = await itineraries_service._check_lock(session, itinerary_id, card_actor)
+    if lock_err is not None and lock_err.outcome is itineraries_service.ItineraryOutcome.LOCKED:
         payload: dict[str, Any] = {
             "type": NodeType.experience,
             "status": NodeStatus.proposed,
@@ -818,7 +797,7 @@ async def _persist_proposed_card(
                 op="add_node",
                 payload=payload,
                 actor=card_actor,
-                queued_at=datetime.now(timezone.utc),
+                queued_at=datetime.now(UTC),
             )
         )
         logger.info(
@@ -875,9 +854,10 @@ async def _authorize_actor(
     if actor.actor_kind == "advisor":
         if actor.user_id is None or client.owner_id != actor.user_id:
             return TurnOutcome.SESSION_NOT_YOURS
-    elif actor.actor_kind == "user":
-        if actor.user_id is None or client.auth_user_id != actor.user_id:
-            return TurnOutcome.SESSION_NOT_YOURS
+    elif actor.actor_kind == "user" and (
+        actor.user_id is None or client.auth_user_id != actor.user_id
+    ):
+        return TurnOutcome.SESSION_NOT_YOURS
     return TurnOutcome.OK
 
 
@@ -981,9 +961,7 @@ async def stream_turn(
         pinned_itinerary_id = agent_session.itinerary_id
 
         # Mode + prior turns — both cheap SELECTs, same transaction.
-        mode = await _detect_mode(
-            db, itinerary_id=pinned_itinerary_id, client_id=client_id
-        )
+        mode = await _detect_mode(db, itinerary_id=pinned_itinerary_id, client_id=client_id)
         prior_turns = await _load_prior_turns(db, session_id=session_id)
 
         user_turn = AgentTurn(
@@ -1057,9 +1035,7 @@ async def stream_turn(
         "agent_token": agent_token,
         "actor_kind": actor.actor_kind,
         "client_id": str(client_id),
-        "itinerary_id": (
-            str(pinned_itinerary_id) if pinned_itinerary_id else None
-        ),
+        "itinerary_id": (str(pinned_itinerary_id) if pinned_itinerary_id else None),
     }
 
     assembled_text = ""
@@ -1098,15 +1074,11 @@ async def stream_turn(
                             },
                         )
                         got_first_byte = True
-                        yield _sse_encode(
-                            {"type": "first_token", "ms": first_token_ms}
-                        )
+                        yield _sse_encode({"type": "first_token", "ms": first_token_ms})
                     elif kind == "delta":
                         text_chunk = str(event.get("text", ""))
                         if first_token_ms is None:
-                            first_token_ms = int(
-                                (time.monotonic() - started) * 1000
-                            )
+                            first_token_ms = int((time.monotonic() - started) * 1000)
                             logger.info(
                                 "agent.turn.first_token",
                                 extra={
@@ -1116,9 +1088,7 @@ async def stream_turn(
                                 },
                             )
                             got_first_byte = True
-                            yield _sse_encode(
-                                {"type": "first_token", "ms": first_token_ms}
-                            )
+                            yield _sse_encode({"type": "first_token", "ms": first_token_ms})
                         assembled_text += text_chunk
                         got_first_byte = True
                         yield _sse_encode({"type": "delta", "text": text_chunk})
@@ -1145,9 +1115,8 @@ async def stream_turn(
                                     break
                                 day_index = slot.get("day_index")
                                 node_ids_raw = slot.get("node_ids_in_order")
-                                if (
-                                    not isinstance(day_index, int)
-                                    or not isinstance(node_ids_raw, list)
+                                if not isinstance(day_index, int) or not isinstance(
+                                    node_ids_raw, list
                                 ):
                                     malformed = True
                                     break
@@ -1195,12 +1164,10 @@ async def stream_turn(
 
                         async with session_factory() as card_db:
                             if itinerary_id_cache is None:
-                                itinerary_id_cache = (
-                                    await _ensure_itinerary_for_client(
-                                        card_db,
-                                        client_id=client_id,
-                                        actor_user_id=actor_user_id,
-                                    )
+                                itinerary_id_cache = await _ensure_itinerary_for_client(
+                                    card_db,
+                                    client_id=client_id,
+                                    actor_user_id=actor_user_id,
                                 )
                             assemble_actor = itineraries_service.ActorContext(
                                 user_id=None,
@@ -1264,12 +1231,10 @@ async def stream_turn(
                         node_id: uuid.UUID | None = None
                         async with session_factory() as card_db:
                             if itinerary_id_cache is None:
-                                itinerary_id_cache = (
-                                    await _ensure_itinerary_for_client(
-                                        card_db,
-                                        client_id=client_id,
-                                        actor_user_id=actor_user_id,
-                                    )
+                                itinerary_id_cache = await _ensure_itinerary_for_client(
+                                    card_db,
+                                    client_id=client_id,
+                                    actor_user_id=actor_user_id,
                                 )
                             node_id = await _persist_proposed_card(
                                 card_db,
@@ -1297,11 +1262,7 @@ async def stream_turn(
             break  # Clean exit from the retry envelope.
         except (AgentRuntimeError, TimeoutError) as exc:
             # Retry only if we haven't emitted a byte yet AND have budget left.
-            reason = (
-                exc.reason
-                if isinstance(exc, AgentRuntimeError)
-                else "first_token_timeout"
-            )
+            reason = exc.reason if isinstance(exc, AgentRuntimeError) else "first_token_timeout"
             if got_first_byte:
                 # Mid-stream failure — no retry, just crash out to fallback.
                 logger.warning(
@@ -1420,11 +1381,7 @@ async def stream_turn(
                 },
             )
         except Exception as exc:  # noqa: BLE001 — failure must never raise
-            reason = (
-                exc.reason
-                if isinstance(exc, AgentRuntimeError)
-                else exc.__class__.__name__
-            )
+            reason = exc.reason if isinstance(exc, AgentRuntimeError) else exc.__class__.__name__
             logger.warning(
                 "agent.memory.create_event.failed",
                 extra={
@@ -1433,5 +1390,3 @@ async def stream_turn(
                     "reason": reason,
                 },
             )
-
-

@@ -13,7 +13,7 @@ the generated client, and the PRD already nails these seven.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,16 +67,16 @@ class InventoryItemBase(BaseModel):
 
     model_config = {"extra": "ignore"}
 
-    source: str                    # e.g. "ov", "mock"
-    source_id: str                 # vendor identifier
+    source: str  # e.g. "ov", "mock"
+    source_id: str  # vendor identifier
     title: str
     description: str | None = None
-    photos: list[str] = []         # hero image first
+    photos: list[str] = []  # hero image first
     location: Location | None = None
     price: Price | None = None
     editorial_links: list[EditorialLink] = []
-    tags: list[str] = []           # e.g. ["hiking", "unesco"]
-    raw: dict = {}                 # provider-specific pass-through
+    tags: list[str] = []  # e.g. ["hiking", "unesco"]
+    raw: dict[str, Any] = {}  # provider-specific pass-through
 
 
 class ExperienceItem(InventoryItemBase):
@@ -112,14 +112,6 @@ class NoteItem(InventoryItemBase):
 
 
 InventoryItem = Annotated[
-    Union[
-        ExperienceItem,
-        DestinationItem,
-        HotelItem,
-        FlightItem,
-        MealItem,
-        TransitItem,
-        NoteItem,
-    ],
+    ExperienceItem | DestinationItem | HotelItem | FlightItem | MealItem | TransitItem | NoteItem,
     Field(discriminator="kind"),
 ]

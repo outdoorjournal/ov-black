@@ -108,9 +108,7 @@ async def build_japan_template(session: AsyncSession) -> CardTemplate:
             # and the tstzrange column normalizes to UTC, losing the offset.
             utcoffset = item.starts_at.utcoffset()
             if utcoffset is not None:
-                metadata["tz_offset_minutes"] = int(
-                    utcoffset.total_seconds() // 60
-                )
+                metadata["tz_offset_minutes"] = int(utcoffset.total_seconds() // 60)
             tnode = await add_template_node(
                 session,
                 template_id=template.id,

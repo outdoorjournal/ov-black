@@ -29,7 +29,6 @@ from app.models.osint_fact import OsintFactKind
 from app.models.profile_fact import ProfileFactKind
 from app.schemas.dossier import DossierDetail
 
-
 # ── Dossier facts ────────────────────────────────────────────────────────
 
 
@@ -116,9 +115,7 @@ class OsintFactCreate(BaseModel):
 
     kind: OsintFactKind
     text: str = Field(min_length=1, max_length=4000)
-    source_kind: Literal[FactSourceKind.advisor, FactSourceKind.scraper] = (
-        FactSourceKind.advisor
-    )
+    source_kind: Literal[FactSourceKind.advisor, FactSourceKind.scraper] = FactSourceKind.advisor
     source_ref: dict[str, Any] = Field(default_factory=dict)
     observed_at: datetime | None = None
 

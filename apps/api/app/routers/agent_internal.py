@@ -107,16 +107,13 @@ async def get_agent_context_endpoint(
         client_full_name=ctx.client.full_name,
         dossier=dossier_detail,
         dossier_facts=[
-            DossierFactDetail.model_validate(f, from_attributes=True)
-            for f in ctx.dossier_facts
+            DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts
         ],
         profile_facts=[
-            ProfileFactDetail.model_validate(f, from_attributes=True)
-            for f in ctx.profile_facts
+            ProfileFactDetail.model_validate(f, from_attributes=True) for f in ctx.profile_facts
         ],
         osint_facts=[
-            OsintFactDetail.model_validate(f, from_attributes=True)
-            for f in ctx.osint_facts
+            OsintFactDetail.model_validate(f, from_attributes=True) for f in ctx.osint_facts
         ],
     )
 

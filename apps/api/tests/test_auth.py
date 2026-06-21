@@ -18,13 +18,13 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 
-def test_health_stays_public(client: "TestClient") -> None:
+def test_health_stays_public(client: TestClient) -> None:
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
 
-def test_openapi_stays_public(client: "TestClient") -> None:
+def test_openapi_stays_public(client: TestClient) -> None:
     # /openapi.json is whitelisted so T07 client codegen can fetch it without
     # minting a service token.
     resp = client.get("/openapi.json")
@@ -44,7 +44,7 @@ AUTHED_PATH = "/health/authed"
     ],
 )
 def test_missing_or_malformed_header_rejected(
-    client: "TestClient",
+    client: TestClient,
     headers: dict[str, str],
     expected_reason: str,
 ) -> None:
@@ -56,7 +56,7 @@ def test_missing_or_malformed_header_rejected(
     assert resp.headers.get("WWW-Authenticate") == "Bearer"
 
 
-def test_malformed_jwt_rejected(client: "TestClient") -> None:
+def test_malformed_jwt_rejected(client: TestClient) -> None:
     resp = client.get(
         AUTHED_PATH,
         headers={"Authorization": "Bearer not.a.real.jwt"},
@@ -66,8 +66,8 @@ def test_malformed_jwt_rejected(client: "TestClient") -> None:
 
 
 def test_expired_token_rejected(
-    client: "TestClient",
-    make_token: "Callable[..., str]",
+    client: TestClient,
+    make_token: Callable[..., str],
 ) -> None:
     # exp_offset negative → issued 10s ago and already expired.
     token = make_token(exp_offset=-10)
@@ -77,8 +77,8 @@ def test_expired_token_rejected(
 
 
 def test_wrong_issuer_rejected(
-    client: "TestClient",
-    make_token: "Callable[..., str]",
+    client: TestClient,
+    make_token: Callable[..., str],
 ) -> None:
     token = make_token(iss="https://attacker.example.com/auth/v1")
     resp = client.get(AUTHED_PATH, headers={"Authorization": f"Bearer {token}"})
@@ -87,8 +87,8 @@ def test_wrong_issuer_rejected(
 
 
 def test_valid_token_passes_and_returns_principal(
-    client: "TestClient",
-    make_token: "Callable[..., str]",
+    client: TestClient,
+    make_token: Callable[..., str],
 ) -> None:
     token = make_token(sub="user-abc-123", role="authenticated")
     resp = client.get(AUTHED_PATH, headers={"Authorization": f"Bearer {token}"})
@@ -98,8 +98,8 @@ def test_valid_token_passes_and_returns_principal(
 
 
 def test_token_missing_sub_rejected(
-    client: "TestClient",
-    make_token: "Callable[..., str]",
+    client: TestClient,
+    make_token: Callable[..., str],
 ) -> None:
     # PyJWT's ``require`` option should reject a token missing ``sub``.
     token = make_token(sub="")
@@ -108,8 +108,8 @@ def test_token_missing_sub_rejected(
 
 
 def test_token_with_unknown_kid_rejected(
-    client: "TestClient",
-    make_token: "Callable[..., str]",
+    client: TestClient,
+    make_token: Callable[..., str],
 ) -> None:
     token = make_token(kid="rotated-out-kid")
     resp = client.get(AUTHED_PATH, headers={"Authorization": f"Bearer {token}"})

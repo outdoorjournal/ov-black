@@ -20,10 +20,6 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from app.models import (
     CostKind,
     Edge,
@@ -43,6 +39,9 @@ from app.models.itinerary import (
     node_status_enum,
     node_type_enum,
 )
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -156,9 +155,7 @@ async def _cleanup(session: AsyncSession, itinerary_id: uuid.UUID) -> None:
         text("delete from public.node_history where itinerary_id = :i"),
         {"i": itinerary_id},
     )
-    await session.execute(
-        text("delete from public.itineraries where id = :i"), {"i": itinerary_id}
-    )
+    await session.execute(text("delete from public.itineraries where id = :i"), {"i": itinerary_id})
     await session.commit()
 
 
@@ -256,16 +253,12 @@ async def test_itinerary_graph_round_trip(session: AsyncSession) -> None:
         assert fetched_child.parent_subgraph_id == parent_id
         assert fetched_child.type is NodeType.meal
 
-        fetched_edge = (
-            await session.execute(select(Edge).where(Edge.id == edge_id))
-        ).scalar_one()
+        fetched_edge = (await session.execute(select(Edge).where(Edge.id == edge_id))).scalar_one()
         assert fetched_edge.type is EdgeType.alternative_to
         assert fetched_edge.metadata_ == {"reason": "client preference split"}
 
         fetched_hist = (
-            await session.execute(
-                select(NodeHistory).where(NodeHistory.node_id == child_id)
-            )
+            await session.execute(select(NodeHistory).where(NodeHistory.node_id == child_id))
         ).scalar_one()
         assert fetched_hist.op == "insert"
         assert fetched_hist.actor_kind == "system"
@@ -365,7 +358,7 @@ async def test_rls_enabled_on_all_graph_tables(session: AsyncSession) -> None:
             )
         )
     ).all()
-    rls = {tbl: enabled for tbl, enabled in rows}
+    rls = dict(rows)
     assert rls == {
         "itineraries": True,
         "nodes": True,
@@ -447,18 +440,20 @@ async def test_update_node_discarded_round_trips_through_history(
         assert isinstance(result, Node)
         assert result.status is NodeStatus.discarded
 
-        fetched = (
-            await session.execute(select(Node).where(Node.id == node_id))
-        ).scalar_one()
+        fetched = (await session.execute(select(Node).where(Node.id == node_id))).scalar_one()
         assert fetched.status is NodeStatus.discarded
 
         history_rows = (
-            await session.execute(
-                select(NodeHistory)
-                .where(NodeHistory.node_id == node_id)
-                .order_by(NodeHistory.id)
+            (
+                await session.execute(
+                    select(NodeHistory)
+                    .where(NodeHistory.node_id == node_id)
+                    .order_by(NodeHistory.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         # update_node writes one history row for the status transition.
         assert len(history_rows) == 1
         hist = history_rows[0]

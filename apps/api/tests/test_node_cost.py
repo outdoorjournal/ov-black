@@ -19,13 +19,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
 from app.inventory.schemas import (
     ExperienceItem,
     FlightItem,
@@ -49,6 +42,12 @@ from app.services.node_cost import (
     NodeCost,
     cost_from_inventory_item,
     sum_node_costs,
+)
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 if TYPE_CHECKING:
@@ -197,7 +196,7 @@ integration = pytest.mark.skipif(
 
 
 @pytest_asyncio.fixture()
-async def db_session() -> "AsyncIterator[AsyncSession]":
+async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -400,9 +399,7 @@ async def test_sum_node_costs_groups_by_currency_and_filters(
         assert totals == {"USD": Decimal("350.50"), "EUR": Decimal("80.00")}
 
         # Status filter narrows to the chosen lifecycle states only.
-        booked_only = await sum_node_costs(
-            db_session, itinerary.id, statuses=[NodeStatus.booked]
-        )
+        booked_only = await sum_node_costs(db_session, itinerary.id, statuses=[NodeStatus.booked])
         assert booked_only == {}
     finally:
         await _cleanup(itinerary.id)

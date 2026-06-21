@@ -19,9 +19,6 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from app.models import (
     Client,
     ContactChannel,
@@ -34,6 +31,8 @@ from app.models import (
     ProfileFact,
     ProfileFactKind,
 )
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 LOCAL_DB_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 LOCAL_HOST = "127.0.0.1"
@@ -88,12 +87,8 @@ async def _cleanup(
     if client_id is not None:
         # Per-fact tables + dossiers cascade on clients delete; clients
         # cascades on auth.users.
-        await session.execute(
-            text("delete from public.clients where id = :id"), {"id": client_id}
-        )
-    await session.execute(
-        text("delete from auth.users where id = :id"), {"id": advisor_id}
-    )
+        await session.execute(text("delete from public.clients where id = :id"), {"id": client_id})
+    await session.execute(text("delete from auth.users where id = :id"), {"id": advisor_id})
     await session.commit()
 
 
@@ -115,9 +110,7 @@ async def test_client_round_trip(session: AsyncSession) -> None:
         await session.refresh(client)
         client_id = client.id
 
-        fetched = (
-            await session.execute(select(Client).where(Client.id == client_id))
-        ).scalar_one()
+        fetched = (await session.execute(select(Client).where(Client.id == client_id))).scalar_one()
         assert fetched.owner_id == advisor_id
         assert fetched.auth_user_id is None
         assert fetched.full_name == "Jane Doe"
@@ -160,9 +153,7 @@ async def test_dossier_typed_core_round_trip(session: AsyncSession) -> None:
         await session.commit()
 
         fetched = (
-            await session.execute(
-                select(Dossier).where(Dossier.client_id == client_id)
-            )
+            await session.execute(select(Dossier).where(Dossier.client_id == client_id))
         ).scalar_one()
 
         # Enums coerce back to the Python enum members.
@@ -207,9 +198,7 @@ async def test_dossier_defaults_round_trip(session: AsyncSession) -> None:
         await session.commit()
 
         fetched = (
-            await session.execute(
-                select(Dossier).where(Dossier.client_id == client_id)
-            )
+            await session.execute(select(Dossier).where(Dossier.client_id == client_id))
         ).scalar_one()
 
         assert fetched.children_ages == []
@@ -272,19 +261,13 @@ async def test_per_fact_round_trip_for_all_three_tiers(session: AsyncSession) ->
         await session.commit()
 
         d = (
-            await session.execute(
-                select(DossierFact).where(DossierFact.client_id == client_id)
-            )
+            await session.execute(select(DossierFact).where(DossierFact.client_id == client_id))
         ).scalar_one()
         p = (
-            await session.execute(
-                select(ProfileFact).where(ProfileFact.client_id == client_id)
-            )
+            await session.execute(select(ProfileFact).where(ProfileFact.client_id == client_id))
         ).scalar_one()
         o = (
-            await session.execute(
-                select(OsintFact).where(OsintFact.client_id == client_id)
-            )
+            await session.execute(select(OsintFact).where(OsintFact.client_id == client_id))
         ).scalar_one()
 
         assert d.kind is DossierFactKind.passion
@@ -319,7 +302,7 @@ async def test_rls_enabled_on_clients_and_fact_tables(session: AsyncSession) -> 
             )
         )
     ).all()
-    rls = {tbl: enabled for tbl, enabled in rows}
+    rls = dict(rows)
     assert rls == {
         "clients": True,
         "dossiers": True,

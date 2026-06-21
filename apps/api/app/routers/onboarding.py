@@ -57,7 +57,7 @@ class OnboardingOpenerResponse(BaseModel):
 )
 async def random_opener_endpoint(
     _user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> OnboardingOpenerResponse:
     row = (
         await session.execute(
@@ -87,7 +87,7 @@ async def random_opener_endpoint(
 )
 async def dismiss_onboarding_endpoint(
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> Response:
     """End any active session and ensure ``has_prior_session`` is true.
 
@@ -101,15 +101,11 @@ async def dismiss_onboarding_endpoint(
     except ValueError:
         raise HTTPException(status_code=404, detail="client_not_found") from None
 
-    client = await resolve_client_for_auth_user(
-        session, user_id=user_uuid, email=user.email
-    )
+    client = await resolve_client_for_auth_user(session, user_id=user_uuid, email=user.email)
     if client is None:
         raise HTTPException(status_code=404, detail="client_not_found")
 
-    actor = ActorContext(
-        user_id=user_uuid, actor_kind="user", actor_id=user.sub
-    )
+    actor = ActorContext(user_id=user_uuid, actor_kind="user", actor_id=user.sub)
     outcome = await dismiss_onboarding(
         get_sessionmaker(),
         actor=actor,

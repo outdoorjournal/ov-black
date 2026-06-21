@@ -63,7 +63,7 @@ class Card:
     altitude_m: int | None
     attached_to_node_id: uuid.UUID | None
     attrs: CardAttributes
-    attached_notes: list["Card"] = field(default_factory=list)
+    attached_notes: list[Card] = field(default_factory=list)
     position: int = 0
 
 
@@ -182,25 +182,27 @@ async def linearize(
     timeline stays one card per moment.
     """
     rows = (
-        await session.execute(
-            _MAIN_SQL,
-            {
-                "iid": itinerary_id,
-                "party_id": party_id,
-                "t_from": t_from,
-                "t_to": t_to,
-                "selected_only": selected_branches_only,
-                "include_structural": include_structural,
-            },
+        (
+            await session.execute(
+                _MAIN_SQL,
+                {
+                    "iid": itinerary_id,
+                    "party_id": party_id,
+                    "t_from": t_from,
+                    "t_to": t_to,
+                    "selected_only": selected_branches_only,
+                    "include_structural": include_structural,
+                },
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     attached_by_host: dict[uuid.UUID, list[Card]] = {}
     if rows:
         host_ids = [r["id"] for r in rows]
-        att_rows = (
-            await session.execute(_ATTACHED_SQL, {"host_ids": host_ids})
-        ).mappings().all()
+        att_rows = (await session.execute(_ATTACHED_SQL, {"host_ids": host_ids})).mappings().all()
         # Group attached rows by host so each host's notes get a fresh
         # 0-indexed position. Within a host, ordering is by created_at
         # ascending — matches the SQL ORDER BY.
@@ -208,10 +210,7 @@ async def linearize(
         for ar in att_rows:
             groups.setdefault(ar["attached_to_node_id"], []).append(ar)
         attached_by_host = {
-            host_id: [
-                _build_card(ar, position=i, attached=[])
-                for i, ar in enumerate(host_rows)
-            ]
+            host_id: [_build_card(ar, position=i, attached=[]) for i, ar in enumerate(host_rows)]
             for host_id, host_rows in groups.items()
         }
 

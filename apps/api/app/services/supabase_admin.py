@@ -189,11 +189,7 @@ async def generate_invite_link(
         body = resp.json()
     except ValueError:
         body = {}
-    raw_link = (
-        body.get("action_link")
-        or (body.get("properties") or {}).get("action_link")
-        or ""
-    )
+    raw_link = body.get("action_link") or (body.get("properties") or {}).get("action_link") or ""
     action_link = raw_link if isinstance(raw_link, str) else ""
 
     logger.info("supabase_admin.invite_link_issued", extra={"email": email})

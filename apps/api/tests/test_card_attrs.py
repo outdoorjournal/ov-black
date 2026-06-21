@@ -19,8 +19,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from pydantic import ValidationError
-
 from app.schemas.card_attrs import (
     CardAttributes,
     DriveCardAttrs,
@@ -45,7 +43,7 @@ from app.seed_data.japan_itinerary import (
     all_items,
     metadata_dump,
 )
-
+from pydantic import ValidationError
 
 # ── Schema-level guards ────────────────────────────────────────────────
 
@@ -71,9 +69,7 @@ def test_kind_mismatch_in_payload_raises() -> None:
         # the helper. We exercise that path directly.
         from pydantic import TypeAdapter
 
-        TypeAdapter(CardAttributes).validate_python(
-            {"kind": "hotel", "iata_from": "HND"}
-        )
+        TypeAdapter(CardAttributes).validate_python({"kind": "hotel", "iata_from": "HND"})
 
 
 def test_unknown_kind_raises() -> None:
@@ -134,9 +130,7 @@ def test_subway_card_carries_typed_lines_and_transfers() -> None:
     attrs = parse_card_attrs("subway", raw)
     assert isinstance(attrs, SubwayCardAttrs)
     assert attrs.lines == [SubwayLine(name="Ginza", agency_color="#f39700")]
-    assert attrs.transfers == [
-        SubwayTransfer(station="Omotesando", line_color="#9b7cb6")
-    ]
+    assert attrs.transfers == [SubwayTransfer(station="Omotesando", line_color="#9b7cb6")]
 
 
 def test_train_card_stops_are_typed() -> None:
@@ -174,9 +168,7 @@ def test_drive_card_nested_vehicle_and_driver() -> None:
 def test_waiting_card_uuid_field_round_trips() -> None:
     """``whats_next_node_id`` parses from string and dumps back to string."""
     nid = uuid.uuid4()
-    attrs = parse_card_attrs(
-        "waiting", {"whats_next_node_id": str(nid), "use_this_time_to": ["x"]}
-    )
+    attrs = parse_card_attrs("waiting", {"whats_next_node_id": str(nid), "use_this_time_to": ["x"]})
     assert attrs.kind == "waiting"
     dumped = attrs.model_dump(mode="json")
     assert dumped["whats_next_node_id"] == str(nid)
@@ -215,9 +207,7 @@ def test_japan_fixture_round_trips_through_parse_card_attrs() -> None:
         # type column. Both paths must agree.
         kind = item.attrs.kind
         reparsed = parse_card_attrs(kind, dumped)
-        assert reparsed.kind == kind, (
-            f"kind drift on {item.id_hint}: {reparsed.kind} != {kind}"
-        )
+        assert reparsed.kind == kind, f"kind drift on {item.id_hint}: {reparsed.kind} != {kind}"
         # Re-dump the reparsed model and compare — proves the round-trip
         # is information-preserving for every populated field.
         assert reparsed.model_dump(exclude_none=True, mode="json") == dumped
@@ -241,11 +231,7 @@ def test_shinkansen_scenery_callout_preserved() -> None:
     detail — failure here means we lost the Cards Style Guide property
     the schema exists to preserve.
     """
-    hikari = next(
-        item
-        for item in all_items()
-        if item.id_hint == "day05-shinkansen"
-    )
+    hikari = next(item for item in all_items() if item.id_hint == "day05-shinkansen")
     assert isinstance(hikari.attrs, TrainCardAttrs)
     assert len(hikari.attrs.scenery_callouts) == 1
     fuji = hikari.attrs.scenery_callouts[0]

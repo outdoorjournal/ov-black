@@ -15,19 +15,18 @@ with a no-op + stubbing the loaders, so each test is a pure auth matrix.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 from typing import Any
-from unittest.mock import AsyncMock
 
 import jwt
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from app.config import Settings
 from app.main import app as fastapi_app
 from app.routers import agent_internal as agent_internal_module
 from app.services import agent_token as agent_token_module
-from app.services.agent_token import AgentTokenError, mint_agent_token
+from app.services.agent_token import mint_agent_token
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 def _settings() -> Settings:
@@ -68,17 +67,15 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_load(_session: Any, *, client_id: uuid.UUID, **_kwargs: Any) -> _DummyCtx:
         return _DummyCtx(client_id)
 
-    monkeypatch.setattr(
-        agent_internal_module, "load_agent_context", _fake_load
-    )
+    monkeypatch.setattr(agent_internal_module, "load_agent_context", _fake_load)
 
     # Side-by-side stubs for the two write paths. The stamp the routes
     # validate via DossierFactDetail / ProfileFactDetail expects every
     # timestamp populated, so the stubs fill them eagerly.
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def _now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     async def _fake_record_profile(*_args: Any, **kwargs: Any):
         from app.models import FactSourceKind, ProfileFact
@@ -120,9 +117,7 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
             updated_at=now,
         )
 
-    monkeypatch.setattr(
-        agent_internal_module, "record_agent_profile_fact", _fake_record_profile
-    )
+    monkeypatch.setattr(agent_internal_module, "record_agent_profile_fact", _fake_record_profile)
     monkeypatch.setattr(
         agent_internal_module, "record_agent_dossier_inference", _fake_record_dossier
     )
@@ -200,12 +195,8 @@ def test_get_context_with_supabase_jwt_returns_401(client: TestClient) -> None:
         "sub": str(uuid.uuid4()),
         "email": "client@example.com",
     }
-    forged = jwt.encode(
-        payload, _settings().agent_token_signing_secret, algorithm="HS256"
-    )
-    resp = client.get(
-        "/agent/context", headers={"Authorization": f"Bearer {forged}"}
-    )
+    forged = jwt.encode(payload, _settings().agent_token_signing_secret, algorithm="HS256")
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {forged}"})
     assert resp.status_code == 401
 
 
@@ -221,9 +212,7 @@ def test_get_context_with_expired_token_returns_401(client: TestClient) -> None:
     import time
 
     time.sleep(1.5)
-    resp = client.get(
-        "/agent/context", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
 
 
@@ -235,9 +224,7 @@ def test_get_context_with_wrong_secret_returns_401(client: TestClient) -> None:
         agentcore_session_id="ac",
         settings=other,
     )
-    resp = client.get(
-        "/agent/context", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
 
 

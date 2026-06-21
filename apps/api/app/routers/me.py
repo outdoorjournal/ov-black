@@ -103,7 +103,7 @@ class MyOnboardingSessionResponse(BaseModel):
 )
 async def get_my_client_endpoint(
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> MyClientResponse:
     try:
         user_id = uuid.UUID(user.sub)
@@ -111,9 +111,7 @@ async def get_my_client_endpoint(
         logger.warning("me.client.malformed_sub", extra={"sub_hint": user.sub[:8]})
         raise HTTPException(status_code=404, detail="client_not_found") from None
 
-    client = await resolve_client_for_auth_user(
-        session, user_id=user_id, email=user.email
-    )
+    client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
     if client is None:
         raise HTTPException(status_code=404, detail="client_not_found")
     return MyClientResponse(client_id=client.id)
@@ -126,7 +124,7 @@ async def get_my_client_endpoint(
 )
 async def list_my_itineraries_endpoint(
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> MyItinerariesResponse:
     """Return every itinerary that belongs to the caller's client row.
 
@@ -140,19 +138,21 @@ async def list_my_itineraries_endpoint(
     except ValueError:  # pragma: no cover
         return MyItinerariesResponse(itineraries=[])
 
-    client = await resolve_client_for_auth_user(
-        session, user_id=user_id, email=user.email
-    )
+    client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
     if client is None:
         return MyItinerariesResponse(itineraries=[])
 
     rows = (
-        await session.execute(
-            select(Itinerary)
-            .where(Itinerary.client_id == client.id)
-            .order_by(Itinerary.updated_at.desc())
+        (
+            await session.execute(
+                select(Itinerary)
+                .where(Itinerary.client_id == client.id)
+                .order_by(Itinerary.updated_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return MyItinerariesResponse(
         itineraries=[MyItinerarySummary.model_validate(row) for row in rows]
     )
@@ -165,7 +165,7 @@ async def list_my_itineraries_endpoint(
 )
 async def get_my_onboarding_session_endpoint(
     user: AuthenticatedUser = Depends(require_user),
-    session: "AsyncSession" = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> MyOnboardingSessionResponse:
     """Return ``{session_id, turn_count, last_turn_at, seeded_opener}`` or all-null.
 
@@ -187,9 +187,7 @@ async def get_my_onboarding_session_endpoint(
     except ValueError:  # pragma: no cover
         return empty
 
-    client = await resolve_client_for_auth_user(
-        session, user_id=user_id, email=user.email
-    )
+    client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
     if client is None:
         return empty
 
@@ -199,9 +197,7 @@ async def get_my_onboarding_session_endpoint(
     has_prior_session = bool(
         (
             await session.execute(
-                select(func.count(AgentSession.id)).where(
-                    AgentSession.client_id == client.id
-                )
+                select(func.count(AgentSession.id)).where(AgentSession.client_id == client.id)
             )
         ).scalar_one()
     )

@@ -21,12 +21,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from app.config import Settings
 from app.inventory.providers.google_places import GooglePlacesProvider
 from app.main import app as fastapi_app
 from app.routers.integrations.google_places import get_google_places_provider
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -35,16 +34,14 @@ _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture()
-def http_client() -> "Iterator[TestClient]":
+def http_client() -> Iterator[TestClient]:
     with TestClient(fastapi_app) as c:
         yield c
 
 
 @pytest.fixture()
-def auth_headers(make_token: "Callable[..., str]") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"
-    }
+def auth_headers(make_token: Callable[..., str]) -> dict[str, str]:
+    return {"Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"}
 
 
 # ── Google Places (live, mock-transport) ───────────────────────────────
@@ -66,7 +63,7 @@ def _override_places(handler) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clear_places_override() -> "Iterator[None]":
+def _clear_places_override() -> Iterator[None]:
     yield
     fastapi_app.dependency_overrides.pop(get_google_places_provider, None)
 

@@ -14,18 +14,11 @@ from __future__ import annotations
 
 import socket
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
 from app.models import (
     CardTemplate,
     EdgeType,
@@ -40,6 +33,12 @@ from app.services.templates import (
     find_or_create_template,
     has_subgraph,
     instantiate_template,
+)
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 if TYPE_CHECKING:
@@ -96,11 +95,9 @@ def test_template_classes_reuse_node_type_enum() -> None:
 
 
 @pytest_asyncio.fixture()
-async def db_session() -> "AsyncIterator[AsyncSession]":
+async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
-    maker = async_sessionmaker(
-        bind=engine, expire_on_commit=False, class_=AsyncSession
-    )
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with maker() as s:
             yield s
@@ -118,9 +115,7 @@ async def _delete_template(template_id: uuid.UUID) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text(
-                    "delete from public.card_templates where id = :id"
-                ),
+                text("delete from public.card_templates where id = :id"),
                 {"id": template_id},
             )
     finally:
@@ -132,15 +127,11 @@ async def _delete_itinerary(itinerary_id: uuid.UUID) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text(
-                    "delete from public.node_history where itinerary_id = :i"
-                ),
+                text("delete from public.node_history where itinerary_id = :i"),
                 {"i": itinerary_id},
             )
             await conn.execute(
-                text(
-                    "delete from public.edge_history where itinerary_id = :i"
-                ),
+                text("delete from public.edge_history where itinerary_id = :i"),
                 {"i": itinerary_id},
             )
             await conn.execute(
@@ -161,9 +152,7 @@ async def test_find_or_create_template_is_idempotent(
 ) -> None:
     slug = f"phase4-test-{uuid.uuid4().hex[:8]}"
     try:
-        first, created_first = await find_or_create_template(
-            db_session, slug=slug, name="first"
-        )
+        first, created_first = await find_or_create_template(db_session, slug=slug, name="first")
         assert created_first is True
         second, created_second = await find_or_create_template(
             db_session, slug=slug, name="not used"
@@ -183,9 +172,7 @@ async def test_template_subgraph_authoring_round_trips(
     db_session: AsyncSession,
 ) -> None:
     slug = f"phase4-author-{uuid.uuid4().hex[:8]}"
-    template, _ = await find_or_create_template(
-        db_session, slug=slug, name="authoring round-trip"
-    )
+    template, _ = await find_or_create_template(db_session, slug=slug, name="authoring round-trip")
     try:
         n_a = await add_template_node(
             db_session,
@@ -215,20 +202,24 @@ async def test_template_subgraph_authoring_round_trips(
         assert await has_subgraph(db_session, template_id=template.id) is True
 
         nodes = (
-            await db_session.execute(
-                select(TemplateNode).where(
-                    TemplateNode.template_id == template.id
+            (
+                await db_session.execute(
+                    select(TemplateNode).where(TemplateNode.template_id == template.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(nodes) == 2
         edges = (
-            await db_session.execute(
-                select(TemplateEdge).where(
-                    TemplateEdge.template_id == template.id
+            (
+                await db_session.execute(
+                    select(TemplateEdge).where(TemplateEdge.template_id == template.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(edges) == 1
         assert edges[0].type is EdgeType.follows
     finally:
@@ -244,9 +235,7 @@ async def test_instantiation_anchors_offsets_and_snapshots_lineage(
     absolute starts_at values + lineage snapshots on every node.
     """
     slug = f"phase4-instantiate-{uuid.uuid4().hex[:8]}"
-    template, _ = await find_or_create_template(
-        db_session, slug=slug, name="instantiation test"
-    )
+    template, _ = await find_or_create_template(db_session, slug=slug, name="instantiation test")
     itinerary_id: uuid.UUID | None = None
     try:
         # 09:00 (offset 540) → 60 min experience
@@ -292,9 +281,7 @@ async def test_instantiation_anchors_offsets_and_snapshots_lineage(
         )
         await db_session.commit()
 
-        trip_start = datetime(
-            2030, 5, 1, 0, 0, tzinfo=timezone(timedelta(hours=9))
-        )
+        trip_start = datetime(2030, 5, 1, 0, 0, tzinfo=timezone(timedelta(hours=9)))
         itinerary = await instantiate_template(
             db_session,
             template=template,
@@ -309,9 +296,10 @@ async def test_instantiation_anchors_offsets_and_snapshots_lineage(
         # Pull the instantiated nodes back; assert the lineage snapshot
         # AND the tstzrange lower bound matches trip_start + offset.
         rows = (
-            await db_session.execute(
-                text(
-                    """
+            (
+                await db_session.execute(
+                    text(
+                        """
                     select id, title, template_id, template_node_id,
                            template_version,
                            lower(starts_at) as lo
@@ -319,10 +307,13 @@ async def test_instantiation_anchors_offsets_and_snapshots_lineage(
                     where itinerary_id = :iid
                     order by lower(starts_at) asc
                     """
-                ),
-                {"iid": itinerary.id},
+                    ),
+                    {"iid": itinerary.id},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
         assert len(rows) == 3
         assert [r["title"] for r in rows] == ["morning", "lunch", "hotel"]
         for r in rows:
@@ -349,9 +340,7 @@ async def test_instantiation_preserves_parent_subgraph_links(
     (parents always come before children).
     """
     slug = f"phase4-parent-{uuid.uuid4().hex[:8]}"
-    template, _ = await find_or_create_template(
-        db_session, slug=slug, name="parent test"
-    )
+    template, _ = await find_or_create_template(db_session, slug=slug, name="parent test")
     itinerary_id: uuid.UUID | None = None
     try:
         parent = await add_template_node(
@@ -377,7 +366,7 @@ async def test_instantiation_preserves_parent_subgraph_links(
             db_session,
             template=template,
             client_id=None,
-            trip_start_at=datetime(2030, 6, 1, tzinfo=timezone.utc),
+            trip_start_at=datetime(2030, 6, 1, tzinfo=UTC),
             title="parent-child instantiation",
         )
         itinerary_id = itinerary.id

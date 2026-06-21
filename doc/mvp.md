@@ -86,10 +86,15 @@ library, AI assembly, and AI gap-filling, so the result delights and is grounded
 - Server-side **linearization** drives every rendered surface (no per-view re-derivation).
 - Every inventory-sourced node carries `source` + `source_id` provenance and is rendered with attribution.
 
-**Status: 🔨 partial.** OV provider built; **Google Places / Weather / Flight-status are stubs**;
-**Duffel and Ratehawk do not exist**. Card-template library + Japan seed + linearization service landed
-on the branch. **AI Fill (Phase 6) and Analyze (Phase 5) are documented but not implemented.** No
-first-class numeric node cost yet (needed downstream for invoicing).
+**Status: 🔨 partial — provider + cost + Analyze layer landed behind tests; owed live-vendor
+validation, AI Fill, and advisor authoring.** Four inventory adapters now exist behind the registry:
+**OV (live)**, **Duffel (built, sandbox-validated)**, **Ratehawk and Google Places (built behind tests;
+owed real-credential validation + live-fixture re-capture)** — all dispatching from the source-agnostic
+`search_inventory` seam. **Weather + flight-status remain stubs.** Card-template library + Japan seed +
+linearization landed on the branch. **First-class numeric node cost landed (B4).** **Analyze Phase 5
+shallow + standard landed (B5)** — structural checks + haversine drive-time feasibility, feeding Fill and
+fork-reconcile; `deep` (live data) deferred per D-ANALYZE; agent tool-wiring not yet done. **AI Fill
+(Phase 6) and the advisor authoring surface (B7) are not yet built.**
 
 ### Pillar 4 — Traveler enters party details and stores documents securely
 **Means:** The traveler completes all missing details for their **travel party** (each member's
@@ -141,7 +146,10 @@ forking with reconcile.
   Σ(booked node costs) — no booked inventory is unpaid, no double-billing.
 - The traveler sees invoice + payment history.
 
-**Status: 🔨 not built.** No invoices, line items, payment integration, node cost, or money gate exist.
+**Status: 🔨 not built — except node cost.** **First-class numeric node `cost_amount` / `cost_currency`
+/ `cost_kind` landed (B4)**, with a per-currency sum helper ready for the money gate. No invoices, line
+items, payment integration, or money gate yet; the `node_offers` / `bookings` schema (D024) is drafted
+in [mvp-plan.md](./mvp-plan.md) §8, not migrated.
 
 ---
 
@@ -151,10 +159,10 @@ forking with reconcile.
 |---|--------|:---:|:---:|:---:|
 | 1 | Invite | ● | | |
 | 2 | Dream + profile build | ● | (UAT) | |
-| 3 | Multi-source fast build | | OV + templates + linearization | Places-live, Duffel, Ratehawk, AI Fill, node cost |
+| 3 | Multi-source fast build | node cost (B4) | OV/Duffel/Ratehawk/Places adapters + templates + linearization + Analyze shallow/standard (B5) | AI Fill (B6), authoring (B7), live-vendor validation, weather/flight live, deep Analyze |
 | 4 | Party details + vault | | parties/travelers tables | member model, traveler UI, vault/docs/expiry |
 | 5 | Fork + reconcile + immutability | | local alt edges | fork/version, diff/reconcile, status gates |
-| 6 | Invoicing + pay-before-book | | | node cost, invoices, line items, Braintree, money gate |
+| 6 | Invoicing + pay-before-book | node cost (B4) | | invoices, line items, Braintree, money gate, node_offers/bookings |
 
 ---
 

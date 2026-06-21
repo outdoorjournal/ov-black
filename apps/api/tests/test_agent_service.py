@@ -22,12 +22,11 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-
 from app.agent.bedrock import AgentRuntimeError, MockAgentRuntimeClient
 from app.agent.prompt import build_system_prompt
 from app.config import Settings
@@ -35,23 +34,22 @@ from app.models import (
     AgentSession,
     AgentTurn,
     Client,
+    Dossier,
     Itinerary,
     Node,
     NodeHistory,
     NodeStatus,
     NodeType,
     TurnRole,
-    Dossier,
 )
 from app.models.client import ContactChannel
+from app.services import itineraries as itineraries_service
 from app.services.agent import (
     ActorContext,
     SessionOutcome,
-    TurnOutcome,
     open_or_reuse_session,
     stream_turn,
 )
-from app.services import itineraries as itineraries_service
 
 SECRET_NETWORTH = 999999999
 SECRET_OSINT = "DO_NOT_LOG_THIS_OSINT"
@@ -74,7 +72,7 @@ class FakeResult:
             raise AssertionError("scalar_one called on empty result")
         return self.rows[0]
 
-    def scalars(self) -> "FakeResult":
+    def scalars(self) -> FakeResult:
         return self
 
     def all(self) -> list[Any]:
@@ -96,14 +94,14 @@ class FakeSession:
     shared store on the factory.
     """
 
-    factory: "FakeFactory"
+    factory: FakeFactory
     added: list[Any] = field(default_factory=list)
     commits: int = 0
     rollbacks: int = 0
     refreshes: int = 0
     commit_raises: BaseException | None = None
 
-    async def __aenter__(self) -> "FakeSession":
+    async def __aenter__(self) -> FakeSession:
         return self
 
     async def __aexit__(self, *exc_info: Any) -> None:
@@ -246,10 +244,7 @@ class FakeFactory:
         # Raw text() INSERT ... ON CONFLICT DO NOTHING into public.profiles.
         # Records the attempted user_id and simulates ON CONFLICT semantics
         # against the in-memory ``profiles_existing_roles`` map.
-        if (
-            sql_lower.startswith("insert into public.profiles")
-            and "on conflict" in sql_lower
-        ):
+        if sql_lower.startswith("insert into public.profiles") and "on conflict" in sql_lower:
             user_id = (params or {}).get("user_id") if isinstance(params, dict) else None
             user_id_str = str(user_id) if user_id is not None else ""
             self.profile_upsert_calls.append(user_id_str)
@@ -261,9 +256,7 @@ class FakeFactory:
 
         # FOR UPDATE row lock on agent_sessions.
         if "for update" in sql_lower and "agent_sessions" in sql_lower:
-            return FakeResult(
-                rows=[self.agent_session.id] if self.agent_session else []
-            )
+            return FakeResult(rows=[self.agent_session.id] if self.agent_session else [])
 
         # max(turn_index) aggregate.
         if "max" in sql_lower and "turn_index" in sql_lower:
@@ -272,20 +265,10 @@ class FakeFactory:
             return FakeResult(rows=[max(t.turn_index for t in self.turns)])
 
         # Join on agent_session + client + dossier (context load).
-        if (
-            "agent_sessions" in sql_lower
-            and "clients" in sql_lower
-            and "dossiers" in sql_lower
-        ):
-            if (
-                self.agent_session is None
-                or self.client_row is None
-                or self.dossier is None
-            ):
+        if "agent_sessions" in sql_lower and "clients" in sql_lower and "dossiers" in sql_lower:
+            if self.agent_session is None or self.client_row is None or self.dossier is None:
                 return FakeResult(rows=[])
-            return FakeResult(
-                rows=[(self.agent_session, self.client_row, self.dossier)]
-            )
+            return FakeResult(rows=[(self.agent_session, self.client_row, self.dossier)])
 
         # Plain agent_sessions lookup (open_or_reuse_session).
         if "agent_sessions" in sql_lower and "ended_at is null" in sql_lower:
@@ -294,10 +277,7 @@ class FakeFactory:
             return FakeResult(rows=[])
 
         # S07 T03 — itinerary-by-client (ensure-one-per-client helper).
-        if (
-            "itineraries" in sql_lower
-            and "itineraries.client_id" in sql_lower
-        ):
+        if "itineraries" in sql_lower and "itineraries.client_id" in sql_lower:
             bound = {}
             try:
                 bound = dict(stmt.compile().params)
@@ -349,9 +329,7 @@ class FakeFactory:
 
         # Plain clients lookup.
         if "clients" in sql_lower and "agent_sessions" not in sql_lower:
-            return FakeResult(
-                rows=[self.client_row] if self.client_row else []
-            )
+            return FakeResult(rows=[self.client_row] if self.client_row else [])
 
         return FakeResult(rows=[])
 
@@ -420,16 +398,12 @@ def factory(
 
 @pytest.fixture
 def advisor_actor(advisor_id: uuid.UUID) -> ActorContext:
-    return ActorContext(
-        user_id=advisor_id, actor_kind="advisor", actor_id=str(advisor_id)
-    )
+    return ActorContext(user_id=advisor_id, actor_kind="advisor", actor_id=str(advisor_id))
 
 
 @pytest.fixture
 def user_actor(user_id: uuid.UUID) -> ActorContext:
-    return ActorContext(
-        user_id=user_id, actor_kind="user", actor_id=str(user_id)
-    )
+    return ActorContext(user_id=user_id, actor_kind="user", actor_id=str(user_id))
 
 
 @pytest.fixture
@@ -593,9 +567,7 @@ async def test_stream_turn_rejects_advisor_who_does_not_own_client(
     settings: Settings,
 ) -> None:
     """Non-owner advisor → fallback frame + done + NO turn rows written."""
-    stranger = ActorContext(
-        user_id=uuid.uuid4(), actor_kind="advisor", actor_id="stranger"
-    )
+    stranger = ActorContext(user_id=uuid.uuid4(), actor_kind="advisor", actor_id="stranger")
     runtime = MockAgentRuntimeClient([{"type": "done"}])
 
     frames = await _collect(
@@ -639,9 +611,7 @@ async def test_stream_turn_first_token_timeout_fires_fallback(
     class SlowRuntime:
         calls: list[dict] = []
 
-        def invoke_stream(
-            self, *, agentcore_session_id: str, payload: dict
-        ) -> AsyncIterator[dict]:
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
             self.calls.append(
                 {
                     "agentcore_session_id": agentcore_session_id,
@@ -714,10 +684,7 @@ async def test_stream_turn_memory_write_failure_does_not_fail_turn(
     assert assistant.content == "ok"
 
     # WARN log emitted with stable event name.
-    assert any(
-        rec.message == "agent.memory.create_event.failed"
-        for rec in caplog.records
-    )
+    assert any(rec.message == "agent.memory.create_event.failed" for rec in caplog.records)
 
 
 async def test_open_or_reuse_session_returns_existing_open_session(
@@ -741,9 +708,7 @@ async def test_open_or_reuse_session_returns_existing_open_session(
     assert itinerary_id == agent_session.itinerary_id
     # No new AgentSession was added to any FakeSession.
     assert all(
-        not isinstance(obj, AgentSession)
-        for s in factory.sessions_created
-        for obj in s.added
+        not isinstance(obj, AgentSession) for s in factory.sessions_created for obj in s.added
     )
 
 
@@ -776,9 +741,7 @@ async def test_stream_turn_turn_index_monotonically_increases(
     settings: Settings,
 ) -> None:
     """Two consecutive turns → second user turn gets turn_index 2."""
-    runtime = MockAgentRuntimeClient(
-        [{"type": "delta", "text": "a"}, {"type": "done"}]
-    )
+    runtime = MockAgentRuntimeClient([{"type": "delta", "text": "a"}, {"type": "done"}])
 
     await _collect(
         stream_turn(
@@ -792,9 +755,7 @@ async def test_stream_turn_turn_index_monotonically_increases(
     )
     # Rebuild a fresh runtime — the mock exhausts its script per invocation
     # sequence, but invoke_stream is stateless beyond self.calls.
-    runtime2 = MockAgentRuntimeClient(
-        [{"type": "delta", "text": "b"}, {"type": "done"}]
-    )
+    runtime2 = MockAgentRuntimeClient([{"type": "delta", "text": "b"}, {"type": "done"}])
     await _collect(
         stream_turn(
             factory,  # type: ignore[arg-type]
@@ -853,9 +814,7 @@ async def test_stream_turn_redaction_sweep_blocks_secret_leaks(
     for record in caplog.records:
         msg = record.getMessage()
         for needle in needles:
-            assert needle not in msg, (
-                f"secret {needle!r} leaked into log message: {msg!r}"
-            )
+            assert needle not in msg, f"secret {needle!r} leaked into log message: {msg!r}"
         for attr_name, attr_val in record.__dict__.items():
             if attr_name in ("msg", "args"):
                 continue
@@ -903,19 +862,16 @@ async def test_open_or_reuse_session_jit_backfill_matching_email_populates_auth_
     # Exactly one backfill log event, carrying session_id + client_id +
     # user_id and nothing else from the sensitive set (no email, no name).
     backfill_records = [
-        rec for rec in caplog.records
-        if rec.message == "agent.auth.client_backfilled"
+        rec for rec in caplog.records if rec.message == "agent.auth.client_backfilled"
     ]
     assert len(backfill_records) == 1
     rec = backfill_records[0]
-    assert getattr(rec, "session_id") == str(session_row.id)
-    assert getattr(rec, "client_id") == str(client_row.id)
-    assert getattr(rec, "user_id") == str(caller_user_id)
+    assert rec.session_id == str(session_row.id)
+    assert rec.client_id == str(client_row.id)
+    assert rec.user_id == str(caller_user_id)
     # Email MUST NEVER land on this record (redaction constraint).
     for attr_name, attr_val in rec.__dict__.items():
-        assert client_row.email not in repr(attr_val), (
-            f"email leaked via record.{attr_name}"
-        )
+        assert client_row.email not in repr(attr_val), f"email leaked via record.{attr_name}"
 
 
 async def test_open_or_reuse_session_jit_backfill_mismatched_email_forbidden(
@@ -949,9 +905,7 @@ async def test_open_or_reuse_session_jit_backfill_mismatched_email_forbidden(
     assert factory.auth_update_count == 0
     assert client_row.auth_user_id is None
     # No backfill log was emitted.
-    assert not any(
-        rec.message == "agent.auth.client_backfilled" for rec in caplog.records
-    )
+    assert not any(rec.message == "agent.auth.client_backfilled" for rec in caplog.records)
 
 
 async def test_open_or_reuse_session_jit_backfill_skipped_when_already_populated(
@@ -982,9 +936,7 @@ async def test_open_or_reuse_session_jit_backfill_skipped_when_already_populated
     # No UPDATE — already populated means the backfill path is never entered.
     assert factory.auth_update_count == 0
     # And no backfill log event.
-    assert not any(
-        rec.message == "agent.auth.client_backfilled" for rec in caplog.records
-    )
+    assert not any(rec.message == "agent.auth.client_backfilled" for rec in caplog.records)
 
 
 # ── JIT profiles upsert (T02) ──────────────────────────────────────────────
@@ -1141,15 +1093,9 @@ async def test_card_event_passes_through(
 
     # Pull each `data: ...` line, parse it, and find the card frame.
     data_lines = [
-        line[len(b"data: "):]
-        for line in joined.split(b"\n")
-        if line.startswith(b"data: ")
+        line[len(b"data: ") :] for line in joined.split(b"\n") if line.startswith(b"data: ")
     ]
-    cards = [
-        json.loads(line.decode("utf-8"))
-        for line in data_lines
-        if b'"type":"card"' in line
-    ]
+    cards = [json.loads(line.decode("utf-8")) for line in data_lines if b'"type":"card"' in line]
     assert len(cards) == 1
     forwarded = cards[0]
     # Snapshot dict survives byte-for-byte — no re-keying, no stripping.
@@ -1301,6 +1247,7 @@ async def test_card_frame_persist_failure_is_non_fatal(
     to the browser and the subsequent ``done`` frame still reaches the
     client. Reload hydration just won't see the lost card.
     """
+
     async def _failing_add_node(
         session: Any,
         actor: Any,
@@ -1348,21 +1295,16 @@ async def test_card_frame_persist_failure_is_non_fatal(
 
     # The forwarded card frame carries node_id=None because persist failed.
     data_lines = [
-        line[len(b"data: "):]
-        for line in joined.split(b"\n")
-        if line.startswith(b"data: ")
+        line[len(b"data: ") :] for line in joined.split(b"\n") if line.startswith(b"data: ")
     ]
-    cards = [
-        json.loads(line.decode("utf-8"))
-        for line in data_lines
-        if b'"type":"card"' in line
-    ]
+    cards = [json.loads(line.decode("utf-8")) for line in data_lines if b'"type":"card"' in line]
     assert len(cards) == 1
     assert cards[0]["node_id"] is None
 
     # WARNING was emitted with the persist_failed event + carries no snapshot.
     warns = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.name == "ov_black.agent.service"
         and r.levelno == logging.WARNING
         and r.getMessage() == "agent.card.persist_failed"

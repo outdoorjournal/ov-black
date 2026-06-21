@@ -21,20 +21,17 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.auth import AuthenticatedUser
 from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import Client, TurnRole
-from app.models.client import ContactChannel
 from app.routers import agent as agent_router_module
 from app.services.agent import ActorContext, SessionOutcome, TurnOutcome
-
+from fastapi.testclient import TestClient
 
 # ── Test doubles ───────────────────────────────────────────────────────────
 
@@ -51,7 +48,7 @@ class _NoopResult:
     def first(self) -> Any:
         return self.rows[0] if self.rows else None
 
-    def scalars(self) -> "_NoopResult":
+    def scalars(self) -> _NoopResult:
         return self
 
     def all(self) -> list[Any]:
@@ -111,9 +108,7 @@ def override_actor_as_advisor(
     """Stub ``_actor_for_user`` to return an advisor ActorContext."""
 
     async def _fake(user: AuthenticatedUser, session: Any) -> ActorContext:
-        return ActorContext(
-            user_id=advisor_sub, actor_kind="advisor", actor_id=str(advisor_sub)
-        )
+        return ActorContext(user_id=advisor_sub, actor_kind="advisor", actor_id=str(advisor_sub))
 
     monkeypatch.setattr(agent_router_module, "_actor_for_user", _fake)
     return advisor_sub
@@ -128,7 +123,7 @@ def _client_row(
 ) -> Client:
     row = Client(owner_id=owner_id, full_name=full_name, email=email)
     row.id = client_id or uuid.uuid4()
-    row.created_at = datetime.now(timezone.utc)
+    row.created_at = datetime.now(UTC)
     row.updated_at = row.created_at
     row.auth_user_id = None
     return row
@@ -174,7 +169,7 @@ def _fake_turn(
     obj.first_token_ms = first_token_ms
     obj.retried = retried
     obj.error_reason = error_reason
-    obj.created_at = datetime.now(timezone.utc)
+    obj.created_at = datetime.now(UTC)
     return obj
 
 
@@ -238,7 +233,12 @@ def test_post_sessions_cross_advisor_returns_404(
     other_client_id = uuid.uuid4()
 
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None, seeded_opener: str | None = None  # noqa: ARG001
+        _factory: Any,
+        *,
+        actor: ActorContext,
+        client_id: uuid.UUID,
+        itinerary_id: uuid.UUID | None = None,
+        seeded_opener: str | None = None,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         return SessionOutcome.FORBIDDEN, None, None
 
@@ -264,7 +264,7 @@ def test_post_sessions_is_idempotent_on_reopen(
     """Two consecutive POSTs return the same session_id — service is idempotent."""
     client_id = uuid.uuid4()
     session_id = uuid.uuid4()
-    itinerary_id = uuid.uuid4()
+    uuid.uuid4()
     agent_sess = _FakeAgentSession(
         session_id=session_id,
         client_id=client_id,
@@ -274,19 +274,20 @@ def test_post_sessions_is_idempotent_on_reopen(
     call_count = {"n": 0}
 
     async def _fake_open(
-        _factory: Any, *, actor: ActorContext, client_id: uuid.UUID, itinerary_id: uuid.UUID | None = None, seeded_opener: str | None = None  # noqa: ARG001
+        _factory: Any,
+        *,
+        actor: ActorContext,
+        client_id: uuid.UUID,
+        itinerary_id: uuid.UUID | None = None,
+        seeded_opener: str | None = None,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         call_count["n"] += 1
         return SessionOutcome.OK, agent_sess, itinerary_id
 
     monkeypatch.setattr(agent_router_module, "open_or_reuse_session", _fake_open)
 
-    r1 = client.post(
-        "/sessions", json={"client_id": str(client_id)}, headers=auth_headers
-    )
-    r2 = client.post(
-        "/sessions", json={"client_id": str(client_id)}, headers=auth_headers
-    )
+    r1 = client.post("/sessions", json={"client_id": str(client_id)}, headers=auth_headers)
+    r2 = client.post("/sessions", json={"client_id": str(client_id)}, headers=auth_headers)
 
     assert r1.status_code == 201 and r2.status_code == 201
     assert r1.json()["session_id"] == r2.json()["session_id"] == str(session_id)
@@ -306,17 +307,13 @@ def test_post_turn_happy_path_streams_sse_frames_in_order(
     advisor = override_actor_as_advisor
     session_id = uuid.uuid4()
     client_row = _client_row(owner_id=advisor)
-    agent_sess = _FakeAgentSession(
-        session_id=session_id, client_id=client_row.id
-    )
+    agent_sess = _FakeAgentSession(session_id=session_id, client_id=client_row.id)
 
     async def _fake_load(session: Any, sid: uuid.UUID) -> tuple[Any, Any]:
         assert sid == session_id
         return agent_sess, client_row
 
-    monkeypatch.setattr(
-        agent_router_module, "_load_session_with_client", _fake_load
-    )
+    monkeypatch.setattr(agent_router_module, "_load_session_with_client", _fake_load)
 
     async def _scripted_stream(
         _factory: Any,
@@ -373,9 +370,7 @@ def test_post_turn_empty_content_returns_422(
         call_counter["stream"] += 1
         yield b""
 
-    monkeypatch.setattr(
-        agent_router_module, "_load_session_with_client", _boom_load
-    )
+    monkeypatch.setattr(agent_router_module, "_load_session_with_client", _boom_load)
     monkeypatch.setattr(agent_router_module, "stream_turn", _boom_stream)
 
     session_id = uuid.uuid4()
@@ -420,9 +415,7 @@ def test_post_turn_by_wrong_caller_returns_404_without_streaming(
     other_advisor = uuid.uuid4()
     session_id = uuid.uuid4()
     other_client = _client_row(owner_id=other_advisor)
-    agent_sess = _FakeAgentSession(
-        session_id=session_id, client_id=other_client.id
-    )
+    agent_sess = _FakeAgentSession(session_id=session_id, client_id=other_client.id)
 
     async def _fake_load(session: Any, sid: uuid.UUID) -> tuple[Any, Any]:
         return agent_sess, other_client
@@ -433,9 +426,7 @@ def test_post_turn_by_wrong_caller_returns_404_without_streaming(
         call_counter["stream"] += 1
         yield b""
 
-    monkeypatch.setattr(
-        agent_router_module, "_load_session_with_client", _fake_load
-    )
+    monkeypatch.setattr(agent_router_module, "_load_session_with_client", _fake_load)
     monkeypatch.setattr(agent_router_module, "stream_turn", _boom_stream)
 
     resp = client.post(
@@ -460,9 +451,7 @@ def test_post_turn_unknown_session_returns_404(
     async def _fake_load(session: Any, sid: uuid.UUID) -> tuple[Any, Any]:
         return None, None
 
-    monkeypatch.setattr(
-        agent_router_module, "_load_session_with_client", _fake_load
-    )
+    monkeypatch.setattr(agent_router_module, "_load_session_with_client", _fake_load)
 
     session_id = uuid.uuid4()
     resp = client.post(
@@ -496,9 +485,7 @@ def test_get_turns_returns_ordered_user_then_assistant(
         first_token_ms=180,
     )
 
-    async def _fake_list(
-        _session: Any, *, actor: ActorContext, session_id: uuid.UUID
-    ) -> list[Any]:
+    async def _fake_list(_session: Any, *, actor: ActorContext, session_id: uuid.UUID) -> list[Any]:
         assert actor.actor_kind == "advisor"
         return [user_turn, asst_turn]
 

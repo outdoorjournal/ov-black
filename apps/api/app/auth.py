@@ -98,9 +98,7 @@ class JWKSCache:
         # via ``.algorithm_name`` — Supabase projects provisioned after 2025
         # sign with ES256, older ones with RS256, and a project can hold both
         # during rotation.
-        self._keys_by_kid = {
-            key["kid"]: jwt.PyJWK(key) for key in keys if "kid" in key
-        }
+        self._keys_by_kid = {key["kid"]: jwt.PyJWK(key) for key in keys if "kid" in key}
         self._fetched_at = time.monotonic()
 
     def get_key(self, kid: str) -> Any:

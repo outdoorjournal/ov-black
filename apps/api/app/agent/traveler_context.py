@@ -28,14 +28,15 @@ Three discipline rules govern this module:
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from app.models import Dossier, DossierFact, OsintFact, ProfileFact
 
 logger = logging.getLogger("ov_black.agent.context")
 
 
-def _enum_value(maybe_enum) -> str:
+def _enum_value(maybe_enum: Any) -> str:
     return maybe_enum.value if hasattr(maybe_enum, "value") else str(maybe_enum)
 
 
@@ -51,9 +52,7 @@ def _typed_core_lines(dossier: Dossier | None) -> list[str]:
     if dossier.estimated_net_worth_usd is not None:
         # Sensitive — must never appear in any log record. The redaction
         # sweep test enforces this at the test layer; here we just emit it.
-        bits.append(
-            f"Estimated net worth (USD): {int(dossier.estimated_net_worth_usd)}"
-        )
+        bits.append(f"Estimated net worth (USD): {int(dossier.estimated_net_worth_usd)}")
     return bits
 
 

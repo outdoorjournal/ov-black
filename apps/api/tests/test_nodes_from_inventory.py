@@ -17,8 +17,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.inventory.providers.duffel import normalize_duffel_offer
 from app.inventory.registry import (
     InventoryCtx,
@@ -29,6 +27,7 @@ from app.inventory.schemas import FlightItem, InventoryItem
 from app.main import app as fastapi_app
 from app.models import NodeType
 from app.routers.inventory import get_inventory_registry
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,9 +52,7 @@ class FakeDuffelProvider(InventoryProvider):
     async def search(self, **_: Any) -> list[InventoryItem]:  # pragma: no cover
         return []
 
-    async def get_detail(
-        self, *, source_id: str, ctx: InventoryCtx
-    ) -> InventoryItem | None:
+    async def get_detail(self, *, source_id: str, ctx: InventoryCtx) -> InventoryItem | None:
         self.detail_calls.append(source_id)
         return self._item
 
@@ -113,7 +110,7 @@ def override_registry():
 
 
 @pytest.fixture()
-def auth_headers(make_token: "Callable[..., str]") -> dict[str, str]:
+def auth_headers(make_token: Callable[..., str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"}
 
 

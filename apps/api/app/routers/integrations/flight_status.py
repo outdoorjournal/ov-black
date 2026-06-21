@@ -8,8 +8,8 @@ Returns a canned status payload for known demo flight codes
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
-from typing import Literal
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from typing import Literal, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
@@ -17,6 +17,21 @@ from pydantic import BaseModel, ConfigDict
 from app.auth import AuthenticatedUser, require_user
 
 router = APIRouter(prefix="/integrations/flight-status", tags=["integrations"])
+
+
+class CannedFlight(TypedDict):
+    """Static fixture row for a known demo flight code."""
+
+    iata_from: str
+    iata_to: str
+    depart_local_time: time
+    depart_tz: tzinfo
+    arrive_local_time: time
+    arrive_tz: tzinfo
+    arrive_day_offset: int
+    gate: str
+    terminal: str
+    aircraft: str
 
 
 class FlightStatus(BaseModel):
@@ -38,7 +53,7 @@ _PDT = timezone(timedelta(hours=-7))
 _JST = timezone(timedelta(hours=9))
 
 
-_CANNED: dict[str, dict[str, object]] = {
+_CANNED: dict[str, CannedFlight] = {
     "DL275": {
         # LAX 15:25 PDT → HND next-day 18:40 JST (≈13h15m).
         "iata_from": "LAX",
@@ -68,18 +83,16 @@ _CANNED: dict[str, dict[str, object]] = {
 }
 
 
-def _scheduled_pair(
-    canned: dict[str, object], flight_date: date
-) -> tuple[datetime, datetime]:
+def _scheduled_pair(canned: CannedFlight, flight_date: date) -> tuple[datetime, datetime]:
     depart_local = datetime.combine(
         flight_date,
-        canned["depart_local_time"],  # type: ignore[arg-type]
-        tzinfo=canned["depart_tz"],  # type: ignore[arg-type]
+        canned["depart_local_time"],
+        tzinfo=canned["depart_tz"],
     )
     arrive_local = datetime.combine(
-        flight_date + timedelta(days=int(canned["arrive_day_offset"])),  # type: ignore[arg-type]
-        canned["arrive_local_time"],  # type: ignore[arg-type]
-        tzinfo=canned["arrive_tz"],  # type: ignore[arg-type]
+        flight_date + timedelta(days=canned["arrive_day_offset"]),
+        canned["arrive_local_time"],
+        tzinfo=canned["arrive_tz"],
     )
     return depart_local, arrive_local
 
@@ -104,8 +117,8 @@ async def status(
         status="scheduled",
         scheduled_departure=sched_dep,
         scheduled_arrival=sched_arr,
-        gate=canned["gate"],  # type: ignore[arg-type]
-        terminal=canned["terminal"],  # type: ignore[arg-type]
-        aircraft=canned["aircraft"],  # type: ignore[arg-type]
+        gate=canned["gate"],
+        terminal=canned["terminal"],
+        aircraft=canned["aircraft"],
         delay_minutes=0,
     )

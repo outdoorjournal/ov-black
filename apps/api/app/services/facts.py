@@ -28,9 +28,10 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any, TypeVar
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +57,10 @@ from app.schemas.facts import (
 from app.services.clients import _load_client_owned_by
 
 logger = logging.getLogger("ov_black.facts")
+
+# Row type of a ``select(...)`` over a single fact model — preserved through
+# ``_filter_redacted`` so each tier's statement keeps its concrete row type.
+_RowT = TypeVar("_RowT", bound=tuple[Any, ...])
 
 
 # UUIDv5 namespace seed for deriving ``recorded_by`` from an AgentCore
@@ -98,9 +103,7 @@ async def create_dossier_fact(
     client_id: uuid.UUID,
     payload: DossierFactCreate,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -110,7 +113,7 @@ async def create_dossier_fact(
         text=payload.text,
         source_kind=payload.source_kind,
         source_ref=payload.source_ref,
-        observed_at=payload.observed_at or datetime.now(timezone.utc),
+        observed_at=payload.observed_at or datetime.now(UTC),
         recorded_by=advisor_id,
     )
     session.add(fact)
@@ -141,9 +144,7 @@ async def update_dossier_fact(
     fact_id: uuid.UUID,
     payload: DossierFactUpdate,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -162,7 +163,7 @@ async def update_dossier_fact(
         fact.kind = payload.kind
     if payload.text is not None:
         fact.text = payload.text
-    fact.updated_at = datetime.now(timezone.utc)
+    fact.updated_at = datetime.now(UTC)
     await session.commit()
     return FactResult(FactOutcome.OK, fact=fact)
 
@@ -175,9 +176,7 @@ async def redact_dossier_fact(
     fact_id: uuid.UUID,
     reason: str,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -192,7 +191,7 @@ async def redact_dossier_fact(
     if fact is None or fact.redacted_at is not None:
         return FactResult(FactOutcome.FACT_NOT_FOUND)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fact.redacted_at = now
     fact.redacted_by = advisor_id
     fact.redacted_reason = reason
@@ -219,9 +218,7 @@ async def create_profile_fact(
     client_id: uuid.UUID,
     payload: ProfileFactCreate,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -231,7 +228,7 @@ async def create_profile_fact(
         text=payload.text,
         source_kind=payload.source_kind,
         source_ref=payload.source_ref,
-        observed_at=payload.observed_at or datetime.now(timezone.utc),
+        observed_at=payload.observed_at or datetime.now(UTC),
         recorded_by=advisor_id,
     )
     session.add(fact)
@@ -252,9 +249,7 @@ async def update_profile_fact(
     fact_id: uuid.UUID,
     payload: ProfileFactUpdate,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -273,7 +268,7 @@ async def update_profile_fact(
         fact.kind = payload.kind
     if payload.text is not None:
         fact.text = payload.text
-    fact.updated_at = datetime.now(timezone.utc)
+    fact.updated_at = datetime.now(UTC)
     await session.commit()
     return FactResult(FactOutcome.OK, fact=fact)
 
@@ -286,9 +281,7 @@ async def redact_profile_fact(
     fact_id: uuid.UUID,
     reason: str,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -303,7 +296,7 @@ async def redact_profile_fact(
     if fact is None or fact.redacted_at is not None:
         return FactResult(FactOutcome.FACT_NOT_FOUND)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fact.redacted_at = now
     fact.redacted_by = advisor_id
     fact.redacted_reason = reason
@@ -322,9 +315,7 @@ async def create_osint_fact(
     client_id: uuid.UUID,
     payload: OsintFactCreate,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -334,7 +325,7 @@ async def create_osint_fact(
         text=payload.text,
         source_kind=payload.source_kind,
         source_ref=payload.source_ref,
-        observed_at=payload.observed_at or datetime.now(timezone.utc),
+        observed_at=payload.observed_at or datetime.now(UTC),
         recorded_by=advisor_id,
     )
     session.add(fact)
@@ -355,9 +346,7 @@ async def update_osint_fact(
     fact_id: uuid.UUID,
     payload: OsintFactUpdate,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -376,7 +365,7 @@ async def update_osint_fact(
         fact.kind = payload.kind
     if payload.text is not None:
         fact.text = payload.text
-    fact.updated_at = datetime.now(timezone.utc)
+    fact.updated_at = datetime.now(UTC)
     await session.commit()
     return FactResult(FactOutcome.OK, fact=fact)
 
@@ -389,9 +378,7 @@ async def redact_osint_fact(
     fact_id: uuid.UUID,
     reason: str,
 ) -> FactResult:
-    client = await _load_client_owned_by(
-        session, advisor_id=advisor_id, client_id=client_id
-    )
+    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
         return FactResult(FactOutcome.CLIENT_NOT_FOUND)
 
@@ -406,7 +393,7 @@ async def redact_osint_fact(
     if fact is None or fact.redacted_at is not None:
         return FactResult(FactOutcome.FACT_NOT_FOUND)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fact.redacted_at = now
     fact.redacted_by = advisor_id
     fact.redacted_reason = reason
@@ -444,7 +431,7 @@ async def record_agent_profile_fact(
             "agentcore_session_id": agentcore_session_id,
             **({"turn_id": str(source_turn_id)} if source_turn_id else {}),
         },
-        observed_at=datetime.now(timezone.utc),
+        observed_at=datetime.now(UTC),
         recorded_by=_agent_recorded_by(agentcore_session_id),
     )
     session.add(fact)
@@ -487,7 +474,7 @@ async def record_agent_dossier_inference(
             "agentcore_session_id": agentcore_session_id,
             **({"turn_id": str(source_turn_id)} if source_turn_id else {}),
         },
-        observed_at=datetime.now(timezone.utc),
+        observed_at=datetime.now(UTC),
         recorded_by=_agent_recorded_by(agentcore_session_id),
     )
     session.add(fact)
@@ -545,7 +532,7 @@ async def load_agent_context(
         await session.execute(select(Dossier).where(Dossier.client_id == client_id))
     ).scalar_one_or_none()
 
-    def _filter_redacted(stmt, model):
+    def _filter_redacted(stmt: Select[_RowT], model: type[Any]) -> Select[_RowT]:
         if include_redacted:
             return stmt
         return stmt.where(model.redacted_at.is_(None))

@@ -23,6 +23,7 @@ from app.inventory.registry import get_registry
 from app.routers.advisor_itineraries import router as advisor_itineraries_router
 from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
+from app.routers.analyze import router as analyze_router
 from app.routers.auth import router as auth_router
 from app.routers.clients import router as clients_router
 from app.routers.demos import router as demos_router
@@ -60,9 +61,7 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
 
     registry = get_registry()
     enabled = [
-        name.strip()
-        for name in settings.inventory_providers_enabled.split(",")
-        if name.strip()
+        name.strip() for name in settings.inventory_providers_enabled.split(",") if name.strip()
     ]
     registered: list[str] = []
     for name in enabled:
@@ -90,6 +89,22 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         "inventory.providers.registered",
         extra={"sources": registered},
     )
+
+    # ── Analyze reaper (Phase 5 / B5) ──────────────────────────────────────
+    # A runner abandoned by a crash/restart leaves a 'running' analyses row no
+    # live BackgroundTask will ever finish. Sweep them to 'failed' once at
+    # boot, sequentially with the rest of startup so a DB failure here surfaces
+    # as "refused to start" rather than silent half-running state.
+    from app.db import get_sessionmaker
+    from app.services.analyze import reap_orphaned_analyses
+
+    async with get_sessionmaker()() as reaper_session:
+        reaped = await reap_orphaned_analyses(
+            reaper_session,
+            max_running_seconds=settings.analyze_reaper_max_running_seconds,
+        )
+    if reaped:
+        logger.info("analyze.reaper.reaped", extra={"count": reaped})
 
     # ── AgentCore runtime wiring (S04 T05) ─────────────────────────────────
     # Stash a single AgentRuntimeClient on app.state so request handlers can
@@ -185,6 +200,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(itineraries_router)
 app.include_router(advisor_itineraries_router)
+app.include_router(analyze_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)
 app.include_router(facts_router)

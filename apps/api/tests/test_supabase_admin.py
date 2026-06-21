@@ -29,7 +29,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from app.config import Settings
 from app.services.supabase_admin import (
     MagicLinkIssued,
@@ -52,7 +51,7 @@ def _settings(url: str = _STAGING_URL, key: str = _SERVICE_KEY) -> Settings:
 
 
 def _mock_client(
-    handler: "Any",
+    handler: Any,
 ) -> httpx.AsyncClient:
     transport = httpx.MockTransport(handler)
     return httpx.AsyncClient(transport=transport)
@@ -62,9 +61,7 @@ def _mock_client(
 
 
 @pytest.mark.asyncio
-async def test_generate_invite_link_posts_to_invite_endpoint_with_admin_auth() -> (
-    None
-):
+async def test_generate_invite_link_posts_to_invite_endpoint_with_admin_auth() -> None:
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -106,9 +103,7 @@ async def test_generate_invite_link_posts_to_invite_endpoint_with_admin_auth() -
 
 
 @pytest.mark.asyncio
-async def test_generate_invite_link_parses_nested_properties_action_link() -> (
-    None
-):
+async def test_generate_invite_link_parses_nested_properties_action_link() -> None:
     # Supabase's admin API sometimes nests action_link under "properties".
     # The S01 magic-link helper handles both shapes; the invite helper
     # must do the same so staging/local behaviour is aligned.
@@ -132,9 +127,7 @@ async def test_generate_invite_link_parses_nested_properties_action_link() -> (
 
 
 @pytest.mark.asyncio
-async def test_generate_invite_link_maps_4xx_to_supabase_admin_rejected() -> (
-    None
-):
+async def test_generate_invite_link_maps_4xx_to_supabase_admin_rejected() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(422, json={"msg": "invalid redirect_to"})
 
@@ -151,9 +144,7 @@ async def test_generate_invite_link_maps_4xx_to_supabase_admin_rejected() -> (
 
 
 @pytest.mark.asyncio
-async def test_generate_invite_link_maps_5xx_to_supabase_admin_rejected() -> (
-    None
-):
+async def test_generate_invite_link_maps_5xx_to_supabase_admin_rejected() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"msg": "upstream down"})
 
@@ -170,9 +161,7 @@ async def test_generate_invite_link_maps_5xx_to_supabase_admin_rejected() -> (
 
 
 @pytest.mark.asyncio
-async def test_generate_invite_link_maps_network_error_to_unreachable() -> (
-    None
-):
+async def test_generate_invite_link_maps_network_error_to_unreachable() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom", request=request)
 
@@ -283,9 +272,7 @@ async def test_generate_invite_link_network_error_log_omits_service_key(
                     client=client,
                 )
 
-    records = [
-        r for r in caplog.records if r.name == "ov_black.supabase_admin"
-    ]
+    records = [r for r in caplog.records if r.name == "ov_black.supabase_admin"]
     assert any(r.message == "supabase_admin.network_error" for r in records)
     for r in records:
         combined = r.getMessage() + " " + str(r.__dict__)

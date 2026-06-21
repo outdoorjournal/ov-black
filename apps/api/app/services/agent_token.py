@@ -89,9 +89,7 @@ def mint_agent_token(
     return jwt.encode(payload, secret, algorithm=_ALGORITHM)
 
 
-def verify_agent_token(
-    token: str, *, settings: Settings | None = None
-) -> AgentTokenClaims:
+def verify_agent_token(token: str, *, settings: Settings | None = None) -> AgentTokenClaims:
     """Decode + validate an agent token. Raises :class:`AgentTokenError` on any failure.
 
     Failures collapse to a short stable ``reason`` string the route

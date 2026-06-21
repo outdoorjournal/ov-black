@@ -20,18 +20,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
-from app.db import get_session
 from app.main import app as fastapi_app
 from app.models import (
     CardTemplate,
@@ -47,6 +37,14 @@ from app.services.japan_template import (
     build_japan_template,
 )
 from app.services.timeline import linearize
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
@@ -77,11 +75,9 @@ integration = pytest.mark.skipif(
 
 
 @pytest_asyncio.fixture()
-async def db_session() -> "AsyncIterator[AsyncSession]":
+async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
-    maker = async_sessionmaker(
-        bind=engine, expire_on_commit=False, class_=AsyncSession
-    )
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with maker() as s:
             yield s
@@ -98,9 +94,7 @@ async def _delete_japan_template_if_exists() -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text(
-                    "delete from public.card_templates where slug = :slug"
-                ),
+                text("delete from public.card_templates where slug = :slug"),
                 {"slug": JAPAN_TEMPLATE_SLUG},
             )
     finally:
@@ -112,15 +106,11 @@ async def _delete_itinerary(itinerary_id: uuid.UUID) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text(
-                    "delete from public.node_history where itinerary_id = :i"
-                ),
+                text("delete from public.node_history where itinerary_id = :i"),
                 {"i": itinerary_id},
             )
             await conn.execute(
-                text(
-                    "delete from public.edge_history where itinerary_id = :i"
-                ),
+                text("delete from public.edge_history where itinerary_id = :i"),
                 {"i": itinerary_id},
             )
             await conn.execute(
@@ -153,27 +143,21 @@ async def test_build_japan_template_creates_node_per_fixture_item(
         item_count = len(all_items())
         nodes = (
             await db_session.execute(
-                select(func.count(TemplateNode.id)).where(
-                    TemplateNode.template_id == template.id
-                )
+                select(func.count(TemplateNode.id)).where(TemplateNode.template_id == template.id)
             )
         ).scalar_one()
         assert nodes == item_count
 
         edges = (
             await db_session.execute(
-                select(func.count(TemplateEdge.id)).where(
-                    TemplateEdge.template_id == template.id
-                )
+                select(func.count(TemplateEdge.id)).where(TemplateEdge.template_id == template.id)
             )
         ).scalar_one()
         # Each day: (items_per_day - 1) follows; plus (num_days - 1)
         # bridges between days. The fixture has at least 4 days each
         # with multiple items; specific check is left loose so adding
         # items to the fixture doesn't break the test.
-        assert edges >= item_count - 1, (
-            "Edge count must connect every node into a single chain"
-        )
+        assert edges >= item_count - 1, "Edge count must connect every node into a single chain"
     finally:
         if template is not None:
             await _delete_japan_template_if_exists()
@@ -190,16 +174,12 @@ async def test_build_japan_template_is_idempotent(
         first = await build_japan_template(db_session)
         first_node_count = (
             await db_session.execute(
-                select(func.count(TemplateNode.id)).where(
-                    TemplateNode.template_id == first.id
-                )
+                select(func.count(TemplateNode.id)).where(TemplateNode.template_id == first.id)
             )
         ).scalar_one()
         first_edge_count = (
             await db_session.execute(
-                select(func.count(TemplateEdge.id)).where(
-                    TemplateEdge.template_id == first.id
-                )
+                select(func.count(TemplateEdge.id)).where(TemplateEdge.template_id == first.id)
             )
         ).scalar_one()
 
@@ -208,16 +188,12 @@ async def test_build_japan_template_is_idempotent(
 
         second_node_count = (
             await db_session.execute(
-                select(func.count(TemplateNode.id)).where(
-                    TemplateNode.template_id == second.id
-                )
+                select(func.count(TemplateNode.id)).where(TemplateNode.template_id == second.id)
             )
         ).scalar_one()
         second_edge_count = (
             await db_session.execute(
-                select(func.count(TemplateEdge.id)).where(
-                    TemplateEdge.template_id == second.id
-                )
+                select(func.count(TemplateEdge.id)).where(TemplateEdge.template_id == second.id)
             )
         ).scalar_one()
         assert second_node_count == first_node_count
@@ -226,13 +202,17 @@ async def test_build_japan_template_is_idempotent(
         # Every built template node stamps its local UTC offset (JST → 540)
         # in metadata so the read side can re-emit starts_at in wall-clock.
         scheduled = (
-            await db_session.execute(
-                select(TemplateNode.metadata_).where(
-                    TemplateNode.template_id == first.id,
-                    TemplateNode.starts_at_offset_minutes.is_not(None),
+            (
+                await db_session.execute(
+                    select(TemplateNode.metadata_).where(
+                        TemplateNode.template_id == first.id,
+                        TemplateNode.starts_at_offset_minutes.is_not(None),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert scheduled  # the fixture has scheduled items
         assert all(m.get("tz_offset_minutes") == 540 for m in scheduled)
     finally:
@@ -255,9 +235,7 @@ async def test_japan_instantiation_linearizes_chronologically(
         from app.services.templates import instantiate_template
 
         template = await build_japan_template(db_session)
-        trip_start = datetime(
-            2030, 5, 1, 0, 0, tzinfo=timezone(timedelta(hours=9))
-        )
+        trip_start = datetime(2030, 5, 1, 0, 0, tzinfo=timezone(timedelta(hours=9)))
         itinerary = await instantiate_template(
             db_session,
             template=template,
@@ -274,17 +252,21 @@ async def test_japan_instantiation_linearizes_chronologically(
             # Re-fetch to inspect lineage columns (Card dataclass doesn't
             # surface them).
             row = (
-                await db_session.execute(
-                    text(
-                        """
+                (
+                    await db_session.execute(
+                        text(
+                            """
                         select template_id, template_version, metadata
                           from public.nodes
                          where id = :id
                         """
-                    ),
-                    {"id": c.node_id},
+                        ),
+                        {"id": c.node_id},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             assert row["template_id"] == template.id
             assert row["template_version"] == template.version
             # The per-node tz offset was copied from the template metadata
@@ -300,7 +282,7 @@ async def test_japan_instantiation_linearizes_chronologically(
 
 
 @pytest.fixture()
-def http_client() -> "Iterator[TestClient]":
+def http_client() -> Iterator[TestClient]:
     with TestClient(fastapi_app) as c:
         yield c
 
@@ -312,7 +294,7 @@ def advisor_sub() -> uuid.UUID:
 
 @pytest.fixture()
 def auth_headers(
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
     advisor_sub: uuid.UUID,
 ) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(sub=str(advisor_sub))}"}
@@ -321,7 +303,7 @@ def auth_headers(
 @pytest.fixture()
 def override_require_advisor(
     advisor_sub: uuid.UUID,
-) -> "Iterator[uuid.UUID]":
+) -> Iterator[uuid.UUID]:
     async def _dep() -> AuthenticatedUser:
         return AuthenticatedUser(
             sub=str(advisor_sub),
@@ -338,7 +320,7 @@ def override_require_advisor(
 
 
 @pytest.fixture()
-def override_require_advisor_rejects() -> "Iterator[None]":
+def override_require_advisor_rejects() -> Iterator[None]:
     async def _dep() -> AuthenticatedUser:
         raise HTTPException(status_code=403, detail="advisor_only")
 
@@ -364,7 +346,7 @@ def test_demos_japan_rejects_non_advisor(
     assert resp.status_code == 403
 
 
-def _run_async(coro_factory: "Callable[[], object]") -> object:
+def _run_async(coro_factory: Callable[[], object]) -> object:
     """Run an async coroutine factory inside a fresh event loop.
 
     Each call creates + disposes its own engine inside one asyncio.run
@@ -376,9 +358,7 @@ def _run_async(coro_factory: "Callable[[], object]") -> object:
     import asyncio
 
     async def _wrapper() -> object:
-        engine = create_async_engine(
-            LOCAL_DB_URL, pool_pre_ping=True, future=True
-        )
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
         try:
             return await coro_factory(engine)
         finally:
@@ -521,9 +501,7 @@ def test_demos_japan_happy_path_creates_itinerary(
             )
             # Clean any prior Japan template so the builder runs fresh.
             await conn.execute(
-                text(
-                    "delete from public.card_templates where slug = :s"
-                ),
+                text("delete from public.card_templates where slug = :s"),
                 {"s": JAPAN_TEMPLATE_SLUG},
             )
 
@@ -535,9 +513,7 @@ def test_demos_japan_happy_path_creates_itinerary(
         )
         async with maker() as s:
             row = (
-                await s.execute(
-                    select(Itinerary).where(Itinerary.id == itinerary_id)
-                )
+                await s.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
             ).scalar_one()
             assert row.client_id == client_id
             assert row.created_by == advisor_sub
@@ -557,16 +533,12 @@ def test_demos_japan_happy_path_creates_itinerary(
             assert lineage == len(all_items())
             edges = (
                 await s.execute(
-                    select(func.count(Edge.id)).where(
-                        Edge.itinerary_id == itinerary_id
-                    )
+                    select(func.count(Edge.id)).where(Edge.itinerary_id == itinerary_id)
                 )
             ).scalar_one()
             assert edges >= len(all_items()) - 1
 
-    async def _cleanup(
-        engine: object, itinerary_id: uuid.UUID | None
-    ) -> None:
+    async def _cleanup(engine: object, itinerary_id: uuid.UUID | None) -> None:
         async with engine.begin() as conn:  # type: ignore[attr-defined]
             if itinerary_id is not None:
                 await conn.execute(
@@ -574,9 +546,7 @@ def test_demos_japan_happy_path_creates_itinerary(
                     {"i": itinerary_id},
                 )
             await conn.execute(
-                text(
-                    "delete from public.card_templates where slug = :s"
-                ),
+                text("delete from public.card_templates where slug = :s"),
                 {"s": JAPAN_TEMPLATE_SLUG},
             )
             await conn.execute(

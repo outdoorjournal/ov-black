@@ -3,10 +3,10 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, func
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,7 +27,7 @@ class OsintFactKind(str, enum.Enum):
     other = "other"
 
 
-osint_fact_kind_enum = SAEnum(
+osint_fact_kind_enum: SAEnum = SAEnum(
     OsintFactKind,
     name="osint_fact_kind",
     schema="public",
@@ -61,10 +61,8 @@ class OsintFact(Base):
     )
     kind: Mapped[OsintFactKind] = mapped_column(osint_fact_kind_enum, nullable=False)
     text: Mapped[str] = mapped_column(nullable=False)
-    source_kind: Mapped[FactSourceKind] = mapped_column(
-        fact_source_kind_enum, nullable=False
-    )
-    source_ref: Mapped[dict] = mapped_column(
+    source_kind: Mapped[FactSourceKind] = mapped_column(fact_source_kind_enum, nullable=False)
+    source_ref: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         server_default=sql_text("'{}'::jsonb"),
@@ -78,12 +76,8 @@ class OsintFact(Base):
         UUID(as_uuid=True),
         nullable=False,
     )
-    redacted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    redacted_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    redacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    redacted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     redacted_reason: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

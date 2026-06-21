@@ -18,6 +18,13 @@ from app.models.agent import (  # noqa: E402,F401  (re-exported)
     AgentTurn,
     TurnRole,
 )
+from app.models.analysis import (  # noqa: E402,F401  (re-exported)
+    Analysis,
+    AnalysisDepth,
+    AnalysisFinding,
+    AnalysisStatus,
+    FindingSeverity,
+)
 from app.models.client import Client, ContactChannel  # noqa: E402,F401
 from app.models.client_contact import (  # noqa: E402,F401  (re-exported)
     ClientContact,
@@ -44,25 +51,29 @@ from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     NodeType,
 )
 from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
-from app.models.party import NodeParty, Party, Traveler  # noqa: E402,F401
-from app.models.template import (  # noqa: E402,F401
-    CardTemplate,
-    TemplateEdge,
-    TemplateNode,
-)
 from app.models.osint_fact import (  # noqa: E402,F401  (re-exported)
     OsintFact,
     OsintFactKind,
 )
+from app.models.party import NodeParty, Party, Traveler  # noqa: E402,F401
 from app.models.profile import Profile, UserRole  # noqa: E402,F401  (re-exported)
 from app.models.profile_fact import (  # noqa: E402,F401  (re-exported)
     ProfileFact,
     ProfileFactKind,
 )
+from app.models.template import (  # noqa: E402,F401
+    CardTemplate,
+    TemplateEdge,
+    TemplateNode,
+)
 
 __all__ = [
     "AgentSession",
     "AgentTurn",
+    "Analysis",
+    "AnalysisDepth",
+    "AnalysisFinding",
+    "AnalysisStatus",
     "Base",
     "CardTemplate",
     "Client",
@@ -77,6 +88,7 @@ __all__ = [
     "EdgeHistory",
     "EdgeType",
     "FactSourceKind",
+    "FindingSeverity",
     "Invite",
     "Itinerary",
     "ItineraryStatus",

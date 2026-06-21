@@ -200,6 +200,113 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
 
+### 2026-06-21 — M002/B5 Analyze (shallow + standard) — **core async Analyze pipeline landed (behind tests)**
+
+**Decision locked:** D-ANALYZE — build **shallow + standard only**; `deep`
+(live external data) deferred. The `deep` enum value stays valid but the runner
+**downgrades a `deep` request to `standard`** and records `result.degraded_from`
++ an `info` `degraded` finding (honest, doesn't reject a valid enum).
+
+**What landed (all `apps/api` + one migration; net-new files plus additive,
+localized edits to the shared `main`/`config`/itineraries-router seams — disjoint
+from the B1–B4 provider/cost surfaces):**
+- **Migration `supabase/migrations/0017_async_analyze.sql`** (D003 raw SQL,
+  idempotent like 0014–0016; the Phase 5 handoff drafted this as `0016` but that
+  number was taken by B4 cost — same schema, renumbered). Three Postgres-native
+  ENUMs (`analysis_status` queued/running/completed/failed/cancelled,
+  `analysis_depth` shallow/standard/deep, `finding_severity`
+  info/suggest/warn/block — D020). `public.analyses` (one run: status state
+  machine + `scope` jsonb + `inputs_hash` + agent-readable `result` jsonb +
+  `external_calls` audit + `started_at`/`completed_at`) and
+  `public.analysis_findings` (append-only, `node_id` ON DELETE SET NULL,
+  `evidence` jsonb, Fill-shaped `suggested_fix`). Partial indexes for
+  list-by-itinerary, the one-in-flight-per-itinerary check, and the cache-hit
+  lookup. RLS enabled (no policies — matches 0014 parties posture; middleware +
+  draft-read gate are the live perimeter). **Applied to the local DB; idempotent
+  on re-run.**
+- **Model** `models/analysis.py`: `Analysis` + `AnalysisFinding` + the three
+  enums with `create_type=False` PGEnums (migration owns DDL). Re-exported from
+  `app.models`; guard test mirrors `test_itinerary_models.py`.
+- **Runner foundation** `services/analyze_runners/common.py`: `Finding` /
+  `RunOutput` dataclasses (the runner↔service contract, kept here to avoid a
+  cycle), `load_timeline_nodes` (read-only graph load honoring scope
+  branches/node_ids/party; decodes PostGIS `location` via
+  `ST_Y/ST_X(location::geometry)`) + `load_edges`, `haversine_km`, and
+  `build_result` (folds findings → flat agent-readable `result`: summary + stats
+  + by_category + `result_extra`).
+- **Shallow runner** `analyze_runners/shallow.py` (structural, no external
+  calls): `time` overlap (adjacent timed pairs → warn), `cyclic` (DFS
+  three-colour over `follows` edges → block), `missing_required` (firmed-up
+  approved/booked/confirmed node missing `starts_at`, or bookable type missing
+  `cost_amount` (B4) → suggest), and the `fuzz_count` planning-maturity score.
+  `collect()` is reused by standard.
+- **Standard runner** `analyze_runners/standard.py` (physical-feasibility,
+  no live traffic): `location_flux` drive-time check over consecutive timed +
+  located pairs — `haversine_km / per-mode speed cap + buffer` vs the scheduled
+  gap (per-mode caps from handoff §4.2; `drive` escalates urban→intercity past
+  100 km; flight legs skipped — schedule governs). `warn` when too tight,
+  `block` on a negative gap. Computed legs surfaced in `result.drive_times` for
+  Fill (B6) to reuse. **This is the B5 acceptance: an impossible drive-time gap
+  yields a `warn` `location_flux` finding with structured evidence.**
+- **Service** `services/analyze.py`: `create_queued_analysis` (in-flight
+  serialization → returns existing queued/running row; `inputs_hash` cache-hit
+  lookup with per-depth TTL 5min/60min/24h; `force_rerun` bypass),
+  `run_analysis` (the `BackgroundTasks` entrypoint — opens its OWN
+  `get_sessionmaker()` session, drives queued→running→completed, **swallows its
+  own exceptions** to `failed`, re-checks status before the completing commit so
+  a mid-run cancel wins), `cancel_analysis` (idempotent, scoped to itinerary),
+  `get_analysis`/`list_analyses`, `reap_orphaned_analyses` (startup sweep:
+  `running` older than `analyze_reaper_max_running_seconds` → `failed`
+  /`abandoned_at_restart`), and pure `compute_inputs_hash`.
+- **Router** `routers/analyze.py`: four endpoints under
+  `/itinerary/{id}/analyses` (POST→202 + schedules the BackgroundTask only for a
+  freshly-queued row; GET list; GET detail+findings; POST cancel). **Refactored
+  the draft-read gate out of `routers/itineraries.py` into a shared
+  `assert_itinerary_readable`** (behavior-preserving — `get_itinerary_endpoint`
+  now calls it) and reused it here, so analyze applies the exact same auth as
+  the graph read.
+- **Wiring** `main.py` (include router + startup reaper inside `lifespan`,
+  sequential so a DB failure refuses boot) + `config.py`
+  (`analyze_reaper_max_running_seconds`, default 600).
+
+**What's tested (5 new files, +32 tests):**
+- `test_analyze_models.py` — enum `create_type=False` + values-match-migration.
+- `test_analyze_runners_shallow.py` — time overlap / cycle / acyclic-clean /
+  missing_required (approved vs proposed) / fuzz count.
+- `test_analyze_runners_standard.py` — **impossible Tokyo→Osaka drive → `warn`
+  `location_flux` with evidence (the acceptance)**; feasible walk → no flux;
+  flight leg skipped.
+- `test_analyze_service.py` — full queued→completed via `run_analysis`; cancel
+  before run is a no-op; cancel idempotent / unknown→None; cache-hit +
+  force-rerun; in-flight serialization; reaper fails stale running / spares
+  fresh; deep→standard downgrade; list ordering; pure inputs-hash.
+- `test_analyze_router.py` — 202; detail completed (BackgroundTask done under
+  TestClient); list; cancel-completed idempotent; 404s; 401; draft-gate 403.
+- Shared raw-SQL seeding helper `tests/_graph_seed.py` (async inserts +
+  `seed_itinerary_sync` for the TestClient tests — seeds `approved` itineraries
+  so the draft gate is skipped without needing an `auth.users` row).
+- **Full `apps/api` suite green (524 passed**, was 492 at B4; +32). OpenAPI
+  emits all four routes; **api-client regenerated** (`generated/` gitignored);
+  `apps/web` typecheck + api-client `tsc` clean.
+
+**What remains (resume hooks):**
+1. **`standard` availability + weather findings** — need the integration-stub
+   refactor (handoff §2c: lift `routers/integrations/{weather,flight_status}.py`
+   into importable `app/integrations/<provider>.py` client modules; Google
+   Places is already a provider via B1). Today standard does drive-time only;
+   `availability`/`weather`/`party`-constraint findings are not yet emitted.
+2. **`deep` tier** — live drive times (Google Routes — never stubbed), live
+   flight status, currency drift. Deferred per D-ANALYZE; runner downgrades for
+   now.
+3. **Agent prompt + tools** — `start_analysis` / `get_analysis` / `list_analyses`
+   / `cancel_analysis` in `apps/agent` (+ the system-prompt "findings are
+   agent-private, like Dossier" framing, handoff §7). Endpoints are user-JWT
+   (the agent carries it), so no new auth path.
+4. **`scripts/verify-sB5.sh`** offline acceptance harness (mirror sB1/sB3) +
+   staging live probe.
+5. **Web findings render** — the Command-Center analyze action + findings UI is
+   B7 (advisor authoring); deliberately untouched here.
+
 ### 2026-06-21 — M002/B4 First-class node cost — **cost columns + provider population + sum landed (behind tests)**
 
 **Decision locked:** D-COST — first-class `nodes.cost_amount` + `cost_currency`,

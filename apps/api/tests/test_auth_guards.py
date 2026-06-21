@@ -21,11 +21,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi import HTTPException
-
 from app.auth import AuthenticatedUser, verify_token
 from app.auth_guards import require_advisor
 from app.models import Profile, UserRole
+from fastapi import HTTPException
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -81,13 +80,9 @@ def _principal_for(sub: str) -> AuthenticatedUser:
 
 
 @pytest.mark.asyncio
-async def test_require_advisor_returns_user_unchanged_for_advisor_profile() -> (
-    None
-):
+async def test_require_advisor_returns_user_unchanged_for_advisor_profile() -> None:
     advisor_sub = uuid.uuid4()
-    session = FakeSession(
-        profiles={advisor_sub: _profile(advisor_sub, UserRole.advisor)}
-    )
+    session = FakeSession(profiles={advisor_sub: _profile(advisor_sub, UserRole.advisor)})
     principal = _principal_for(str(advisor_sub))
 
     result = await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
@@ -101,24 +96,22 @@ async def test_require_advisor_rejects_client_role_with_403(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     client_sub = uuid.uuid4()
-    session = FakeSession(
-        profiles={client_sub: _profile(client_sub, UserRole.client)}
-    )
+    session = FakeSession(profiles={client_sub: _profile(client_sub, UserRole.client)})
     principal = _principal_for(str(client_sub))
 
-    with caplog.at_level(logging.INFO, logger="ov_black.auth_guards"):
-        with pytest.raises(HTTPException) as exc_info:
-            await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
+    with (
+        caplog.at_level(logging.INFO, logger="ov_black.auth_guards"),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "advisor_only"
     # The rejection reason + sub_hint must be logged, the full sub must not.
-    record = next(
-        r for r in caplog.records if r.name == "ov_black.auth_guards"
-    )
+    record = next(r for r in caplog.records if r.name == "ov_black.auth_guards")
     assert record.message == "auth_guards.require_advisor.reject"
-    assert getattr(record, "reason") == "not_advisor"
-    assert getattr(record, "sub_hint") == str(client_sub)[:8]
+    assert record.reason == "not_advisor"
+    assert record.sub_hint == str(client_sub)[:8]
     assert str(client_sub) not in record.getMessage()
 
 
@@ -133,17 +126,17 @@ async def test_require_advisor_rejects_missing_profile_with_403(
     stranger_sub = uuid.uuid4()
     principal = _principal_for(str(stranger_sub))
 
-    with caplog.at_level(logging.INFO, logger="ov_black.auth_guards"):
-        with pytest.raises(HTTPException) as exc_info:
-            await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
+    with (
+        caplog.at_level(logging.INFO, logger="ov_black.auth_guards"),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "advisor_only"
-    record = next(
-        r for r in caplog.records if r.name == "ov_black.auth_guards"
-    )
-    assert getattr(record, "reason") == "profile_not_found"
-    assert getattr(record, "sub_hint") == str(stranger_sub)[:8]
+    record = next(r for r in caplog.records if r.name == "ov_black.auth_guards")
+    assert record.reason == "profile_not_found"
+    assert record.sub_hint == str(stranger_sub)[:8]
 
 
 @pytest.mark.asyncio
@@ -155,24 +148,24 @@ async def test_require_advisor_rejects_malformed_sub_with_403(
     session = FakeSession()
     principal = _principal_for("not-a-uuid-123456")
 
-    with caplog.at_level(logging.INFO, logger="ov_black.auth_guards"):
-        with pytest.raises(HTTPException) as exc_info:
-            await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
+    with (
+        caplog.at_level(logging.INFO, logger="ov_black.auth_guards"),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await require_advisor(user=principal, session=session)  # type: ignore[arg-type]
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "advisor_only"
-    record = next(
-        r for r in caplog.records if r.name == "ov_black.auth_guards"
-    )
-    assert getattr(record, "reason") == "malformed_sub"
-    assert getattr(record, "sub_hint") == "not-a-uu"
+    record = next(r for r in caplog.records if r.name == "ov_black.auth_guards")
+    assert record.reason == "malformed_sub"
+    assert record.sub_hint == "not-a-uu"
 
 
 # --- JWT fixture integration check ------------------------------------------
 
 
 def test_jwt_fixture_mints_a_principal_whose_sub_flows_into_the_guard(
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     """Sanity check: the RSA fixture's tokens carry the sub we expect.
 

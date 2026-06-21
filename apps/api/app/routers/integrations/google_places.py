@@ -198,9 +198,7 @@ async def search(
         query = payload.query.strip()
         if not query:
             return SearchResponse(results=[])
-        places = await provider.text_search(
-            text_query=query, location_bias=location_bias
-        )
+        places = await provider.text_search(text_query=query, location_bias=location_bias)
     finally:
         await provider.aclose()
 

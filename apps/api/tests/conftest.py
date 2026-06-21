@@ -8,22 +8,20 @@ issuer so ``iss`` validation is exercised for real.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from typing import Any
 
-import json
-
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi.testclient import TestClient
-from jwt.algorithms import RSAAlgorithm
-
 from app import auth as auth_module
 from app.auth import JWKSCache
 from app.config import Settings, get_settings
 from app.main import app as fastapi_app
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.testclient import TestClient
+from jwt.algorithms import RSAAlgorithm
 
 TEST_ISSUER = "https://test.supabase.co/auth/v1"
 TEST_KID = "test-kid-1"

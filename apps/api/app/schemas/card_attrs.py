@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -116,7 +116,7 @@ class TrainStop(BaseModel):
 
 
 class SceneryCallout(BaseModel):
-    """"Mt. Fuji, north window, from 12:55" — the train card's signature
+    """ "Mt. Fuji, north window, from 12:55" — the train card's signature
     detail. Specific minute + side, not a vague "scenic route" tag.
     """
 
@@ -152,7 +152,7 @@ class Driver(BaseModel):
 
 
 class WalkingDistance(BaseModel):
-    """"From your door" walking time to one upcoming itinerary node.
+    """ "From your door" walking time to one upcoming itinerary node.
 
     Hotel card's signature detail (Cards_Style_Guide.md §hotel) — connects
     the lodging to the day around it.
@@ -204,9 +204,7 @@ class _CardBase(BaseModel):
     description: str | None = None
     body: str | None = None
     ambient_image: str | None = None
-    time_of_day: (
-        Literal["morning", "lunch", "afternoon", "evening", "night"] | None
-    ) = None
+    time_of_day: Literal["morning", "lunch", "afternoon", "evening", "night"] | None = None
     location: GeoPoint | None = None
     duration_minutes: int | None = Field(default=None, ge=0)
 
@@ -297,9 +295,7 @@ class BoatCardAttrs(_CardBase):
     kind: Literal["boat"] = "boat"
     dock_from: str | None = None
     dock_to: str | None = None
-    motion_sickness_rating: (
-        Literal["none", "mild", "moderate", "rough"] | None
-    ) = None
+    motion_sickness_rating: Literal["none", "mild", "moderate", "rough"] | None = None
     bring_with: list[str] = Field(default_factory=list)
     schedule_frequency: str | None = None
     from_location: GeoPoint | None = None
@@ -342,9 +338,7 @@ class ExperienceCardAttrs(_CardBase):
     kind: Literal["experience"] = "experience"
     category: str | None = None
     energy_required: int | None = Field(default=None, ge=1, le=5)
-    energy_after: (
-        Literal["depleting", "neutral", "restorative"] | None
-    ) = None
+    energy_after: Literal["depleting", "neutral", "restorative"] | None = None
     difficulty: str | None = None
     best_window: TimeOfDayWindow | None = None
     gear_list: list[str] = Field(default_factory=list)
@@ -444,7 +438,7 @@ _CARD_ADAPTER: TypeAdapter[CardAttributes] = TypeAdapter(CardAttributes)
 _NON_CARD_METADATA_KEYS = frozenset({"tz_offset_minutes"})
 
 
-def parse_card_attrs(node_type: str, raw: dict | None) -> CardAttributes:
+def parse_card_attrs(node_type: str, raw: dict[str, Any] | None) -> CardAttributes:
     """Validate ``raw`` metadata against the model that matches ``node_type``.
 
     ``kind`` is injected from ``node_type`` so callers don't have to set
@@ -457,11 +451,7 @@ def parse_card_attrs(node_type: str, raw: dict | None) -> CardAttributes:
 
     A ``raw`` of ``None`` or ``{}`` is fine — every field is optional.
     """
-    cleaned = {
-        k: v
-        for k, v in (raw or {}).items()
-        if k not in _NON_CARD_METADATA_KEYS
-    }
+    cleaned = {k: v for k, v in (raw or {}).items() if k not in _NON_CARD_METADATA_KEYS}
     payload = {**cleaned, "kind": node_type}
     return _CARD_ADAPTER.validate_python(payload)
 

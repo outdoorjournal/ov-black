@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-
 from app.agent.bedrock import (
     AgentRuntimeError,
     Boto3AgentRuntimeClient,
@@ -68,22 +67,16 @@ async def test_mock_client_round_trips_scripted_stream() -> None:
 
     assert received == script
     # The mock records what it was called with so assertions can inspect it.
-    assert client.calls == [
-        {"agentcore_session_id": "s-1", "payload": {"prompt": "hello"}}
-    ]
+    assert client.calls == [{"agentcore_session_id": "s-1", "payload": {"prompt": "hello"}}]
 
 
 async def test_mock_client_records_multiple_calls() -> None:
     """Multiple ``invoke_stream`` calls append to the ``calls`` log."""
     client = MockAgentRuntimeClient([{"type": "done"}])
 
-    async for _ in client.invoke_stream(
-        agentcore_session_id="s-1", payload={"t": 1}
-    ):
+    async for _ in client.invoke_stream(agentcore_session_id="s-1", payload={"t": 1}):
         pass
-    async for _ in client.invoke_stream(
-        agentcore_session_id="s-2", payload={"t": 2}
-    ):
+    async for _ in client.invoke_stream(agentcore_session_id="s-2", payload={"t": 2}):
         pass
 
     assert [call["agentcore_session_id"] for call in client.calls] == ["s-1", "s-2"]
@@ -105,24 +98,16 @@ class TestParseSseLine:
         assert _parse_sse_line(b"") is None
         assert _parse_sse_line(b"data:") is None
 
-    def test_skips_malformed_json_and_warns(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_skips_malformed_json_and_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="ov_black.agent.bedrock")
         assert _parse_sse_line(b"data: {not json") is None
-        assert any(
-            rec.message == "agent.runtime.malformed_sse" for rec in caplog.records
-        )
+        assert any(rec.message == "agent.runtime.malformed_sse" for rec in caplog.records)
 
-    def test_skips_non_dict_json_and_warns(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_skips_non_dict_json_and_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="ov_black.agent.bedrock")
         # Parsable as JSON, but top-level is a list — we only trust dicts.
         assert _parse_sse_line(b'data: ["not", "a", "dict"]') is None
-        assert any(
-            rec.message == "agent.runtime.malformed_sse" for rec in caplog.records
-        )
+        assert any(rec.message == "agent.runtime.malformed_sse" for rec in caplog.records)
 
 
 async def test_agent_runtime_error_carries_reason() -> None:

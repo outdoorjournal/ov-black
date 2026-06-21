@@ -18,16 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
-from app.models import Itinerary, Node, NodeHistory, NodeStatus, NodeType
-from app.services import agent as agent_service
-from app.services import itineraries as itineraries_service
+from app.models import Itinerary, Node, NodeHistory, NodeType
 from app.services.agent import (
     _agent_write_queue,
     _persist_proposed_card,
@@ -42,6 +33,12 @@ from app.services.itineraries import (
     create_itinerary,
     release_lock,
     update_node,
+)
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 if TYPE_CHECKING:
@@ -119,9 +116,7 @@ async def _cleanup(itinerary_id: uuid.UUID, user_ids: list[uuid.UUID]) -> None:
                 {"i": itinerary_id},
             )
             for uid in user_ids:
-                await conn.execute(
-                    text("delete from auth.users where id = :i"), {"i": uid}
-                )
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": uid})
     finally:
         await engine.dispose()
 
@@ -131,9 +126,7 @@ def _advisor(user_id: uuid.UUID) -> ActorContext:
 
 
 def _agent(session_id: uuid.UUID) -> ActorContext:
-    return ActorContext(
-        user_id=None, kind=ActorKind.AGENT, actor_id=str(session_id)
-    )
+    return ActorContext(user_id=None, kind=ActorKind.AGENT, actor_id=str(session_id))
 
 
 def _system() -> ActorContext:
@@ -145,9 +138,7 @@ def _system() -> ActorContext:
 
 @integration
 @pytest.mark.asyncio
-async def test_agent_write_queues_under_lock_and_drains_on_release(
-    engine_factory, caplog
-) -> None:
+async def test_agent_write_queues_under_lock_and_drains_on_release(engine_factory, caplog) -> None:
     engine, maker = engine_factory
 
     advisor_id = await _seed_user(maker, uuid.uuid4())
@@ -206,9 +197,7 @@ async def test_agent_write_queues_under_lock_and_drains_on_release(
                 )
 
         with caplog.at_level("INFO", logger="ov_black.agent.service"):
-            agent_out, advisor_out = await asyncio.gather(
-                _agent_call(), _advisor_update()
-            )
+            agent_out, advisor_out = await asyncio.gather(_agent_call(), _advisor_update())
 
         # Agent persist returned None (queued, not written).
         assert agent_out is None
@@ -222,16 +211,13 @@ async def test_agent_write_queues_under_lock_and_drains_on_release(
         assert queued.session_id == session_id
         # Log line fired with the expected event name.
         assert any(
-            record.getMessage() == "itinerary.agent_write_queued"
-            for record in caplog.records
+            record.getMessage() == "itinerary.agent_write_queued" for record in caplog.records
         )
         caplog.clear()
 
         # Advisor releases the lock and drains the queue.
         async with maker() as rel_sess:
-            released = await release_lock(
-                rel_sess, _advisor(advisor_id), itinerary_id=itinerary_id
-            )
+            released = await release_lock(rel_sess, _advisor(advisor_id), itinerary_id=itinerary_id)
         assert isinstance(released, Itinerary)
         assert released.locked_by is None
 
@@ -240,28 +226,31 @@ async def test_agent_write_queues_under_lock_and_drains_on_release(
         assert replayed_count == 1
         assert queue_depth(itinerary_id) == 0
         assert any(
-            record.getMessage() == "itinerary.agent_write_replayed"
-            for record in caplog.records
+            record.getMessage() == "itinerary.agent_write_replayed" for record in caplog.records
         )
 
         # The replayed node exists and carries AGENT provenance.
         async with maker() as verify:
             node_rows = (
-                await verify.execute(
-                    select(Node).where(Node.itinerary_id == itinerary_id)
-                )
-            ).scalars().all()
+                (await verify.execute(select(Node).where(Node.itinerary_id == itinerary_id)))
+                .scalars()
+                .all()
+            )
             titles = {n.title for n in node_rows}
             assert "ov-villa" in titles  # replayed agent node
             assert "swapped hotel" in titles  # advisor update
 
             history_rows = (
-                await verify.execute(
-                    select(NodeHistory)
-                    .where(NodeHistory.itinerary_id == itinerary_id)
-                    .order_by(NodeHistory.occurred_at)
+                (
+                    await verify.execute(
+                        select(NodeHistory)
+                        .where(NodeHistory.itinerary_id == itinerary_id)
+                        .order_by(NodeHistory.occurred_at)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             actor_kinds = [row.actor_kind for row in history_rows]
             assert "advisor" in actor_kinds  # advisor's update row
             assert "agent" in actor_kinds  # replayed agent insert row

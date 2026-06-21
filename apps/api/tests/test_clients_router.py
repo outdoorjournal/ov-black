@@ -18,13 +18,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
@@ -36,6 +33,8 @@ from app.services.clients import (
     ClientCreateOutcome,
     ClientCreateResult,
 )
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -59,7 +58,7 @@ class _ExecResult:
     def all(self) -> list[Any]:
         return list(self.rows)
 
-    def scalars(self) -> "_ExecResult":
+    def scalars(self) -> _ExecResult:
         # The router's invite reads consume .scalars() and may chain
         # .all() (load_agent_context). Return self so both .all() and
         # iteration over rows work.
@@ -90,15 +89,9 @@ class FakeSession:
 
         # ── LIST /clients — JOIN with dossiers only (invites fetched separately) ──
         if "from clients" in sql and "join" in sql:
-            advisor_id = next(
-                (v for v in params.values() if isinstance(v, uuid.UUID)), None
-            )
+            advisor_id = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             rows: list[tuple[Client, uuid.UUID | None]] = []
-            owned = [
-                c
-                for c in self.clients_by_id.values()
-                if c.owner_id == advisor_id
-            ]
+            owned = [c for c in self.clients_by_id.values() if c.owner_id == advisor_id]
             owned.sort(key=lambda c: c.created_at, reverse=True)
             for client in owned:
                 dossier = self.dossiers_by_client.get(client.id)
@@ -123,9 +116,7 @@ class FakeSession:
 
         # ── Dossier lookup by client_id (for the GET-by-id flow) ──
         if "from dossiers" in sql:
-            client_id = next(
-                (v for v in params.values() if isinstance(v, uuid.UUID)), None
-            )
+            client_id = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             dossier = self.dossiers_by_client.get(client_id)
             return _ExecResult([dossier] if dossier is not None else [])
 
@@ -147,9 +138,7 @@ class FakeSession:
                 (v for v in params.values() if isinstance(v, str) and "@" in v),
                 None,
             )
-            created_by = next(
-                (v for v in params.values() if isinstance(v, uuid.UUID)), None
-            )
+            created_by = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             matches = [
                 i
                 for i in self.invites
@@ -169,11 +158,11 @@ class FakeSession:
 
 
 @pytest.fixture()
-def fake_session() -> "Iterator[FakeSession]":
+def fake_session() -> Iterator[FakeSession]:
     """Override ``get_session`` with a FakeSession for the test."""
     fake = FakeSession()
 
-    async def _dep() -> "Iterator[FakeSession]":
+    async def _dep() -> Iterator[FakeSession]:
         yield fake
 
     fastapi_app.dependency_overrides[get_session] = _dep
@@ -190,7 +179,7 @@ def advisor_sub() -> uuid.UUID:
 
 @pytest.fixture()
 def auth_headers(
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
     advisor_sub: uuid.UUID,
 ) -> dict[str, str]:
     """Mint a valid JWT so the middleware lets the request through.
@@ -203,7 +192,7 @@ def auth_headers(
 
 
 @pytest.fixture()
-def override_require_advisor(advisor_sub: uuid.UUID) -> "Iterator[uuid.UUID]":
+def override_require_advisor(advisor_sub: uuid.UUID) -> Iterator[uuid.UUID]:
     """Install ``require_advisor`` override that returns an advisor principal."""
 
     async def _dep() -> AuthenticatedUser:
@@ -222,7 +211,7 @@ def override_require_advisor(advisor_sub: uuid.UUID) -> "Iterator[uuid.UUID]":
 
 
 @pytest.fixture()
-def override_require_advisor_rejects_client() -> "Iterator[None]":
+def override_require_advisor_rejects_client() -> Iterator[None]:
     """Install ``require_advisor`` override that 403s like a non-advisor JWT."""
 
     async def _dep() -> AuthenticatedUser:
@@ -251,18 +240,14 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         payload: Any,
         settings: Any = None,
     ) -> ClientCreateResult:
-        state["calls"].append(
-            {"advisor_id": advisor_id, "payload": payload}
-        )
+        state["calls"].append({"advisor_id": advisor_id, "payload": payload})
         outcome = state["return_outcome"]
         client_id = state["return_client_id"] or (
             uuid.uuid4() if outcome is ClientCreateOutcome.OK else None
         )
         return ClientCreateResult(outcome=outcome, client_id=client_id)
 
-    monkeypatch.setattr(
-        clients_router_module, "create_client_with_dossier", _fake
-    )
+    monkeypatch.setattr(clients_router_module, "create_client_with_dossier", _fake)
     return state
 
 
@@ -296,7 +281,7 @@ def _client_row(
         email=email,
     )
     row.id = client_id or uuid.uuid4()
-    row.created_at = created_at or datetime.now(timezone.utc)
+    row.created_at = created_at or datetime.now(UTC)
     row.updated_at = row.created_at
     row.auth_user_id = None
     return row
@@ -312,7 +297,7 @@ def _dossier_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> Dossier:
         estimated_net_worth_usd=None,
     )
     dossier.id = uuid.uuid4()
-    dossier.created_at = datetime.now(timezone.utc)
+    dossier.created_at = datetime.now(UTC)
     dossier.updated_at = dossier.created_at
     return dossier
 
@@ -332,13 +317,13 @@ def _invite_for(
         email=email,
         created_by=created_by,
     )
-    inv.created_at = created_at or datetime.now(timezone.utc)
+    inv.created_at = created_at or datetime.now(UTC)
     if consumed:
-        inv.consumed_at = datetime.now(timezone.utc)
+        inv.consumed_at = datetime.now(UTC)
     if cancelled:
-        inv.cancelled_at = datetime.now(timezone.utc)
+        inv.cancelled_at = datetime.now(UTC)
     if superseded:
-        inv.superseded_at = datetime.now(timezone.utc)
+        inv.superseded_at = datetime.now(UTC)
     return inv
 
 
@@ -444,19 +429,19 @@ def test_get_clients_returns_only_own_clients(
         owner_id=advisor_a,
         email="a@example.com",
         full_name="Alice A",
-        created_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 1, tzinfo=UTC),
     )
     b_client = _client_row(
         owner_id=advisor_b,
         email="b@example.com",
         full_name="Bob B",
-        created_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 2, tzinfo=UTC),
     )
     a_client_2 = _client_row(
         owner_id=advisor_a,
         email="c@example.com",
         full_name="Carol A",
-        created_at=datetime(2026, 4, 3, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 3, tzinfo=UTC),
     )
 
     fake_session.clients_by_id[a_client.id] = a_client
@@ -465,9 +450,7 @@ def test_get_clients_returns_only_own_clients(
 
     # advisor_a has a doll for a_client only, and a consumed invite for a_client
     fake_session.dossiers_by_client[a_client.id] = _dossier_for(a_client.id, advisor_a)
-    fake_session.invites.append(
-        _invite_for(a_client.email, advisor_a, consumed=True)
-    )
+    fake_session.invites.append(_invite_for(a_client.email, advisor_a, consumed=True))
     fake_session.invites.append(_invite_for(a_client_2.email, advisor_a))
 
     resp = client.get("/clients", headers=auth_headers)

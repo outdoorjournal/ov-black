@@ -16,9 +16,6 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import TypeAdapter
-
 from app.inventory.registry import (
     InventoryCtx,
     InventoryProvider,
@@ -34,6 +31,8 @@ from app.inventory.schemas import (
 )
 from app.main import app as fastapi_app
 from app.routers.inventory import get_inventory_registry
+from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -157,7 +156,7 @@ def override_registry(fake_registry: InventoryProviderRegistry):
 
 
 @pytest.fixture()
-def auth_headers(make_token: "Callable[..., str]") -> dict[str, str]:
+def auth_headers(make_token: Callable[..., str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(sub=str(uuid.uuid4()))}"}
 
 
@@ -211,9 +210,7 @@ def test_search_source_ov_returns_only_ov_items(
     override_registry: InventoryProviderRegistry,
     auth_headers: dict[str, str],
 ) -> None:
-    resp = client.get(
-        "/search-inventory?source=ov&keyword=como", headers=auth_headers
-    )
+    resp = client.get("/search-inventory?source=ov&keyword=como", headers=auth_headers)
     assert resp.status_code == 200
     items = resp.json()["items"]
     assert items and all(i["source"] == "ov" for i in items)
@@ -291,9 +288,7 @@ def test_search_oversized_limit_is_capped_server_side(
     auth_headers: dict[str, str],
 ) -> None:
     # Load-profile protection: the 10x breakpoint is bounded at 50.
-    resp = client.get(
-        "/search-inventory?source=ov&limit=1000", headers=auth_headers
-    )
+    resp = client.get("/search-inventory?source=ov&limit=1000", headers=auth_headers)
     assert resp.status_code == 200
     provider = override_registry.get("ov")
     assert isinstance(provider, FakeOVProvider)
@@ -305,9 +300,7 @@ def test_search_small_limit_is_passed_through(
     override_registry: InventoryProviderRegistry,
     auth_headers: dict[str, str],
 ) -> None:
-    resp = client.get(
-        "/search-inventory?source=ov&limit=5", headers=auth_headers
-    )
+    resp = client.get("/search-inventory?source=ov&limit=5", headers=auth_headers)
     assert resp.status_code == 200
     provider = override_registry.get("ov")
     assert isinstance(provider, FakeOVProvider)
@@ -320,9 +313,7 @@ def test_search_zero_limit_rejected_by_validation(
     auth_headers: dict[str, str],
 ) -> None:
     # ge=1 on the Query means ``limit=0`` is a 422, not a silent no-op.
-    resp = client.get(
-        "/search-inventory?source=ov&limit=0", headers=auth_headers
-    )
+    resp = client.get("/search-inventory?source=ov&limit=0", headers=auth_headers)
     assert resp.status_code == 422
 
 
@@ -425,7 +416,15 @@ def test_search_omits_unset_hotel_params_from_filters(
     provider = override_registry.get("ov")
     assert isinstance(provider, FakeOVProvider)
     filters = provider.search_calls[-1]["filters"]
-    for key in ("region_id", "latitude", "longitude", "checkin", "checkout", "residency", "currency"):
+    for key in (
+        "region_id",
+        "latitude",
+        "longitude",
+        "checkin",
+        "checkout",
+        "residency",
+        "currency",
+    ):
         assert key not in filters
 
 
@@ -473,7 +472,7 @@ def test_search_omits_unset_places_params_from_filters(
 def test_search_forwards_actor_context_from_user(
     client: TestClient,
     override_registry: InventoryProviderRegistry,
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
 ) -> None:
     sub = str(uuid.uuid4())
     headers = {"Authorization": f"Bearer {make_token(sub=sub)}"}

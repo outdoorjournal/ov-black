@@ -14,13 +14,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
@@ -37,6 +34,8 @@ from app.services.clients import (
     reissue_client_invite,
 )
 from app.services.supabase_admin import MagicLinkIssued, SupabaseAdminError
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -100,9 +99,7 @@ class FakeServiceSession:
 
     def _handle_select(self, sql: str, params: dict[str, Any]) -> _ExecResult:
         if "from clients" in sql:
-            wanted_id = next(
-                (v for v in params.values() if isinstance(v, uuid.UUID)), None
-            )
+            wanted_id = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             owners = [v for v in params.values() if isinstance(v, uuid.UUID)]
             owner_id = owners[1] if len(owners) > 1 else None
             for c in self.clients:
@@ -115,9 +112,7 @@ class FakeServiceSession:
                 (v for v in params.values() if isinstance(v, str) and "@" in v),
                 None,
             )
-            created_by = next(
-                (v for v in params.values() if isinstance(v, uuid.UUID)), None
-            )
+            created_by = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             consumed_only = "consumed_at is not null" in sql
             matches = [
                 i
@@ -142,13 +137,11 @@ class FakeServiceSession:
             (v for v in params.values() if isinstance(v, str) and "@" in v),
             None,
         )
-        created_by = next(
-            (v for v in params.values() if isinstance(v, uuid.UUID)), None
-        )
+        created_by = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
         # Setting which lifecycle column? Inspect the SET clause.
         is_supersede = "set superseded_at" in sql
         is_cancel = "set cancelled_at" in sql
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         targets = [
             i
@@ -176,7 +169,7 @@ def _client_row(advisor_id: uuid.UUID, *, email: str = "client@example.com") -> 
         email=email,
     )
     row.id = uuid.uuid4()
-    row.created_at = datetime.now(timezone.utc)
+    row.created_at = datetime.now(UTC)
     row.updated_at = row.created_at
     row.auth_user_id = None
     return row
@@ -196,7 +189,7 @@ def _invite_row(
         email=email,
         created_by=advisor_id,
     )
-    inv.created_at = datetime.now(timezone.utc)
+    inv.created_at = datetime.now(UTC)
     if consumed:
         inv.consumed_at = inv.created_at
     if cancelled:
@@ -238,9 +231,7 @@ async def test_reissue_supersedes_active_and_inserts_fresh_row(
     active = _invite_row(email=client.email, advisor_id=advisor_id)
     session = FakeServiceSession(clients=[client], invites=[active])
 
-    result = await reissue_client_invite(
-        session, advisor_id=advisor_id, client_id=client.id
-    )
+    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=client.id)
 
     assert result.outcome is InviteReissueOutcome.OK
     assert result.issued is not None
@@ -265,14 +256,10 @@ async def test_reissue_when_no_active_row_just_inserts_a_fresh_row(
     # Advisor cancelled the prior invite, then changed their mind.
     advisor_id = uuid.uuid4()
     client = _client_row(advisor_id, email="rebound@example.com")
-    cancelled = _invite_row(
-        email=client.email, advisor_id=advisor_id, cancelled=True
-    )
+    cancelled = _invite_row(email=client.email, advisor_id=advisor_id, cancelled=True)
     session = FakeServiceSession(clients=[client], invites=[cancelled])
 
-    result = await reissue_client_invite(
-        session, advisor_id=advisor_id, client_id=client.id
-    )
+    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=client.id)
 
     assert result.outcome is InviteReissueOutcome.OK
     new_invites = [o for o in session.added if isinstance(o, Invite)]
@@ -291,9 +278,7 @@ async def test_reissue_refuses_when_invite_already_consumed(
     consumed = _invite_row(email=client.email, advisor_id=advisor_id, consumed=True)
     session = FakeServiceSession(clients=[client], invites=[consumed])
 
-    result = await reissue_client_invite(
-        session, advisor_id=advisor_id, client_id=client.id
-    )
+    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=client.id)
 
     assert result.outcome is InviteReissueOutcome.ALREADY_REDEEMED
     # No new invite was added, no upstream call.
@@ -309,9 +294,7 @@ async def test_reissue_unknown_client_returns_client_not_found(
     advisor_id = uuid.uuid4()
     session = FakeServiceSession()  # no clients
 
-    result = await reissue_client_invite(
-        session, advisor_id=advisor_id, client_id=uuid.uuid4()
-    )
+    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=uuid.uuid4())
 
     assert result.outcome is InviteReissueOutcome.CLIENT_NOT_FOUND
     assert stub_admin_ok == []
@@ -327,9 +310,7 @@ async def test_reissue_other_advisors_client_returns_client_not_found(
     other = _client_row(other_advisor)
     session = FakeServiceSession(clients=[other])
 
-    result = await reissue_client_invite(
-        session, advisor_id=caller, client_id=other.id
-    )
+    result = await reissue_client_invite(session, advisor_id=caller, client_id=other.id)
 
     assert result.outcome is InviteReissueOutcome.CLIENT_NOT_FOUND
     assert stub_admin_ok == []
@@ -344,9 +325,7 @@ async def test_reissue_upstream_failure_rolls_back(
     active = _invite_row(email=client.email, advisor_id=advisor_id)
     session = FakeServiceSession(clients=[client], invites=[active])
 
-    result = await reissue_client_invite(
-        session, advisor_id=advisor_id, client_id=client.id
-    )
+    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=client.id)
 
     assert result.outcome is InviteReissueOutcome.UPSTREAM_UNAVAILABLE
     assert session.commits == 0
@@ -363,9 +342,7 @@ async def test_cancel_marks_active_invite_cancelled() -> None:
     active = _invite_row(email=client.email, advisor_id=advisor_id)
     session = FakeServiceSession(clients=[client], invites=[active])
 
-    result = await cancel_client_invite(
-        session, advisor_id=advisor_id, client_id=client.id
-    )
+    result = await cancel_client_invite(session, advisor_id=advisor_id, client_id=client.id)
 
     assert result.outcome is InviteCancelOutcome.OK
     assert active.cancelled_at is not None
@@ -379,9 +356,7 @@ async def test_cancel_when_no_active_returns_no_active_invite() -> None:
     consumed = _invite_row(email=client.email, advisor_id=advisor_id, consumed=True)
     session = FakeServiceSession(clients=[client], invites=[consumed])
 
-    result = await cancel_client_invite(
-        session, advisor_id=advisor_id, client_id=client.id
-    )
+    result = await cancel_client_invite(session, advisor_id=advisor_id, client_id=client.id)
 
     assert result.outcome is InviteCancelOutcome.NO_ACTIVE_INVITE
     assert session.commits == 0
@@ -394,9 +369,7 @@ async def test_cancel_other_advisors_client_returns_client_not_found() -> None:
     other = _client_row(other_advisor)
     session = FakeServiceSession(clients=[other])
 
-    result = await cancel_client_invite(
-        session, advisor_id=caller, client_id=other.id
-    )
+    result = await cancel_client_invite(session, advisor_id=caller, client_id=other.id)
 
     assert result.outcome is InviteCancelOutcome.CLIENT_NOT_FOUND
 
@@ -411,14 +384,14 @@ def advisor_sub() -> uuid.UUID:
 
 @pytest.fixture()
 def auth_headers(
-    make_token: "Callable[..., str]",
+    make_token: Callable[..., str],
     advisor_sub: uuid.UUID,
 ) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(sub=str(advisor_sub))}"}
 
 
 @pytest.fixture()
-def override_require_advisor(advisor_sub: uuid.UUID) -> "Iterator[uuid.UUID]":
+def override_require_advisor(advisor_sub: uuid.UUID) -> Iterator[uuid.UUID]:
     async def _dep() -> AuthenticatedUser:
         return AuthenticatedUser(
             sub=str(advisor_sub),
@@ -435,7 +408,7 @@ def override_require_advisor(advisor_sub: uuid.UUID) -> "Iterator[uuid.UUID]":
 
 
 @pytest.fixture()
-def override_require_advisor_rejects() -> "Iterator[None]":
+def override_require_advisor_rejects() -> Iterator[None]:
     async def _dep() -> AuthenticatedUser:
         raise HTTPException(status_code=403, detail="advisor_only")
 
@@ -447,10 +420,10 @@ def override_require_advisor_rejects() -> "Iterator[None]":
 
 
 @pytest.fixture()
-def stub_session() -> "Iterator[None]":
+def stub_session() -> Iterator[None]:
     """Provide a no-op session; the service layer is stubbed below."""
 
-    async def _dep() -> "Iterator[None]":
+    async def _dep() -> Iterator[None]:
         yield None
 
     fastapi_app.dependency_overrides[get_session] = _dep
@@ -508,7 +481,7 @@ def stub_cancel(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @pytest.fixture()
-def http_client() -> "Iterator[TestClient]":
+def http_client() -> Iterator[TestClient]:
     with TestClient(fastapi_app) as c:
         yield c
 
@@ -524,9 +497,7 @@ def test_reissue_route_advisor_returns_204(
     auth_headers: dict[str, str],
 ) -> None:
     client_id = uuid.uuid4()
-    resp = http_client.post(
-        f"/clients/{client_id}/invite/reissue", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{client_id}/invite/reissue", headers=auth_headers)
     assert resp.status_code == 204
     assert resp.content == b""
     assert stub_reissue["calls"] == [
@@ -541,9 +512,7 @@ def test_reissue_route_non_advisor_returns_403(
     stub_reissue: dict[str, Any],
     auth_headers: dict[str, str],
 ) -> None:
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers)
     assert resp.status_code == 403
     assert stub_reissue["calls"] == []
 
@@ -556,9 +525,7 @@ def test_reissue_route_unknown_client_returns_404(
     auth_headers: dict[str, str],
 ) -> None:
     stub_reissue["outcome"] = InviteReissueOutcome.CLIENT_NOT_FOUND
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers)
     assert resp.status_code == 404
     assert resp.json()["detail"] == "client_not_found"
 
@@ -571,9 +538,7 @@ def test_reissue_route_already_redeemed_returns_409(
     auth_headers: dict[str, str],
 ) -> None:
     stub_reissue["outcome"] = InviteReissueOutcome.ALREADY_REDEEMED
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers)
     assert resp.status_code == 409
     assert resp.json()["detail"] == "invite_already_redeemed"
 
@@ -586,9 +551,7 @@ def test_reissue_route_upstream_unavailable_returns_502(
     auth_headers: dict[str, str],
 ) -> None:
     stub_reissue["outcome"] = InviteReissueOutcome.UPSTREAM_UNAVAILABLE
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/reissue", headers=auth_headers)
     assert resp.status_code == 502
     assert resp.json()["detail"] == "auth_upstream_unavailable"
 
@@ -604,9 +567,7 @@ def test_cancel_route_advisor_returns_204(
     auth_headers: dict[str, str],
 ) -> None:
     client_id = uuid.uuid4()
-    resp = http_client.post(
-        f"/clients/{client_id}/invite/cancel", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{client_id}/invite/cancel", headers=auth_headers)
     assert resp.status_code == 204
     assert resp.content == b""
     assert stub_cancel["calls"] == [
@@ -621,9 +582,7 @@ def test_cancel_route_non_advisor_returns_403(
     stub_cancel: dict[str, Any],
     auth_headers: dict[str, str],
 ) -> None:
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/cancel", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/cancel", headers=auth_headers)
     assert resp.status_code == 403
     assert stub_cancel["calls"] == []
 
@@ -636,9 +595,7 @@ def test_cancel_route_no_active_returns_409(
     auth_headers: dict[str, str],
 ) -> None:
     stub_cancel["outcome"] = InviteCancelOutcome.NO_ACTIVE_INVITE
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/cancel", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/cancel", headers=auth_headers)
     assert resp.status_code == 409
     assert resp.json()["detail"] == "no_active_invite"
 
@@ -651,8 +608,6 @@ def test_cancel_route_unknown_client_returns_404(
     auth_headers: dict[str, str],
 ) -> None:
     stub_cancel["outcome"] = InviteCancelOutcome.CLIENT_NOT_FOUND
-    resp = http_client.post(
-        f"/clients/{uuid.uuid4()}/invite/cancel", headers=auth_headers
-    )
+    resp = http_client.post(f"/clients/{uuid.uuid4()}/invite/cancel", headers=auth_headers)
     assert resp.status_code == 404
     assert resp.json()["detail"] == "client_not_found"
