@@ -16,10 +16,14 @@ import {
   createClientContactEndpointClientsClientIdContactsPost,
   createClientEndpointClientsPost,
   createDossierFactEndpointClientsClientIdDossierFactsPost,
+  createEdgeEndpointItineraryItineraryIdEdgesPost,
+  createNodeEndpointItineraryItineraryIdNodesPost,
   createOsintFactEndpointClientsClientIdOsintFactsPost,
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
   deleteClientContactEndpointClientsClientIdContactsContactIdDelete,
+  deleteEdgeEndpointItineraryItineraryIdEdgesEdgeIdDelete,
+  deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
   dismissOnboardingEndpointOnboardingDismissPost,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
@@ -54,6 +58,8 @@ import type {
   ClientDetail,
   ClientSessionSummary,
   ClientSummary,
+  CreateEdgeRequest,
+  CreateNodeRequest,
   DossierFactCreate,
   DossierFactDetail,
   DossierFactUpdate,
@@ -730,6 +736,9 @@ export type UpdateNodePatch = {
   source?: string | null;
   source_id?: string | null;
   status?: NodeStatus | null;
+  // Free-form node metadata patch — e.g. persisting a node's start_time
+  // after a drag-to-reorder. Forwarded as-is to UpdateNodeRequest.metadata.
+  metadata?: { [key: string]: unknown } | null;
 };
 
 export type UpdateNodeArgs = {
@@ -770,6 +779,214 @@ export async function updateNode(
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }
+}
+
+// ── Node / edge mutations (itinerary graph) ────────────────────────────────
+//
+// Direct create/delete of graph nodes and edges, consumed by the advisor
+// draft editor (drag-to-reorder, add/remove cards, wire/unwire sequence
+// edges). All four collapse the SDK's `{data, error, response}` onto the
+// shared discriminated result so the editor can mutate optimistically and
+// revert on `ok: false` without try/catch.
+
+export type CreateNodeDetail =
+  | "itinerary_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type CreateNodeResult =
+  | { ok: true; node: NodeResponse }
+  | { ok: false; status: number; detail: CreateNodeDetail };
+
+export type CreateNodeArgs = {
+  itineraryId: string;
+  body: CreateNodeRequest;
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/nodes. Creates a single
+ * graph node (destination, hotel, experience, …) and returns it. 404 →
+ * `itinerary_not_found`, 422 → `validation_error`.
+ */
+export async function createNode(
+  client: Client,
+  args: CreateNodeArgs,
+): Promise<CreateNodeResult> {
+  try {
+    const { data, error, response } =
+      await createNodeEndpointItineraryItineraryIdNodesPost({
+        client,
+        path: { itinerary_id: args.itineraryId },
+        body: args.body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, node: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseCreateNodeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseCreateNodeDetail(status: number): CreateNodeDetail {
+  if (status === 404) return "itinerary_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type DeleteNodeDetail =
+  | "node_not_found"
+  | "network_error"
+  | "unknown";
+
+export type DeleteNodeResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: DeleteNodeDetail };
+
+export type DeleteNodeArgs = {
+  itineraryId: string;
+  nodeId: string;
+};
+
+/**
+ * Typed wrapper for DELETE /itinerary/{itinerary_id}/nodes/{node_id}. The
+ * endpoint returns 204 with no body, so success is detected via
+ * `error === undefined`. 404 → `node_not_found`.
+ */
+export async function deleteNode(
+  client: Client,
+  args: DeleteNodeArgs,
+): Promise<DeleteNodeResult> {
+  try {
+    const { error, response } =
+      await deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete({
+        client,
+        path: {
+          itinerary_id: args.itineraryId,
+          node_id: args.nodeId,
+        },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseDeleteNodeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseDeleteNodeDetail(status: number): DeleteNodeDetail {
+  if (status === 404) return "node_not_found";
+  return "unknown";
+}
+
+export type CreateEdgeDetail =
+  | "itinerary_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type CreateEdgeResult =
+  | { ok: true; edge: EdgeResponse }
+  | { ok: false; status: number; detail: CreateEdgeDetail };
+
+export type CreateEdgeArgs = {
+  itineraryId: string;
+  body: CreateEdgeRequest;
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/edges. Wires two nodes
+ * with a typed edge (e.g. a sequence edge between consecutive days) and
+ * returns it. 404 → `itinerary_not_found`, 422 → `validation_error`.
+ */
+export async function createEdge(
+  client: Client,
+  args: CreateEdgeArgs,
+): Promise<CreateEdgeResult> {
+  try {
+    const { data, error, response } =
+      await createEdgeEndpointItineraryItineraryIdEdgesPost({
+        client,
+        path: { itinerary_id: args.itineraryId },
+        body: args.body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, edge: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseCreateEdgeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseCreateEdgeDetail(status: number): CreateEdgeDetail {
+  if (status === 404) return "itinerary_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type DeleteEdgeDetail =
+  | "edge_not_found"
+  | "network_error"
+  | "unknown";
+
+export type DeleteEdgeResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: DeleteEdgeDetail };
+
+export type DeleteEdgeArgs = {
+  itineraryId: string;
+  edgeId: string;
+};
+
+/**
+ * Typed wrapper for DELETE /itinerary/{itinerary_id}/edges/{edge_id}. The
+ * endpoint returns 204 with no body, so success is detected via
+ * `error === undefined`. 404 → `edge_not_found`.
+ */
+export async function deleteEdge(
+  client: Client,
+  args: DeleteEdgeArgs,
+): Promise<DeleteEdgeResult> {
+  try {
+    const { error, response } =
+      await deleteEdgeEndpointItineraryItineraryIdEdgesEdgeIdDelete({
+        client,
+        path: {
+          itinerary_id: args.itineraryId,
+          edge_id: args.edgeId,
+        },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseDeleteEdgeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseDeleteEdgeDetail(status: number): DeleteEdgeDetail {
+  if (status === 404) return "edge_not_found";
+  return "unknown";
 }
 
 export type AcquireLockDetail =

@@ -21,14 +21,14 @@
 // colored strip pinned to the right edge of each day column from local-21:00
 // to the column's bottom.
 
-import type { EdgeResponse, NodeResponse } from "../_lib/types";
-import { getHMeta } from "../_lib/types";
+import type { EdgeResponse, NodeResponse } from "../../model/horizontalTypes";
+import { getHMeta } from "../../model/horizontalTypes";
 import {
   MINUTES_PER_DAY,
   formatMinuteOfDay,
   localMinuteOfDay,
   tzDayKey,
-} from "../_lib/time";
+} from "../../model/horizontalTime";
 
 export const TIME_GUTTER = 96;
 // PAD_X reserves space for the first day's duration-bar gutter; otherwise the

@@ -3,7 +3,7 @@ import {
   type NodeResponse,
   NODE_TYPE_ORDER,
   getMeta,
-} from "../_lib/types";
+} from "@/app/_components/itinerary-graph/model/baseTypes";
 
 export const COL_WIDTH = 248;
 export const COL_GAP = 40;

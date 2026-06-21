@@ -7,8 +7,8 @@ import {
   type NodeResponse,
   STATUS_LABELS,
   getMeta,
-} from "../_lib/types";
-import { Card } from "./Card";
+} from "@/app/_components/itinerary-graph/model/baseTypes";
+import { Card } from "@/app/_components/itinerary-graph/shared/ExpandedCard";
 
 interface NodeDetailSheetProps {
   node: NodeResponse | null;

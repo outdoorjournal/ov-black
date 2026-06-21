@@ -5,7 +5,7 @@ import type {
   NodeType,
   VerticalNodeMeta,
   NodeStatus,
-} from "../_lib/types";
+} from "@/app/_components/itinerary-graph/model/types";
 import { endOf, isoTokyo, makeEdge, makeItinerary, makeNode, resetCounters } from "./builders";
 
 const ITINERARY_ID = "it-japan-2024";

@@ -1,6 +1,6 @@
 "use client";
 
-import { MapFlyer, type MapArc, type MapFocus } from "./MapFlyer";
+import { MapFlyer, type MapArc, type MapFocus } from "@/app/_components/itinerary-graph/shared/MapFlyer";
 
 interface AmbientBackdropProps {
   focus: MapFocus | null;

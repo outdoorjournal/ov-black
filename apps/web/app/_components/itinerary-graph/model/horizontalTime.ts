@@ -17,9 +17,9 @@ export {
   startOfDayIso,
   hourOfDay,
   formatDayTile,
-} from "../../itinerary-graph-vertical/_lib/time";
+} from "./time";
 
-import { parseIso } from "../../itinerary-graph-vertical/_lib/time";
+import { parseIso } from "./time";
 
 export const MINUTES_PER_DAY = 24 * 60;
 

@@ -201,7 +201,7 @@ function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
             >
               <Td className="pl-5 sm:pl-7">
                 <Link
-                  href={`/command-center/itineraries/${row.id}`}
+                  href={`/itinerary/${row.id}`}
                   className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
                 >
                   {row.title || "Untitled draft"}

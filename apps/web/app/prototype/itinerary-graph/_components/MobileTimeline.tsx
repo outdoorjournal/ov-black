@@ -3,9 +3,9 @@
 import { AnimatePresence, motion, useAnimate } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
 
-import { type MoodId, type NodeResponse, getMeta } from "../_lib/types";
+import { type MoodId, type NodeResponse, getMeta } from "@/app/_components/itinerary-graph/model/baseTypes";
 import { timelineStore } from "../_state/timelineStore";
-import { Card } from "./Card";
+import { Card } from "@/app/_components/itinerary-graph/shared/ExpandedCard";
 import { GhostCard } from "./GhostCard";
 
 interface MobileTimelineProps {

@@ -3,9 +3,9 @@
 // Shared minute-of-day y axis. Renders the sun-color gradient (single 24h
 // sweep, since every column shares 0..1440), elision bands, and hour labels.
 
-import { sunStopsForDay } from "../../itinerary-graph-vertical/_lib/sun";
-import { formatDuration } from "../_lib/time";
-import type { TimelineSegment, TimeMarker } from "../_state/layout";
+import { sunStopsForDay } from "../../model/sun";
+import { formatDuration } from "../../model/horizontalTime";
+import type { TimelineSegment, TimeMarker } from "./layout";
 
 interface TimeAxisProps {
   segments: TimelineSegment[];

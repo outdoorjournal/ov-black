@@ -7,7 +7,7 @@ import {
   TYPE_TOKENS,
   type CardKind,
   type StatusKind,
-} from "../_lib/tokens";
+} from "@/app/_components/itinerary-graph/shared/cards/tokens";
 
 export function Section({
   index,

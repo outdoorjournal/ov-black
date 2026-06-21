@@ -194,4 +194,4 @@ These live in code so they can be enforced at runtime. The MD points; it does no
 
 - **Visual rules** (color, shadow, status escalation, layout) — change the prototype first, then update the relevant pointer here.
 - **Per-type rules** (which fields appear, signature detail, when to use the type) — update this MD first; then the prototype is the new reference.
-- **Status transitions** — propose the change in `.gsd/DECISIONS.md` before updating this MD; transitions touch the API + agent + UI together.
+- **Status transitions** — propose the change in [doc/decisions.md](../../../../../doc/decisions.md) before updating this MD; transitions touch the API + agent + UI together.

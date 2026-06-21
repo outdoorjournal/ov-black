@@ -34,6 +34,12 @@ const TYPE_LABEL: Record<NodeType, string> = {
   note: "Notes",
   flight: "Flights",
   free_time: "Free time",
+  subway: "Subway",
+  train: "Trains",
+  drive: "Drives",
+  walk: "Walks",
+  boat: "Boats",
+  waiting: "Waiting",
 };
 
 function groupNodesByType(

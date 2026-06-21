@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 
-import { EDGE_TYPE_COLORS, type EdgeResponse } from "../_lib/types";
+import { EDGE_TYPE_COLORS, type EdgeResponse } from "@/app/_components/itinerary-graph/model/baseTypes";
 import { type LayoutResult, bezierPath, edgeAnchor } from "../_state/layout";
 
 interface EdgeLayerProps {

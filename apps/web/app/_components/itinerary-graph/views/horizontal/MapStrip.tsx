@@ -8,7 +8,7 @@
 // vertical prototype uses on its right-side ambient backdrop, just rotated
 // 90°.
 
-import { MapFlyer, type MapArc, type MapFocus } from "../../itinerary-graph-vertical/_components/MapFlyer";
+import { MapFlyer, type MapArc, type MapFocus } from "../../shared/MapFlyer";
 
 interface MapStripProps {
   focus: MapFocus | null;

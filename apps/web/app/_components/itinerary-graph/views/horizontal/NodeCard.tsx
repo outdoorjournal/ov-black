@@ -14,18 +14,18 @@ import {
   CompactBody,
   Sub,
   Title,
-} from "../../cards/_components/CardShell";
+} from "../../shared/cards/CardShell";
 import {
   TYPE_TOKENS,
   type CardKind,
   type StatusKind,
-} from "../../cards/_lib/tokens";
+} from "../../shared/cards/tokens";
 
-import { formatClock, formatDuration } from "../_lib/time";
-import type { HorizontalNodeMeta, NodeResponse } from "../_lib/types";
-import { getHMeta } from "../_lib/types";
+import { formatClock, formatDuration } from "../../model/horizontalTime";
+import type { HorizontalNodeMeta, NodeResponse } from "../../model/horizontalTypes";
+import { getHMeta } from "../../model/horizontalTypes";
 
-interface JapanCardProps {
+interface NodeCardProps {
   node: NodeResponse;
   tzOffsetHours: number;
   onClick?: () => void;
@@ -86,13 +86,13 @@ function statusToKind(status: NodeResponse["status"]): StatusKind {
   }
 }
 
-export function JapanCard({
+export function NodeCard({
   node,
   tzOffsetHours,
   onClick,
   flash,
   compact = false,
-}: JapanCardProps) {
+}: NodeCardProps) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
 

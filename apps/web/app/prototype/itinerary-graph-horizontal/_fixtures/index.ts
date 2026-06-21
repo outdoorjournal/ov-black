@@ -3,8 +3,8 @@
 // rather than a single tall column.
 
 import { buildJapan } from "../../itinerary-graph-vertical/_fixtures/japan";
-import type { HorizontalTimeline } from "../_lib/types";
+import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/horizontalTypes";
 
-export function getHorizontalTimeline(): HorizontalTimeline {
+export function getHorizontalTimeline(): ItineraryTimeline {
   return buildJapan();
 }

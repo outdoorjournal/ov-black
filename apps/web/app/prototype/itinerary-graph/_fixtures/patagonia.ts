@@ -1,4 +1,4 @@
-import type { SampleTimeline } from "../_lib/types";
+import type { SampleTimeline } from "@/app/_components/itinerary-graph/model/baseTypes";
 import { makeEdge, makeItinerary, makeNode, resetCounters } from "./builders";
 
 export function buildPatagonia(): SampleTimeline {

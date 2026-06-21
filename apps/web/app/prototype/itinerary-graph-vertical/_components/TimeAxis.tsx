@@ -1,7 +1,7 @@
 "use client";
 
-import { sunStopsForDay } from "../_lib/sun";
-import { formatDayTile, formatDuration } from "../_lib/time";
+import { sunStopsForDay } from "@/app/_components/itinerary-graph/model/sun";
+import { formatDayTile, formatDuration } from "@/app/_components/itinerary-graph/model/time";
 import type { TimeMarker, TimelineSegment } from "../_state/layout";
 
 interface TimeAxisProps {

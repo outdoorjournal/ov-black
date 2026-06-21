@@ -8,7 +8,7 @@ import {
   TYPE_TOKENS,
   type CardKind,
   type StatusKind,
-} from "../_lib/tokens";
+} from "./tokens";
 
 export type CardWidth = "compact" | "glance" | "zoom";
 

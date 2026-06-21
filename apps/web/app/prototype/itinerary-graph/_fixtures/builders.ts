@@ -6,7 +6,7 @@ import type {
   NodeResponse,
   NodeStatus,
   NodeType,
-} from "../_lib/types";
+} from "@/app/_components/itinerary-graph/model/baseTypes";
 
 // Static pseudo-UUIDs so HMR + SSR stay stable across reloads. Real uuids
 // aren't needed for a fixture; deterministic strings are easier to reason

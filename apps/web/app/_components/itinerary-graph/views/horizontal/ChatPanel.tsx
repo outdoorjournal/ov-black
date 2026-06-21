@@ -7,8 +7,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-import type { NodeResponse } from "../_lib/types";
-import type { ChatMessage } from "../_state/horizontalStore";
+import type { NodeResponse } from "../../model/horizontalTypes";
+import type { ChatMessage } from "../../store/itineraryGraphStore";
 
 interface ChatPanelProps {
   messages: ChatMessage[];

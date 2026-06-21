@@ -11,7 +11,7 @@ import type {
   EdgeResponse,
   NodeResponse,
   SampleTimeline,
-} from "../_lib/types";
+} from "@/app/_components/itinerary-graph/model/baseTypes";
 import type { AgentNode } from "./mockStream";
 
 export interface ChatMessage {

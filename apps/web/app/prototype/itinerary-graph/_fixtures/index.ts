@@ -1,4 +1,4 @@
-import type { SampleTimeline } from "../_lib/types";
+import type { SampleTimeline } from "@/app/_components/itinerary-graph/model/baseTypes";
 import { buildAmalfi } from "./amalfi-nested";
 import { buildPatagonia } from "./patagonia";
 import { buildTokyoKyoto } from "./tokyo-kyoto";

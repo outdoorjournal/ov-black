@@ -5,15 +5,15 @@
 // component so the import graph between prototypes stays clean.
 
 import {
-  horizontalStore,
+  itineraryGraphStore,
   ZOOM_MAX,
   ZOOM_MIN,
   ZOOM_PRESETS,
-} from "../_state/horizontalStore";
+} from "../../store/itineraryGraphStore";
 
 export function ZoomControls() {
-  const pxPerMinute = horizontalStore.useStore((s) => s.pxPerMinute);
-  const storeApi = horizontalStore.useStoreApi();
+  const pxPerMinute = itineraryGraphStore.useStore((s) => s.pxPerMinute);
+  const storeApi = itineraryGraphStore.useStoreApi();
 
   return (
     <div className="flex items-center gap-2">

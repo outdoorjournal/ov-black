@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-import { getMeta, type NodeResponse, type SampleTimeline } from "../_lib/types";
+import { getMeta, type NodeResponse, type SampleTimeline } from "@/app/_components/itinerary-graph/model/baseTypes";
 import { runScenario } from "../_state/mockStream";
 import { timelineStore } from "../_state/timelineStore";
 import { AIDemoController } from "./AIDemoController";

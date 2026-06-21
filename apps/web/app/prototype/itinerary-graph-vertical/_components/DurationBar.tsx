@@ -1,7 +1,7 @@
 "use client";
 
-import type { NodeType } from "../_lib/types";
-import { formatDuration } from "../_lib/time";
+import type { NodeType } from "@/app/_components/itinerary-graph/model/types";
+import { formatDuration } from "@/app/_components/itinerary-graph/model/time";
 
 interface DurationBarProps {
   type: NodeType;
@@ -12,11 +12,17 @@ interface DurationBarProps {
 const TYPE_COLOR: Record<NodeType, string> = {
   flight: "#4d7490",
   transit: "#7a7a7a",
+  subway: "#7a7a7a",
+  train: "#7a7a7a",
+  drive: "#7a7a7a",
+  walk: "#7a7a7a",
+  boat: "#4d7490",
   experience: "#b58a3a",
   destination: "#5f7a4a",
   hotel: "#3a3a3a",
   meal: "#b85a3e",
   free_time: "#a0a0a0",
+  waiting: "#a0a0a0",
   note: "#bbb6ad",
 };
 

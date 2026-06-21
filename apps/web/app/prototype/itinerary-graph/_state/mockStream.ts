@@ -2,7 +2,7 @@
 
 import type { StoreApi } from "zustand";
 
-import type { NodeResponse } from "../_lib/types";
+import type { NodeResponse } from "@/app/_components/itinerary-graph/model/baseTypes";
 import type { TimelineState } from "./timelineStore";
 
 // Local mirror of the AgentNode shape from agentStream.types. Kept here so

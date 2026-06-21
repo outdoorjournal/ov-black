@@ -39,23 +39,24 @@ import {
   useState,
 } from "react";
 
-import { Card } from "../../itinerary-graph/_components/Card";
-import type { HorizontalTimeline, NodeResponse } from "../_lib/types";
-import { getHMeta } from "../_lib/types";
-import { tzDayKey } from "../_lib/time";
+import { Card } from "../../shared/ExpandedCard";
+import type { ItineraryTimeline, NodeResponse } from "../../model/horizontalTypes";
+import { getHMeta } from "../../model/horizontalTypes";
+import { tzDayKey } from "../../model/horizontalTime";
 import {
   computeHorizontalLayout,
   DAY_HEADER_HEIGHT,
   TIME_GUTTER,
   mapYToMinute,
-} from "../_state/layout";
-import { horizontalStore } from "../_state/horizontalStore";
-import { runScenario } from "../_state/mockStream";
+} from "./layout";
+import {
+  itineraryGraphStore,
+  selectEditable,
+} from "../../store/itineraryGraphStore";
 
-import { AIDemoController } from "./AIDemoController";
 import { ChatPanel } from "./ChatPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
-import { JapanCard } from "./JapanCard";
+import { NodeCard } from "./NodeCard";
 import { MapStrip } from "./MapStrip";
 import { MobileDayList } from "./MobileDayList";
 import { ScrollHint } from "./ScrollHint";
@@ -87,27 +88,30 @@ function buildIsoOnDayAtMinute(
 // gutter, so each click lands the viewport on the next day's column.
 const SCROLL_HINT_STEP_PX = 320;
 
-interface HorizontalShellProps {
-  timeline: HorizontalTimeline;
+interface HorizontalViewProps {
+  timeline: ItineraryTimeline;
 }
 
-export function HorizontalShell({ timeline }: HorizontalShellProps) {
-  return (
-    <horizontalStore.Provider initial={{ timeline }}>
-      <Inner timeline={timeline} />
-    </horizontalStore.Provider>
-  );
-}
-
-function Inner({ timeline }: HorizontalShellProps) {
-  const nodes = horizontalStore.useStore((s) => s.nodes);
-  const edges = horizontalStore.useStore((s) => s.edges);
-  const pendingProposals = horizontalStore.useStore((s) => s.pendingProposals);
-  const messages = horizontalStore.useStore((s) => s.messages);
-  const focusedNodeId = horizontalStore.useStore((s) => s.focusedNodeId);
-  const flashNodeId = horizontalStore.useStore((s) => s.flashNodeId);
-  const pxPerMinute = horizontalStore.useStore((s) => s.pxPerMinute);
-  const storeApi = horizontalStore.useStoreApi();
+// The horizontal view is a pure consumer of itineraryGraphStore — the store
+// Provider is owned by <ItineraryGraphView> one level up, so the same store
+// instance is shared with any future view.
+export function HorizontalView({ timeline }: HorizontalViewProps) {
+  const nodes = itineraryGraphStore.useStore((s) => s.nodes);
+  const edges = itineraryGraphStore.useStore((s) => s.edges);
+  const pendingProposals = itineraryGraphStore.useStore((s) => s.pendingProposals);
+  const messages = itineraryGraphStore.useStore((s) => s.messages);
+  const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
+  const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
+  const pxPerMinute = itineraryGraphStore.useStore((s) => s.pxPerMinute);
+  // Staff editing state.
+  const canEdit = itineraryGraphStore.useStore((s) => s.canEdit);
+  const status = itineraryGraphStore.useStore((s) => s.status);
+  const lockStatus = itineraryGraphStore.useStore((s) => s.lockStatus);
+  const lockPending = itineraryGraphStore.useStore((s) => s.lockPending);
+  const releasePending = itineraryGraphStore.useStore((s) => s.releasePending);
+  const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
+  const editable = itineraryGraphStore.useStore(selectEditable);
+  const storeApi = itineraryGraphStore.useStoreApi();
 
   const canvasScrollRef = useRef<HTMLDivElement>(null);
   const axisScrollRef = useRef<HTMLDivElement>(null);
@@ -316,13 +320,13 @@ function Inner({ timeline }: HorizontalShellProps) {
       const targetDayKey = overId.slice(4);
       if (!targetDayKey) return;
       const minute = snapshot.overMinute;
-      if (typeof minute === "number") {
-        storeApi
-          .getState()
-          .moveNodeToDayAndMinute(String(active.id), targetDayKey, minute);
-      } else {
-        storeApi.getState().moveNodeToDay(String(active.id), targetDayKey);
-      }
+      storeApi
+        .getState()
+        .moveNode(
+          String(active.id),
+          targetDayKey,
+          typeof minute === "number" ? minute : null,
+        );
     },
     [drag, storeApi],
   );
@@ -458,19 +462,27 @@ function Inner({ timeline }: HorizontalShellProps) {
     };
   }, [focusedNode, nodes]);
 
-  const handleRunScenario = useCallback(
-    async (scenario: "propose" | "assemble" | "modify") => {
-      await runScenario(scenario, { store: storeApi });
-    },
-    [storeApi],
-  );
+  const handleChatSubmit = useCallback((_text: string) => {
+    /* TODO: wire to agent SSE */
+  }, []);
 
-  const handleChatSubmit = useCallback(
-    (text: string) => {
-      void runScenario("freeform", { store: storeApi }, text);
-    },
-    [storeApi],
-  );
+  // Add a fresh note onto the first day at noon so it lands on the timeline
+  // immediately; the advisor then drags it to a slot and edits it. Gated on
+  // `editable` inside the store action, so it no-ops unless staff hold the lock.
+  const handleAddNode = useCallback(() => {
+    const firstDay = timeline.days[0]?.date;
+    const metadata = firstDay
+      ? {
+          start_time: buildIsoOnDayAtMinute(
+            firstDay,
+            12 * 60,
+            timeline.timezoneOffsetHours,
+          ),
+          duration_minutes: 60,
+        }
+      : {};
+    storeApi.getState().addNode({ type: "note", title: "New note", metadata });
+  }, [storeApi, timeline.days, timeline.timezoneOffsetHours]);
 
   const expandedNode: NodeResponse | null = useMemo(() => {
     if (!expandedId) return null;
@@ -491,20 +503,41 @@ function Inner({ timeline }: HorizontalShellProps) {
       onDragCancel={handleDragCancel}
     >
     <div className="flex h-screen w-screen flex-col bg-paper text-ink">
-      <header className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm">
+      <header
+        data-testid="itinerary-graph-header"
+        data-itinerary-status={status}
+        data-lock-status={lockStatus}
+        data-can-edit={canEdit ? "true" : "false"}
+        className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm"
+      >
         <div>
           <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
-            OV Black · Horizontal prototype
+            {canEdit ? "OV Black · Staff" : "OV Black · Itinerary"}
           </div>
           <div className="font-serif text-lg text-ink">
             {timeline.label}
-            <span className="ml-2 text-[12px] italic text-ink/60">
-              {timeline.subtitle}
-            </span>
+            {timeline.subtitle ? (
+              <span className="ml-2 text-[12px] italic text-ink/60">
+                {timeline.subtitle}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <AIDemoController onRun={handleRunScenario} />
+          {canEdit ? (
+            <StaffToolbar
+              status={status}
+              lockStatus={lockStatus}
+              lockPending={lockPending}
+              releasePending={releasePending}
+              approvePending={approvePending}
+              editable={editable}
+              onEdit={() => storeApi.getState().acquireLock()}
+              onRelease={() => storeApi.getState().releaseLock()}
+              onApprove={() => storeApi.getState().approve()}
+              onAddNode={handleAddNode}
+            />
+          ) : null}
           <ZoomControls />
         </div>
       </header>
@@ -555,6 +588,7 @@ function Inner({ timeline }: HorizontalShellProps) {
                 pendingProposals={pendingProposals}
                 flashNodeId={flashNodeId}
                 focusedNodeId={focusedNodeId}
+                editable={editable}
                 tzOffsetHours={timeline.timezoneOffsetHours}
                 axisWidth={TIME_GUTTER}
                 activeDragId={drag.activeId}
@@ -631,10 +665,23 @@ function Inner({ timeline }: HorizontalShellProps) {
             onClick={() => setExpandedId(null)}
           >
             <motion.div
-              className="w-full max-w-xl"
+              className="flex w-full max-w-xl flex-col gap-3"
               onClick={(e) => e.stopPropagation()}
             >
               <Card node={expandedNode} mood={timeline.mood} />
+              {editable ? (
+                <NodeEditPanel
+                  key={expandedNode.id}
+                  node={expandedNode}
+                  onEditField={(field, value) =>
+                    storeApi.getState().editNodeField(expandedNode.id, field, value)
+                  }
+                  onRemove={() => {
+                    storeApi.getState().removeNode(expandedNode.id);
+                    setExpandedId(null);
+                  }}
+                />
+              ) : null}
             </motion.div>
           </motion.div>
         ) : null}
@@ -646,7 +693,7 @@ function Inner({ timeline }: HorizontalShellProps) {
       <DragOverlay dropAnimation={null}>
         {activeNode ? (
           <div style={{ width: 260, cursor: "grabbing" }}>
-            <JapanCard
+            <NodeCard
               node={activeNode}
               tzOffsetHours={timeline.timezoneOffsetHours}
               compact={
@@ -660,5 +707,140 @@ function Inner({ timeline }: HorizontalShellProps) {
       </DragOverlay>
     </div>
     </DndContext>
+  );
+}
+
+// Staff-only lock/approve toolbar. Mirrors the S08 advisor editor contract
+// (Edit acquires the lock, Release frees it, Approve flips draft→approved)
+// plus an Add control. Craft-feel: no spinners/icons — `disabled` is the only
+// in-flight affordance.
+function StaffToolbar({
+  status,
+  lockStatus,
+  lockPending,
+  releasePending,
+  approvePending,
+  editable,
+  onEdit,
+  onRelease,
+  onApprove,
+  onAddNode,
+}: {
+  status: string;
+  lockStatus: "unlocked" | "locked-by-me" | "locked-by-other";
+  lockPending: boolean;
+  releasePending: boolean;
+  approvePending: boolean;
+  editable: boolean;
+  onEdit: () => void;
+  onRelease: () => void;
+  onApprove: () => void;
+  onAddNode: () => void;
+}) {
+  const lockedBySelf = lockStatus === "locked-by-me";
+  const isApproved = status === "approved";
+  const btn =
+    "h-8 rounded-md border border-ink/20 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-40";
+  return (
+    <div className="flex items-center gap-2" data-testid="itinerary-graph-staff-toolbar">
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={lockPending || lockedBySelf || lockStatus === "locked-by-other" || isApproved}
+        data-testid="itinerary-graph-edit"
+        className={btn}
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        onClick={onRelease}
+        disabled={releasePending || !lockedBySelf}
+        data-testid="itinerary-graph-release"
+        className={btn}
+      >
+        Release
+      </button>
+      <button
+        type="button"
+        onClick={onAddNode}
+        disabled={!editable}
+        data-testid="itinerary-graph-add-node"
+        className={btn}
+      >
+        Add
+      </button>
+      <button
+        type="button"
+        onClick={onApprove}
+        disabled={approvePending || isApproved}
+        data-testid="itinerary-graph-approve"
+        className={btn}
+      >
+        Approve
+      </button>
+      {lockStatus === "locked-by-other" ? (
+        <span
+          data-testid="itinerary-graph-locked-notice"
+          className="font-sans text-[11px] text-ink/60"
+        >
+          Locked by another advisor
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// Inline field editor + remove, shown beneath the expanded card when editable.
+// defaultValue + onBlur mirrors the advisor editor: persists on blur, reverts
+// silently in the store on failure.
+function NodeEditPanel({
+  node,
+  onEditField,
+  onRemove,
+}: {
+  node: NodeResponse;
+  onEditField: (field: "title" | "source_id", value: string) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      data-testid="itinerary-graph-node-edit"
+      data-node-id={node.id}
+      className="rounded-lg border border-ink/15 bg-paper/95 px-4 py-3"
+    >
+      <label className="block">
+        <span className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/50">
+          Title
+        </span>
+        <input
+          type="text"
+          data-testid="itinerary-graph-node-title"
+          defaultValue={node.title}
+          onBlur={(e) => onEditField("title", e.target.value)}
+          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-serif text-lg text-ink focus:border-ink/40 focus:outline-none"
+        />
+      </label>
+      <label className="mt-3 block">
+        <span className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/50">
+          Source id
+        </span>
+        <input
+          type="text"
+          data-testid="itinerary-graph-node-source-id"
+          defaultValue={node.source_id ?? ""}
+          onBlur={(e) => onEditField("source_id", e.target.value)}
+          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-sans text-sm text-ink/80 focus:border-ink/40 focus:outline-none"
+        />
+      </label>
+      <button
+        type="button"
+        onClick={onRemove}
+        data-testid="itinerary-graph-node-remove"
+        className="mt-4 h-8 rounded-md border border-[#8b2a1d]/40 px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-[#8b2a1d] transition-colors hover:bg-[#8b2a1d]/5"
+      >
+        Remove from itinerary
+      </button>
+    </div>
   );
 }

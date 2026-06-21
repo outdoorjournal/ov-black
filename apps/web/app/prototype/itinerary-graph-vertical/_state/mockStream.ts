@@ -2,7 +2,7 @@
 
 import type { StoreApi } from "zustand";
 
-import { getVerticalMeta, type NodeResponse } from "../_lib/types";
+import { getVerticalMeta, type NodeResponse } from "@/app/_components/itinerary-graph/model/types";
 import type { VerticalState } from "./verticalStore";
 
 export interface AgentNode {

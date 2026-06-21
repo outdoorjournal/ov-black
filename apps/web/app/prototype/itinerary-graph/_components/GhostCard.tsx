@@ -2,8 +2,8 @@
 
 import { motion } from "framer-motion";
 
-import type { MoodId, NodeResponse } from "../_lib/types";
-import { Card } from "./Card";
+import type { MoodId, NodeResponse } from "@/app/_components/itinerary-graph/model/baseTypes";
+import { Card } from "@/app/_components/itinerary-graph/shared/ExpandedCard";
 
 interface GhostCardProps {
   node: NodeResponse;

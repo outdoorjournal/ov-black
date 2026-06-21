@@ -258,7 +258,7 @@ function ItineraryRow({ row }: { row: AdvisorItinerarySummary }) {
   return (
     <li>
       <Link
-        href={`/command-center/itineraries/${row.id}`}
+        href={`/itinerary/${row.id}`}
         className="group flex items-center gap-4 px-1 py-3 transition-colors hover:bg-paper/[0.04]"
       >
         <div className="min-w-0 flex-1">

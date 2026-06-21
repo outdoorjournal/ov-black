@@ -45,6 +45,7 @@ from app.services.itineraries import (
     ActorKind,
     ItineraryError,
     ItineraryOutcome,
+    _serialize_starts_at,
     acquire_lock,
     add_edge,
     add_node,
@@ -122,6 +123,12 @@ class NodeResponse(BaseModel):
     source: str | None
     source_id: str | None
     metadata: dict[str, Any]
+    # Scheduled timing, derived from the node's ``starts_at`` tstzrange.
+    # ``starts_at`` is the ISO-8601 lower bound; ``duration_minutes`` is the
+    # whole-minute span (upper - lower), or None when there is no upper bound
+    # (or no range at all). Both are None for nodes without a schedule.
+    starts_at: str | None = None
+    duration_minutes: int | None = None
     depth: int | None = None
 
 
@@ -373,6 +380,8 @@ async def get_itinerary_endpoint(
                 source=n.source,
                 source_id=n.source_id,
                 metadata=n.metadata,
+                starts_at=n.starts_at,
+                duration_minutes=n.duration_minutes,
                 depth=n.depth,
             )
             for n in result.nodes
@@ -418,6 +427,7 @@ async def create_node_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
+    starts_at, duration_minutes = _serialize_starts_at(result.starts_at)
     return NodeResponse(
         id=result.id,
         itinerary_id=result.itinerary_id,
@@ -428,6 +438,8 @@ async def create_node_endpoint(
         source=result.source,
         source_id=result.source_id,
         metadata=result.metadata_,
+        starts_at=starts_at,
+        duration_minutes=duration_minutes,
     )
 
 
@@ -451,6 +463,7 @@ async def update_node_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
+    starts_at, duration_minutes = _serialize_starts_at(result.starts_at)
     return NodeResponse(
         id=result.id,
         itinerary_id=result.itinerary_id,
@@ -461,6 +474,8 @@ async def update_node_endpoint(
         source=result.source,
         source_id=result.source_id,
         metadata=result.metadata_,
+        starts_at=starts_at,
+        duration_minutes=duration_minutes,
     )
 
 
@@ -608,6 +623,8 @@ async def assemble_itinerary_endpoint(
                 source=n.source,
                 source_id=n.source_id,
                 metadata=n.metadata,
+                starts_at=n.starts_at,
+                duration_minutes=n.duration_minutes,
                 depth=n.depth,
             )
             for n in result.nodes

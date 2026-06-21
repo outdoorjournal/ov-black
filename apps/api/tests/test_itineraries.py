@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import socket
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -48,6 +48,7 @@ from app.services.itineraries import (
     ItineraryError,
     ItineraryOutcome,
     _check_provenance,
+    _serialize_starts_at,
     add_edge,
     add_node,
     create_itinerary,
@@ -103,6 +104,53 @@ def test_check_provenance_rejects_id_without_source() -> None:
     err = _check_provenance(None, "trip-123")
     assert err is not None
     assert err.outcome is ItineraryOutcome.INVALID_PROVENANCE
+
+
+# ── Pure unit tests: starts_at serialization ───────────────────────────────
+
+
+class _FakeRange:
+    """Stand-in for the asyncpg Range object the driver returns."""
+
+    def __init__(self, lower: datetime | None, upper: datetime | None) -> None:
+        self.lower = lower
+        self.upper = upper
+
+
+def test_serialize_starts_at_none_yields_none() -> None:
+    assert _serialize_starts_at(None) == (None, None)
+
+
+def test_serialize_starts_at_range_object() -> None:
+    jst = timezone(timedelta(hours=9))
+    lower = datetime(2024, 6, 20, 16, 10, tzinfo=jst)
+    upper = datetime(2024, 6, 20, 16, 40, tzinfo=jst)
+    iso, duration = _serialize_starts_at(_FakeRange(lower, upper))
+    assert iso == "2024-06-20T16:10:00+09:00"
+    assert duration == 30
+
+
+def test_serialize_starts_at_range_without_upper() -> None:
+    jst = timezone(timedelta(hours=9))
+    lower = datetime(2024, 6, 20, 16, 10, tzinfo=jst)
+    iso, duration = _serialize_starts_at(_FakeRange(lower, None))
+    assert iso == "2024-06-20T16:10:00+09:00"
+    assert duration is None
+
+
+def test_serialize_starts_at_string_literal() -> None:
+    """The Postgres text form (in case a raw CTE column surfaces it)."""
+    literal = '["2024-06-20 16:10:00+09","2024-06-20 16:40:00+09")'
+    iso, duration = _serialize_starts_at(literal)
+    assert iso == "2024-06-20T16:10:00+09:00"
+    assert duration == 30
+
+
+def test_serialize_starts_at_string_unbounded_upper() -> None:
+    literal = '["2024-06-20 16:10:00+09",)'
+    iso, duration = _serialize_starts_at(literal)
+    assert iso == "2024-06-20T16:10:00+09:00"
+    assert duration is None
 
 
 # ── Router tests (service stubbed, JWT real) ───────────────────────────────
@@ -304,6 +352,8 @@ def test_get_itinerary_assembles_graph(
                 source="ov",
                 source_id="t-1",
                 metadata={},
+                starts_at="2024-06-20T16:10:00+09:00",
+                duration_minutes=30,
                 depth=0,
             ),
             NodeOut(
@@ -316,6 +366,8 @@ def test_get_itinerary_assembles_graph(
                 source=None,
                 source_id=None,
                 metadata={},
+                starts_at=None,
+                duration_minutes=None,
                 depth=1,
             ),
         ],
@@ -337,6 +389,11 @@ def test_get_itinerary_assembles_graph(
     assert len(body["nodes"]) == 2
     assert body["nodes"][0]["depth"] == 0
     assert body["nodes"][1]["depth"] == 1
+    # Scheduled timing is serialized through onto the response.
+    assert body["nodes"][0]["starts_at"] == "2024-06-20T16:10:00+09:00"
+    assert body["nodes"][0]["duration_minutes"] == 30
+    assert body["nodes"][1]["starts_at"] is None
+    assert body["nodes"][1]["duration_minutes"] is None
     assert len(body["edges"]) == 1
     assert body["edges"][0]["type"] == "alternative_to"
 
@@ -908,6 +965,21 @@ async def test_get_itinerary_graph_assembles_subgraph(
         )
         assert isinstance(edge, Edge)
 
+        # Stamp a JST tstzrange on the root so we can assert the CTE
+        # serializes starts_at + duration_minutes. add_node doesn't take a
+        # range, so set it directly. The child is left without a schedule.
+        jst = timezone(timedelta(hours=9))
+        lower = datetime(2024, 6, 20, 16, 10, tzinfo=jst)
+        upper = datetime(2024, 6, 20, 16, 40, tzinfo=jst)
+        await db_session.execute(
+            text(
+                "update public.nodes set starts_at = "
+                "tstzrange(:lo, :hi, '[)') where id = :id"
+            ),
+            {"lo": lower, "hi": upper, "id": root.id},
+        )
+        await db_session.commit()
+
         graph = await get_itinerary_graph(db_session, itinerary.id)
         assert not isinstance(graph, ItineraryError)
         assert graph.itinerary.id == itinerary.id
@@ -917,6 +989,16 @@ async def test_get_itinerary_graph_assembles_subgraph(
         assert by_id[grandchild.id].depth == 2
         assert len(graph.edges) == 1
         assert graph.edges[0].from_node_id == root.id
+        # starts_at flows through the recursive CTE as an ISO string + an
+        # integer minute span; unscheduled nodes stay (None, None).
+        root_out = by_id[root.id]
+        assert isinstance(root_out.starts_at, str)
+        # tstzrange stores instants in UTC, so the serialized lower bound is the
+        # JST 16:10 normalized to 07:10Z — assert the instant, not the offset.
+        assert datetime.fromisoformat(root_out.starts_at) == lower
+        assert root_out.duration_minutes == 30
+        assert by_id[child.id].starts_at is None
+        assert by_id[child.id].duration_minutes is None
     finally:
         await _cleanup(db_session, itinerary.id)
 

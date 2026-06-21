@@ -1,6 +1,6 @@
 "use client";
 
-import type { SampleTimeline } from "../_lib/types";
+import type { SampleTimeline } from "@/app/_components/itinerary-graph/model/baseTypes";
 
 interface TimelineSwitcherProps {
   samples: SampleTimeline[];

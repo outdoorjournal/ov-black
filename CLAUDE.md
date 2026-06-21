@@ -154,9 +154,9 @@ Root `tsconfig.base.json` enables `strict`, `noUncheckedIndexedAccess`, `exactOp
 
 Three required jobs: `workspaces` (turbo lint/typecheck/build/test), `api-pytest` (uv-managed pytest in `apps/api`), `cdk-synth`. A `deploy-staging` job runs only on pushes to `main`, gated by the `staging` GitHub Environment's manual reviewer approval — the deploy step itself is a placeholder until a later milestone.
 
-## GSD workflow
+## Planning & project docs
 
-This repo is driven by the `gsd-workflow` MCP server (configured in [.mcp.json](.mcp.json)) which persists state under [.gsd/](.gsd/). `.gsd/PROJECT.md`, `.gsd/STATE.md`, `.gsd/REQUIREMENTS.md`, `.gsd/DECISIONS.md` are the canonical sources for milestone/slice/requirement/decision history — consult them before starting work that spans slices. Slice verification scripts (`scripts/verify-sNN.sh`) pair with slice completion.
+Forward-looking scope and plan live in [doc/mvp.md](doc/mvp.md) (the MVP scope contract) and [doc/mvp-plan.md](doc/mvp-plan.md) (the slice-by-slice build plan). Durable history salvaged from the now-retired GSD workflow lives in [doc/decisions.md](doc/decisions.md) (append-only D0xx decision register with rationale), [doc/requirements.md](doc/requirements.md) (R0xx capability/coverage contract), and [doc/knowledge.md](doc/knowledge.md) (non-obvious engineering lessons). Consult these before starting work that spans slices. Slice verification scripts (`scripts/verify-sNN.sh`) pair with slice completion.
 
 ## Tooling preferences
 

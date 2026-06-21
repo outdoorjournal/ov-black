@@ -13,7 +13,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
-import { type MoodId, type NodeResponse } from "../_lib/types";
+import { type MoodId, type NodeResponse } from "@/app/_components/itinerary-graph/model/baseTypes";
 import {
   CARD_GAP,
   CARD_HEIGHT,
@@ -25,7 +25,7 @@ import {
   computeLayout,
 } from "../_state/layout";
 import { timelineStore } from "../_state/timelineStore";
-import { Card } from "./Card";
+import { Card } from "@/app/_components/itinerary-graph/shared/ExpandedCard";
 import { EdgeLayer } from "./EdgeLayer";
 import { GhostCard } from "./GhostCard";
 

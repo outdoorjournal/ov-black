@@ -11,7 +11,7 @@ import {
   type NodeType,
   STATUS_LABELS,
   getMeta,
-} from "../_lib/types";
+} from "../model/baseTypes";
 
 const NOISE_URL =
   "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='1' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05 0 0 0 0 0.04 0 0 0 0 0.03 0 0 0 0.06 0'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>\")";

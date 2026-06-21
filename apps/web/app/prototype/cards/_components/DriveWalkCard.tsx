@@ -1,7 +1,7 @@
 "use client";
 
-import { CardShell, Chip, CompactBody, Sub, Title } from "./CardShell";
-import { TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
+import { CardShell, Chip, CompactBody, Sub, Title } from "@/app/_components/itinerary-graph/shared/cards/CardShell";
+import { TYPE_TOKENS, type StatusKind } from "@/app/_components/itinerary-graph/shared/cards/tokens";
 
 const drive = TYPE_TOKENS.drive;
 const walk = TYPE_TOKENS.walk;

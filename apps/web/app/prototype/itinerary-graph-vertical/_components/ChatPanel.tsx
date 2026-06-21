@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-import type { NodeResponse } from "../_lib/types";
+import type { NodeResponse } from "@/app/_components/itinerary-graph/model/types";
 import type { ChatMessage } from "../_state/verticalStore";
 
 interface ChatPanelProps {

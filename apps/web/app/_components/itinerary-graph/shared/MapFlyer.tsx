@@ -4,7 +4,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type { Marker as MapboxMarker } from "mapbox-gl";
 import { useEffect, useRef, useState } from "react";
 
-import { getMapboxToken, loadMapbox, type MapboxMap } from "../_lib/mapbox";
+import { getMapboxToken, loadMapbox, type MapboxMap } from "../model/mapbox";
 
 export interface MapFocus {
   lat: number;

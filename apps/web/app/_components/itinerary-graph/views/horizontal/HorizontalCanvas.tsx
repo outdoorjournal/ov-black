@@ -3,7 +3,7 @@
 // The drawing surface. Layout (positions + segments) is computed *outside* by
 // the shell so the time axis on the left and the cards in here stay in lock-
 // step. This component owns the per-card draggable wiring + measurements; the
-// DndContext itself lives one level up in HorizontalShell so it can drive the
+// DndContext itself lives one level up in HorizontalView so it can drive the
 // preview layout while a drag is in flight.
 //
 // Internal stack (top → bottom of the DOM):
@@ -15,7 +15,7 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef } from "react";
 
-import { JapanCard } from "./JapanCard";
+import { NodeCard } from "./NodeCard";
 import {
   COL_WIDTH,
   DAY_HEADER_HEIGHT,
@@ -24,9 +24,9 @@ import {
   type DayLayout,
   type HLayoutResult,
   type PositionedHNode,
-} from "../_state/layout";
-import { formatDayTile, localMinuteOfDay } from "../_lib/time";
-import type { NodeResponse, NodeStatus, NodeType } from "../_lib/types";
+} from "./layout";
+import { formatDayTile, localMinuteOfDay } from "../../model/horizontalTime";
+import type { NodeResponse, NodeStatus, NodeType } from "../../model/horizontalTypes";
 
 const LOCKED_STATUSES: ReadonlySet<NodeStatus> = new Set(["approved", "confirmed"]);
 
@@ -56,6 +56,8 @@ interface HorizontalCanvasProps {
   pendingProposals: NodeResponse[];
   flashNodeId: string | null;
   focusedNodeId: string | null;
+  // Staff editing is unlocked — only then are cards draggable to reorder.
+  editable: boolean;
   tzOffsetHours: number;
   axisWidth: number;
   activeDragId: string | null;
@@ -99,6 +101,7 @@ export function HorizontalCanvas({
   pendingProposals,
   flashNodeId,
   focusedNodeId,
+  editable,
   tzOffsetHours,
   axisWidth,
   activeDragId,
@@ -311,6 +314,7 @@ export function HorizontalCanvas({
                   isFocused={isFocused}
                   isActiveDrag={isActive}
                   isLocked={isLockedStatus(p.node.status)}
+                  editable={editable}
                   onHover={(id) => onCardHover(id)}
                   onMeasure={onMeasureCard}
                   onClick={() => onCardClick(p.node.id)}
@@ -343,7 +347,7 @@ export function HorizontalCanvas({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
               >
-                <JapanCard
+                <NodeCard
                   node={p}
                   tzOffsetHours={tzOffsetHours}
                   onClick={() => onCardClick(p.id)}
@@ -427,7 +431,7 @@ function DayRail({
 // The "make room" placeholder shown in the destination day while a drag is
 // in flight. It occupies the same y/height the dragged card will land at,
 // which is what causes subsequent cards in the column to slide down via the
-// shared layout pass — see HorizontalShell for the ghost-node wiring.
+// shared layout pass — see HorizontalView for the ghost-node wiring.
 function GhostSlot({
   p,
   axisWidth,
@@ -473,6 +477,7 @@ function CardWrap({
   isFocused,
   isActiveDrag,
   isLocked,
+  editable,
   onHover,
   onMeasure,
   onClick,
@@ -488,6 +493,7 @@ function CardWrap({
   isFocused: boolean;
   isActiveDrag: boolean;
   isLocked: boolean;
+  editable: boolean;
   onHover: (id: string | null) => void;
   onMeasure: (id: string, h: number) => void;
   onClick: () => void;
@@ -496,12 +502,15 @@ function CardWrap({
   tzOffsetHours: number;
   compact: boolean;
 }) {
+  // Draggable only when staff editing is unlocked AND the node isn't a
+  // locked-status (approved/confirmed) row.
+  const dragDisabled = isLocked || !editable;
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
     id: p.node.id,
-    disabled: isLocked,
+    disabled: dragDisabled,
   });
   // We deliberately don't apply `transform` here — DragOverlay (in
-  // HorizontalShell) renders the floating clone. Letting the source slot
+  // HorizontalView) renders the floating clone. Letting the source slot
   // stay anchored keeps the canvas layout calm and lets the ghost slot in
   // the destination day be the only thing that moves to "make room".
   return (
@@ -530,10 +539,10 @@ function CardWrap({
           {...attributes}
           className="outline-none"
           style={{
-            cursor: isLocked ? "default" : isDragging ? "grabbing" : "grab",
-            touchAction: isLocked ? "auto" : "none",
+            cursor: dragDisabled ? "default" : isDragging ? "grabbing" : "grab",
+            touchAction: dragDisabled ? "auto" : "none",
           }}
-          aria-disabled={isLocked || undefined}
+          aria-disabled={dragDisabled || undefined}
           title={isLocked ? `Locked — status is ${p.node.status}` : undefined}
         >
           {/* Focus chrome — matches the vertical prototype: a soft amber
@@ -556,7 +565,7 @@ function CardWrap({
                 style={{ backgroundColor: "#b88a3e" }}
               />
             ) : null}
-            <JapanCard
+            <NodeCard
               node={p.node}
               tzOffsetHours={tzOffsetHours}
               onClick={onClick}

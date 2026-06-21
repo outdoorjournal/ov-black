@@ -11,8 +11,8 @@ export type {
   NodeStatus,
   NodeType,
   VerticalNodeMeta as HorizontalNodeMeta,
-  VerticalTimeline as HorizontalTimeline,
-} from "../../itinerary-graph-vertical/_lib/types";
+  ItineraryTimeline,
+} from "./types";
 
 export {
   getVerticalMeta as getHMeta,
@@ -20,6 +20,6 @@ export {
   MOOD_ACCENTS,
   NODE_TYPE_ORDER,
   STATUS_LABELS,
-} from "../../itinerary-graph-vertical/_lib/types";
+} from "./types";
 
-export type { CardSnapshot, MoodId } from "../../itinerary-graph-vertical/_lib/types";
+export type { CardSnapshot, MoodId } from "./types";

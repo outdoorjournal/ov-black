@@ -3,9 +3,9 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-import { Card } from "../../itinerary-graph/_components/Card";
+import { Card } from "@/app/_components/itinerary-graph/shared/ExpandedCard";
 import { GhostCard } from "../../itinerary-graph/_components/GhostCard";
-import type { MoodId, NodeResponse } from "../_lib/types";
+import type { MoodId, NodeResponse } from "@/app/_components/itinerary-graph/model/types";
 import type { LayoutResultV, PositionedVNode } from "../_state/layout";
 import {
   CARD_WIDTH,
@@ -15,7 +15,7 @@ import {
   NIGHT_BAR_WIDTH,
   mapMinuteToY,
 } from "../_state/layout";
-import { formatDuration, minutesSince } from "../_lib/time";
+import { formatDuration, minutesSince } from "@/app/_components/itinerary-graph/model/time";
 import { AltCluster } from "./AltCluster";
 import { DurationBar } from "./DurationBar";
 

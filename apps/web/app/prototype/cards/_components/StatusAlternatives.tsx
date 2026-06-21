@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-import { NOISE_BG, TYPE_TOKENS, type StatusKind } from "../_lib/tokens";
+import { NOISE_BG, TYPE_TOKENS, type StatusKind } from "@/app/_components/itinerary-graph/shared/cards/tokens";
 
 const t = TYPE_TOKENS.experience;
 

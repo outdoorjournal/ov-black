@@ -1,23 +1,27 @@
-// Client-facing final itinerary view (S09 T03).
+// Unified itinerary graph route (traveler + staff).
 //
-// This RSC:
-//   1. Gates on a live Supabase user — redirects to / if unauthenticated.
-//   2. SSR-fetches the assembled graph via getItinerary. The S08 API gate
-//      (approved || advisor || owning client) is the source of truth; a
-//      `forbidden` detail here means the viewer is not entitled to the
-//      draft and the page collapses to notFound() — existence is hidden.
-//   3. Hands off to <FinalItineraryView> which is fully server-rendered.
-//      No accessToken / apiBaseUrl pass-through — the final view does not
-//      fetch anything on the client, so no interactive state is exposed.
+// Both the traveler and an advisor land here on the SAME view. The server
+// resolves the viewer's role and decides whether editing is unlocked:
+//   - traveler  → canEdit=false, NO credentials passed to the client (the
+//                 view is read-only; nothing to mutate, no token to leak).
+//   - advisor   → canEdit=true, apiBaseUrl + accessToken passed so the view's
+//                 client-side mutations (lock/approve/edit/add/remove/reorder)
+//                 can call the API. The backend's advisor guards remain the
+//                 real authority — canEdit only governs the UI.
+//
+// The S08 API gate (approved || advisor || owning client) on GET /itinerary
+// is the source of truth for *visibility*; a non-entitled viewer collapses to
+// notFound() so a draft's existence stays hidden.
 
 import { notFound, redirect } from "next/navigation";
 
 import { createApiClient, getItinerary } from "@ov-black/api-client";
 
+import { ItineraryGraphView } from "@/app/_components/itinerary-graph/ItineraryGraphView";
+import { toItineraryTimeline } from "@/app/_components/itinerary-graph/adapter/toItineraryTimeline";
 import { publicEnv } from "@/lib/env";
+import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
-
-import { FinalItineraryView } from "./_components/FinalItineraryView";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +29,7 @@ type PageProps = {
   params: Promise<{ id: string }>;
 };
 
-export default async function FinalItineraryPage({ params }: PageProps) {
+export default async function ItineraryPage({ params }: PageProps) {
   const { id: itineraryId } = await params;
 
   const supabase = await createServerSupabase();
@@ -52,12 +56,23 @@ export default async function FinalItineraryPage({ params }: PageProps) {
     notFound();
   }
 
+  const role = await resolveUserRole(supabase);
+  const canEdit = role === "advisor";
+  const status = result.itinerary.status ?? "draft";
+  const timeline = toItineraryTimeline(
+    result.itinerary,
+    result.nodes,
+    result.edges,
+  );
+
   return (
-    <FinalItineraryView
-      status={result.itinerary.status ?? "draft"}
-      nodes={result.nodes}
-      edges={result.edges}
-      title={result.itinerary.title}
+    <ItineraryGraphView
+      timeline={timeline}
+      itineraryId={itineraryId}
+      status={status}
+      canEdit={canEdit}
+      // Credentials only for staff — travelers never receive a token.
+      {...(canEdit ? { apiBaseUrl, accessToken } : {})}
     />
   );
 }

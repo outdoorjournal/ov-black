@@ -12,7 +12,7 @@ import type {
   EdgeResponse,
   NodeResponse,
   VerticalTimeline,
-} from "../_lib/types";
+} from "@/app/_components/itinerary-graph/model/types";
 import type { AgentNode } from "./mockStream";
 
 export interface ChatMessage {

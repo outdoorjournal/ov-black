@@ -6,8 +6,8 @@
 
 import type { StoreApi } from "zustand";
 
-import { getHMeta, type NodeResponse } from "../_lib/types";
-import type { HorizontalState } from "./horizontalStore";
+import { getHMeta, type NodeResponse } from "@/app/_components/itinerary-graph/model/horizontalTypes";
+import type { ItineraryGraphState } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 
 export interface AgentNode {
   id: string;
@@ -23,7 +23,7 @@ export interface AgentNode {
 export type ScenarioId = "propose" | "assemble" | "modify" | "freeform";
 
 export interface ScenarioContext {
-  store: StoreApi<HorizontalState>;
+  store: StoreApi<ItineraryGraphState>;
   onAssembleSweep?: (nodeIds: string[]) => void;
 }
 

@@ -7,11 +7,11 @@ import type {
   NodeType,
 } from "@ov-black/api-client";
 
-import type { NodeMeta } from "../../itinerary-graph/_lib/types";
+import type { NodeMeta } from "./baseTypes";
 
 export type { EdgeResponse, EdgeType, ItineraryResponse, NodeResponse, NodeStatus, NodeType };
-export { getMeta, MOOD_ACCENTS, NODE_TYPE_ORDER, STATUS_LABELS } from "../../itinerary-graph/_lib/types";
-export type { CardSnapshot, MoodId } from "../../itinerary-graph/_lib/types";
+export { getMeta, MOOD_ACCENTS, NODE_TYPE_ORDER, STATUS_LABELS } from "./baseTypes";
+export type { CardSnapshot, MoodId } from "./baseTypes";
 
 export interface VerticalNodeMeta extends NodeMeta {
   start_time?: string;
@@ -33,11 +33,13 @@ export function getVerticalMeta(node: NodeResponse): VerticalNodeMeta {
   return node.metadata as VerticalNodeMeta;
 }
 
-export interface VerticalTimeline {
+export type VerticalTimeline = ItineraryTimeline;
+
+export interface ItineraryTimeline {
   id: string;
   label: string;
   subtitle: string;
-  mood: import("../../itinerary-graph/_lib/types").MoodId;
+  mood: import("./baseTypes").MoodId;
   timezoneOffsetHours: number;
   windowStart: string;
   windowEnd: string;

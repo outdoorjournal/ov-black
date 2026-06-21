@@ -10,11 +10,11 @@
 import { AnimatePresence, motion, useAnimate } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
 
-import { JapanCard } from "./JapanCard";
-import { formatDayTile } from "../_lib/time";
-import { type NodeResponse } from "../_lib/types";
-import { getHMeta } from "../_lib/types";
-import { horizontalStore } from "../_state/horizontalStore";
+import { NodeCard } from "./NodeCard";
+import { formatDayTile } from "../../model/horizontalTime";
+import { type NodeResponse } from "../../model/horizontalTypes";
+import { getHMeta } from "../../model/horizontalTypes";
+import { itineraryGraphStore } from "../../store/itineraryGraphStore";
 
 interface MobileDayListProps {
   daysMeta: Array<{ date: string; label: string; weather_emoji?: string }>;
@@ -34,9 +34,9 @@ export function MobileDayList({
   tzOffsetHours,
   onCardClick,
 }: MobileDayListProps) {
-  const nodes = horizontalStore.useStore((s) => s.nodes);
-  const pendingProposals = horizontalStore.useStore((s) => s.pendingProposals);
-  const storeApi = horizontalStore.useStoreApi();
+  const nodes = itineraryGraphStore.useStore((s) => s.nodes);
+  const pendingProposals = itineraryGraphStore.useStore((s) => s.pendingProposals);
+  const storeApi = itineraryGraphStore.useStoreApi();
 
   const groups = useMemo<DayGroup[]>(() => {
     const byDay = new Map<string, NodeResponse[]>();
@@ -78,7 +78,7 @@ export function MobileDayList({
   const handleLand = useCallback(
     (date: string) => {
       if (!parked) return;
-      storeApi.getState().moveNodeToDay(parked.id, date);
+      storeApi.getState().moveNode(parked.id, date, null);
       setParked(null);
     },
     [parked, storeApi],
@@ -152,7 +152,7 @@ export function MobileDayList({
               <div className="mb-1 text-center text-[9px] uppercase tracking-[0.22em] text-ink/60">
                 Held · tap a day to drop
               </div>
-              <JapanCard node={parked} tzOffsetHours={tzOffsetHours} />
+              <NodeCard node={parked} tzOffsetHours={tzOffsetHours} />
               <button
                 type="button"
                 onClick={() => setParked(null)}
@@ -213,7 +213,7 @@ function MobileRow({
       transition={{ duration: 0.22 }}
       className="mb-2 touch-pan-x"
     >
-      <JapanCard node={node} tzOffsetHours={tzOffsetHours} onClick={onClick} />
+      <NodeCard node={node} tzOffsetHours={tzOffsetHours} onClick={onClick} />
     </motion.div>
   );
 }

@@ -1,4 +1,5 @@
-import { HorizontalShell } from "./_components/HorizontalShell";
+import { ItineraryGraphView } from "@/app/_components/itinerary-graph/ItineraryGraphView";
+
 import { getHorizontalTimeline } from "./_fixtures";
 
 export const metadata = {
@@ -9,5 +10,16 @@ export const metadata = {
 
 export default function ItineraryGraphHorizontalPrototypePage() {
   const timeline = getHorizontalTimeline();
-  return <HorizontalShell timeline={timeline} />;
+  // Sandbox: canEdit + startLocked so the drag/edit affordances are exercisable
+  // without an API to acquire a real lock against. No credentials → mutations
+  // are local-only (no network).
+  return (
+    <ItineraryGraphView
+      timeline={timeline}
+      itineraryId={timeline.itinerary.id}
+      status="draft"
+      canEdit
+      startLocked
+    />
+  );
 }

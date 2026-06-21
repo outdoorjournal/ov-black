@@ -20,6 +20,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, NamedTuple, TypedDict
 
 from sqlalchemy import delete, func, or_, select, text, update
@@ -85,7 +86,12 @@ class ItineraryError:
 
 
 class NodeOut(NamedTuple):
-    """Flattened node row + CTE ``depth`` for graph assembly responses."""
+    """Flattened node row + CTE ``depth`` for graph assembly responses.
+
+    ``starts_at`` is the ISO-8601 lower bound of the node's ``starts_at``
+    tstzrange; ``duration_minutes`` is the whole-minute span. Both are None
+    when the node has no schedule (or, for duration, no upper bound).
+    """
 
     id: uuid.UUID
     itinerary_id: uuid.UUID
@@ -96,6 +102,8 @@ class NodeOut(NamedTuple):
     source: str | None
     source_id: str | None
     metadata: dict[str, Any]
+    starts_at: str | None
+    duration_minutes: int | None
     depth: int
 
 
@@ -161,6 +169,68 @@ def _snapshot_edge(edge: Edge) -> dict[str, Any]:
         "type": edge.type.value if isinstance(edge.type, EdgeType) else edge.type,
         "metadata": edge.metadata_,
     }
+
+
+def _parse_range_bound(raw: str) -> datetime | None:
+    """Parse one bound out of a Postgres tstzrange text literal.
+
+    asyncpg normally hands back a ``Range`` object, but a raw recursive-CTE
+    column can surface the text form, e.g.
+    ``'["2024-06-20 16:10:00+09","2024-06-20 16:40:00+09")'``. Bounds are
+    space-separated (not ``T``) and may be quoted; an empty bound (unbounded
+    side) yields ``None``.
+    """
+    bound = raw.strip().strip('"')
+    if not bound:
+        return None
+    # Postgres uses a space between date and time; datetime.fromisoformat in
+    # 3.11+ accepts that, but normalise to be safe across the offset forms it
+    # emits (e.g. "+09" with no minutes).
+    iso = bound.replace(" ", "T", 1)
+    try:
+        return datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+
+
+def _serialize_starts_at(value: Any) -> tuple[str | None, int | None]:
+    """(iso_start, duration_minutes) from a tstzrange value, or (None, None).
+
+    Handles three runtime forms defensively:
+
+    - ``None`` → ``(None, None)``.
+    - A Range-like object (asyncpg ``Range``) with ``.lower`` / ``.upper``
+      tz-aware datetimes → ``(lower.isoformat(), round((upper - lower)
+      total minutes))``; ``upper is None`` → ``(lower.isoformat(), None)``.
+    - The Postgres text literal form
+      ``'["2024-06-20 16:10:00+09","2024-06-20 16:40:00+09")'`` (in case a
+      raw CTE column surfaces the string) — parsed via :func:`_parse_range_bound`.
+    """
+    if value is None:
+        return (None, None)
+
+    lower: datetime | None
+    upper: datetime | None
+    if hasattr(value, "lower") and not isinstance(value, str):
+        lower = value.lower
+        upper = value.upper
+    elif isinstance(value, str):
+        inner = value.strip().lstrip("[(").rstrip("])")
+        # Split on the comma that separates the two bounds, respecting that a
+        # quoted timestamp won't itself contain a bare comma.
+        parts = inner.split(",", 1)
+        lower = _parse_range_bound(parts[0]) if parts else None
+        upper = _parse_range_bound(parts[1]) if len(parts) > 1 else None
+    else:
+        return (None, None)
+
+    if lower is None:
+        return (None, None)
+    iso_start = lower.isoformat()
+    if upper is None:
+        return (iso_start, None)
+    duration = round((upper - lower).total_seconds() / 60)
+    return (iso_start, duration)
 
 
 async def _write_node_history(
@@ -323,42 +393,47 @@ async def get_itinerary_graph(
         """
         with recursive subgraph(
             id, itinerary_id, parent_subgraph_id, type, status, title,
-            source, source_id, metadata, depth
+            source, source_id, metadata, starts_at, depth
         ) as (
             select n.id, n.itinerary_id, n.parent_subgraph_id, n.type, n.status,
-                   n.title, n.source, n.source_id, n.metadata, 0
+                   n.title, n.source, n.source_id, n.metadata, n.starts_at, 0
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
             union all
             select c.id, c.itinerary_id, c.parent_subgraph_id, c.type, c.status,
-                   c.title, c.source, c.source_id, c.metadata, s.depth + 1
+                   c.title, c.source, c.source_id, c.metadata, c.starts_at,
+                   s.depth + 1
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
         )
         select id, itinerary_id, parent_subgraph_id, type, status, title,
-               source, source_id, metadata, depth
+               source, source_id, metadata, starts_at, depth
           from subgraph
          order by depth, id
         """
     )
     node_rows = (await session.execute(cte_sql, {"iid": itinerary_id})).all()
-    nodes: list[NodeOut] = [
-        NodeOut(
-            id=row.id,
-            itinerary_id=row.itinerary_id,
-            parent_subgraph_id=row.parent_subgraph_id,
-            type=NodeType(row.type),
-            status=NodeStatus(row.status),
-            title=row.title,
-            source=row.source,
-            source_id=row.source_id,
-            metadata=row.metadata,
-            depth=row.depth,
+    nodes: list[NodeOut] = []
+    for row in node_rows:
+        iso_start, duration_minutes = _serialize_starts_at(row.starts_at)
+        nodes.append(
+            NodeOut(
+                id=row.id,
+                itinerary_id=row.itinerary_id,
+                parent_subgraph_id=row.parent_subgraph_id,
+                type=NodeType(row.type),
+                status=NodeStatus(row.status),
+                title=row.title,
+                source=row.source,
+                source_id=row.source_id,
+                metadata=row.metadata,
+                starts_at=iso_start,
+                duration_minutes=duration_minutes,
+                depth=row.depth,
+            )
         )
-        for row in node_rows
-    ]
 
     edge_rows = (
         await session.execute(

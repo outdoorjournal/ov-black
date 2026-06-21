@@ -6,8 +6,8 @@ import type {
   NodeStatus,
   NodeType,
   VerticalNodeMeta,
-} from "../_lib/types";
-import { addMinutesIso } from "../_lib/time";
+} from "@/app/_components/itinerary-graph/model/types";
+import { addMinutesIso } from "@/app/_components/itinerary-graph/model/time";
 
 let _nodeCounter = 0;
 let _edgeCounter = 0;

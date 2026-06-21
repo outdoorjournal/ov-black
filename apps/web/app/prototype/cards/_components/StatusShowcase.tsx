@@ -1,7 +1,7 @@
 "use client";
 
 import { ExperienceGlance } from "./ExperienceCard";
-import type { StatusKind } from "../_lib/tokens";
+import type { StatusKind } from "@/app/_components/itinerary-graph/shared/cards/tokens";
 
 const ORDER: StatusKind[] = [
   "idea",

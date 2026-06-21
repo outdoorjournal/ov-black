@@ -66,12 +66,18 @@ export interface SampleTimeline {
 export const NODE_TYPE_ORDER: Record<NodeType, number> = {
   flight: 0,
   transit: 1,
-  destination: 2,
-  hotel: 3,
-  experience: 4,
-  meal: 5,
-  free_time: 6,
-  note: 7,
+  subway: 2,
+  train: 3,
+  drive: 4,
+  walk: 5,
+  boat: 6,
+  destination: 7,
+  hotel: 8,
+  experience: 9,
+  meal: 10,
+  free_time: 11,
+  waiting: 12,
+  note: 13,
 };
 
 export const STATUS_LABELS: Record<NodeStatus, string> = {

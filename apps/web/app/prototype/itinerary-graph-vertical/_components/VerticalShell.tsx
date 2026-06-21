@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-import { Card } from "../../itinerary-graph/_components/Card";
-import type { VerticalTimeline, NodeResponse } from "../_lib/types";
-import { getVerticalMeta } from "../_lib/types";
+import { Card } from "@/app/_components/itinerary-graph/shared/ExpandedCard";
+import type { VerticalTimeline, NodeResponse } from "@/app/_components/itinerary-graph/model/types";
+import { getVerticalMeta } from "@/app/_components/itinerary-graph/model/types";
 import { computeVerticalLayout } from "../_state/layout";
 import { runScenario } from "../_state/mockStream";
 import { verticalStore } from "../_state/verticalStore";

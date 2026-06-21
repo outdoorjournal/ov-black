@@ -1,12 +1,12 @@
-import type { EdgeResponse, NodeResponse } from "../_lib/types";
-import { getVerticalMeta } from "../_lib/types";
+import type { EdgeResponse, NodeResponse } from "@/app/_components/itinerary-graph/model/types";
+import { getVerticalMeta } from "@/app/_components/itinerary-graph/model/types";
 import {
   formatClock,
   minutesBetween,
   minutesSince,
   startOfDayIso,
   tzDayKey,
-} from "../_lib/time";
+} from "@/app/_components/itinerary-graph/model/time";
 
 export const CARD_WIDTH = 300;
 export const LANE_WIDTH = 320;
