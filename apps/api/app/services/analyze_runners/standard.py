@@ -23,28 +23,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import FindingSeverity, NodeType
 from app.services.analyze_runners import shallow
 from app.services.analyze_runners.common import (
+    MODE_SPEEDS,
     Finding,
     GraphNode,
     RunOutput,
+    drive_mode_for_distance,
     haversine_km,
+    transit_minutes,
     transit_mode_of,
 )
 
-# (km/h speed cap, buffer minutes per edge). Defaults from the Phase 5 handoff
-# §4.2 — first-cut numbers, no live traffic. `drive` resolves to urban vs
-# intercity by distance (see _resolve_mode).
-_MODE_SPEEDS: dict[str, tuple[float, int]] = {
-    "walk": (5, 0),
-    "subway": (35, 5),
-    "train": (80, 10),
-    "drive": (25, 15),  # urban; intercity handled below
-    "drive_intercity": (70, 15),
-    "boat": (25, 10),
-}
-# Above this haversine distance a `drive` is treated as intercity (higher cap).
-_INTERCITY_KM = 100.0
 # Below this distance two nodes are effectively co-located — skip flux emission
 # to avoid flagging same-venue transitions (their drive_time is still recorded).
+# The mode-speed table + intercity threshold live in `common` so Fill (B6)
+# shares the exact same physical-feasibility model.
 _MIN_FLUX_KM = 0.2
 
 
@@ -53,13 +45,13 @@ def _resolve_mode(cur: GraphNode, distance_km: float) -> str | None:
 
     A transit node names its own mode; a `flight` is governed by schedule (skip
     haversine); everything else defaults to driving, escalated to intercity
-    speed past :data:`_INTERCITY_KM`.
+    speed past the shared intercity threshold.
     """
     if cur.type is NodeType.flight:
         return None
     mode = transit_mode_of(cur) or "drive"
-    if mode == "drive" and distance_km > _INTERCITY_KM:
-        return "drive_intercity"
+    if mode == "drive":
+        return drive_mode_for_distance(distance_km)
     return mode
 
 
@@ -82,8 +74,8 @@ def _flux_findings(
         mode = _resolve_mode(cur, distance_km)
         if mode is None:  # flight — schedule governs, not haversine
             continue
-        speed_kmh, buffer_min = _MODE_SPEEDS[mode]
-        required_min = distance_km / speed_kmh * 60 + buffer_min
+        speed_kmh, _buffer_min = MODE_SPEEDS[mode]
+        required_min = transit_minutes(distance_km, mode)
         available_min = round((cur.starts_lower - prev.starts_upper).total_seconds() / 60)
         # Report the urban/intercity split back as a plain `drive` to callers.
         report_mode = "drive" if mode == "drive_intercity" else mode

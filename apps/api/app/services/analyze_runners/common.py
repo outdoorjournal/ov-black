@@ -203,6 +203,35 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+# ── shared drive-time model (standard runner + Fill) ───────────────────
+# Per-mode (km/h speed cap, buffer minutes per edge). First-cut numbers from
+# the Phase 5 handoff §4.2 — no live traffic. The standard Analyze runner
+# (existing-pair flux) and Fill (B6 candidate envelope) share this ONE table so
+# the analyzer's feasibility verdict and Fill's "what's reachable" can never
+# disagree. `drive` resolves urban→intercity by distance (see below).
+MODE_SPEEDS: dict[str, tuple[float, int]] = {
+    "walk": (5, 0),
+    "subway": (35, 5),
+    "train": (80, 10),
+    "drive": (25, 15),  # urban
+    "drive_intercity": (70, 15),
+    "boat": (25, 10),
+}
+# Above this haversine distance a `drive` escalates to the intercity cap.
+INTERCITY_KM = 100.0
+
+
+def drive_mode_for_distance(distance_km: float) -> str:
+    """`drive` (urban) below :data:`INTERCITY_KM`, `drive_intercity` above."""
+    return "drive_intercity" if distance_km > INTERCITY_KM else "drive"
+
+
+def transit_minutes(distance_km: float, mode: str) -> float:
+    """Estimated minutes for one leg: ``distance / speed cap + per-edge buffer``."""
+    speed_kmh, buffer_min = MODE_SPEEDS[mode]
+    return distance_km / speed_kmh * 60 + buffer_min
+
+
 def _summarize(findings: list[Finding], fuzz_count: int) -> str:
     """A one-line, agent-readable headline for ``analyses.summary``."""
     blocks = sum(1 for f in findings if f.severity is FindingSeverity.block)

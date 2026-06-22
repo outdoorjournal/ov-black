@@ -40,9 +40,12 @@ uv sync --frozen            # install deps from uv.lock
 uv run uvicorn app.main:app --reload   # local dev on :8000
 uv run pytest -q            # full suite
 uv run pytest tests/test_auth.py::test_name -q    # single test
+uv run ruff check .         # lint
+uv run ruff format .        # autoformat (omit to just check: --check)
+uv run mypy                 # strict type-check (app/ only; tests excluded)
 ```
 
-Pytest is configured with `asyncio_mode = "auto"` — async tests don't need a decorator.
+Pytest is configured with `asyncio_mode = "auto"` — async tests don't need a decorator. Ruff (lint + format) and mypy `--strict` are configured under `[tool.ruff]` / `[tool.mypy]` in `pyproject.toml`; both must stay green (CI's `api-lint` job enforces them). Mypy uses the pydantic plugin and type-checks `app/` only.
 
 ### apps/web (Next 15 + React 19)
 
@@ -152,7 +155,7 @@ Root `tsconfig.base.json` enables `strict`, `noUncheckedIndexedAccess`, `exactOp
 
 ## CI (.github/workflows/ci.yml)
 
-Three required jobs: `workspaces` (turbo lint/typecheck/build/test), `api-pytest` (uv-managed pytest in `apps/api`), `cdk-synth`. A `deploy-staging` job runs only on pushes to `main`, gated by the `staging` GitHub Environment's manual reviewer approval — the deploy step itself is a placeholder until a later milestone.
+Four required jobs: `workspaces` (turbo lint/typecheck/build/test), `api-lint` (ruff check + format-check + mypy strict in `apps/api`), `api-pytest` (uv-managed pytest in `apps/api`), `cdk-synth`. A `deploy-staging` job runs only on pushes to `main`, gated by the `staging` GitHub Environment's manual reviewer approval — the deploy step itself is a placeholder until a later milestone.
 
 ## Planning & project docs
 
