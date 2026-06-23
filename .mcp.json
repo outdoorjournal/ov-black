@@ -2,10 +2,17 @@
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"],
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
       "env": {
         "PLAYWRIGHT_HEADLESS": "1"
       }
+    },
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=mvdpfawccgkhlttaqvuy&read_only=true"
     }
   }
 }

@@ -79,7 +79,27 @@ pnpm -C infra/cdk cdk deploy OvBlackApi-staging -c imageTag=<sha>   # needs cred
 
 ## Driving the live app
 
-Two complementary tools exist for exercising real workflows end-to-end (vs. unit/integration tests). Use them when verifying a feature actually works in the running stack — not as a substitute for pytest/vitest, which remain the fast default.
+Three complementary tools exist for exercising real workflows end-to-end (vs. unit/integration tests). Use them when verifying a feature actually works in the running stack — not as a substitute for pytest/vitest, which remain the fast default. **`ovb` (below) is the default for API-level work** — it wraps the JWT minting + every route in one typed CLI.
+
+### `ovb` — operator CLI + e2e harness ([apps/cli](apps/cli/))
+
+A uv-managed Python CLI (package `ovb`) that drives a live/local stack the same way the UI does — view/mutate the itinerary graph, search inventory, run Analyze/Fill, and **chat with the agent as a traveler or staff** (the SSE turn loop). It's a thin layer over a generated SDK ([apps/cli/src/ovb/_generated](apps/cli/src/ovb/_generated/), regenerate with `apps/cli/scripts/generate.sh` after an apps/api schema change) that the pytest e2e suite also uses, so a manual flow and a test are the same scenario. Full docs: [apps/cli/README.md](apps/cli/README.md).
+
+```bash
+cd apps/cli && uv run ovb --help          # never pip; uv-managed like apps/api
+uv run ovb --json clients list            # --json (global) = machine-readable; use it when driving programmatically
+uv run ovb itinerary get <id>             # renders the graph like the UI canvas
+uv run ovb --profile local-traveler chat repl --client-id <id>   # interactive turns
+uv run ovb --profile mock scenario smoke  # AWS-free end-to-end smoke
+```
+
+**Profiles** (AWS-style, selected with `--profile`; defined in a gitignored `.cli` file — run `ovb configure list` / `ovb configure show` to see what's actually present):
+- **`local`** (default) — admin minting via `scripts/mint-jwt.sh` (reads the service-role key from `apps/api/.env`); identity defaults to git `user.email` as advisor.
+- **`local-advisor` / `local-traveler`** — dedicated service users authenticated via the Supabase **password grant** (no service-role key; the traveler is linked to a client so chat-as-traveler works). Created per dev machine — recreate by provisioning two Supabase users with passwords + `auth_method=password` profiles.
+- **`mock`** — targets a deterministic mock-agent API on `:8011` (canned reply, **no LLM/AWS**). Start it: from `apps/api`, `agent_local_url= bedrock_agentcore_runtime_arn= uv run uvicorn app.main:app --port 8011`.
+- **`staging`** — commented template; fill in once F2 staging is deployed.
+
+**Auth model:** "as traveler" vs "as staff" is just the JWT's Supabase role (the API resolves actor_kind from `public.profiles.role`). `auth_method` picks *how* the JWT is obtained — `password` (anon key + a service user's password, no god key — preferred off-box), `admin` (mint-jwt.sh), or a pre-supplied `jwt`. Secrets live only in the gitignored `.cli`. Real chat turns need an agent backend: `local-*` hit `:8000` (needs the local agent on `:8080` + Bedrock creds), `mock` hits `:8011` (deterministic, AWS-free).
 
 ### `scripts/mint-jwt.sh` — Supabase JWT on stdout
 
