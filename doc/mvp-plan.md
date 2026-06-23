@@ -245,7 +245,11 @@ only because the local agent on `:8080` wasn't running (`upstream_unavailable`) 
 environmental, not a regression; they pass/skip against the `:8011` mock agent.
 
 **What remains (resume hooks):** ConciergeChat web vitest (prior entry's hook #3)
-still open; disclosure-rule + mobile (hooks #2/#4) are deferred design calls.
+is now **closed** — `apps/web/tests/itineraryGraph/conciergeChat.test.tsx` (+4)
+covers lazy session-open, the `audience` prop plumbing into `POST /sessions`,
+eager `hydrateHistory` replay with turn→message role mapping, and the
+no-context inert composer (web suite **92 passed**, typecheck + lint clean).
+Disclosure-rule + mobile (hooks #2/#4) remain deferred design calls.
 **Next track is a founder call:** M003 (traveler details + vault) vs M004/G1
 (status gates, which M005's money gate needs) — per §7.
 
