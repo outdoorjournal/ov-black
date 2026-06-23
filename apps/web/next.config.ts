@@ -1,6 +1,14 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Containerized deploy (ECS Fargate behind the shared ALB) ships the
+  // self-contained standalone server (.next/standalone/apps/web/server.js)
+  // instead of `next start`. outputFileTracingRoot pins file-tracing to the
+  // monorepo root so the standalone node_modules + server.js nesting is
+  // deterministic across machines (default would guess from the lockfile).
+  output: "standalone",
+  outputFileTracingRoot: path.join(__dirname, "../../"),
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: true,

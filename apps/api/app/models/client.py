@@ -13,7 +13,7 @@ from app.models import Base
 
 
 class ContactChannel(str, enum.Enum):
-    """Mirrors the public.contact_channel Postgres enum from 0003_clients_voodoo_dolls.sql."""
+    """Mirrors the public.contact_channel Postgres enum from 0003_clients_dossiers.sql."""
 
     email = "email"
     sms = "sms"

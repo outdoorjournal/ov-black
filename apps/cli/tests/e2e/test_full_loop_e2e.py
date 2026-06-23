@@ -39,7 +39,7 @@ async def test_loop_invite_to_approved(advisor: Ovb, harness: Harness) -> None:
         net_worth=400_000_000,
         party_notes="Anniversary trip; she's vegetarian; no early mornings.",
     )
-    await flows.seed_voodoo_doll(
+    await flows.seed_dossier(
         advisor,
         client_id,
         dossier=[("preference", "Hates being rushed; values privacy above all.")],

@@ -9,7 +9,7 @@
 
 ## 0. Baseline — what's already landed
 
-**M001 (S01–S09) shipped the front half of the loop:** invite + magic link, advisor client/Voodoo-Doll
+**M001 (S01–S09) shipped the front half of the loop:** invite + magic link, advisor client/Dossier
 authoring, AgentCore turn loop, client chat with atmospheric morph, mood-board cards from OV inventory,
 draft assembly + advisor approval gate + lock/queue, and the client final-itinerary view.
 

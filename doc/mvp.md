@@ -28,7 +28,7 @@ details + vault, fork/reconcile, and money — and finishes the integrations tha
   │          │   │          │   │         │   │          │   │   RECONCILE   │   │                   │
   └─────────┘   └──────────┘   └─────────┘   └──────────┘   └───────────────┘   └──────────────────┘
   advisor seeds  traveler chats  staff + AI    traveler adds  traveler forks      advisor issues
-  Voodoo Doll,   → profile +     assemble from  party members  with AI; staff      invoice(s) totalling
+  Dossier,   → profile +     assemble from  party members  with AI; staff      invoice(s) totalling
   issues invite, mood-board       OV + Places +  + uploads      diff vs. reality    booked inventory;
   traveler       cards from       Duffel +       passports to   & reconcile;        traveler pays;
   redeems        real inventory   Ratehawk;      the vault      booked/finalized    paid nodes → booked
@@ -46,11 +46,11 @@ node lifecycle and the money gate (see §4).
 For each: **what it means**, **acceptance criteria** (what proves it's done), and **status today**.
 
 ### Pillar 1 — A traveler can be invited
-**Means:** An advisor creates a client, hand-seeds the Voodoo Doll, and issues an invite; the
+**Means:** An advisor creates a client, hand-seeds the Dossier, and issues an invite; the
 traveler redeems an emailed magic link and lands in their chat. No self-serve signup.
 
 **Acceptance**
-- Advisor creates client + Voodoo Doll in Command Center; invite is issued (single-use, lifecycle-tracked).
+- Advisor creates client + Dossier in Command Center; invite is issued (single-use, lifecycle-tracked).
 - Traveler redeems magic link → role-aware redirect into `/chat/[client_id]`.
 - Invite cannot be redeemed twice; unknown code/wrong email collapse to one indistinguishable response.
 
@@ -204,7 +204,7 @@ is a node-by-node diff between the fork and its baseline, gated by Analyze feasi
 Carried from PRD §5 plus refactor-era deferrals:
 
 - WhatsApp / iMessage channels (in-app chat only for MVP). *(R050 deferred.)*
-- Native mobile app, printed magazine, multi-traveler Voodoo Dolls.
+- Native mobile app, printed magazine, multi-traveler Dossiers.
 - Automated supplier booking — **advisors book manually**; the system records confirmations back into the graph.
 - Experience/train **auto-booking** (present options, book manually).
 - Live Analyze "deep" mode external calls (real-time traffic/flight/currency) beyond what Fill needs —
@@ -237,7 +237,7 @@ The MVP is complete when this runs end-to-end in staging against **real Bedrock,
 Places, real Duffel, real Ratehawk, and real Braintree (sandbox)**, with the craft-feel line held
 (R014/R021):
 
-1. Advisor seeds a client + Voodoo Doll and sends an invite. Traveler redeems the magic link.
+1. Advisor seeds a client + Dossier and sends an invite. Traveler redeems the magic link.
 2. Traveler chats; agent opens grounded, proposes real cards, and the profile visibly grows.
 3. Advisor + AI assemble a multi-day itinerary pulling a **flight (Duffel)**, **hotel (Ratehawk)**, an
    **OV experience**, and a **restaurant (Google Places)**; AI Fill closes a gap; advisor approves; the

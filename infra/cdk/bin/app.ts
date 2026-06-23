@@ -9,6 +9,7 @@ const app = new App();
 const config = loadEnvConfig(app);
 const awsEnv = { account: config.account, region: config.region };
 const imageTagContext = app.node.tryGetContext('imageTag') as string | undefined;
+const webImageTagContext = app.node.tryGetContext('webImageTag') as string | undefined;
 
 const secretsStack = new SecretsStack(app, `OvBlackSecrets-${config.envName}`, {
   envName: config.envName,

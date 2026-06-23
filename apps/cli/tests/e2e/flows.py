@@ -111,7 +111,7 @@ def fact_texts(detail: gm.ClientDetail, tier: str) -> list[str]:
     return [str(unwrap_root(getattr(f, "text", ""))) for f in facts_of(detail, tier)]
 
 
-async def seed_voodoo_doll(
+async def seed_dossier(
     advisor: Ovb,
     client_id: str,
     *,
@@ -121,7 +121,7 @@ async def seed_voodoo_doll(
 ) -> None:
     """Hand-seed the three context tiers (Dossier / Profile / OSINT).
 
-    Each entry is ``(kind, text)``. This is the advisor "Voodoo Doll" authoring
+    Each entry is ``(kind, text)``. This is the advisor "Dossier" authoring
     that grounds the agent's first message (Pillar 1 → Pillar 2 hand-off).
     """
     for tier, rows in (("dossier", dossier), ("profile", profile), ("osint", osint)):

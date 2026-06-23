@@ -1,7 +1,7 @@
 """Per-mode system-prompt builders.
 
 Every builder consumes the payload-side ``system`` block (voice preamble
-+ Voodoo Doll context) and appends a mode-specific rubric. The rubric
++ Dossier context) and appends a mode-specific rubric. The rubric
 lives here, not on the API side, because it is the runtime's product
 surface — we iterate the wording without redeploying FastAPI.
 """
@@ -25,7 +25,7 @@ def build_prompt(
     """Assemble the full system prompt for a turn.
 
     ``api_system`` is whatever FastAPI put in ``payload['system']`` —
-    today that is the voice preamble + Voodoo Doll context block. If it
+    today that is the voice preamble + Dossier context block. If it
     ever arrives empty we still emit the hard-coded voice preamble so
     the agent never runs without one.
     """

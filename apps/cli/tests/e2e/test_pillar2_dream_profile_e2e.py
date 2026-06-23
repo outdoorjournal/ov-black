@@ -104,7 +104,7 @@ async def test_agent_never_surfaces_private_context_in_prose(
     # 1. Seed private knowledge the agent must ground on but never reveal verbatim.
     osint_sentinel = "acquired Meridian Robotics for 1.4 billion"
     dossier_sentinel = "estranged from his brother since 2019"
-    await flows.seed_voodoo_doll(
+    await flows.seed_dossier(
         advisor,
         client_id,
         osint=[("press", f"Per the FT, the client {osint_sentinel}.")],

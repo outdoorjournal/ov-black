@@ -44,7 +44,10 @@
         "publicSubnetIds": ["subnet-010f2998bcd5e6bd6", "subnet-0add1b5345a58b1a1"],
         "privateSubnetIds": ["subnet-010f2998bcd5e6bd6", "subnet-0add1b5345a58b1a1"],
         "agentcoreRegion": "us-west-2",
-        "webOrigin": ""
+        "hostedZoneId": "REPLACE_WITH_DEV_OUTDOORVOYAGE_ZONE_ID",
+        "zoneName": "dev.outdoorvoyage.com",
+        "webHost": "black.dev.outdoorvoyage.com",
+        "apiHost": "api.black.dev.outdoorvoyage.com"
       },
       "prod": {
         "account": "",

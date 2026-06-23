@@ -1,0 +1,28 @@
+# Root build context for apps/web/Dockerfile (built with repo root as context).
+# Keep the context small + stable so the pnpm-install layer caches well.
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+**/coverage
+cdk.out
+
+# Other workspaces / non-web source: not needed to build apps/web, and
+# excluding them keeps the context small. (apps/web's only workspace dep is
+# packages/api-client.) infra/cdk/package.json is the exception — it must stay
+# so `pnpm install --frozen-lockfile` sees a complete, lockfile-matching
+# workspace (nested re-include so only the manifest survives).
+apps/api
+apps/agent
+infra/*
+!infra/cdk
+infra/cdk/*
+!infra/cdk/package.json
+
+# VCS + local secrets. **/.env* is critical: a stray apps/web/.env.local in the
+# context would otherwise shadow the NEXT_PUBLIC_* build args at `next build`.
+.git
+.github
+**/.env*
+!**/.env.example
+**/*.log

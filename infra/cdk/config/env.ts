@@ -17,10 +17,9 @@ export interface EnvConfig {
   readonly publicSubnetIds: string[];
   readonly privateSubnetIds: string[];
   /**
-   * Origin of the advisor/client web app (e.g. https://staging.ov.black). Injected
-   * as WEB_ORIGIN so the API builds correct magic-link redirect_to targets and CORS
-   * allow-lists. Empty until the web app's staging origin exists — the API then keeps
-   * its own localhost default and is NOT injected (see api-stack.ts).
+   * Origin of the advisor/client web app (https://<webHost>). Injected as
+   * WEB_ORIGIN so the API builds correct magic-link redirect_to targets and CORS
+   * allow-lists. Derived from webHost in loadEnvConfig unless explicitly overridden.
    */
   readonly webOrigin: string;
   /**
@@ -30,6 +29,12 @@ export interface EnvConfig {
    * the ECS deploy region, and the runtime ARN encodes its own region regardless.
    */
   readonly agentcoreRegion: string;
+  /** Route53 hosted zone for the web + api DNS records (e.g. dev.outdoorvoyage.com). */
+  readonly hostedZoneId: string;
+  readonly zoneName: string;
+  /** Public FQDNs served by the shared ALB. webHost is the apex; apiHost the API host. */
+  readonly webHost: string;
+  readonly apiHost: string;
 }
 
 interface RawEnvConfig {
@@ -41,6 +46,10 @@ interface RawEnvConfig {
   privateSubnetIds?: string[];
   webOrigin?: string;
   agentcoreRegion?: string;
+  hostedZoneId?: string;
+  zoneName?: string;
+  webHost?: string;
+  apiHost?: string;
 }
 
 const DUMMY = {
@@ -50,6 +59,12 @@ const DUMMY = {
   azs: ['us-east-1a', 'us-east-1b'],
   publicSubnets: ['subnet-public-a', 'subnet-public-b'],
   privateSubnets: ['subnet-private-a', 'subnet-private-b'],
+  // Internally consistent placeholders (webHost/apiHost end with zoneName) so
+  // hermetic synth produces a valid cert + record-name derivation without creds.
+  hostedZoneId: 'Z00000000000000000000',
+  zoneName: 'dev.outdoorvoyage.com',
+  webHost: 'black.dev.outdoorvoyage.com',
+  apiHost: 'api.black.dev.outdoorvoyage.com',
 } as const;
 
 export function loadEnvConfig(scope: Construct): EnvConfig {
@@ -82,11 +97,19 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
       ? raw.privateSubnetIds
       : [...DUMMY.privateSubnets];
 
-  // WEB_ORIGIN has no safe dummy — an empty value means "operator hasn't wired the
-  // web app's staging origin yet", and api-stack.ts skips injecting it so the API
-  // keeps its own default rather than booting with WEB_ORIGIN=''.
-  const webOrigin = raw.webOrigin ?? '';
   const agentcoreRegion = raw.agentcoreRegion || 'us-west-2';
+
+  // DNS + public hostnames for the shared ALB. Dummy fallbacks keep `cdk synth`
+  // hermetic; real values come from cdk.json (or `-c` overrides).
+  const hostedZoneId = raw.hostedZoneId || DUMMY.hostedZoneId;
+  const zoneName = raw.zoneName || DUMMY.zoneName;
+  const webHost = raw.webHost || DUMMY.webHost;
+  const apiHost = raw.apiHost || DUMMY.apiHost;
+
+  // WEB_ORIGIN (magic-link redirect_to + CORS allow-list) is the web app's origin.
+  // Derive it from webHost so there is a single source of truth; an explicit
+  // webOrigin in context still wins.
+  const webOrigin = raw.webOrigin || `https://${webHost}`;
 
   return {
     envName,
@@ -98,5 +121,9 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
     privateSubnetIds,
     webOrigin,
     agentcoreRegion,
+    hostedZoneId,
+    zoneName,
+    webHost,
+    apiHost,
   };
 }

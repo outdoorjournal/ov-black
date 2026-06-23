@@ -4,7 +4,7 @@ Lifted from the original R004 rubric in
 [apps/api/app/agent/prompt.py](../../../../api/app/agent/prompt.py).
 Tests over there assert exact wording; the string here is the
 authoritative copy going forward, and the API-side module is being
-shrunk to only assemble the Voodoo Doll context.
+shrunk to only assemble the Dossier context.
 """
 
 from __future__ import annotations

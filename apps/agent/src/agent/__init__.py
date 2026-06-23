@@ -7,7 +7,7 @@ in [apps/api](../../api) via ``bedrock-agentcore:InvokeAgentRuntime``.
 Three modes, one Strands ``Agent`` per turn:
 
 - **onboarding** — first-touch conversation grounded on the seeded
-  Voodoo Doll. No itinerary writes yet.
+  Dossier. No itinerary writes yet.
 - **planning** — client + advisor stitching an itinerary. Tools write
   through FastAPI; tool results translate to SSE frames the UI renders.
 - **qa** — the itinerary is approved; answer questions factually against

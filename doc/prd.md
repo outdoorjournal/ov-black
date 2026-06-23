@@ -22,7 +22,7 @@ An AI-native, invitation-only travel concierge for high-net-worth individuals. O
 
 ## 3. Core Concepts
 
-### 3.1 The "Voodoo Doll" (Client Profile)
+### 3.1 The "Dossier" (Client Profile)
 
 An AI-constructed deep profile of each client, built from:
 
@@ -35,7 +35,7 @@ An AI-constructed deep profile of each client, built from:
   - Genuine passion (art, culture, history, UNESCO sites, adventure, mountains, cuisine, etc.)
 - **Travel history:** Past trips, spend levels, what they loved vs. tolerated
 
-The Voodoo Doll is a living document — it evolves with every interaction and trip.
+The Dossier is a living document — it evolves with every interaction and trip.
 
 We need methods of quickly adding to this profile over time, and using it to inform every recommendation. It’s the secret sauce for personalization at scale.
 
@@ -66,7 +66,7 @@ All recommendations must be validated with:
 2. Arrives at a minimal, elegant landing page — logo + entry point
 3. Selects preferred contact method: Email, WhatsApp, Call, iMessage, Other
 4. Brief intake: who they are, who they travel with, what excites them
-5. System begins building the Voodoo Doll (automated research + intake responses)
+5. System begins building the Dossier (automated research + intake responses)
 
 ### Phase 2: Dreaming — The Mood Board
 
@@ -74,11 +74,11 @@ The client chats with an AI agent to explore what they want. As they talk, the U
 
 **How it works:**
 1. Client starts with anything — a vague idea ("Como + Dolomites"), a bucket-list item, or just a mood ("something adventurous in Asia")
-2. The AI agent engages conversationally, drawing on the Voodoo Doll to suggest things the client might love
+2. The AI agent engages conversationally, drawing on the Dossier to suggest things the client might love
 3. As they chat, the UI dynamically adds **cards** to the mood board: destination photos, activity snapshots, maps, hotel options, notes, editorial links
    - *Example:* Client mentions climbing Mt. Fuji → a card with a stunning Fuji photo, best season info, and a trail overview appears on the board
 4. The agent is **context-aware** — it knows weather, seasonality, and local constraints (e.g., no sailing in Michigan in winter, monsoon season in Southeast Asia, Japan is rainy in June) and steers accordingly
-5. The agent **proactively suggests** experiences based on the Voodoo Doll and the emerging mood board — not just responding, but inspiring
+5. The agent **proactively suggests** experiences based on the Dossier and the emerging mood board — not just responding, but inspiring
 
 **Client controls on the mood board:**
 - **Must Do** — pin a card as non-negotiable for the final itinerary
@@ -92,7 +92,7 @@ The client chats with an AI agent to explore what they want. As they talk, the U
 - Pulls real inventory: hotels (Ratehawk), flights (Duffel), experiences (GetYourGuide, OV public API), trains
 - Cross-references availability, pricing, and editorial validation
 - Flags seasonal risks or logistical conflicts early
-- Feeds the Voodoo Doll with new preference signals from every interaction
+- Feeds the Dossier with new preference signals from every interaction
 
 ### Phase 3: The Build — Strategic Friction
 
@@ -126,7 +126,7 @@ The advisor-facing counterpart to the client experience. Function over aesthetic
 
 **Queue & workload view:**
 - All incoming trip requests in a single dashboard, sortable by status, priority, dates, and advisor assignment
-- Each request shows: client name, Voodoo Doll summary, mood board snapshot, current phase, and assigned AI agent(s)
+- Each request shows: client name, Dossier summary, mood board snapshot, current phase, and assigned AI agent(s)
 - Status pipeline: New → Dreaming → Building → Review → Presented → Booking → Complete
 
 **AI-assisted itinerary assembly:**
@@ -137,11 +137,11 @@ The advisor-facing counterpart to the client experience. Function over aesthetic
 
 **Client interaction from Command Center:**
 - Advisors can send clarifying questions to the client (delivered as drip touchpoints in Phase 3)
-- Advisors can update the Voodoo Doll directly with new insights from conversations
+- Advisors can update the Dossier directly with new insights from conversations
 - All client-facing messages are reviewed/approved by the advisor before sending (or auto-sent within approved templates)
 
-**Voodoo Doll management:**
-- Full editable view of the client's Voodoo Doll from the Command Center
+**Dossier management:**
+- Full editable view of the client's Dossier from the Command Center
 - Advisors annotate with qualitative notes AI can't capture ("she mentioned her anniversary is in October")
 - Change history tracked so the team can see how preferences evolve
 
@@ -173,7 +173,7 @@ The client can chat with the AI agent while reviewing the itinerary. The agent h
 - **"Why" questions** — *"Why do we leave at 8am?"* → Agent: *"In Rome on a Wednesday, the Vatican opens at 8:30 and the line builds to 2+ hours by 9am. Your advisor Evan also noted that your afternoon cooking class in Trastevere starts at 2pm, so this keeps the day from feeling rushed."*
 - **Change requests** — *"Can we push that to 10am?"* → Agent flags the downstream impact (missed Vatican window, tight on the cooking class) and either adjusts the graph or escalates to the advisor if the change cascades.
 - **Notes and preferences** — *"We want to grab espresso near the hotel before we leave"* → Agent adds a note or a new node to the graph for the advisor to see.
-- **Alternative selection** — Where branches exist, the client can ask the agent to help them decide: *"Which restaurant do you recommend for our anniversary dinner?"* → Agent draws on Voodoo Doll + editorial sources to make a personalized recommendation.
+- **Alternative selection** — Where branches exist, the client can ask the agent to help them decide: *"Which restaurant do you recommend for our anniversary dinner?"* → Agent draws on Dossier + editorial sources to make a personalized recommendation.
 
 All client feedback in this phase flows back to the advisor via the Command Center. The advisor decides whether to accept changes directly or follow up.
 
@@ -208,15 +208,15 @@ All confirmations are entered back into the itinerary graph as they succeed. Eac
 | Area | Details |
 |------|---------|
 | **Landing page** | Invitation-only entry, minimal design, contact preference selection |
-| **Voodoo Doll v1** | Automated client research (public info) + structured intake questionnaire |
+| **Dossier v1** | Automated client research (public info) + structured intake questionnaire |
 | **Mood board + chat** | Split-pane UI: AI chat on one side, visual mood board on the other. Cards (photos, maps, notes) appear as client and agent discuss. Cards can be pinned as "Must Do", kept as "Maybe", or discarded. |
-| **Itinerary generation** | AI builds itinerary from client request + Voodoo Doll, validated with real inventory |
+| **Itinerary generation** | AI builds itinerary from client request + Dossier, validated with real inventory |
 | **Hotel search** | Ratehawk API integration for availability and rates |
 | **Flight search** | Duffel API integration for flights |
 | **Itinerary presentation** | Mobile-friendly PDF with images, links, day-by-day plan |
 | **Payment** | Braintree integration — deposit + final payment. Client can view invoices and payment history. |
 | **Advisor team model** | Multi-advisor teams collaborate on a trip via Command Center. Humans in the loop at every stage. |
-| **Command Center v1** | Internal dashboard: request queue, basic timeline UI for arranging itinerary cards, chat/MCP agent interaction, Voodoo Doll editing, client messaging |
+| **Command Center v1** | Internal dashboard: request queue, basic timeline UI for arranging itinerary cards, chat/MCP agent interaction, Dossier editing, client messaging |
 | **Client vault** | Encrypted document upload (passports, visas, etc.) with access controls and expiry tracking |
 | **WhatsApp integration** | Clients can interact via WhatsApp in addition to in-app chat |
 
@@ -224,8 +224,8 @@ All confirmations are entered back into the itinerary graph as they succeed. Eac
 | Area | Details |
 |------|---------|
 | **Native mobile app** | MVP is web-only (responsive); React Native app comes later |
-| **Printed personalized magazine** | Physical mail piece based on Voodoo Doll preferences |
-| **Multi-traveler Voodoo Dolls** | Deep profiles for each member of a group (v1 focuses on primary client) |
+| **Printed personalized magazine** | Physical mail piece based on Dossier preferences |
+| **Multi-traveler Dossiers** | Deep profiles for each member of a group (v1 focuses on primary client) |
 | **Experience booking** | GetYourGuide and other experience APIs (v1 presents options but books manually) |
 | **Train booking** | Present train options but book manually for MVP |
 | **Hotel direct-rate comparison** | Cross-referencing Ratehawk vs. hotel direct websites |
@@ -264,7 +264,7 @@ All confirmations are entered back into the itinerary graph as they succeed. Eac
 | **Seasonal availability** (e.g., August in Italy, event conflicts) | Can't fulfill the itinerary as presented | AI flags high-risk dates; **advisors verify availability directly** before presenting to client |
 | **Trust gap** — AI-generated content feels impersonal | Client doesn't convert | Human advisors are genuinely in the loop — not theater. They review, adjust, and personally approve every itinerary |
 | **AI quality gaps** — agent produces a weak or unrealistic itinerary | Client loses confidence | **Advisors catch and fix before anything reaches the client.** AI does the heavy lifting; humans do QA. Invest in better AI later. |
-| **Scope creep on Voodoo Doll** | Over-invest in research before validating the model | V1: structured intake + basic web research. **Advisors fill gaps manually** from conversation. Deepen automation iteratively |
+| **Scope creep on Dossier** | Over-invest in research before validating the model | V1: structured intake + basic web research. **Advisors fill gaps manually** from conversation. Deepen automation iteratively |
 | **Privacy / OSINT ethics** | Clients uncomfortable with depth of research | Transparent about what info is used; let clients review and correct their profile |
 | **Booking automation complexity** | Multi-supplier orchestration is hard to automate reliably | **MVP: advisors handle bookings manually** using AI-assembled details. Automate supplier-by-supplier as reliability is proven |
 
@@ -287,7 +287,7 @@ All confirmations are entered back into the itinerary graph as they succeed. Eac
 1. **Chat vs. messaging:** Both. MVP ships with in-app chat AND WhatsApp integration. Meet clients where they are.
 2. **Advisor model:** Mix. A team of advisors (OV staff, contracted specialists, local contacts) may collaborate on a single trip. The Command Center supports multi-advisor assignment.
 3. **Invitation mechanism:** Personal invite from the CEO. No self-serve signup. Scale the invite list manually for now.
-4. **Voodoo Doll consent:** Implicit. We use publicly available information without explicit opt-in. Clients can review and correct their profile at any time.
+4. **Dossier consent:** Implicit. We use publicly available information without explicit opt-in. Clients can review and correct their profile at any time.
 5. **Deposit structure:** Deposit of X% at commitment, remainder due Y days before departure. Exact percentages and timing TBD.
 6. **Multi-supplier booking:** Humans handle it. Advisors book manually using the details assembled by AI. The key requirement is that everything gets entered back into the **Itinerary data structure** so it remains the single source of truth.
 
@@ -365,7 +365,7 @@ Itinerary
 - **Transit as first-class nodes:** Getting from A to B is part of the experience, not an afterthought. Transit nodes carry mode, duration, route, cost — and can themselves be bookable and beautiful (scenic train rides, ferry crossings, private transfers).
 - **Progressive detail:** A node starts as just a title and photo ("Lake Como") and accumulates detail over time — specific hotel, room type, check-in time, confirmation number. The data model supports every stage of fidelity.
 - **Parallel paths:** Two people in the group doing different things at the same time? Two nodes at the same time slot, no `follows` edge between them. The graph handles it naturally.
-- **Append-only history:** Every change is versioned. The advisor moved dinner from 7pm to 8pm? Logged. The client removed a museum visit? Logged. This feeds the Voodoo Doll and protects against disputes.
+- **Append-only history:** Every change is versioned. The advisor moved dinner from 7pm to 8pm? Logged. The client removed a museum visit? Logged. This feeds the Dossier and protects against disputes.
 
 ### Why this matters
 

@@ -4,7 +4,7 @@ Imagine building an AI-native travel agency for wealthy individuals that is excl
 
 Our challenges in the back office are all about scalability and automation, while our challenges in the front office are all about building trust and providing a high-end experience that matches the expectations of our clientele.
 
-We want to use AI at every step of the process, from building a "Voodoo Doll" of the client to understand their preferences and motivations, to creating personalized itineraries that are backed by real local knowledge and real-time information, to automating the booking process and providing a seamless experience for the client.
+We want to use AI at every step of the process, from building a "Dossier" of the client to understand their preferences and motivations, to creating personalized itineraries that are backed by real local knowledge and real-time information, to automating the booking process and providing a seamless experience for the client.
 
 ## Tech Stack
 
@@ -41,7 +41,7 @@ By Invitation Only
   - Other  
 - Begin Flow
 
-- Cient \-\> (Create Voodoo Doll)
+- Cient \-\> (Create Dossier)
 
 Real Life Example from OV client list: 
 
@@ -52,9 +52,9 @@ Atiq Raza and his wife Nandini Sairaya.
 [https://www.quiverquant.com/insiders/1184563/Saiyed-Atiq-Raza](https://www.quiverquant.com/insiders/1184563/Saiyed-Atiq-Raza)  
 (estimate net worth)
 
-(See above \- have the Agent do an investigative style diligence on the client to build their Voodoo Doll)
+(See above \- have the Agent do an investigative style diligence on the client to build their Dossier)
 
-- Group Type \-\> (Solo \- prob not; Couple? Family (kids? Ages?) Group of Friends? Who are they, and their Voodoo Dolls…)
+- Group Type \-\> (Solo \- prob not; Couple? Family (kids? Ages?) Group of Friends? Who are they, and their Dossiers…)
 
 *Atiq and Nandini travel as a couple. They do cruises but also like experiences. They “Loved” our Iceland itinerary for them and spent \~$15K for a 6-day trip there. It was after a cruise they took.*  
 
@@ -63,14 +63,14 @@ Atiq Raza and his wife Nandini Sairaya.
   - Social Status / Peer Pressure / Peer Validation  
   - Bucket List (see above)  
   - Genuine love for Art / Culture / Country? History / UNESCO / Adventure / Mountains / other keywords. Get as much as possible.   
-    Intellectualize their rationale (for our Voodoo Doll)  
+    Intellectualize their rationale (for our Dossier)  
     
 
 With Atiq and Nandini \- seems to a be a combination of art / culture / history / travel adventure and some bucket listing. Prob a bit of social validation as part of their Rotary Club or other community stuff. 
 
 - Client REQUEST (literally anything, even a few words to start the journey). The “Prompt”. Some vague idea. (which is usually what it is, even if they give us a finel crafted ChatGPT generated itinerary OR even if they have their own version of ***what they think they want. Example: “COMO \+ DOLOMITES”.***   
     
-- Now, based on the Voodoo Doll we’ve created, build an ideal plan backed by real local knowledge and real-time info. Validate with real editorial magazine links to make it authentic. 
+- Now, based on the Dossier we’ve created, build an ideal plan backed by real local knowledge and real-time info. Validate with real editorial magazine links to make it authentic. 
 
 
 **Example:**
@@ -119,4 +119,4 @@ Offer call back with real life person / on ground person, Build assurance and tr
 
 –
 
-Voodoo Doll preferences allow building a real-time personalized magazine to print and mail to their address.   
+Dossier preferences allow building a real-time personalized magazine to print and mail to their address.   

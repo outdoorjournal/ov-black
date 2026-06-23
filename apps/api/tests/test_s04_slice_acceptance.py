@@ -11,14 +11,14 @@ not running, mirroring the ``_supabase_running()`` pattern in
 
 The six tests map to the slice demo bullets:
 
-1. Seeded Voodoo Doll loads into the first turn's system prompt.
+1. Seeded Dossier loads into the first turn's system prompt.
 2. A scripted 5-turn onboarding persists all 10 turns and keeps the
    runtimeSessionId stable across every call.
 3. ``first_token_ms`` lands in both the SSE frame and the DB row.
 4. A ThrottlingException on turn 3 silently retries without any SSE
    frame loss.
 5. Exhausted retries surface the crafted fallback frame + error row.
-6. Voodoo Doll sensitive context never appears in any log record.
+6. Dossier sensitive context never appears in any log record.
 """
 
 from __future__ import annotations
@@ -712,7 +712,7 @@ def test_retries_exhausted_surfaces_crafted_fallback(
         _cleanup_seed(seed.advisor_id, seed.client_id)
 
 
-# ── Test 6: Voodoo Doll sensitive context never appears in logs ────────────
+# ── Test 6: Dossier sensitive context never appears in logs ────────────
 
 
 _SENSITIVE_NETWORTH = 1234567

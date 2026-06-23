@@ -1,7 +1,7 @@
 """Unit tests for ``app.agent.prompt``.
 
-S11: the prompt builder was shrunk to just the voice preamble + Voodoo
-Doll context block. The mode-specific rubric (onboarding / planning /
+S11: the prompt builder was shrunk to just the voice preamble + Dossier
+context block. The mode-specific rubric (onboarding / planning /
 Q&A) and the card / assemble tool-use protocol both live in the
 runtime workspace at [apps/agent](../../../agent). These tests assert
 the voice preamble remains load-bearing and the context block round-

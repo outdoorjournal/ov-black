@@ -5,7 +5,7 @@ These routes deliberately bypass the global Supabase JWT middleware
 so the middleware skips them, and they validate an HS256 agent token
 themselves via :func:`require_agent_token`. A Supabase client JWT presented
 to these routes is rejected — that's the whole point of moving Dossier
-and OSINT off ``/me/voodoo-doll``: the traveler must not be able to read
+and OSINT off ``/me/dossier``: the traveler must not be able to read
 their own private dossier or see what we've researched externally.
 
 Three routes:

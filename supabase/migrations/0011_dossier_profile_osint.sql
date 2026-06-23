@@ -1,8 +1,8 @@
 -- 0011_dossier_profile_osint.sql
--- Split the former "voodoo doll" into three semantically distinct stores
--- with explicit disclosure rules:
---   * dossiers (renamed from voodoo_dolls): private internal knowledge,
---     typed core only. Long-tail JSONB sections move to dossier_facts.
+-- Split the dossier's long-tail into three semantically distinct fact
+-- stores with explicit disclosure rules:
+--   * dossiers: private internal knowledge, typed core only. Long-tail
+--     JSONB sections move to dossier_facts.
 --   * dossier_facts: per-fact rows for advisor-seeded long-tail and
 --     agent-inferred private observations. NEVER revealed to traveler.
 --   * profile_facts: per-fact rows for things the traveler self-expressed.
@@ -18,12 +18,11 @@
 -- RLS posture matches existing tables: owner-only SELECT for the calling
 -- advisor; mutations bypass via FastAPI's service_role.
 
--- ── 1. Rename voodoo_dolls → dossiers ─────────────────────────────────
-alter table public.voodoo_dolls rename to dossiers;
-alter index public.voodoo_dolls_author_idx rename to dossiers_author_idx;
--- Renaming the unique constraint also renames its backing index in one step.
-alter table public.dossiers rename constraint voodoo_dolls_client_id_unique to dossiers_client_id_unique;
-alter policy "voodoo_dolls_owner_select" on public.dossiers rename to "dossiers_owner_select";
+-- ── 1. dossiers table ─────────────────────────────────────────────────
+-- The typed-core dossiers table (with its index, unique constraint, and
+-- owner-only RLS) is created in 0003_clients_dossiers.sql. This migration
+-- only adds the per-fact stores below and moves the long-tail JSONB into
+-- them, then drops those columns from dossiers (section 8).
 
 -- ── 2. New enums for fact source_kind + per-tier kinds ────────────────
 create type public.fact_source_kind as enum (
@@ -164,7 +163,7 @@ select
     case when jsonb_typeof(p) = 'string' then p #>> '{}'
          else coalesce(p->>'label', p::text) end,
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.passions','original',p),
+    jsonb_build_object('migrated_from','dossiers.passions','original',p),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_array_elements(d.passions) as p
@@ -182,7 +181,7 @@ select
     'motivation'::public.dossier_fact_kind,
     (k || ': ' || (case when jsonb_typeof(v) = 'string' then v #>> '{}' else v::text end)),
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.motivations','key',k),
+    jsonb_build_object('migrated_from','dossiers.motivations','key',k),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_each(d.motivations) as kv(k,v)
@@ -203,7 +202,7 @@ select
         nullif(coalesce(h->>'note', h->>'summary',''),'')
     )),
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.travel_history','original',h),
+    jsonb_build_object('migrated_from','dossiers.travel_history','original',h),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_array_elements(d.travel_history) as h
@@ -223,7 +222,7 @@ select
     'trigger'::public.dossier_fact_kind,
     case when jsonb_typeof(t) = 'string' then t #>> '{}' else t::text end,
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.triggers'),
+    jsonb_build_object('migrated_from','dossiers.triggers'),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_array_elements(d.triggers) as t
@@ -237,7 +236,7 @@ select
     'constraint'::public.dossier_fact_kind,
     case when jsonb_typeof(c) = 'string' then c #>> '{}' else c::text end,
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.constraints'),
+    jsonb_build_object('migrated_from','dossiers.constraints'),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_array_elements(d.constraints) as c
@@ -251,7 +250,7 @@ select
     'deal_breaker'::public.dossier_fact_kind,
     case when jsonb_typeof(b) = 'string' then b #>> '{}' else b::text end,
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.deal_breakers'),
+    jsonb_build_object('migrated_from','dossiers.deal_breakers'),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_array_elements(d.deal_breakers) as b
@@ -266,7 +265,7 @@ select
     'dream_signal'::public.dossier_fact_kind,
     (k || ': ' || (case when jsonb_typeof(v) = 'string' then v #>> '{}' else v::text end)),
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.dream_trip_signals','key',k),
+    jsonb_build_object('migrated_from','dossiers.dream_trip_signals','key',k),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_each(d.dream_trip_signals) as kv(k,v)
@@ -288,7 +287,7 @@ select
            else 'other'::public.osint_fact_kind end,
     case when jsonb_typeof(v) = 'string' then v #>> '{}' else v::text end,
     'advisor'::public.fact_source_kind,
-    jsonb_build_object('migrated_from','voodoo_dolls.osint_notes','key',k),
+    jsonb_build_object('migrated_from','dossiers.osint_notes','key',k),
     d.created_at,
     d.authored_by
 from public.dossiers d, lateral jsonb_each(d.osint_notes) as kv(k,v)

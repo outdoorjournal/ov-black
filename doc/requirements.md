@@ -8,28 +8,28 @@ This file is the explicit capability and coverage contract for the project.
 - Class: launchability
 - Status: active
 - Description: Clients and advisors access Black only via an emailed magic-link tied to a pre-issued invite code. No self-serve signup.
-- Why it matters: The product premise is invitation-only. Self-serve access would violate brand positioning and the pre-seeded Voodoo Doll flow that depends on advisor setup before first touch.
+- Why it matters: The product premise is invitation-only. Self-serve access would violate brand positioning and the pre-seeded Dossier flow that depends on advisor setup before first touch.
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: none
 - Validation: mapped
 - Notes: Supabase Auth handles magic link + invite token validation.
 
-### R002 — Advisor, in Command Center, creates a client record and hand-populates the full Voodoo Doll (passions, travel history, psychological triggers, party composition, constraints, deal-breakers, dream-trip signals) before sending the invite.
+### R002 — Advisor, in Command Center, creates a client record and hand-populates the full Dossier (passions, travel history, psychological triggers, party composition, constraints, deal-breakers, dream-trip signals) before sending the invite.
 - Class: primary-user-loop
 - Status: active
-- Description: Advisor, in Command Center, creates a client record and hand-populates the full Voodoo Doll (passions, travel history, psychological triggers, party composition, constraints, deal-breakers, dream-trip signals) before sending the invite.
-- Why it matters: Seeded Voodoo Doll is what lets the agent open from a position of attentiveness rather than discovery. The pre-invite flow is load-bearing; cold onboarding would break the craft premise.
+- Description: Advisor, in Command Center, creates a client record and hand-populates the full Dossier (passions, travel history, psychological triggers, party composition, constraints, deal-breakers, dream-trip signals) before sending the invite.
+- Why it matters: Seeded Dossier is what lets the agent open from a position of attentiveness rather than discovery. The pre-invite flow is load-bearing; cold onboarding would break the craft premise.
 - Source: user
 - Primary owning slice: M001/S03
 - Supporting slices: M001/S08
 - Validation: mapped
 - Notes: At scale (later milestones) this becomes auto-research; M001 is manual.
 
-### R003 — The agent's first message is a specific, grounded observation derived from the seeded Voodoo Doll — not a generic greeting. This is the moment that either lands the magical first touch or misses.
+### R003 — The agent's first message is a specific, grounded observation derived from the seeded Dossier — not a generic greeting. This is the moment that either lands the magical first touch or misses.
 - Class: differentiator
 - Status: active
-- Description: The agent's first message is a specific, grounded observation derived from the seeded Voodoo Doll — not a generic greeting. This is the moment that either lands the magical first touch or misses.
+- Description: The agent's first message is a specific, grounded observation derived from the seeded Dossier — not a generic greeting. This is the moment that either lands the magical first touch or misses.
 - Why it matters: Load-bearing craft moment. If this feels generic, every downstream investment is compromised.
 - Source: user
 - Primary owning slice: M001/S05
@@ -37,10 +37,10 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: Success is judged in the final craft-feel sign-off.
 
-### R004 — The agent adapts its approach based on how the client arrives: a client who names a dream trip gets oriented toward it immediately while the agent backfills Voodoo Doll gaps in the background; a vague client gets steered toward proposal through conversation. Seeded Voodoo Doll is the baseline; conversation validates and extends it.
+### R004 — The agent adapts its approach based on how the client arrives: a client who names a dream trip gets oriented toward it immediately while the agent backfills Dossier gaps in the background; a vague client gets steered toward proposal through conversation. Seeded Dossier is the baseline; conversation validates and extends it.
 - Class: primary-user-loop
 - Status: active
-- Description: The agent adapts its approach based on how the client arrives: a client who names a dream trip gets oriented toward it immediately while the agent backfills Voodoo Doll gaps in the background; a vague client gets steered toward proposal through conversation. Seeded Voodoo Doll is the baseline; conversation validates and extends it.
+- Description: The agent adapts its approach based on how the client arrives: a client who names a dream trip gets oriented toward it immediately while the agent backfills Dossier gaps in the background; a vague client gets steered toward proposal through conversation. Seeded Dossier is the baseline; conversation validates and extends it.
 - Why it matters: PRD explicitly calls out "may have an upcoming dream trip in mind, but you may also need to pull it out of them." The agent must read the signal and pick the right mode, not interrogate.
 - Source: user
 - Primary owning slice: M001/S04
@@ -79,7 +79,7 @@ This file is the explicit capability and coverage contract for the project.
 - Primary owning slice: M001/S07
 - Supporting slices: none
 - Validation: mapped
-- Notes: State flows back into the Voodoo Doll as refinement signal.
+- Notes: State flows back into the Dossier as refinement signal.
 
 ### R009 — Agent calls `search_inventory(kinds, filters)` and `get_inventory_detail(source, id)`. A provider registry dispatches to the right adapter. Each adapter normalizes to a common `InventoryItem` shape. OV is adapter #1; Duffel, Ratehawk, editorial partners land in later milestones without agent-prompt changes.
 - Class: core-capability
@@ -92,10 +92,10 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: Common `InventoryItem` shape lives in the graph schema as node metadata.
 
-### R010 — AgentCore hosts the agent runtime (Claude via Bedrock), isolated session per client. Short-term scratchpad lives in AgentCore Memory within a session. Durable state — full turn log, proposed cards, graph mutations, pacing timers, Voodoo Doll refinements — writes to Postgres at turn boundaries so Command Center and future analytics can read it.
+### R010 — AgentCore hosts the agent runtime (Claude via Bedrock), isolated session per client. Short-term scratchpad lives in AgentCore Memory within a session. Durable state — full turn log, proposed cards, graph mutations, pacing timers, Dossier refinements — writes to Postgres at turn boundaries so Command Center and future analytics can read it.
 - Class: core-capability
 - Status: active
-- Description: AgentCore hosts the agent runtime (Claude via Bedrock), isolated session per client. Short-term scratchpad lives in AgentCore Memory within a session. Durable state — full turn log, proposed cards, graph mutations, pacing timers, Voodoo Doll refinements — writes to Postgres at turn boundaries so Command Center and future analytics can read it.
+- Description: AgentCore hosts the agent runtime (Claude via Bedrock), isolated session per client. Short-term scratchpad lives in AgentCore Memory within a session. Durable state — full turn log, proposed cards, graph mutations, pacing timers, Dossier refinements — writes to Postgres at turn boundaries so Command Center and future analytics can read it.
 - Why it matters: Command Center must be able to read the agent's work without going through AgentCore's session API. Durable record also survives AgentCore outages and session expiry (8h cap).
 - Source: user
 - Primary owning slice: M001/S04
@@ -103,10 +103,10 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: Long-term cross-session memory deferred to later milestone.
 
-### R012 — Functional-before-fancy advisor dashboard. Queue of clients, open a client's session, view + edit Voodoo Doll, view + edit the draft itinerary graph, approve/release the gate. Client creation (R002) lives here.
+### R012 — Functional-before-fancy advisor dashboard. Queue of clients, open a client's session, view + edit Dossier, view + edit the draft itinerary graph, approve/release the gate. Client creation (R002) lives here.
 - Class: primary-user-loop
 - Status: active
-- Description: Functional-before-fancy advisor dashboard. Queue of clients, open a client's session, view + edit Voodoo Doll, view + edit the draft itinerary graph, approve/release the gate. Client creation (R002) lives here.
+- Description: Functional-before-fancy advisor dashboard. Queue of clients, open a client's session, view + edit Dossier, view + edit the draft itinerary graph, approve/release the gate. Client creation (R002) lives here.
 - Why it matters: Without this, M001 has no advisor-facing half. The loop is client ↔ agent ↔ advisor; all three surfaces must exist.
 - Source: user
 - Primary owning slice: M001/S03
@@ -305,10 +305,10 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: unmapped
 - Notes: Plugs into the R009 provider abstraction.
 
-### R056 — Automated research pulls public signals (news mentions, social, public record, prior bookings) to pre-populate the Voodoo Doll before invite.
+### R056 — Automated research pulls public signals (news mentions, social, public record, prior bookings) to pre-populate the Dossier before invite.
 - Class: differentiator
 - Status: deferred
-- Description: Automated research pulls public signals (news mentions, social, public record, prior bookings) to pre-populate the Voodoo Doll before invite.
+- Description: Automated research pulls public signals (news mentions, social, public record, prior bookings) to pre-populate the Dossier before invite.
 - Why it matters: Scales the "already knows you" effect beyond advisor hand-seeding.
 - Source: user
 - Primary owning slice: M003+
@@ -374,7 +374,7 @@ This file is the explicit capability and coverage contract for the project.
 - Class: anti-feature
 - Status: out-of-scope
 - Description: Clients signing themselves up without CEO-issued invitation.
-- Why it matters: Violates invitation-only positioning and breaks the pre-seeded Voodoo Doll flow.
+- Why it matters: Violates invitation-only positioning and breaks the pre-seeded Dossier flow.
 - Source: user
 - Primary owning slice: none
 - Supporting slices: none

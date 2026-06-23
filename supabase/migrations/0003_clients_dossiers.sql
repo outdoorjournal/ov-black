@@ -1,6 +1,6 @@
--- 0003_clients_voodoo_dolls.sql
--- M001/S03: clients + voodoo_dolls with day-one RLS.
--- Typed-core + JSONB-long-tail split on voodoo_dolls per S03 research:
+-- 0003_clients_dossiers.sql
+-- M001/S03: clients + dossiers with day-one RLS.
+-- Typed-core + JSONB-long-tail split on dossiers per S03 research:
 -- typed columns for stable signals S04's agent will ground on; JSONB for
 -- evolving axes (passions, motivations, travel_history, …). Owned by Supabase
 -- CLI (D003) — SQLAlchemy reads/writes as a query layer only.
@@ -34,11 +34,11 @@ create table public.clients (
 create unique index clients_owner_email_idx
     on public.clients (owner_id, lower(email));
 
--- voodoo_dolls: 1:1 with clients (UNIQUE(client_id)). Typed columns capture
+-- dossiers: 1:1 with clients (UNIQUE(client_id)). Typed columns capture
 -- the stable signals; JSONB columns hold the evolving long-tail. authored_by
--- is the advisor who wrote the doll (S03 always == clients.owner_id, but kept
+-- is the advisor who wrote the dossier (S03 always == clients.owner_id, but kept
 -- explicit so future co-advising or hand-off flows do not require a migration).
-create table public.voodoo_dolls (
+create table public.dossiers (
     id                       uuid primary key default gen_random_uuid(),
     client_id                uuid not null references public.clients (id) on delete cascade,
     authored_by              uuid not null references auth.users (id) on delete cascade,
@@ -57,23 +57,23 @@ create table public.voodoo_dolls (
     osint_notes              jsonb not null default '{}'::jsonb,
     created_at               timestamptz not null default now(),
     updated_at               timestamptz not null default now(),
-    constraint voodoo_dolls_client_id_unique unique (client_id)
+    constraint dossiers_client_id_unique unique (client_id)
 );
 
 -- ── Indexes ────────────────────────────────────────────────────────────────
 -- Names are load-bearing: tests and future migrations reference them by
 -- identifier. Pattern mirrors invites_*_idx / nodes_*_idx in 0001/0002.
 
-create index clients_owner_idx       on public.clients (owner_id);
-create index voodoo_dolls_author_idx on public.voodoo_dolls (authored_by);
+create index clients_owner_idx   on public.clients (owner_id);
+create index dossiers_author_idx on public.dossiers (authored_by);
 
 -- ── Row-Level Security ─────────────────────────────────────────────────────
 -- Day-one posture: owner-only SELECT for authenticated; ZERO insert/update/
 -- delete policies. All mutations flow through the FastAPI service_role which
 -- bypasses RLS entirely (D003 inherited from S01).
 
-alter table public.clients      enable row level security;
-alter table public.voodoo_dolls enable row level security;
+alter table public.clients  enable row level security;
+alter table public.dossiers enable row level security;
 
 create policy "clients_owner_select"
     on public.clients
@@ -81,8 +81,8 @@ create policy "clients_owner_select"
     to authenticated
     using (auth.uid() = owner_id);
 
-create policy "voodoo_dolls_owner_select"
-    on public.voodoo_dolls
+create policy "dossiers_owner_select"
+    on public.dossiers
     for select
     to authenticated
     using (auth.uid() = authored_by);

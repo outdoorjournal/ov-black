@@ -1,7 +1,7 @@
 -- 0004_agent_sessions.sql
 -- M001/S04: agent_sessions + agent_turns with day-one RLS (zero policies).
 -- Mirrors the RLS-on-zero-policies posture from S02 (itineraries/nodes/edges)
--- and S03 (clients/voodoo_dolls): service_role is the only writer; anon and
+-- and S03 (clients/dossiers): service_role is the only writer; anon and
 -- authenticated are denied at the schema level. A scoped read policy will be
 -- added in a later slice if/when the advisor surface needs direct DB reads.
 -- Owned by Supabase CLI (D003) — SQLAlchemy reads/writes as a query layer only.

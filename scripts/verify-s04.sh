@@ -71,8 +71,8 @@ run_check() {
   fi
 }
 
-run_check "seeded VoodooDoll snapshot lands in the AgentCore system prompt" \
-          "test_seeded_voodoo_doll_loads_into_first_turn"
+run_check "seeded Dossier snapshot lands in the AgentCore system prompt" \
+          "test_seeded_dossier_facts_load_into_first_turn"
 run_check "scripted 5-turn onboarding persists all 10 rows with stable agentcore_session_id" \
           "test_scripted_five_turn_onboarding_persists_all_turns"
 run_check "first_token_ms recorded on the assistant row and under the 2000 ms budget" \
@@ -81,8 +81,8 @@ run_check "throttling on turn 3 triggers a silent retry with no error frame" \
           "test_throttling_on_turn_3_triggers_silent_retry_without_frame_loss"
 run_check "retries exhausted surfaces the crafted fallback frame + error turn row" \
           "test_retries_exhausted_surfaces_crafted_fallback"
-run_check "VoodooDoll sensitive context never appears in log records" \
-          "test_voodoo_doll_context_never_appears_in_logs"
+run_check "Dossier sensitive context never appears in log records" \
+          "test_traveler_context_never_appears_in_logs"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 log "────────────────────────────────────────────────"

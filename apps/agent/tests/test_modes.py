@@ -11,7 +11,7 @@ from agent.tools import tools_for
 
 def _payload(**overrides) -> TurnPayload:
     base = {
-        "system": "VOICE PREAMBLE + Voodoo Doll context",
+        "system": "VOICE PREAMBLE + Dossier context",
         "input_text": "hi",
         "mode": Mode.onboarding,
         "auth_bearer": "eyJfake",

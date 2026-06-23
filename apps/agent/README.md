@@ -11,7 +11,7 @@ One agent, one system prompt assembled per turn. Mode is derived by
 FastAPI at turn-start and passed in the payload:
 
 - **onboarding** — first-touch conversation grounded on the seeded
-  Voodoo Doll. No itinerary writes yet.
+  Dossier. No itinerary writes yet.
 - **planning** — client or advisor stitching together a draft itinerary.
   Agent proposes cards, orders days, accepts adjustments.
 - **qa** — the itinerary is approved; answer questions factually
@@ -79,7 +79,7 @@ FastAPI sends a JSON object validated by
 
 ```json
 {
-  "system": "<voice preamble + Voodoo Doll context>",
+  "system": "<voice preamble + Dossier context>",
   "input_text": "<current user message>",
   "prior_turns": [{"role": "user|assistant", "content": "..."}, ...],
   "mode": "onboarding | planning | qa",

@@ -1,10 +1,10 @@
 """Pillar 1 — A traveler can be invited.
 
-Demo-script stage 1 (mvp.md §7): *"Advisor seeds a client + Voodoo Doll and sends
+Demo-script stage 1 (mvp.md §7): *"Advisor seeds a client + Dossier and sends
 an invite. Traveler redeems the magic link."*
 
 Acceptance (mvp.md Pillar 1):
-  - Advisor creates client + Voodoo Doll in Command Center; invite is issued
+  - Advisor creates client + Dossier in Command Center; invite is issued
     (single-use, lifecycle-tracked).
   - Traveler redeems magic link → role-aware redirect into /chat/[client_id].
   - Invite cannot be redeemed twice; unknown code / wrong email collapse to one
