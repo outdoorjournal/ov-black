@@ -102,7 +102,7 @@ state files reflect the branch.*
 
 | Slice | Goal | Deliverables / touches | Acceptance |
 |---|---|---|---|
-| **F1** | Land the branch | Merge `feat/travelgraph-schema-spine`; confirm `doc/mvp.md` / `doc/mvp-plan.md` reflect reality (GSD retired, history salvaged to `doc/`); CI green on `main`. | Migrations through 0015 + the TravelGraph phases are on `main`; planning docs match the code. |
+| **F1** ✅ | Land the branch onto a `dev` trunk | Land `feat/travelgraph-schema-spine` onto a long-lived **`dev`** branch (the working trunk) and continue **trunk-based dev** there — *not* onto `main`. Confirm `doc/mvp.md` / `doc/mvp-plan.md` reflect reality (GSD retired, history salvaged to `doc/`); CI green. **Deploying `dev`→`main` (F2) is deferred.** | Migrations through 0017 + the TravelGraph phases + B1–B6 are on `dev`; planning docs match the code. |
 | **F2** | Real staging deploy | Populate CDK context (real `vpcId`/subnets), real Secrets (Supabase, Bedrock, vendor keys), provision the AgentCore runtime + put its ARN in the Secret, configure SMTP. | `scripts/verify-s0*.sh` pass against `STAGING_API_URL`; magic-link email arrives. |
 | **F3** | Founder craft-feel UAT | Run M001's owed UATs (S03 authoring, S05 opener, S06 morph, S07 cards, S08 advisor surface, S09 final view) against real Bedrock + OV. | R021 sign-off recorded; any craft slips fixed. |
 
@@ -117,7 +117,8 @@ state files reflect the branch.*
 | **B4 — First-class node cost** | Make cost real (unblocks M005). | Migration: `nodes.cost_amount numeric`, `nodes.cost_currency text`, optional `cost_kind` (per_person/total); populate from each provider adapter; surface in `card_attrs` + linearization; advisor can edit. **Deprecate free-text `metadata.price` for bookables.** | A bookable node has numeric cost+currency from the provider; advisor surface shows/edits it; sum-of-costs computable. |
 | **B5 — Analyze (shallow + standard)** | Feasibility backbone for Fill + reconcile. | Migration: `analyses` + `analysis_findings` (per `TravelGraph_Analysis` §8 / `phase5_analyze_handoff.md`); `services/analyze.py` async state machine; endpoints `POST /itinerary/{id}/analyze`, `GET .../analyses[/{id}]`, cancel. Shallow = structural; standard = `tstzrange` overlap + geo-flux by mode (uses 0014 PostGIS) + weather stub. **No deep/real-time yet.** | Running standard analyze on the Japan seed flags an impossible drive-time gap as a `warn` finding with evidence. |
 | **B6 — AI Fill** | Physically-feasible gap-filling. | `services/fill.py` consuming the latest completed analysis (`phase6_fill_handoff.md`); `fill_gap(itinerary_id, gap, party_id, analysis_id)` → ranked `FillProposal`s filtered by geo-radius + drive-time + party constraints; agent tool + advisor "fill this gap" action; accepted proposals become `proposed` nodes. | Advisor selects a gap; Fill returns ranked feasible options with rationale; accepting one adds a `proposed` node with provenance. |
-| **B7 — Advisor authoring surface** | "Build in minutes." | Command-Center itinerary editor: card-template **deck** (instantiate from `card_templates`), drag/drop using the promoted `_components/itinerary-graph` views, inline node edit, run-analyze + run-fill actions, approve. Generated-SDK wrappers for templates/analyze/fill. | Advisor builds a 5+ node multi-source itinerary from templates + Fill and approves it; client view renders it. |
+| **B7 — AI-assisted authoring surface** | "Build in minutes" — with AI, from a blank canvas. | Command-Center itinerary editor over the promoted `_components/itinerary-graph` views: add nodes from inventory search (B1–B3), inline node edit + cost (B4), drag/drop, **run-analyze + run-fill actions** (B5/B6) with findings + ranked gap-fill proposals rendered inline, accept a proposal → `proposed` node (via the existing `POST /nodes/from-inventory`), approve. Generated-SDK wrappers for **analyze + fill** (templates deferred to B8). | Advisor builds a 5+ node multi-source itinerary from a blank canvas using inventory search + Fill (no templates), runs Analyze to confirm feasibility, and approves it; client view renders it. |
+| **B8 — Templates: snapshot & reuse** *(was the deck half of B7; resequenced)* | Turn a great hand-built itinerary into a reusable starting point. | Direction flips from "instantiate-first" to **"build-then-snapshot"**: `POST /itinerary/{id}/snapshot-template` captures an approved itinerary's nodes/edges into `card_templates`/`template_nodes`/`template_edges` (schema already landed, 0015); a Command-Center **template deck** to instantiate a saved template into a fresh itinerary (reuses the existing `services/templates.py` instantiation); generated-SDK wrappers for the template routes. | Advisor snapshots an approved itinerary to a named template, then instantiates it into a fresh itinerary for another traveler; instantiated nodes land `proposed` carrying template provenance (`template_id`/`template_node_id`/`template_version`). |
 
 ### M003 — Traveler details + vault (Pillar 4) — *parallel to M002*
 *Goal: the traveler supplies party details and stores reusable documents securely.*
@@ -151,8 +152,10 @@ state files reflect the branch.*
 ## 4. Parallelization & sizing
 
 - **After Foundation:** run M002 and M003 concurrently (different subsystems, no shared schema churn).
-- **Within M002:** B1/B2/B3 (the three providers) are independent and parallelizable; B4 (cost) can land
-  alongside them; B5→B6→B7 are sequential (Fill needs Analyze; authoring needs both).
+- **Within M002:** B1/B2/B3 (providers) + B4 (cost) + B5 (Analyze) + B6 (Fill) have **landed** behind tests
+  (on `dev`); **B7 (AI-assisted authoring) is next** and consumes them (Fill needs Analyze; authoring needs
+  both). **B8 (templates) was resequenced to follow B7** — we snapshot a great hand-built itinerary into a
+  template rather than instantiate-from-template first.
 - **M004 needs** G1 (gates) before G2/G3, and benefits from B5 (Analyze) for reconcile feasibility.
 - **M005 needs** B4 (cost) and G1 (gates) — start it only after those land.
 - Each slice ships behind tests with a `scripts/verify-sNN.sh` smoke harness, matching M001 discipline.
@@ -186,12 +189,17 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 ---
 
-## 7. Suggested first three steps
+## 7. Suggested next steps
 
-1. **F1** — land the branch so `main` matches the planning docs.
-2. Lock **D-COST**, **D-FORK**, **D-PAY** (they gate the spine).
-3. Start **M002/B1 + B2 + B3** (providers, parallel) and **M002/B4** (node cost) — the highest-leverage,
-   most-independent work, and the foundation everything money-related sits on.
+> The original three are largely done: B1–B6 landed behind tests, D-COST + D-ANALYZE are locked (B4/B5),
+> and F1 landed the work onto the `dev` trunk (2026-06-23 — see §8). D-FORK/D-PAY remain to lock before M004/M005.
+
+1. **B7 — AI-assisted authoring surface**: the Command-Center editor that finally surfaces B1–B6 to an
+   advisor (inventory search · cost · run-analyze · run-fill · approve). Templates are **not** in scope — that's B8.
+2. **B8 — Templates: snapshot & reuse**: once B7 can build a great itinerary, add snapshot-to-template +
+   a deck to instantiate saved templates.
+3. Then pick the next track: **M003** (traveler details + vault, parallel) or **M004/G1** status gates
+   (which M005's money gate needs). Deployment (F2/F3) stays deferred until you choose to cut a release.
 
 ---
 
@@ -200,6 +208,32 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-23 — F1 (modified) + M002 resequencing — **landed onto a `dev` trunk; templates moved B7→B8**
+
+**Decision (founder):** F1 lands the branch onto a long-lived **`dev`** branch as the working trunk and we
+continue **trunk-based dev** there — NOT onto `main`. There's no git remote yet; deployment (`dev`→`main`,
+F2/F3 staging) is deliberately deferred. `main` stays the eventual deploy branch.
+
+**What landed:**
+- **`dev` branch created at the `feat/travelgraph-schema-spine` HEAD** (28 commits; `main` is a strict
+  ancestor, so `dev` carries all of M001 + migrations through 0017 + TravelGraph phases 1–6 + B1–B6). The
+  feature branch is preserved; future work commits to `dev`.
+- **B7 rescoped + B8 added.** B7 was "advisor authoring incl. a card-template **deck** (instantiate-first)."
+  Founder call: **build a great itinerary with AI assistance first, snapshot it to a template later.** So:
+  - **B7 → "AI-assisted authoring surface"**: blank-canvas editor + inventory search (B1–B3) + cost (B4) +
+    run-analyze (B5) + run-fill (B6) + approve. **No templates.** SDK wrappers for analyze + fill only.
+  - **B8 (new) → "Templates: snapshot & reuse"**: `POST /itinerary/{id}/snapshot-template` captures an
+    approved itinerary into `card_templates` (schema already landed, 0015) + a deck to instantiate a saved
+    template (reuses `services/templates.py`). Direction flips instantiate-first → build-then-snapshot.
+
+**What's tested:** doc-only change (`doc/mvp-plan.md`: F1 row, B7 row, new B8 row, §4, §7, this entry) — no
+code touched, so the last recorded suite state stands (B6: `apps/api` 546 passed, `apps/agent` 34 passed).
+
+**Resume hook:** start **B7** — backend is ready (analyze + fill routers live; inventory search +
+`POST /nodes/from-inventory` write live). First step is the generated-SDK wrappers for
+`/itinerary/{id}/analyses` + `/itinerary/{id}/fill`, then the Command-Center editor surface. (An `apps/cli`
+`ovb` operator CLI now exists — see CLAUDE.md — and can drive these flows e2e.)
 
 ### 2026-06-22 — M002/B6 AI Fill — **physically-feasible gap-fill service + endpoint + agent tool landed (behind tests)**
 
