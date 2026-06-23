@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from ovb._generated import models as gm
 from ovb.errors import ApiError, TurnError
 from ovb.sdk import Ovb
 from ovb.sse import (
@@ -143,6 +144,7 @@ class Conversation:
     session_id: str
     agentcore_session_id: str
     itinerary_id: str | None = None
+    audience: str = "traveler"
     history: list[TurnResult] = field(default_factory=list)
 
     @classmethod
@@ -153,10 +155,21 @@ class Conversation:
         client_id: str,
         itinerary_id: str | None = None,
         seeded_opener: str | None = None,
+        audience: gm.SessionAudience | str | None = None,
     ) -> Conversation:
-        """Open or reuse a session (idempotent per client, like the UI)."""
+        """Open or reuse a session (idempotent per client, like the UI).
+
+        ``audience`` selects which conversation this is: ``'traveler'`` (the
+        shared client thread, the default) or ``'advisor'`` (the private
+        advisor↔AI workspace the traveler never sees — B7). A traveler actor
+        is gated to ``'traveler'`` server-side; asking for ``'advisor'`` as a
+        traveler 404s (existence-hiding).
+        """
         opened = await ovb.open_session(
-            client_id=client_id, itinerary_id=itinerary_id, seeded_opener=seeded_opener
+            client_id=client_id,
+            itinerary_id=itinerary_id,
+            seeded_opener=seeded_opener,
+            audience=audience,
         )
         return cls(
             ovb=ovb,
@@ -164,6 +177,7 @@ class Conversation:
             session_id=str(opened.session_id),
             agentcore_session_id=opened.agentcore_session_id,
             itinerary_id=str(opened.itinerary_id) if opened.itinerary_id else None,
+            audience=str(opened.audience) if opened.audience else "traveler",
         )
 
     async def say(

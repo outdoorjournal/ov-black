@@ -211,6 +211,44 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
 
+### 2026-06-23 — B7 follow-up: audience axis verified end-to-end — **0018 applied; full apps/api green; ovb e2e covers private-vs-shared sessions** (test/tooling only)
+
+**Context:** closes resume hooks #1 of the prior B7-audience entry and the e2e
+gap it implied — no app behavior change, only the migration apply + test/CLI
+plumbing that proves the private advisor↔AI session is isolated from the shared
+client thread over the wire.
+
+**What landed:**
+- **Migration 0018 confirmed applied** to the local DB (the `session_audience`
+  enum + `agent_sessions.audience` are present and recorded in
+  `schema_migrations`). Full `apps/api` pytest is green — **550 passed**, ruff +
+  mypy clean.
+- **ovb CLI SDK regenerated** (`apps/cli/scripts/generate.sh`) to carry
+  `audience` on `OpenSessionRequest`/`OpenSessionResponse` + the
+  `SessionAudience` enum (the generated half was stale after the B7 backend
+  change). Diff is purely additive.
+- **`audience` threaded** through `ovb.sdk.open_session` +
+  `ovb.agent.Conversation.open` (+ a `Conversation.audience` field). Defaults to
+  `traveler`, so every existing call site is unchanged.
+- **New e2e** (`apps/cli/tests/e2e/test_pillar3_build_e2e.py`):
+  `test_advisor_private_concierge_isolated_from_client_thread` (advisor opens
+  both audiences → distinct, per-`(client_id, audience)`-stable sessions) +
+  `test_traveler_cannot_open_advisor_audience` (traveler → 404 existence-hiding;
+  self-skips without a linked-traveler profile).
+
+**What's tested:** cli offline 50 passed; ruff + mypy clean. e2e against `local`
+— both audience tests pass (the traveler-gating one runs for real against the
+provisioned `local-traveler`). e2e against the AWS-free `mock` profile — pillar 2
+turn loop green/skip and the audience-isolation test passes (gating self-skips,
+no `mock-traveler`). NB: the two pillar-2 *turn-content* tests fail under `local`
+only because the local agent on `:8080` wasn't running (`upstream_unavailable`) —
+environmental, not a regression; they pass/skip against the `:8011` mock agent.
+
+**What remains (resume hooks):** ConciergeChat web vitest (prior entry's hook #3)
+still open; disclosure-rule + mobile (hooks #2/#4) are deferred design calls.
+**Next track is a founder call:** M003 (traveler details + vault) vs M004/G1
+(status gates, which M005's money gate needs) — per §7.
+
 ### 2026-06-23 — B8 templates **deferred to an unscheduled future point** (doc-only)
 
 **Decision (founder):** B8 (Templates: snapshot & reuse) is **no longer the default next slice after B7**.

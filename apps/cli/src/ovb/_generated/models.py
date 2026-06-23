@@ -576,51 +576,6 @@ class SeededOpener(RootModel[str]):
     root: Annotated[str, Field(max_length=500, title='Seeded Opener')]
 
 
-class OpenSessionRequest(BaseModel):
-    """
-    Payload for ``POST /sessions``.
-
-    ``itinerary_id`` is optional: pin the session to a specific draft for
-    planning mode, or omit for a general session (onboarding / Q&A). A
-    session pinned to an approved itinerary serves as a trip-scoped Q&A.
-
-    ``seeded_opener`` is the verbatim opening line the basecamp UI picked
-    from the onboarding-opener bank for a brand-new client. It is recorded
-    on the session row and replayed on the runtime as a mode-rubric
-    directive ("your first message MUST be exactly …") so the agent's
-    streamed first turn matches the prompt the user already saw on the
-    page. Ignored / persisted-but-no-op for non-onboarding sessions.
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    client_id: Annotated[UUID, Field(title='Client Id')]
-    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')] = None
-    seeded_opener: Annotated[SeededOpener | None, Field(title='Seeded Opener')] = None
-
-
-class OpenSessionResponse(BaseModel):
-    """
-    Response for ``POST /sessions`` — returned on both create and reuse.
-
-    ``itinerary_id`` reflects the session's current pin. ``None`` means the
-    session is unpinned — the browser's mood-board aside can either stay
-    empty (onboarding / Q&A) or hydrate after the first ``card_proposed``
-    frame auto-creates one. ``seeded_opener`` round-trips so the caller
-    can verify the persisted value matches what they sent (for reused
-    sessions, this may be a value chosen on a prior request).
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    session_id: Annotated[UUID, Field(title='Session Id')]
-    agentcore_session_id: Annotated[str, Field(title='Agentcore Session Id')]
-    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')]
-    seeded_opener: Annotated[str | None, Field(title='Seeded Opener')] = None
-
-
 class SourceKind1(StrEnum):
     advisor = 'advisor'
     scraper = 'scraper'
@@ -750,6 +705,19 @@ class SearchRequest(BaseModel):
 
 class SearchResponse(BaseModel):
     results: Annotated[list[PlaceSummary], Field(title='Results')]
+
+
+class SessionAudience(StrEnum):
+    """
+    Mirrors the public.session_audience enum from 0018.
+
+    Splits the client-facing conversation from a private advisor workspace:
+    ``traveler`` is the shared thread (the traveler + any advisor who joins);
+    ``advisor`` is the advisor<->AI session the traveler never sees.
+    """
+
+    traveler = 'traveler'
+    advisor = 'advisor'
 
 
 class StartAnalysisRequest(BaseModel):
@@ -1251,6 +1219,53 @@ class NoteItem(BaseModel):
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['note'], Field(title='Kind')] = 'note'
+
+
+class OpenSessionRequest(BaseModel):
+    """
+    Payload for ``POST /sessions``.
+
+    ``itinerary_id`` is optional: pin the session to a specific draft for
+    planning mode, or omit for a general session (onboarding / Q&A). A
+    session pinned to an approved itinerary serves as a trip-scoped Q&A.
+
+    ``seeded_opener`` is the verbatim opening line the basecamp UI picked
+    from the onboarding-opener bank for a brand-new client. It is recorded
+    on the session row and replayed on the runtime as a mode-rubric
+    directive ("your first message MUST be exactly …") so the agent's
+    streamed first turn matches the prompt the user already saw on the
+    page. Ignored / persisted-but-no-op for non-onboarding sessions.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')] = None
+    seeded_opener: Annotated[SeededOpener | None, Field(title='Seeded Opener')] = None
+    audience: SessionAudience | None = 'traveler'
+
+
+class OpenSessionResponse(BaseModel):
+    """
+    Response for ``POST /sessions`` — returned on both create and reuse.
+
+    ``itinerary_id`` reflects the session's current pin. ``None`` means the
+    session is unpinned — the browser's mood-board aside can either stay
+    empty (onboarding / Q&A) or hydrate after the first ``card_proposed``
+    frame auto-creates one. ``seeded_opener`` round-trips so the caller
+    can verify the persisted value matches what they sent (for reused
+    sessions, this may be a value chosen on a prior request).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    session_id: Annotated[UUID, Field(title='Session Id')]
+    agentcore_session_id: Annotated[str, Field(title='Agentcore Session Id')]
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')]
+    seeded_opener: Annotated[str | None, Field(title='Seeded Opener')] = None
+    audience: SessionAudience | None = 'traveler'
 
 
 class OsintFactCreate(BaseModel):

@@ -413,12 +413,18 @@ class Ovb:
         client_id: str,
         itinerary_id: str | None = None,
         seeded_opener: str | None = None,
+        audience: gm.SessionAudience | str | None = None,
     ) -> gm.OpenSessionResponse:
         body: dict[str, Any] = {"client_id": client_id}
         if itinerary_id is not None:
             body["itinerary_id"] = itinerary_id
         if seeded_opener is not None:
             body["seeded_opener"] = seeded_opener
+        # 'traveler' (shared client thread) vs 'advisor' (private advisor↔AI
+        # workspace the traveler never sees). Omit to take the API default
+        # (traveler); reuse is keyed per (client_id, audience). See 0018.
+        if audience is not None:
+            body["audience"] = str(audience)
         return await self._model(gm.OpenSessionResponse, "POST", "/sessions", json_body=body)
 
     async def list_turns(self, session_id: str) -> list[gm.AgentTurnSummary]:

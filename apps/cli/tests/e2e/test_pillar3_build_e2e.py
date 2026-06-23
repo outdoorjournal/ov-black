@@ -24,6 +24,8 @@ import contextlib
 import flows
 import pytest
 
+from ovb.agent import Conversation
+from ovb.errors import ApiError
 from ovb.invariants import assert_no_violations, cost_totals, graph_integrity
 from ovb.scenario import Harness
 from ovb.sdk import Ovb
@@ -213,3 +215,71 @@ async def test_advisor_approves_built_itinerary(advisor: Ovb, built_itinerary: s
     # And the graph read reflects the approved status (linearization-driven surface).
     graph = await advisor.get_graph(built_itinerary)
     assert str(graph.itinerary.status) == "approved"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Advisor private concierge (B7) — the audience axis added in 0018.
+#
+# The advisor's build aside carries a PRIVATE advisor↔AI workspace (audience
+# 'advisor') distinct from the SHARED client thread (audience 'traveler'). The
+# two are isolated: reuse is keyed per (client_id, audience), so a client has at
+# most one live session of each kind and they never cross-contaminate. These
+# assert the session-identity invariants only — no live agent turn — so they are
+# green against the mock agent and real Bedrock alike.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_advisor_private_concierge_isolated_from_client_thread(
+    advisor: Ovb, client_under_test: tuple[str, str]
+) -> None:
+    """Advisor opens both audiences for one client → two distinct, per-audience-stable sessions.
+
+    Invariants (0018):
+      * each session reports the audience it was opened for;
+      * the private advisor workspace and the shared client thread are *different*
+        sessions (isolation — the traveler never sees the advisor one);
+      * reuse is idempotent per (client_id, audience): re-opening the same
+        audience returns the same session, opening the other does not.
+    """
+    client_id, _ = client_under_test
+
+    traveler_thread = await Conversation.open(advisor, client_id=client_id, audience="traveler")
+    advisor_workspace = await Conversation.open(advisor, client_id=client_id, audience="advisor")
+
+    # Each session carries the audience it was opened for.
+    assert traveler_thread.audience == "traveler"
+    assert advisor_workspace.audience == "advisor"
+
+    # Isolation: the private workspace is a different session from the shared thread.
+    assert advisor_workspace.session_id != traveler_thread.session_id
+
+    # Reuse is keyed per (client_id, audience): same audience → same session.
+    reopened_advisor = await Conversation.open(advisor, client_id=client_id, audience="advisor")
+    assert reopened_advisor.session_id == advisor_workspace.session_id
+
+    reopened_traveler = await Conversation.open(advisor, client_id=client_id, audience="traveler")
+    assert reopened_traveler.session_id == traveler_thread.session_id
+
+
+async def test_traveler_cannot_open_advisor_audience(
+    traveler: Ovb, linked_traveler_client_id: str
+) -> None:
+    """A traveler asking for the private advisor workspace is refused with existence-hiding.
+
+    Defense-in-depth from `open_or_reuse_session`: a traveler actor is gated to
+    the 'traveler' audience; requesting 'advisor' resolves to FORBIDDEN surfaced
+    as 404 (we don't even confirm the advisor session could exist). Self-skips
+    when no linked-traveler identity is provisioned on this machine.
+    """
+    # The traveler's own (shared) thread opens fine — the control case.
+    own_thread = await Conversation.open(
+        traveler, client_id=linked_traveler_client_id, audience="traveler"
+    )
+    assert own_thread.audience == "traveler"
+
+    # But the private advisor workspace is hidden: 404, not 403.
+    with pytest.raises(ApiError) as exc_info:
+        await Conversation.open(
+            traveler, client_id=linked_traveler_client_id, audience="advisor"
+        )
+    assert exc_info.value.status == 404, exc_info.value
