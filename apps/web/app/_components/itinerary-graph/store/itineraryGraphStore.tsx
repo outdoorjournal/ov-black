@@ -25,10 +25,20 @@ import {
   approveItinerary,
   createApiClient,
   createNode,
+  createNodeFromInventory,
   deleteNode,
+  fillGap,
+  getAnalysis,
   releaseItineraryLock,
+  searchInventory,
+  startAnalysis,
   updateNode,
+  type AnalysisStatus,
+  type FillProposalResponse,
+  type FindingResponse,
   type ItineraryStatus,
+  type SearchInventoryQuery,
+  type SearchInventoryResponse,
 } from "@ov-black/api-client";
 
 import { createStoreContext } from "@/lib/store/createStoreContext";
@@ -40,6 +50,12 @@ import type {
   NodeResponse,
   NodeType,
 } from "../model/horizontalTypes";
+
+/** A single inventory search result (the element of the search response). */
+type InventoryItem = SearchInventoryResponse["items"][number];
+
+/** A scheduled gap to fill — ISO start/end, the GapModel shape the API wants. */
+export type FillGapWindow = { start: string; end: string };
 
 // Shape of a node as emitted by the agent stream before it's persisted as a
 // graph node. Mirrors the open-metadata NodeResponse but keeps type/status as
@@ -143,6 +159,34 @@ export type ItineraryGraphState = {
     metadata?: Record<string, unknown>;
   }) => void;
   removeNode: (id: string) => void;
+
+  // ── authoring (B7): inventory search · analyze · fill ──
+  // Reads (search/analyze/fill) gate on `canEdit`; the two writes
+  // (addNodeFromInventory / acceptFillProposal) gate on `selectEditable`
+  // because they mutate the graph and so need the lock.
+  inventoryResults: InventoryItem[];
+  inventoryPending: boolean;
+  inventoryError: boolean;
+  /** source_id of the item currently being added — disables its Add button. */
+  addingInventoryId: string | null;
+  analysisId: string | null;
+  analyzeStatus: AnalysisStatus | "idle";
+  analyzePending: boolean;
+  findings: FindingResponse[];
+  analyzeSummary: string | null;
+  fillProposals: FillProposalResponse[];
+  fillPending: boolean;
+  fillGapWindow: FillGapWindow | null;
+
+  runInventorySearch: (query: SearchInventoryQuery) => void;
+  clearInventoryResults: () => void;
+  addNodeFromInventory: (source: string, sourceId: string) => void;
+  startAnalyze: () => void;
+  refreshAnalysis: () => void;
+  runFill: (gap: FillGapWindow, desiredKinds?: NodeType[]) => void;
+  acceptFillProposal: (proposal: FillProposalResponse) => void;
+  dismissFillProposal: (inventoryId: string) => void;
+  clearFill: () => void;
 
   // ── zoom (horizontal view) ──
   setPxPerMinute: (value: number) => void;
@@ -526,6 +570,154 @@ export const itineraryGraphStore = createStoreContext<
             },
           );
         },
+
+        // ── authoring (B7): inventory search · analyze · fill ───────────────
+        inventoryResults: [],
+        inventoryPending: false,
+        inventoryError: false,
+        addingInventoryId: null,
+        analysisId: null,
+        analyzeStatus: "idle",
+        analyzePending: false,
+        findings: [],
+        analyzeSummary: null,
+        fillProposals: [],
+        fillPending: false,
+        fillGapWindow: null,
+
+        runInventorySearch: (query) => {
+          const s = get();
+          if (!s.canEdit) return;
+          const c = client();
+          if (!c) return;
+          set({ inventoryPending: true, inventoryError: false });
+          void searchInventory(c, query)
+            .then((result) => {
+              if (result.ok) {
+                set({ inventoryResults: result.items });
+              } else {
+                set({ inventoryResults: [], inventoryError: true });
+              }
+            })
+            .finally(() => set({ inventoryPending: false }));
+        },
+        clearInventoryResults: () =>
+          set({ inventoryResults: [], inventoryError: false }),
+        addNodeFromInventory: (source, sourceId) => {
+          const s = get();
+          if (!selectEditable(s)) return;
+          const c = client();
+          if (!c) return;
+          set({ addingInventoryId: sourceId });
+          void createNodeFromInventory(c, {
+            itineraryId: s.itineraryId,
+            source,
+            sourceId,
+          })
+            .then((result) => {
+              if (result.ok) {
+                set((cur) => ({
+                  nodes: [...cur.nodes, result.node],
+                  flashNodeId: result.node.id,
+                }));
+              }
+            })
+            .finally(() => set({ addingInventoryId: null }));
+        },
+        startAnalyze: () => {
+          const s = get();
+          if (!s.canEdit || s.analyzePending) return;
+          const c = client();
+          if (!c) return;
+          set({
+            analyzePending: true,
+            analyzeStatus: "queued",
+            findings: [],
+            analyzeSummary: null,
+          });
+          void startAnalysis(c, { itineraryId: s.itineraryId })
+            .then((result) => {
+              if (result.ok) {
+                set({
+                  analysisId: result.created.analysis_id,
+                  analyzeStatus: result.created.status,
+                });
+              } else {
+                set({ analyzeStatus: "failed" });
+              }
+            })
+            .finally(() => set({ analyzePending: false }));
+        },
+        refreshAnalysis: () => {
+          const s = get();
+          if (!s.analysisId) return;
+          const c = client();
+          if (!c) return;
+          void getAnalysis(c, {
+            itineraryId: s.itineraryId,
+            analysisId: s.analysisId,
+          }).then((result) => {
+            if (result.ok) {
+              set({
+                analyzeStatus: result.analysis.status,
+                findings: result.analysis.findings,
+                analyzeSummary: result.analysis.summary,
+              });
+            }
+          });
+        },
+        runFill: (gap, desiredKinds) => {
+          const s = get();
+          if (!s.canEdit || s.fillPending) return;
+          const c = client();
+          if (!c) return;
+          set({ fillPending: true, fillGapWindow: gap, fillProposals: [] });
+          void fillGap(c, {
+            itineraryId: s.itineraryId,
+            body: {
+              gap,
+              ...(desiredKinds && desiredKinds.length > 0
+                ? { desired_kinds: desiredKinds }
+                : {}),
+              ...(s.analysisId ? { analysis_id: s.analysisId } : {}),
+            },
+          })
+            .then((result) => {
+              set({ fillProposals: result.ok ? result.result.proposals : [] });
+            })
+            .finally(() => set({ fillPending: false }));
+        },
+        acceptFillProposal: (proposal) => {
+          const s = get();
+          if (!selectEditable(s)) return;
+          const c = client();
+          if (!c) return;
+          set({ addingInventoryId: proposal.inventory_id });
+          void createNodeFromInventory(c, {
+            itineraryId: s.itineraryId,
+            source: proposal.inventory_source,
+            sourceId: proposal.inventory_id,
+          })
+            .then((result) => {
+              if (result.ok) {
+                set((cur) => ({
+                  nodes: [...cur.nodes, result.node],
+                  flashNodeId: result.node.id,
+                  fillProposals: cur.fillProposals.filter(
+                    (p) => p.inventory_id !== proposal.inventory_id,
+                  ),
+                }));
+              }
+            })
+            .finally(() => set({ addingInventoryId: null }));
+        },
+        dismissFillProposal: (inventoryId) =>
+          set((s) => ({
+            fillProposals: s.fillProposals.filter(
+              (p) => p.inventory_id !== inventoryId,
+            ),
+          })),
+        clearFill: () => set({ fillProposals: [], fillGapWindow: null }),
 
         setPxPerMinute: (v) => set({ pxPerMinute: clampZoom(v) }),
         zoomIn: () =>

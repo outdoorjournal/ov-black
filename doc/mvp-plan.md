@@ -117,7 +117,7 @@ state files reflect the branch.*
 | **B4 — First-class node cost** | Make cost real (unblocks M005). | Migration: `nodes.cost_amount numeric`, `nodes.cost_currency text`, optional `cost_kind` (per_person/total); populate from each provider adapter; surface in `card_attrs` + linearization; advisor can edit. **Deprecate free-text `metadata.price` for bookables.** | A bookable node has numeric cost+currency from the provider; advisor surface shows/edits it; sum-of-costs computable. |
 | **B5 — Analyze (shallow + standard)** | Feasibility backbone for Fill + reconcile. | Migration: `analyses` + `analysis_findings` (per `TravelGraph_Analysis` §8 / `phase5_analyze_handoff.md`); `services/analyze.py` async state machine; endpoints `POST /itinerary/{id}/analyze`, `GET .../analyses[/{id}]`, cancel. Shallow = structural; standard = `tstzrange` overlap + geo-flux by mode (uses 0014 PostGIS) + weather stub. **No deep/real-time yet.** | Running standard analyze on the Japan seed flags an impossible drive-time gap as a `warn` finding with evidence. |
 | **B6 — AI Fill** | Physically-feasible gap-filling. | `services/fill.py` consuming the latest completed analysis (`phase6_fill_handoff.md`); `fill_gap(itinerary_id, gap, party_id, analysis_id)` → ranked `FillProposal`s filtered by geo-radius + drive-time + party constraints; agent tool + advisor "fill this gap" action; accepted proposals become `proposed` nodes. | Advisor selects a gap; Fill returns ranked feasible options with rationale; accepting one adds a `proposed` node with provenance. |
-| **B7 — AI-assisted authoring surface** | "Build in minutes" — with AI, from a blank canvas. | Command-Center itinerary editor over the promoted `_components/itinerary-graph` views: add nodes from inventory search (B1–B3), inline node edit + cost (B4), drag/drop, **run-analyze + run-fill actions** (B5/B6) with findings + ranked gap-fill proposals rendered inline, accept a proposal → `proposed` node (via the existing `POST /nodes/from-inventory`), approve. Generated-SDK wrappers for **analyze + fill** (templates deferred to B8). | Advisor builds a 5+ node multi-source itinerary from a blank canvas using inventory search + Fill (no templates), runs Analyze to confirm feasibility, and approves it; client view renders it. |
+| **B7 — AI-assisted authoring surface** 🔨 *core landed — see §8* | "Build in minutes" — with AI, from a blank canvas. | Command-Center itinerary editor over the promoted `_components/itinerary-graph` views: add nodes from inventory search (B1–B3), inline node edit + cost (B4), drag/drop, **run-analyze + run-fill actions** (B5/B6) with findings + ranked gap-fill proposals rendered inline, accept a proposal → `proposed` node (via the existing `POST /nodes/from-inventory`), approve. Generated-SDK wrappers for **analyze + fill** (templates deferred to B8). | Advisor builds a 5+ node multi-source itinerary from a blank canvas using inventory search + Fill (no templates), runs Analyze to confirm feasibility, and approves it; client view renders it. |
 | **B8 — Templates: snapshot & reuse** *(was the deck half of B7; resequenced)* | Turn a great hand-built itinerary into a reusable starting point. | Direction flips from "instantiate-first" to **"build-then-snapshot"**: `POST /itinerary/{id}/snapshot-template` captures an approved itinerary's nodes/edges into `card_templates`/`template_nodes`/`template_edges` (schema already landed, 0015); a Command-Center **template deck** to instantiate a saved template into a fresh itinerary (reuses the existing `services/templates.py` instantiation); generated-SDK wrappers for the template routes. | Advisor snapshots an approved itinerary to a named template, then instantiates it into a fresh itinerary for another traveler; instantiated nodes land `proposed` carrying template provenance (`template_id`/`template_node_id`/`template_version`). |
 
 ### M003 — Traveler details + vault (Pillar 4) — *parallel to M002*
@@ -208,6 +208,53 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-23 — M002/B7 AI-assisted authoring surface — **inventory search · analyze · fill · concierge chat wired into the unified graph view (behind tests)**
+
+**Decision (founder):** B7 lands on the **existing unified `/itinerary/[id]` view** — the
+Command-Center editor route was already retired (it redirects there; staff edit on the same
+surface travelers see, gated by server-resolved `canEdit`). Both AI-assist modalities ship
+together: explicit toolbar actions **and** the agent chat SSE.
+
+**What landed (api-client + apps/web; additive — no backend/migration change, the
+B5/B6/inventory routes already existed):**
+- **`packages/api-client` wrappers** for the previously-unwrapped routes, discriminated
+  `{ok,…}` like the rest: `searchInventory`, `createNodeFromInventory`, `startAnalysis`,
+  `listAnalyses`, `getAnalysis`, `cancelAnalysis`, `fillGap`; analyze/fill/from-inventory
+  models re-exported (`FindingResponse` / `FillProposalResponse` / `AnalysisStatus` / …).
+  **No regen needed** — the generated SDK already carried the operations; `tsc` build clean.
+- **`itineraryGraphStore` authoring actions** — `runInventorySearch`, `addNodeFromInventory`,
+  `startAnalyze` + `refreshAnalysis` (poll), `runFill`, `acceptFillProposal`,
+  `dismissFillProposal`, `clearInventoryResults`/`clearFill` + backing state. Reads gate on
+  `canEdit`; the two writes (add / accept) gate on `selectEditable` (lock held) — a traveler
+  or unlocked advisor can't mutate. Accept = the same `from-inventory` write Add uses.
+- **`AuthoringPanel.tsx`** — the "Build" half of the staff aside: keyword + kind inventory
+  search → result rows (title/kind/source/price) with Add; "Analyze" → polled findings list
+  (severity/category/message, severity-sorted); "Fill a gap" (from/until datetime → tz-aware
+  ISO) → ranked proposals (rationale + fits/tight/unconfirmed) with Accept/Dismiss. Craft-clean
+  (no spinners/emoji; plain buttons; serif/sans; `#8b2a1d` only for destructive).
+- **`HorizontalView`** — the advisor aside is now a **Build / Concierge** tab switcher
+  (`AuthoringPanel` vs `ChatPanel`); travelers still get ChatPanel only (unchanged). The
+  `handleChatSubmit` **TODO stub is wired**: lazy `createSessionEndpoint` (idempotent per
+  client_id) on first submit → `useAgentStream` turn loop → deltas into store messages,
+  `card_proposed` → `proposeNode`, `node_updated` → `applyNodeUpdate`, abort-on-unmount.
+  `NodeEditPanel` now shows first-class cost (B4) when the node carries it.
+
+**What's tested:** `apps/web/tests/itineraryGraph/authoring.test.tsx` (+11) — store actions
+(search populates / traveler-inert; add appends + lock-gated; analyze→findings; fill→proposals;
+accept adds+drops; dismiss no-write) and the panel (sections render; search runs + Add enabled
+when locked; locked notice + Add disabled without the lock). **Full web suite 88 passed** (was
+77); web `tsc` + api-client `tsc` clean; `next lint` clean.
+
+**What remains (resume hooks):**
+1. **Mobile** — the authoring panel is desktop-only (the `md:` aside); `MobileDayList` has no
+   authoring affordances yet.
+2. **Live drive into a running stack** (search a real provider, analyze/fill the Japan seed,
+   chat a real agent turn) — needs F2 staging or a local agent; `ovb` (apps/cli) can drive it.
+   Not exercised here beyond mocked unit tests; no `scripts/verify-sB7.sh` yet.
+3. **Fill desired-kinds + party** in the UI (store/endpoint accept them; the panel sends
+   neither yet) and **richer cost** (sum-of-costs; cost on cards, not just the edit panel).
+4. **B8 templates** (snapshot & reuse) is the next M002 slice — deliberately untouched.
 
 ### 2026-06-23 — F1 (modified) + M002 resequencing — **landed onto a `dev` trunk; templates moved B7→B8**
 

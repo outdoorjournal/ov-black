@@ -53,7 +53,11 @@ import {
   itineraryGraphStore,
   selectEditable,
 } from "../../store/itineraryGraphStore";
+import { createApiClient, createSessionEndpoint } from "@ov-black/api-client";
+import { useAgentStream } from "@/lib/agentStream";
+import { createBrowserSupabase } from "@/lib/supabase/client";
 
+import { AuthoringPanel } from "./AuthoringPanel";
 import { ChatPanel } from "./ChatPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
 import { NodeCard } from "./NodeCard";
@@ -111,6 +115,10 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
   const releasePending = itineraryGraphStore.useStore((s) => s.releasePending);
   const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
   const editable = itineraryGraphStore.useStore(selectEditable);
+  // API creds — only present for staff (the server withholds them from
+  // travelers), so the Concierge chat below is implicitly advisor-only.
+  const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
+  const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
   const storeApi = itineraryGraphStore.useStoreApi();
 
   const canvasScrollRef = useRef<HTMLDivElement>(null);
@@ -120,6 +128,12 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
   );
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [scrollHints, setScrollHints] = useState({ left: false, right: false });
+  // Which half of the staff aside is showing: the authoring tools ("build") or
+  // the agent conversation ("concierge"). Advisors default to Build; travelers
+  // never see the toggle (they only get ChatPanel).
+  const [asidePanel, setAsidePanel] = useState<"build" | "concierge">(
+    canEdit ? "build" : "concierge",
+  );
   // Drag preview state. While `activeDragId` is set, we add a synthetic
   // "ghost" node to the layout in the day the pointer is over so other cards
   // in that column slide down to make room before the drop is committed.
@@ -463,9 +477,128 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
     };
   }, [focusedNode, nodes]);
 
-  const handleChatSubmit = useCallback((_text: string) => {
-    /* TODO: wire to agent SSE */
+  // ── Concierge chat (advisor "Concierge" tab) ──────────────────────────
+  // Wires the DIY SSE turn loop into the shared store. The session is opened
+  // lazily on first submit (idempotent per client_id) so we don't spin one up
+  // for advisors who never chat. card_proposed → proposeNode lands the agent's
+  // card on the same graph the Build tools mutate.
+  const clientId = timeline.itinerary.client_id;
+  const sessionIdRef = useRef<string | null>(null);
+  const streamingAssistantIdRef = useRef<string | null>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
+
+  const getAccessToken = useMemo<() => Promise<string | null>>(() => {
+    let supabase: ReturnType<typeof createBrowserSupabase> | null = null;
+    try {
+      supabase = createBrowserSupabase();
+    } catch {
+      supabase = null;
+    }
+    return async () => {
+      if (supabase) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.access_token) return session.access_token;
+      }
+      return accessToken ?? null;
+    };
+  }, [accessToken]);
+
+  const { sendTurn } = useAgentStream({
+    getSessionId: () => sessionIdRef.current,
+    getAccessToken,
+    apiBaseUrl: apiBaseUrl ?? "",
+    abortRef: chatAbortRef,
+    onDelta: (frame) => {
+      const id = streamingAssistantIdRef.current;
+      if (id) storeApi.getState().appendDelta(id, frame.text);
+    },
+    onDone: () => {
+      const id = streamingAssistantIdRef.current;
+      if (id) storeApi.getState().finishAssistant(id);
+      streamingAssistantIdRef.current = null;
+    },
+    onError: () => {
+      const id = streamingAssistantIdRef.current;
+      if (id) {
+        storeApi
+          .getState()
+          .appendDelta(
+            id,
+            "\n\n(The concierge couldn’t respond just now. Try again in a moment.)",
+          );
+        storeApi.getState().finishAssistant(id);
+      }
+      streamingAssistantIdRef.current = null;
+    },
+    onCardProposed: (node) => {
+      storeApi.getState().proposeNode({
+        id: node.id,
+        itinerary_id: node.itinerary_id,
+        type: node.type,
+        status: node.status,
+        title: node.title,
+        source: node.source ?? null,
+        source_id: node.source_id ?? null,
+        metadata: node.metadata ?? {},
+      });
+    },
+    onNodeUpdated: (node) => {
+      storeApi.getState().applyNodeUpdate({
+        id: node.id,
+        itinerary_id: node.itinerary_id,
+        type: node.type,
+        status: node.status,
+        title: node.title,
+        source: node.source ?? null,
+        source_id: node.source_id ?? null,
+        metadata: node.metadata ?? {},
+      });
+    },
+  });
+
+  useEffect(() => {
+    const ref = chatAbortRef;
+    return () => ref.current?.abort();
   }, []);
+
+  const handleChatSubmit = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      // Chat needs the store's API creds (staff) + a client to open against.
+      if (!apiBaseUrl || !accessToken || !clientId) return;
+      const store = storeApi.getState();
+      const stamp = Date.now();
+      const userId = `u-${stamp}`;
+      const assistantId = `a-${stamp}`;
+      store.appendUserMessage(userId, trimmed);
+      store.appendAssistantMessage(assistantId);
+      streamingAssistantIdRef.current = assistantId;
+      void (async () => {
+        if (!sessionIdRef.current) {
+          const api = createApiClient({ baseUrl: apiBaseUrl, accessToken });
+          const result = await createSessionEndpoint(api, {
+            client_id: clientId,
+            itinerary_id: store.itineraryId,
+          });
+          if (!result.ok) {
+            store.appendDelta(
+              assistantId,
+              "(Couldn’t reach the concierge. Try again in a moment.)",
+            );
+            store.finishAssistant(assistantId);
+            streamingAssistantIdRef.current = null;
+            return;
+          }
+          sessionIdRef.current = result.session_id;
+        }
+        await sendTurn(trimmed);
+      })();
+    },
+    [apiBaseUrl, accessToken, clientId, sendTurn, storeApi],
+  );
 
   // Add a fresh note onto the first day at noon so it lands on the timeline
   // immediately; the advisor then drags it to a slot and edits it. Gated on
@@ -623,16 +756,61 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
             />
           </div>
 
-          {/* Chat panel — fixed width, doesn't scroll with the canvas. */}
+          {/* Staff aside — fixed width, doesn't scroll with the canvas. For
+              advisors it toggles between the authoring tools (Build) and the
+              agent conversation (Concierge); travelers only ever see chat. */}
           <aside className="hidden w-[440px] shrink-0 md:block">
-            <ChatPanel
-              messages={messages}
-              pendingProposals={pendingProposals}
-              onAccept={(id) => storeApi.getState().acceptProposal(id)}
-              onDismiss={(id) => storeApi.getState().dismissProposal(id)}
-              onSubmit={handleChatSubmit}
-              onScrollToNode={scrollToNode}
-            />
+            {canEdit ? (
+              <div className="flex h-full flex-col">
+                <div
+                  data-testid="itinerary-graph-aside-tabs"
+                  className="flex shrink-0 gap-1 border-b border-l border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
+                >
+                  {(["build", "concierge"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setAsidePanel(tab)}
+                      data-testid={`itinerary-graph-tab-${tab}`}
+                      aria-pressed={asidePanel === tab}
+                      className={`h-8 rounded-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
+                        asidePanel === tab
+                          ? "bg-ink/10 text-ink"
+                          : "text-ink/55 hover:bg-ink/5"
+                      }`}
+                    >
+                      {tab === "build" ? "Build" : "Concierge"}
+                    </button>
+                  ))}
+                </div>
+                <div className="min-h-0 flex-1 border-l border-ink/10">
+                  {asidePanel === "build" ? (
+                    <AuthoringPanel
+                      tzOffsetHours={timeline.timezoneOffsetHours}
+                      days={timeline.days}
+                    />
+                  ) : (
+                    <ChatPanel
+                      messages={messages}
+                      pendingProposals={pendingProposals}
+                      onAccept={(id) => storeApi.getState().acceptProposal(id)}
+                      onDismiss={(id) => storeApi.getState().dismissProposal(id)}
+                      onSubmit={handleChatSubmit}
+                      onScrollToNode={scrollToNode}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <ChatPanel
+                messages={messages}
+                pendingProposals={pendingProposals}
+                onAccept={(id) => storeApi.getState().acceptProposal(id)}
+                onDismiss={(id) => storeApi.getState().dismissProposal(id)}
+                onSubmit={handleChatSubmit}
+                onScrollToNode={scrollToNode}
+              />
+            )}
           </aside>
         </div>
 
@@ -834,6 +1012,15 @@ function NodeEditPanel({
           className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-sans text-sm text-ink/80 focus:border-ink/40 focus:outline-none"
         />
       </label>
+      {node.cost_amount && node.cost_currency ? (
+        <p
+          data-testid="itinerary-graph-node-cost"
+          className="mt-3 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/55"
+        >
+          Cost · {node.cost_currency} {node.cost_amount}
+          {node.cost_kind === "per_person" ? " / person" : ""}
+        </p>
+      ) : null}
       <button
         type="button"
         onClick={onRemove}

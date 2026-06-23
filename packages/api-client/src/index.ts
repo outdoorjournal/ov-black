@@ -12,12 +12,14 @@ import type { Client } from "./generated/client/types.gen.js";
 import {
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
+  cancelAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdCancelPost,
   cancelClientInviteEndpointClientsClientIdInviteCancelPost,
   createClientContactEndpointClientsClientIdContactsPost,
   createClientEndpointClientsPost,
   createDossierFactEndpointClientsClientIdDossierFactsPost,
   createEdgeEndpointItineraryItineraryIdEdgesPost,
   createNodeEndpointItineraryItineraryIdNodesPost,
+  createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost,
   createOsintFactEndpointClientsClientIdOsintFactsPost,
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
@@ -25,10 +27,13 @@ import {
   deleteEdgeEndpointItineraryItineraryIdEdgesEdgeIdDelete,
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
   dismissOnboardingEndpointOnboardingDismissPost,
+  fillGapEndpointItineraryItineraryIdFillPost,
+  getAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdGet,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
   listAdvisorItinerariesEndpointItinerariesGet,
+  listAnalysesEndpointItineraryItineraryIdAnalysesGet,
   listClientSessionsEndpointClientsClientIdSessionsGet,
   listClientsEndpointClientsGet,
   listMyItinerariesEndpointMeItinerariesGet,
@@ -42,6 +47,8 @@ import {
   redeemInviteEndpointAuthRedeemInvitePost,
   reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
+  searchInventoryEndpointSearchInventoryGet,
+  startAnalysisEndpointItineraryItineraryIdAnalysesPost,
   updateClientContactEndpointClientsClientIdContactsContactIdPatch,
   updateDossierFactEndpointClientsClientIdDossierFactsFactIdPatch,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
@@ -51,6 +58,9 @@ import {
 import type {
   AdvisorItinerarySummary,
   AgentTurnSummary,
+  AnalysisCreatedResponse,
+  AnalysisDetailResponse,
+  AnalysisSummaryResponse,
   ClientContactCreate,
   ClientContactDetail,
   ClientContactUpdate,
@@ -64,6 +74,8 @@ import type {
   DossierFactDetail,
   DossierFactUpdate,
   EdgeResponse,
+  FillRequest,
+  FillResponse,
   GraphResponse,
   ItineraryResponse,
   LoginRequest,
@@ -82,6 +94,9 @@ import type {
   ProfileFactUpdate,
   RedactRequest,
   RedeemInviteRequest,
+  SearchInventoryEndpointSearchInventoryGetData,
+  SearchInventoryResponse,
+  StartAnalysisRequest,
 } from "./generated/types.gen.js";
 
 export type { LoginRequest, RedeemInviteRequest } from "./generated/types.gen.js";
@@ -119,6 +134,27 @@ export type {
   Range,
   EditorialLink,
   SearchInventoryResponse,
+} from "./generated/types.gen.js";
+
+// Analyze (B5) + Fill (B6) + from-inventory authoring (B7). The advisor
+// authoring surface renders findings (severity / category / evidence) and
+// ranked Fill proposals, and adds inventory results as nodes — so apps/web
+// types these from one module. SearchInventoryResponse is re-exported above.
+export type {
+  StartAnalysisRequest,
+  AnalysisCreatedResponse,
+  AnalysisSummaryResponse,
+  AnalysisDetailResponse,
+  AnalysisStatus,
+  AnalysisDepth,
+  FindingResponse,
+  FindingSeverity,
+  FillRequest,
+  FillResponse,
+  FillProposalResponse,
+  GapModel,
+  GeoPointResponse,
+  CreateNodeFromInventoryRequest,
 } from "./generated/types.gen.js";
 
 // Clients (S03): advisor-facing /clients surface — the request/response
@@ -986,6 +1022,327 @@ export async function deleteEdge(
 
 function parseDeleteEdgeDetail(status: number): DeleteEdgeDetail {
   if (status === 404) return "edge_not_found";
+  return "unknown";
+}
+
+// ── Analyze (B5) · Fill (B6) · inventory authoring (B7) ─────────────────────
+//
+// The advisor authoring surface (the unified itinerary graph view, unlocked
+// for staff) drives three backend capabilities through these wrappers: search
+// inventory across providers and add a result as a graph node; queue + poll an
+// Analyze run and read its findings; and rank feasible Fill candidates for a
+// gap. All collapse the SDK's `{data, error, response}` onto the shared
+// discriminated result so the store can mutate / poll without try/catch.
+
+export type SearchInventoryDetail =
+  | "unknown_source"
+  | "network_error"
+  | "unknown";
+
+/** Query params for GET /search-inventory — the generated shape, sans null. */
+export type SearchInventoryQuery = NonNullable<
+  SearchInventoryEndpointSearchInventoryGetData["query"]
+>;
+
+export type SearchInventoryResult =
+  | { ok: true; items: SearchInventoryResponse["items"]; count: number }
+  | { ok: false; status: number; detail: SearchInventoryDetail };
+
+/**
+ * Typed wrapper for GET /search-inventory. Aggregate fan-out by default; pass
+ * `source` / `kinds` / `keyword` (+ flight / hotel / geo-bias params) to
+ * scope. 400 → `unknown_source`.
+ */
+export async function searchInventory(
+  client: Client,
+  query: SearchInventoryQuery = {},
+): Promise<SearchInventoryResult> {
+  try {
+    const { data, error, response } =
+      await searchInventoryEndpointSearchInventoryGet({ client, query });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, items: data.items, count: data.count };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 400 ? "unknown_source" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type CreateNodeFromInventoryDetail =
+  | "itinerary_not_found"
+  | "inventory_not_found"
+  | "unknown_source"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type CreateNodeFromInventoryResult =
+  | { ok: true; node: NodeResponse }
+  | { ok: false; status: number; detail: CreateNodeFromInventoryDetail };
+
+export type CreateNodeFromInventoryArgs = {
+  itineraryId: string;
+  source: string;
+  sourceId: string;
+  status?: NodeStatus;
+  parentSubgraphId?: string | null;
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{id}/nodes/from-inventory. The server
+ * re-fetches the item, derives typed card metadata + first-class cost (B4),
+ * and adds it as a node (default status `proposed`). This is also how an
+ * accepted Fill proposal lands on the graph. 400 → `unknown_source`, 404 →
+ * `inventory_not_found`, 422 → `validation_error`.
+ */
+export async function createNodeFromInventory(
+  client: Client,
+  args: CreateNodeFromInventoryArgs,
+): Promise<CreateNodeFromInventoryResult> {
+  try {
+    const { data, error, response } =
+      await createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost(
+        {
+          client,
+          path: { itinerary_id: args.itineraryId },
+          body: {
+            source: args.source,
+            source_id: args.sourceId,
+            ...(args.status ? { status: args.status } : {}),
+            ...(args.parentSubgraphId !== undefined
+              ? { parent_subgraph_id: args.parentSubgraphId }
+              : {}),
+          },
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, node: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseCreateNodeFromInventoryDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseCreateNodeFromInventoryDetail(
+  status: number,
+): CreateNodeFromInventoryDetail {
+  if (status === 400) return "unknown_source";
+  if (status === 404) return "inventory_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type AnalyzeDetail =
+  | "itinerary_not_found"
+  | "forbidden"
+  | "analysis_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type StartAnalysisResult =
+  | { ok: true; created: AnalysisCreatedResponse }
+  | { ok: false; status: number; detail: AnalyzeDetail };
+
+export type StartAnalysisArgs = {
+  itineraryId: string;
+  body?: StartAnalysisRequest;
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{id}/analyses (202). Queues an Analyze run
+ * (standard depth by default) and returns its id + status; the caller polls
+ * `getAnalysis` for findings. 404 → `itinerary_not_found`, 403 → `forbidden`.
+ */
+export async function startAnalysis(
+  client: Client,
+  args: StartAnalysisArgs,
+): Promise<StartAnalysisResult> {
+  try {
+    const { data, error, response } =
+      await startAnalysisEndpointItineraryItineraryIdAnalysesPost({
+        client,
+        path: { itinerary_id: args.itineraryId },
+        body: args.body ?? {},
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, created: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseAnalyzeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListAnalysesResult =
+  | { ok: true; analyses: AnalysisSummaryResponse[] }
+  | { ok: false; status: number; detail: AnalyzeDetail };
+
+/** Typed wrapper for GET /itinerary/{id}/analyses — recent runs, newest first. */
+export async function listAnalyses(
+  client: Client,
+  itineraryId: string,
+  limit?: number,
+): Promise<ListAnalysesResult> {
+  try {
+    const { data, error, response } =
+      await listAnalysesEndpointItineraryItineraryIdAnalysesGet({
+        client,
+        path: { itinerary_id: itineraryId },
+        ...(limit !== undefined ? { query: { limit } } : {}),
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, analyses: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseAnalyzeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type GetAnalysisResult =
+  | { ok: true; analysis: AnalysisDetailResponse }
+  | { ok: false; status: number; detail: AnalyzeDetail };
+
+/**
+ * Typed wrapper for GET /itinerary/{id}/analyses/{analysis_id} — one run plus
+ * its findings. The store polls this until `analysis.status` is terminal.
+ */
+export async function getAnalysis(
+  client: Client,
+  args: { itineraryId: string; analysisId: string },
+): Promise<GetAnalysisResult> {
+  try {
+    const { data, error, response } =
+      await getAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdGet({
+        client,
+        path: { itinerary_id: args.itineraryId, analysis_id: args.analysisId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, analysis: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail:
+        response.status === 404
+          ? "analysis_not_found"
+          : parseAnalyzeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+/**
+ * Typed wrapper for POST /itinerary/{id}/analyses/{analysis_id}/cancel
+ * (idempotent). Returns the run's current detail.
+ */
+export async function cancelAnalysis(
+  client: Client,
+  args: { itineraryId: string; analysisId: string },
+): Promise<GetAnalysisResult> {
+  try {
+    const { data, error, response } =
+      await cancelAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdCancelPost(
+        {
+          client,
+          path: {
+            itinerary_id: args.itineraryId,
+            analysis_id: args.analysisId,
+          },
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, analysis: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail:
+        response.status === 404
+          ? "analysis_not_found"
+          : parseAnalyzeDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseAnalyzeDetail(status: number): AnalyzeDetail {
+  if (status === 404) return "itinerary_not_found";
+  if (status === 403) return "forbidden";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type FillGapDetail =
+  | "itinerary_not_found"
+  | "forbidden"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type FillGapResult =
+  | { ok: true; result: FillResponse }
+  | { ok: false; status: number; detail: FillGapDetail };
+
+export type FillGapArgs = {
+  itineraryId: string;
+  body: FillRequest;
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{id}/fill (read-only). Ranks feasible
+ * inventory candidates for a gap; accepting one is `createNodeFromInventory`.
+ * 404 → `itinerary_not_found`, 403 → `forbidden`, 422 → `validation_error`.
+ */
+export async function fillGap(
+  client: Client,
+  args: FillGapArgs,
+): Promise<FillGapResult> {
+  try {
+    const { data, error, response } =
+      await fillGapEndpointItineraryItineraryIdFillPost({
+        client,
+        path: { itinerary_id: args.itineraryId },
+        body: args.body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, result: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseFillGapDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseFillGapDetail(status: number): FillGapDetail {
+  if (status === 404) return "itinerary_not_found";
+  if (status === 403) return "forbidden";
+  if (status === 422) return "validation_error";
   return "unknown";
 }
 
