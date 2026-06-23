@@ -31,8 +31,9 @@ draft assembly + advisor approval gate + lock/queue, and the client final-itiner
 - Design docs: `TravelGraph_Analysis.md` (the 8-phase plan), `Cards_Style_Guide.md`,
   `phase5_analyze_handoff.md`, `phase6_fill_handoff.md`.
 
-**TravelGraph phase status:** 1–4 landed · **5 (Analyze) & 6 (Fill) documented, not implemented** ·
-7 (status gates) & 8 (Meld/Extract) design-only.
+**TravelGraph phase status:** 1–4 landed · **5 (Analyze) & 6 (Fill) core landed behind tests**
+(see §8 progress log — `deep`/live-data tier still deferred) · 7 (status gates) & 8 (Meld/Extract)
+design-only.
 
 **First task before anything else:** land this branch. Its 9 migrations and TravelGraph phases never
 made it into the project's status docs — the stale GSD state files were the trigger for retiring that
@@ -199,6 +200,89 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-22 — M002/B6 AI Fill — **physically-feasible gap-fill service + endpoint + agent tool landed (behind tests)**
+
+**What landed (all `apps/api` + one `apps/agent` tool; net-new files plus
+additive, localized edits to the shared main/standard-runner/planning-prompt
+seams — no migration: Fill is read-only over the graph):**
+- **Shared drive-time model lifted into `services/analyze_runners/common.py`**
+  (`MODE_SPEEDS`, `INTERCITY_KM`, `drive_mode_for_distance`,
+  `transit_minutes`). The B5 standard runner now imports them (behavior-
+  preserving — same numbers, B5 tests unchanged) so **Fill and Analyze share
+  ONE feasibility model** and can never disagree about what's reachable.
+- **`services/fill.py`** — `fill_gap(session, *, registry, itinerary_id, gap,
+  party_id?, analysis_id?, desired_kinds?, min_score=0.5, max_proposals=8,
+  ctx?)` → `FillResult(proposals, analysis_id, analysis_age_seconds)`. Typed
+  dataclasses `GapWindow`/`GeoPoint`/`FillProposal`. Algorithm: resolve the
+  pinned-or-latest **completed** analysis; collect `block`-finding
+  `exclude_node_types`; load bracketing nodes via B5's `load_timeline_nodes`
+  (reuses its PostGIS lat/lng decode); bias the inventory `search_inventory`
+  fan-out to the bracket midpoint + a gap-derived radius; for each item compute
+  the **drive-time envelope** (haversine + shared speed caps for prior→cand and
+  cand→next) and `fits_in_gap`; drop meals carrying a **party allergen** (hard),
+  flag mobility mismatches (soft); **content-adjacency** — down-rank a meal
+  butted up against an adjacent meal in time ("you just ate", via a separate
+  `_temporal_neighbors` over the nearest *timed* nodes, located or not) below
+  the default `min_score`; score (feasible-close-utilized ≈ 1.0,
+  too-tight 0.25, geometry-unknown a neutral 0.5); sort, cut `< min_score`,
+  truncate. **Honesty:** where bracket geometry is missing a candidate is
+  *marked* `feasibility_unknown` (drive times `None`), never asserted feasible
+  (handoff §4).
+- **`routers/fill.py`** — `POST /itinerary/{id}/fill` (read-only, 200).
+  `extra="forbid"` request; typed `FillResponse`. Reuses
+  `assert_itinerary_readable` so Fill applies the **exact same auth** as the
+  graph read. **No accept route by design** — a `FillProposal` carries
+  `inventory_source`/`inventory_id`, so accepting is the existing
+  `POST /nodes/from-inventory` write (proposed node lands with provenance via
+  the normal `add_node` path). Wired into `main.py`.
+- **Agent tool `apps/agent/.../tools/fill.py`** — `fill_gap(gap_start, gap_end,
+  desired_kinds?, party_id?, min_score?, max_proposals?)`, POSTs to the pinned
+  itinerary's `/fill`; registered in the **planning** bundle (not onboarding/QA)
+  + a one-line mention added to both planning rubrics so the agent reaches for
+  it on an empty window. Accept stays `propose_card`/`propose_flight`.
+
+**What's tested (2 new files, +22 tests):**
+- `test_fill_service.py` — pure: kind-mapping drops graph-structure types,
+  radius bounds, `_party_eval` allergen-hard-block / experience-not-blocked /
+  mobility-soft, `_build_proposal` scoring (feasible > too-tight > unknown),
+  **meal-after-meal down-rank vs activity-after-meal unaffected**,
+  unknown-when-no-anchors. Integration (gated on local Supabase, in-test
+  `_FakeProvider`): **Tokyo gap returns feasible meal/experience + excludes a
+  ~400 km Osaka candidate (the B6 acceptance)**; far candidate surfaced-but-
+  flagged at `min_score=0`; **tree-nut allergen drops the matching meal**;
+  **a meal right after a lunch node is suppressed by default + resurfaces
+  flagged at `min_score=0`**; **`block` finding `exclude_node_types` excludes
+  experiences**; no-located-anchors ⇒ `feasibility_unknown`; empty gap ⇒ no
+  proposals.
+- `test_fill_router.py` — feasible proposal end-to-end (located+timed seed,
+  registry swapped via `dependency_overrides`); feasibility-unknown path;
+  `extra="forbid"` 422; 404; 401; draft-read gate 403.
+- **Full `apps/api` suite green (546 passed**, was 524 at B5; +22). `apps/agent`
+  suite green (34). ruff + `mypy --strict` clean; **api-client regenerated**
+  (`/fill` in `sdk.gen`/`types.gen`; `generated/` gitignored) + `tsc` build and
+  `apps/web` typecheck clean. `scripts/verify-sB6.sh` runs **13 offline
+  acceptance bullets green** + an optional staging live probe (soft-skips
+  without `STAGING_API_URL`/JWT/`FILL_ITINERARY_ID`).
+
+**What remains (resume hooks):**
+1. **Live drive times (deep tier).** Fill uses haversine + per-mode caps like
+   standard Analyze; live Google Routes drive time is the deferred `deep` work
+   (D-ANALYZE) — wire it the same place B5's deep tier lands.
+2. **Richer party constraints.** Today: meal allergens (hard) + a coarse
+   mobility tag (soft). Age/dietary/medical from the V1 party-member model
+   (M003) aren't consulted yet — extend `_party_eval` + `_party_constraints`
+   once V1 lands.
+3. **`block`-finding `exclude_node_types` is a forward contract** — the standard
+   runner doesn't emit it yet (no weather/availability findings until the
+   integration-stub refactor, B5 resume hook 1). Fill honors it the moment a
+   runner produces it.
+4. **Web "fill this gap" surface** — the advisor action + proposal render is
+   **B7** (advisor authoring); deliberately untouched here. Endpoint + agent
+   tool are the B6 surface.
+5. **Item-supplied durations.** Visit length is a per-kind default
+   (`_DEFAULT_DURATION_MIN`); an item that carries its own duration (e.g. an OV
+   experience's `duration_days`) isn't read yet — refine when cards need it.
 
 ### 2026-06-21 — M002/B5 Analyze (shallow + standard) — **core async Analyze pipeline landed (behind tests)**
 

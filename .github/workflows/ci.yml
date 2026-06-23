@@ -110,6 +110,68 @@ jobs:
       - name: Run pytest
         run: uv run pytest -q
 
+  # ── Python/ovb CLI: ruff lint + format + mypy strict for apps/cli ──
+  cli-lint:
+    name: apps/cli lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/cli
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: apps/cli/uv.lock
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Sync dependencies (frozen)
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run mypy
+
+  # ── Python/ovb CLI: offline pytest (e2e self-skips without a live stack) ──
+  cli-pytest:
+    name: apps/cli pytest (uv)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/cli
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: apps/cli/uv.lock
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Sync dependencies (frozen)
+        run: uv sync --frozen
+
+      - name: Run pytest (offline)
+        run: uv run pytest -q -m "not e2e"
+
   # ── CDK synth: hermetic synth from a clean checkout (no AWS creds needed — D018) ──
   cdk-synth:
     name: infra/cdk synth

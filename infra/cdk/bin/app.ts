@@ -27,6 +27,7 @@ const apiStack = new ApiStack(app, `OvBlackApi-${config.envName}`, {
   databaseUrlSecret: secretsStack.databaseUrl,
   bedrockAgentCoreRuntimeArnSecret: secretsStack.bedrockAgentCoreRuntimeArn,
   agentTokenSigningSecret: secretsStack.agentTokenSigningSecret,
+  inventoryProviderKeysSecret: secretsStack.inventoryProviderKeys,
   webOrigin: config.webOrigin,
   agentcoreRegion: config.agentcoreRegion,
   ...(imageTagContext ? { imageTag: imageTagContext } : {}),

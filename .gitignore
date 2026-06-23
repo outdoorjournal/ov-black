@@ -45,3 +45,6 @@ next-env.d.ts
 # AgentCore
 .bedrock_agentcore/
 .playwright-mcp/
+
+# AWS-style ovb CLI config (apps/cli) — may hold secrets; never commit.
+.cli

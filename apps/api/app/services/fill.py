@@ -85,6 +85,12 @@ _MAX_RADIUS_M = 150_000
 # Urban drive km/h used only to turn a gap into a coarse search radius.
 _RADIUS_DRIVE_KMH = 25.0
 
+# Two meals scheduled within this window of each other read as "you just ate" —
+# a meal candidate butted up against an adjacent meal is heavily down-ranked
+# (below the default min_score) so Fill won't recommend it unless asked.
+_MEAL_SPACING_MIN = 180.0
+_REDUNDANT_MEAL_FACTOR = 0.35
+
 
 @dataclass(frozen=True, slots=True)
 class GeoPoint:
@@ -158,9 +164,7 @@ def _item_point(item: InventoryItem) -> GeoPoint | None:
     return GeoPoint(lat=loc.lat, lng=loc.lng)
 
 
-def _anchors(
-    nodes: list[GraphNode], gap: GapWindow
-) -> tuple[GraphNode | None, GraphNode | None]:
+def _anchors(nodes: list[GraphNode], gap: GapWindow) -> tuple[GraphNode | None, GraphNode | None]:
     """Nearest located + timed nodes bracketing the gap.
 
     ``prior`` is the located node ending closest before the gap starts;
@@ -179,6 +183,30 @@ def _anchors(
     )
     nxt = min(
         (n for n in located if n.starts_lower is not None and n.starts_lower >= gap.end),
+        key=lambda n: n.starts_lower,  # type: ignore[arg-type,return-value]
+        default=None,
+    )
+    return prior, nxt
+
+
+def _temporal_neighbors(
+    nodes: list[GraphNode], gap: GapWindow
+) -> tuple[GraphNode | None, GraphNode | None]:
+    """Nearest timed nodes bracketing the gap, ignoring whether they're located.
+
+    These drive the *content*-adjacency check (e.g. "you just ate"), which is
+    about what sits next to the gap in time — distinct from :func:`_anchors`,
+    which needs coordinates for the drive-time envelope. A meal with no point
+    still counts as the meal you just had.
+    """
+    timed = [n for n in nodes if n.starts_lower is not None and n.starts_upper is not None]
+    prior = max(
+        (n for n in timed if n.starts_upper is not None and n.starts_upper <= gap.start),
+        key=lambda n: n.starts_upper,  # type: ignore[arg-type,return-value]
+        default=None,
+    )
+    nxt = min(
+        (n for n in timed if n.starts_lower is not None and n.starts_lower >= gap.end),
         key=lambda n: n.starts_lower,  # type: ignore[arg-type,return-value]
         default=None,
     )
@@ -245,6 +273,37 @@ def _party_eval(
     return party_ok, warnings, hard_block
 
 
+def _redundant_meal(
+    node_type: NodeType,
+    *,
+    starts_at: datetime,
+    ends_at: datetime,
+    prior_neighbor: GraphNode | None,
+    next_neighbor: GraphNode | None,
+) -> bool:
+    """True when this is a meal butted up against an adjacent meal in time.
+
+    Proposing lunch right after the lunch you just finished (or right before
+    dinner) is the "you just ate" case — measured against the gap's temporal
+    neighbors, not its geometry anchors.
+    """
+    if node_type is not NodeType.meal:
+        return False
+    if (
+        prior_neighbor is not None
+        and prior_neighbor.type is NodeType.meal
+        and prior_neighbor.starts_upper is not None
+        and (starts_at - prior_neighbor.starts_upper).total_seconds() / 60.0 < _MEAL_SPACING_MIN
+    ):
+        return True
+    return bool(
+        next_neighbor is not None
+        and next_neighbor.type is NodeType.meal
+        and next_neighbor.starts_lower is not None
+        and (next_neighbor.starts_lower - ends_at).total_seconds() / 60.0 < _MEAL_SPACING_MIN
+    )
+
+
 def _build_proposal(
     item: InventoryItem,
     node_type: NodeType,
@@ -255,6 +314,8 @@ def _build_proposal(
     nxt: GraphNode | None,
     party_ok: bool,
     warnings: list[str],
+    prior_neighbor: GraphNode | None = None,
+    next_neighbor: GraphNode | None = None,
 ) -> FillProposal:
     loc = _item_point(item)
     duration_min = _DEFAULT_DURATION_MIN.get(node_type, 90)
@@ -280,17 +341,33 @@ def _build_proposal(
 
     party_factor = 1.0 if party_ok else 0.6
     if feasibility_unknown:
-        score = round(0.5 * party_factor, 3)
+        score = 0.5 * party_factor
     elif not fits_in_gap:
-        score = round(0.25 * party_factor, 3)
+        score = 0.25 * party_factor
     else:
         proximity = max(0.0, 1.0 - (in_min + out_min) / gap_min) if gap_min else 0.0
         util = min(1.0, used_min / gap_min) if gap_min else 0.0
-        score = round((0.6 + 0.25 * proximity + 0.15 * util) * party_factor, 3)
+        score = (0.6 + 0.25 * proximity + 0.15 * util) * party_factor
 
-    rationale = _rationale(item.title, duration_min, drive_in, drive_out, fits_in_gap, feasibility_unknown)
-    if warnings:
-        rationale = f"{rationale} ({'; '.join(warnings)})"
+    # Variety: don't recommend a meal right after (or before) another meal.
+    redundant_meal = _redundant_meal(
+        node_type,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        prior_neighbor=prior_neighbor,
+        next_neighbor=next_neighbor,
+    )
+    if redundant_meal:
+        score *= _REDUNDANT_MEAL_FACTOR
+
+    rationale = _rationale(
+        item.title, duration_min, drive_in, drive_out, fits_in_gap, feasibility_unknown
+    )
+    notes = list(warnings)
+    if redundant_meal:
+        notes.append("a meal is already scheduled close by")
+    if notes:
+        rationale = f"{rationale} ({'; '.join(notes)})"
 
     return FillProposal(
         inventory_source=item.source,
@@ -300,7 +377,7 @@ def _build_proposal(
         starts_at=starts_at,
         ends_at=ends_at,
         location=loc,
-        score=score,
+        score=round(score, 3),
         fits_in_gap=fits_in_gap,
         feasibility_unknown=feasibility_unknown,
         drive_time_in_min=drive_in,
@@ -361,9 +438,7 @@ async def _resolve_analysis(
     ).scalar_one_or_none()
 
 
-async def _excluded_node_types(
-    session: AsyncSession, analysis: Analysis | None
-) -> set[NodeType]:
+async def _excluded_node_types(session: AsyncSession, analysis: Analysis | None) -> set[NodeType]:
     """NodeTypes a ``block`` finding rules out for this gap.
 
     A block finding carrying ``evidence.exclude_node_types: ["experience", …]``
@@ -407,9 +482,7 @@ async def _party_constraints(
     rows = (
         (
             await session.execute(
-                text(
-                    "select profile_attrs from public.travelers where party_id = :pid"
-                ),
+                text("select profile_attrs from public.travelers where party_id = :pid"),
                 {"pid": party_id},
             )
         )
@@ -448,7 +521,8 @@ async def fill_gap(
     Anchors on the latest completed analysis (or the pinned ``analysis_id``);
     queries inventory biased to the bracketing geometry; rejects/marks
     candidates that can't fit the drive-time envelope; drops party-allergen
-    meals; scores and truncates. Never mutates the graph.
+    meals; down-ranks a meal butted up against an adjacent meal ("you just
+    ate"); scores and truncates. Never mutates the graph.
     """
     ctx = ctx or InventoryCtx(actor_kind="system")
     start = _ensure_aware(gap.start)
@@ -463,18 +537,23 @@ async def fill_gap(
         age_seconds = max(0, int((datetime.now(UTC) - analysis.completed_at).total_seconds()))
 
     if gap_min <= 0:  # degenerate / empty gap — nothing to fill
-        return FillResult(proposals=[], analysis_id=analysis_id_out, analysis_age_seconds=age_seconds)
+        return FillResult(
+            proposals=[], analysis_id=analysis_id_out, analysis_age_seconds=age_seconds
+        )
 
     excluded = await _excluded_node_types(session, analysis)
     requested = list(desired_kinds) if desired_kinds else list(_DEFAULT_KINDS)
     types = [t for t in requested if t not in excluded]
     inv_kinds = _node_types_to_inventory_kinds(types)
     if not inv_kinds:
-        return FillResult(proposals=[], analysis_id=analysis_id_out, analysis_age_seconds=age_seconds)
+        return FillResult(
+            proposals=[], analysis_id=analysis_id_out, analysis_age_seconds=age_seconds
+        )
 
     scope: dict[str, Any] = {"party_id": str(party_id)} if party_id is not None else {}
     nodes = await load_timeline_nodes(session, itinerary_id=itinerary_id, scope=scope)
     prior, nxt = _anchors(nodes, gap)
+    prior_neighbor, next_neighbor = _temporal_neighbors(nodes, gap)
 
     filters: dict[str, Any] = {"limit": 40}
     center = _search_center(prior, nxt)
@@ -514,6 +593,8 @@ async def fill_gap(
                 nxt=nxt,
                 party_ok=party_ok,
                 warnings=warnings,
+                prior_neighbor=prior_neighbor,
+                next_neighbor=next_neighbor,
             )
         )
 

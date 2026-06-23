@@ -28,6 +28,7 @@ from app.routers.auth import router as auth_router
 from app.routers.clients import router as clients_router
 from app.routers.demos import router as demos_router
 from app.routers.facts import router as facts_router
+from app.routers.fill import router as fill_router
 from app.routers.integrations.flight_status import router as flight_status_router
 from app.routers.integrations.google_places import router as google_places_router
 from app.routers.integrations.weather import router as weather_router
@@ -201,6 +202,7 @@ app.include_router(auth_router)
 app.include_router(itineraries_router)
 app.include_router(advisor_itineraries_router)
 app.include_router(analyze_router)
+app.include_router(fill_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)
 app.include_router(facts_router)

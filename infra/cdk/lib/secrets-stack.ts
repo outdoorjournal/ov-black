@@ -21,6 +21,7 @@ export class SecretsStack extends Stack {
   readonly databaseUrl: Secret;
   readonly bedrockAgentCoreRuntimeArn: Secret;
   readonly agentTokenSigningSecret: Secret;
+  readonly inventoryProviderKeys: Secret;
 
   constructor(scope: Construct, id: string, props: SecretsStackProps) {
     super(scope, id, props);
@@ -99,6 +100,30 @@ export class SecretsStack extends Stack {
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
+    // ONE secret holding every inventory-provider vendor key as a JSON field —
+    // Secrets Manager bills per-secret/month, so we fold the cheap, low-rotation
+    // vendor keys together (same JSON-field pattern as supabase-jwt above) instead
+    // of paying for one secret each. ApiStack extracts each field into the flat env
+    // var apps/api reads (GOOGLE_PLACES_API_KEY / DUFFEL_API_KEY). Add ratehawk's
+    // key id + key here as new JSON fields when that provider lands — no new secret.
+    //
+    // Seeded with EMPTY strings (not REPLACE_ME) so the ECS json-field extraction
+    // resolves before the operator populates real values, AND so each provider sees
+    // an empty key → degrades to [] with a single `no_credentials` warning rather
+    // than hammering the upstream with a bad key and logging 4xx/401 noise. Honesty
+    // notes per field: the Google key must never leak into a client-facing URL
+    // (photo media needs a keyed proxy); prod wants a `duffel_live_…` token (a
+    // `duffel_test_…` token returns Duffel's simulated airlines). NEVER log these.
+    this.inventoryProviderKeys = new Secret(this, 'InventoryProviderKeys', {
+      secretName: `${namePrefix}/inventory-provider-keys`,
+      description:
+        'Inventory-provider vendor API keys consumed by apps/api, one JSON secret to save per-secret cost. JSON: {google_places, duffel}. NEVER log these values.',
+      secretStringValue: SecretValue.unsafePlainText(
+        JSON.stringify({ google_places: '', duffel: '' }),
+      ),
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
     new CfnOutput(this, 'SupabaseServiceRoleArn', {
       value: this.supabaseServiceRole.secretArn,
       description: 'ARN of the Supabase service-role-key secret.',
@@ -127,6 +152,12 @@ export class SecretsStack extends Stack {
       value: this.agentTokenSigningSecret.secretArn,
       description: 'ARN of the agent-token signing-key secret.',
       exportName: `ov-black-${props.envName}-agent-token-signing-secret-arn`,
+    });
+
+    new CfnOutput(this, 'InventoryProviderKeysArn', {
+      value: this.inventoryProviderKeys.secretArn,
+      description: 'ARN of the inventory-provider vendor-keys secret (JSON: google_places, duffel).',
+      exportName: `ov-black-${props.envName}-inventory-provider-keys-arn`,
     });
   }
 }

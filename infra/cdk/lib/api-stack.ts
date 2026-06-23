@@ -32,6 +32,8 @@ export interface ApiStackProps extends StackProps {
   readonly databaseUrlSecret: SmSecret;
   readonly bedrockAgentCoreRuntimeArnSecret: SmSecret;
   readonly agentTokenSigningSecret: SmSecret;
+  /** One JSON secret holding every vendor key; ApiStack extracts each field (google_places, duffel). */
+  readonly inventoryProviderKeysSecret: SmSecret;
   /** Web app origin → WEB_ORIGIN. Empty means "not wired yet"; we skip injection then. */
   readonly webOrigin: string;
   /** Region of the Bedrock AgentCore runtime → AWS_REGION for apps/api's boto3 client. */
@@ -122,6 +124,7 @@ export class ApiStack extends Stack {
           props.databaseUrlSecret.secretArn,
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
           props.agentTokenSigningSecret.secretArn,
+          props.inventoryProviderKeysSecret.secretArn,
         ],
       }),
     );
@@ -177,9 +180,12 @@ export class ApiStack extends Stack {
         AWS_REGION: props.agentcoreRegion,
         // Real providers only. The default 'ov,mock' would CRASH boot here: the mock
         // provider eagerly loads tests/fixtures/mock_inventory.json in __init__, and
-        // the image excludes tests/ (.dockerignore). M002 extends this to
-        // 'ov,google_places,duffel,ratehawk' once those keys land — see the runbook.
-        INVENTORY_PROVIDERS_ENABLED: 'ov',
+        // the image excludes tests/ (.dockerignore). google_places + duffel are enabled
+        // now that their keys are wired below (GOOGLE_PLACES_API_KEY / DUFFEL_API_KEY);
+        // ratehawk joins once its key lands — see the runbook. Until the operator populates
+        // the real key, each provider degrades to [] (a placeholder key 4xx/401s, never a
+        // boot crash).
+        INVENTORY_PROVIDERS_ENABLED: 'ov,google_places,duffel',
         // Hand the ARNs to the app for reference/observability; the live values are
         // injected via the `secrets` block below (ECS native), NEVER baked into env.
         // The task role above is the only principal that can read them.
@@ -189,6 +195,8 @@ export class ApiStack extends Stack {
         BEDROCK_AGENTCORE_RUNTIME_ARN_SECRET_ARN:
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
         AGENT_TOKEN_SIGNING_SECRET_ARN: props.agentTokenSigningSecret.secretArn,
+        // One secret, two JSON fields → two env vars (extracted in the secrets block below).
+        INVENTORY_PROVIDER_KEYS_SECRET_ARN: props.inventoryProviderKeysSecret.secretArn,
         // WEB_ORIGIN drives invite redirect_to + CORS. Only injected once the web
         // app's staging origin is known; until then apps/api keeps its own default
         // rather than booting with WEB_ORIGIN='' (which would break both).
@@ -211,6 +219,13 @@ export class ApiStack extends Stack {
         AGENT_TOKEN_SIGNING_SECRET: EcsSecret.fromSecretsManager(
           props.agentTokenSigningSecret,
         ),
+        // Both vendor keys live in one JSON secret (cost) — extract each field into
+        // the flat env var apps/api reads, exactly like the supabase-jwt fields above.
+        GOOGLE_PLACES_API_KEY: EcsSecret.fromSecretsManager(
+          props.inventoryProviderKeysSecret,
+          'google_places',
+        ),
+        DUFFEL_API_KEY: EcsSecret.fromSecretsManager(props.inventoryProviderKeysSecret, 'duffel'),
       },
       portMappings: [{ containerPort: 8000, name: 'api' }],
       essential: true,

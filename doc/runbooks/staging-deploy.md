@@ -30,7 +30,7 @@ them so you know what the secrets below feed:
 | No `DATABASE_URL` injected | App fell back to `localhost:54322`; every DB request 500s | New `ov-black/staging/database-url` secret → `DATABASE_URL` |
 | Supabase JWT shipped as a JSON blob (`SUPABASE_JWT`), app reads flat vars | JWKS/issuer empty → every authed route 401s | `supabase-jwt` secret now `{url,issuer,jwks_url}`, each extracted into `SUPABASE_URL` / `SUPABASE_JWT_ISSUER` / `SUPABASE_JWKS_URL` |
 | `Settings.env` never set (`OV_BLACK_ENV` is not read by the app) | Stayed `local`; agent could fall back to the mock runtime | Injects `ENV=staging` (`prod`→`production`) |
-| Default `INVENTORY_PROVIDERS_ENABLED=ov,mock` | **Boot crash** — mock eagerly loads `tests/fixtures/…`, excluded from the image | Pins staging to `ov` |
+| Default `INVENTORY_PROVIDERS_ENABLED=ov,mock` | **Boot crash** — mock eagerly loads `tests/fixtures/…`, excluded from the image | Pins to `ov,google_places,duffel` (real providers only; keys wired below) |
 | No `AWS_REGION` for the agentcore client | boto3 targeted the wrong region | Injects `AWS_REGION=us-west-2` (the `agentcoreRegion` context) |
 
 ---
@@ -63,7 +63,7 @@ checkout; you populate real values in step 3.
 pnpm -C infra/cdk cdk deploy OvBlackSecrets-staging
 ```
 
-This creates five secrets under `ov-black/staging/`:
+This creates six secrets under `ov-black/staging/`:
 
 | Secret name | Consumed as | Holds |
 |---|---|---|
@@ -72,6 +72,7 @@ This creates five secrets under `ov-black/staging/`:
 | `database-url` | `DATABASE_URL` | async SQLAlchemy DSN |
 | `agent-token-signing-secret` | `AGENT_TOKEN_SIGNING_SECRET` | HS256 key for per-session agent tokens |
 | `bedrock-agentcore-runtime-arn` | `BEDROCK_AGENTCORE_RUNTIME_ARN` | AgentCore runtime ARN (set in step 5) |
+| `inventory-provider-keys` | `GOOGLE_PLACES_API_KEY` + `DUFFEL_API_KEY` | JSON `{google_places, duffel}` — one secret for all vendor keys (per-secret cost) |
 
 ---
 
@@ -103,7 +104,21 @@ $SM --secret-id ov-black/staging/database-url --secret-string \
 # 3d. Per-session agent-token signing key (32+ bytes of randomness).
 $SM --secret-id ov-black/staging/agent-token-signing-secret --secret-string "$(openssl rand -base64 48)"
 
-# 3e. bedrock-agentcore-runtime-arn is set in step 5, after the runtime exists.
+# 3e. Inventory-provider vendor keys — ONE JSON secret holding every vendor key
+#     (Secrets Manager bills per-secret, so they're folded together). Set both fields
+#     in a single put (a put REPLACES the whole value — include every field each time):
+#       - google_places: Google Cloud console → APIs & Services → Credentials. Places
+#         API New + Maps must be enabled; restrict the key by HTTP referrer / IP.
+#       - duffel: Duffel dashboard → Settings → Access tokens. Staging may use a
+#         duffel_test_ token (simulated airlines); prod wants a duffel_live_ token.
+#     Any field left empty → that provider degrades to [] with a no_credentials warning
+#     (no boot crash). Add ratehawk's key id + key here as new JSON fields when it lands.
+$SM --secret-id ov-black/staging/inventory-provider-keys --secret-string '{
+  "google_places": "AIza...",
+  "duffel":        "duffel_test_..."
+}'
+
+# 3f. bedrock-agentcore-runtime-arn is set in step 5, after the runtime exists.
 ```
 
 ---
@@ -219,10 +234,12 @@ If the service won't stabilize, the circuit breaker rolls back; read the cause i
 
 - **`WEB_ORIGIN`** — set `ov-black:envs.staging.webOrigin` in `cdk.json` once the web app's staging
   origin exists, then redeploy. Until then magic-link redirects target localhost.
-- **M002 vendor providers** — flip `INVENTORY_PROVIDERS_ENABLED` to
-  `ov,google_places,duffel,ratehawk` and add their keys as secrets (mirror §2/§3:
-  `google-places-api-key`, `duffel-api-key`, `ratehawk-key-id` + `ratehawk-api-key`, grant the task
-  role `GetSecretValue`, inject in `api-stack.ts`). Out of scope for M001/F2.
+- **Remaining vendor providers** — `google_places` + `duffel` are wired (keys in the single
+  `inventory-provider-keys` secret + enabled in `INVENTORY_PROVIDERS_ENABLED`, see §2/§3). Ratehawk is
+  still owed: extend the flag to `ov,google_places,duffel,ratehawk`, add `ratehawk_key_id` +
+  `ratehawk_api_key` as new JSON fields in that **same** secret (no new secret), and extract each into
+  its env var in `api-stack.ts` (`EcsSecret.fromSecretsManager(secret, 'ratehawk_key_id')`). Out of
+  scope for M001/F2.
 - **TLS / custom domain** — the ALB is HTTP-only (M001 concession); add ACM + an HTTPS listener.
 - **CDK-managed AgentCore** — runtime provisioning is still console/CLI out-of-band (S05 deferral).
 - **F3 founder craft-feel UAT** — run the M001 craft checks against this deploy (separate slice).

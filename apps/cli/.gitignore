@@ -1,0 +1,14 @@
+# Transient OpenAPI dump emitted during codegen (the models it produces ARE
+# committed — see scripts/generate.sh, mirroring packages/api-client).
+/openapi.json
+
+# AWS-style ovb config — may hold service-role keys / JWTs; never commit.
+.cli
+
+# Python / tooling caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
