@@ -118,7 +118,7 @@ state files reflect the branch.*
 | **B5 — Analyze (shallow + standard)** | Feasibility backbone for Fill + reconcile. | Migration: `analyses` + `analysis_findings` (per `TravelGraph_Analysis` §8 / `phase5_analyze_handoff.md`); `services/analyze.py` async state machine; endpoints `POST /itinerary/{id}/analyze`, `GET .../analyses[/{id}]`, cancel. Shallow = structural; standard = `tstzrange` overlap + geo-flux by mode (uses 0014 PostGIS) + weather stub. **No deep/real-time yet.** | Running standard analyze on the Japan seed flags an impossible drive-time gap as a `warn` finding with evidence. |
 | **B6 — AI Fill** | Physically-feasible gap-filling. | `services/fill.py` consuming the latest completed analysis (`phase6_fill_handoff.md`); `fill_gap(itinerary_id, gap, party_id, analysis_id)` → ranked `FillProposal`s filtered by geo-radius + drive-time + party constraints; agent tool + advisor "fill this gap" action; accepted proposals become `proposed` nodes. | Advisor selects a gap; Fill returns ranked feasible options with rationale; accepting one adds a `proposed` node with provenance. |
 | **B7 — AI-assisted authoring surface** 🔨 *core landed — see §8* | "Build in minutes" — with AI, from a blank canvas. | Command-Center itinerary editor over the promoted `_components/itinerary-graph` views: add nodes from inventory search (B1–B3), inline node edit + cost (B4), drag/drop, **run-analyze + run-fill actions** (B5/B6) with findings + ranked gap-fill proposals rendered inline, accept a proposal → `proposed` node (via the existing `POST /nodes/from-inventory`), approve. Generated-SDK wrappers for **analyze + fill** (templates deferred to B8). | Advisor builds a 5+ node multi-source itinerary from a blank canvas using inventory search + Fill (no templates), runs Analyze to confirm feasibility, and approves it; client view renders it. |
-| **B8 — Templates: snapshot & reuse** *(was the deck half of B7; resequenced)* | Turn a great hand-built itinerary into a reusable starting point. | Direction flips from "instantiate-first" to **"build-then-snapshot"**: `POST /itinerary/{id}/snapshot-template` captures an approved itinerary's nodes/edges into `card_templates`/`template_nodes`/`template_edges` (schema already landed, 0015); a Command-Center **template deck** to instantiate a saved template into a fresh itinerary (reuses the existing `services/templates.py` instantiation); generated-SDK wrappers for the template routes. | Advisor snapshots an approved itinerary to a named template, then instantiates it into a fresh itinerary for another traveler; instantiated nodes land `proposed` carrying template provenance (`template_id`/`template_node_id`/`template_version`). |
+| **B8 — Templates: snapshot & reuse** ⏸ *deferred — no scheduled date (parked until prioritized)* | Turn a great hand-built itinerary into a reusable starting point. | Direction flips from "instantiate-first" to **"build-then-snapshot"**: `POST /itinerary/{id}/snapshot-template` captures an approved itinerary's nodes/edges into `card_templates`/`template_nodes`/`template_edges` (schema already landed, 0015); a Command-Center **template deck** to instantiate a saved template into a fresh itinerary (reuses the existing `services/templates.py` instantiation); generated-SDK wrappers for the template routes. | Advisor snapshots an approved itinerary to a named template, then instantiates it into a fresh itinerary for another traveler; instantiated nodes land `proposed` carrying template provenance (`template_id`/`template_node_id`/`template_version`). |
 
 ### M003 — Traveler details + vault (Pillar 4) — *parallel to M002*
 *Goal: the traveler supplies party details and stores reusable documents securely.*
@@ -154,8 +154,9 @@ state files reflect the branch.*
 - **After Foundation:** run M002 and M003 concurrently (different subsystems, no shared schema churn).
 - **Within M002:** B1/B2/B3 (providers) + B4 (cost) + B5 (Analyze) + B6 (Fill) have **landed** behind tests
   (on `dev`); **B7 (AI-assisted authoring) is next** and consumes them (Fill needs Analyze; authoring needs
-  both). **B8 (templates) was resequenced to follow B7** — we snapshot a great hand-built itinerary into a
-  template rather than instantiate-from-template first.
+  both). **B8 (templates) is deferred to an unscheduled future point** — parked until prioritized, not the
+  default next slice after B7. The direction is still build-then-snapshot (snapshot a great hand-built
+  itinerary into a template rather than instantiate-from-template first); only the *timing* is open.
 - **M004 needs** G1 (gates) before G2/G3, and benefits from B5 (Analyze) for reconcile feasibility.
 - **M005 needs** B4 (cost) and G1 (gates) — start it only after those land.
 - Each slice ships behind tests with a `scripts/verify-sNN.sh` smoke harness, matching M001 discipline.
@@ -196,10 +197,11 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 1. **B7 — AI-assisted authoring surface**: the Command-Center editor that finally surfaces B1–B6 to an
    advisor (inventory search · cost · run-analyze · run-fill · approve). Templates are **not** in scope — that's B8.
-2. **B8 — Templates: snapshot & reuse**: once B7 can build a great itinerary, add snapshot-to-template +
-   a deck to instantiate saved templates.
-3. Then pick the next track: **M003** (traveler details + vault, parallel) or **M004/G1** status gates
+2. Then pick the next track: **M003** (traveler details + vault, parallel) or **M004/G1** status gates
    (which M005's money gate needs). Deployment (F2/F3) stays deferred until you choose to cut a release.
+3. **B8 — Templates: snapshot & reuse** is **deferred (no scheduled date)** — parked until prioritized.
+   When picked up: once an advisor can build a great itinerary, add snapshot-to-template + a deck to
+   instantiate saved templates. The backing schema (0015) already landed, so it can resume cold.
 
 ---
 
@@ -208,6 +210,21 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-23 — B8 templates **deferred to an unscheduled future point** (doc-only)
+
+**Decision (founder):** B8 (Templates: snapshot & reuse) is **no longer the default next slice after B7**.
+It is **parked with no scheduled date** until explicitly prioritized. Direction is unchanged
+(build-then-snapshot, not instantiate-first) — only the *timing* is open. After B7, the next track is
+**M003** (traveler details + vault) or **M004/G1** (status gates), per §7.
+
+**What changed:** doc-only (`doc/mvp-plan.md`): B8 row marked `⏸ deferred — no scheduled date`; §4
+parallelization note rewritten (B8 deferred, not "resequenced to follow B7"); §7 next-steps reordered so
+M003/M004 precede B8 and B8 is listed as deferred. No code/schema/test changes — migration 0015 already
+landed, so B8 can resume cold whenever it's picked up.
+
+**Resume hook:** to revive B8, restore it as a near-term slice in §4/§7 and start from
+`POST /itinerary/{id}/snapshot-template` over the already-landed 0015 schema + `services/templates.py`.
 
 ### 2026-06-23 — B7 follow-up: advisor session audience — **private advisor chat vs. shared client thread (behind tests; migration apply pending)**
 
