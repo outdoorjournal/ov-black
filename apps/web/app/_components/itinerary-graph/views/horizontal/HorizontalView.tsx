@@ -53,12 +53,9 @@ import {
   itineraryGraphStore,
   selectEditable,
 } from "../../store/itineraryGraphStore";
-import { createApiClient, createSessionEndpoint } from "@ov-black/api-client";
-import { useAgentStream } from "@/lib/agentStream";
-import { createBrowserSupabase } from "@/lib/supabase/client";
 
 import { AuthoringPanel } from "./AuthoringPanel";
-import { ChatPanel } from "./ChatPanel";
+import { ConciergeChat } from "./ConciergeChat";
 import { HorizontalCanvas } from "./HorizontalCanvas";
 import { NodeCard } from "./NodeCard";
 import { MapStrip } from "./MapStrip";
@@ -103,7 +100,6 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const edges = itineraryGraphStore.useStore((s) => s.edges);
   const pendingProposals = itineraryGraphStore.useStore((s) => s.pendingProposals);
-  const messages = itineraryGraphStore.useStore((s) => s.messages);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
   const pxPerMinute = itineraryGraphStore.useStore((s) => s.pxPerMinute);
@@ -131,9 +127,9 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
   // Which half of the staff aside is showing: the authoring tools ("build") or
   // the agent conversation ("concierge"). Advisors default to Build; travelers
   // never see the toggle (they only get ChatPanel).
-  const [asidePanel, setAsidePanel] = useState<"build" | "concierge">(
-    canEdit ? "build" : "concierge",
-  );
+  const [asidePanel, setAsidePanel] = useState<
+    "build" | "concierge" | "client"
+  >(canEdit ? "build" : "concierge");
   // Drag preview state. While `activeDragId` is set, we add a synthetic
   // "ghost" node to the layout in the day the pointer is over so other cards
   // in that column slide down to make room before the drop is committed.
@@ -477,128 +473,10 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
     };
   }, [focusedNode, nodes]);
 
-  // ── Concierge chat (advisor "Concierge" tab) ──────────────────────────
-  // Wires the DIY SSE turn loop into the shared store. The session is opened
-  // lazily on first submit (idempotent per client_id) so we don't spin one up
-  // for advisors who never chat. card_proposed → proposeNode lands the agent's
-  // card on the same graph the Build tools mutate.
+  // The Concierge (private) and Client-thread (shared) conversations are each
+  // owned by a <ConciergeChat> instance in the aside below; HorizontalView
+  // only needs the client id to bind them to a session.
   const clientId = timeline.itinerary.client_id;
-  const sessionIdRef = useRef<string | null>(null);
-  const streamingAssistantIdRef = useRef<string | null>(null);
-  const chatAbortRef = useRef<AbortController | null>(null);
-
-  const getAccessToken = useMemo<() => Promise<string | null>>(() => {
-    let supabase: ReturnType<typeof createBrowserSupabase> | null = null;
-    try {
-      supabase = createBrowserSupabase();
-    } catch {
-      supabase = null;
-    }
-    return async () => {
-      if (supabase) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (session?.access_token) return session.access_token;
-      }
-      return accessToken ?? null;
-    };
-  }, [accessToken]);
-
-  const { sendTurn } = useAgentStream({
-    getSessionId: () => sessionIdRef.current,
-    getAccessToken,
-    apiBaseUrl: apiBaseUrl ?? "",
-    abortRef: chatAbortRef,
-    onDelta: (frame) => {
-      const id = streamingAssistantIdRef.current;
-      if (id) storeApi.getState().appendDelta(id, frame.text);
-    },
-    onDone: () => {
-      const id = streamingAssistantIdRef.current;
-      if (id) storeApi.getState().finishAssistant(id);
-      streamingAssistantIdRef.current = null;
-    },
-    onError: () => {
-      const id = streamingAssistantIdRef.current;
-      if (id) {
-        storeApi
-          .getState()
-          .appendDelta(
-            id,
-            "\n\n(The concierge couldn’t respond just now. Try again in a moment.)",
-          );
-        storeApi.getState().finishAssistant(id);
-      }
-      streamingAssistantIdRef.current = null;
-    },
-    onCardProposed: (node) => {
-      storeApi.getState().proposeNode({
-        id: node.id,
-        itinerary_id: node.itinerary_id,
-        type: node.type,
-        status: node.status,
-        title: node.title,
-        source: node.source ?? null,
-        source_id: node.source_id ?? null,
-        metadata: node.metadata ?? {},
-      });
-    },
-    onNodeUpdated: (node) => {
-      storeApi.getState().applyNodeUpdate({
-        id: node.id,
-        itinerary_id: node.itinerary_id,
-        type: node.type,
-        status: node.status,
-        title: node.title,
-        source: node.source ?? null,
-        source_id: node.source_id ?? null,
-        metadata: node.metadata ?? {},
-      });
-    },
-  });
-
-  useEffect(() => {
-    const ref = chatAbortRef;
-    return () => ref.current?.abort();
-  }, []);
-
-  const handleChatSubmit = useCallback(
-    (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      // Chat needs the store's API creds (staff) + a client to open against.
-      if (!apiBaseUrl || !accessToken || !clientId) return;
-      const store = storeApi.getState();
-      const stamp = Date.now();
-      const userId = `u-${stamp}`;
-      const assistantId = `a-${stamp}`;
-      store.appendUserMessage(userId, trimmed);
-      store.appendAssistantMessage(assistantId);
-      streamingAssistantIdRef.current = assistantId;
-      void (async () => {
-        if (!sessionIdRef.current) {
-          const api = createApiClient({ baseUrl: apiBaseUrl, accessToken });
-          const result = await createSessionEndpoint(api, {
-            client_id: clientId,
-            itinerary_id: store.itineraryId,
-          });
-          if (!result.ok) {
-            store.appendDelta(
-              assistantId,
-              "(Couldn’t reach the concierge. Try again in a moment.)",
-            );
-            store.finishAssistant(assistantId);
-            streamingAssistantIdRef.current = null;
-            return;
-          }
-          sessionIdRef.current = result.session_id;
-        }
-        await sendTurn(trimmed);
-      })();
-    },
-    [apiBaseUrl, accessToken, clientId, sendTurn, storeApi],
-  );
 
   // Add a fresh note onto the first day at noon so it lands on the timeline
   // immediately; the advisor then drags it to a slot and edits it. Gated on
@@ -757,8 +635,10 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
           </div>
 
           {/* Staff aside — fixed width, doesn't scroll with the canvas. For
-              advisors it toggles between the authoring tools (Build) and the
-              agent conversation (Concierge); travelers only ever see chat. */}
+              advisors it switches between the authoring tools (Build), a
+              PRIVATE advisor↔AI chat (Concierge), and the SHARED client
+              conversation (Client thread). All three stay mounted so a
+              conversation isn't lost on tab switch; travelers only see chat. */}
           <aside className="hidden w-[440px] shrink-0 md:block">
             {canEdit ? (
               <div className="flex h-full flex-col">
@@ -766,7 +646,7 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                   data-testid="itinerary-graph-aside-tabs"
                   className="flex shrink-0 gap-1 border-b border-l border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
                 >
-                  {(["build", "concierge"] as const).map((tab) => (
+                  {(["build", "concierge", "client"] as const).map((tab) => (
                     <button
                       key={tab}
                       type="button"
@@ -779,35 +659,55 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                           : "text-ink/55 hover:bg-ink/5"
                       }`}
                     >
-                      {tab === "build" ? "Build" : "Concierge"}
+                      {tab === "build"
+                        ? "Build"
+                        : tab === "concierge"
+                          ? "Concierge"
+                          : "Client thread"}
                     </button>
                   ))}
                 </div>
-                <div className="min-h-0 flex-1 border-l border-ink/10">
-                  {asidePanel === "build" ? (
+                <div className="relative min-h-0 flex-1 border-l border-ink/10">
+                  <div className={asidePanel === "build" ? "h-full" : "hidden"}>
                     <AuthoringPanel
                       tzOffsetHours={timeline.timezoneOffsetHours}
                       days={timeline.days}
                     />
-                  ) : (
-                    <ChatPanel
-                      messages={messages}
-                      pendingProposals={pendingProposals}
-                      onAccept={(id) => storeApi.getState().acceptProposal(id)}
-                      onDismiss={(id) => storeApi.getState().dismissProposal(id)}
-                      onSubmit={handleChatSubmit}
+                  </div>
+                  <div
+                    className={asidePanel === "concierge" ? "h-full" : "hidden"}
+                  >
+                    <ConciergeChat
+                      audience="advisor"
+                      apiBaseUrl={apiBaseUrl}
+                      accessToken={accessToken}
+                      clientId={clientId}
+                      itineraryId={timeline.itinerary.id}
+                      intro="Private workspace — just you and the concierge. The traveler never sees this conversation."
                       onScrollToNode={scrollToNode}
                     />
-                  )}
+                  </div>
+                  <div className={asidePanel === "client" ? "h-full" : "hidden"}>
+                    <ConciergeChat
+                      audience="traveler"
+                      apiBaseUrl={apiBaseUrl}
+                      accessToken={accessToken}
+                      clientId={clientId}
+                      itineraryId={timeline.itinerary.id}
+                      hydrateHistory
+                      intro="The client conversation — what you send here is visible to the traveler."
+                      onScrollToNode={scrollToNode}
+                    />
+                  </div>
                 </div>
               </div>
             ) : (
-              <ChatPanel
-                messages={messages}
-                pendingProposals={pendingProposals}
-                onAccept={(id) => storeApi.getState().acceptProposal(id)}
-                onDismiss={(id) => storeApi.getState().dismissProposal(id)}
-                onSubmit={handleChatSubmit}
+              <ConciergeChat
+                audience="traveler"
+                apiBaseUrl={apiBaseUrl}
+                accessToken={accessToken}
+                clientId={clientId}
+                itineraryId={timeline.itinerary.id}
                 onScrollToNode={scrollToNode}
               />
             )}

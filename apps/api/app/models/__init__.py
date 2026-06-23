@@ -16,6 +16,7 @@ class Base(DeclarativeBase):
 from app.models.agent import (  # noqa: E402,F401  (re-exported)
     AgentSession,
     AgentTurn,
+    SessionAudience,
     TurnRole,
 )
 from app.models.analysis import (  # noqa: E402,F401  (re-exported)
@@ -69,6 +70,7 @@ from app.models.template import (  # noqa: E402,F401
 
 __all__ = [
     "AgentSession",
+    "SessionAudience",
     "AgentTurn",
     "Analysis",
     "AnalysisDepth",

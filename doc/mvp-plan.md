@@ -209,6 +209,54 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
 
+### 2026-06-23 — B7 follow-up: advisor session audience — **private advisor chat vs. shared client thread (behind tests; migration apply pending)**
+
+**Decision (founder):** the advisor needs TWO conversations — a PRIVATE advisor↔AI
+session the traveler never sees, AND the ability to join the SHARED client thread (a
+separate workflow). B7's "Concierge" tab opened the traveler's (idempotent-per-client)
+session — i.e. it posted into the client thread. This adds an `audience` axis so the
+two are isolated.
+
+**What landed (backend + apps/web; one migration):**
+- **Migration `0018_agent_session_audience.sql`** — Postgres-native `session_audience`
+  enum ('traveler','advisor'), `agent_sessions.audience NOT NULL default 'traveler'`
+  (existing rows backfill to traveler) + a partial index on `(client_id, audience)
+  where ended_at is null` for the reuse lookup. Idempotent (0014–0017 idiom).
+  **NOT yet applied** — the sandbox blocked the local `psql` apply (couldn't verify
+  local vs. the provisioned remote); apply with `supabase migration up`.
+- **Model/schema** — `SessionAudience` + `AgentSession.audience` (PGEnum,
+  create_type=False); `OpenSessionRequest.audience` (default traveler) +
+  `OpenSessionResponse.audience`.
+- **Service `open_or_reuse_session(audience=…)`** — reuse keyed per (client_id,
+  audience); **a traveler actor is gated to 'traveler'** (advisor audience →
+  FORBIDDEN → 404, existence-hiding). Turn + list-turns refuse a traveler on an
+  advisor-audience session (defense-in-depth). Default 'traveler' ⇒ /chat, basecamp,
+  and the traveler are unchanged.
+- **api-client regenerated** — `audience` on the session request/response +
+  `SessionAudience`; tsc build clean.
+- **Frontend** — extracted `ConciergeChat(audience)` (its own session + message buffer
+  + SSE turn loop; lazy session open; `card_proposed` → `proposeNode` onto the shared
+  graph; optional prior-turn hydration). The advisor aside is now **3 tabs: Build ·
+  Concierge (private, audience='advisor') · Client thread (shared, audience='traveler',
+  hydrated)** — all kept mounted so neither conversation is lost on a tab switch.
+  HorizontalView's inline SSE wiring moved into ConciergeChat.
+
+**What's tested:** offline (no DB) — `test_agent_router.py` audience plumb-through +
+fixed doubles; `test_agent_service.py` traveler-cannot-open-advisor (FORBIDDEN) +
+advisor-opens-advisor. Real-DB (run after the migration) — `test_agent_models.py`
+audience default + advisor round-trip. **apps/api offline subset green (35), ruff +
+mypy clean; web suite 88 + typecheck + lint clean.**
+
+**What remains (resume hooks):**
+1. **Apply 0018 + run the full `apps/api` pytest** — blocked here by the sandbox; the
+   real-DB tests (model round-trips, agent integration) need the column present.
+2. **Disclosure unchanged** — the private advisor session does NOT yet let the agent
+   reveal Dossier/OSINT (kept the existing rules deliberately). Revisit if staff want
+   candid internal context there.
+3. **ConciergeChat web test** — the component is only indirectly covered; add a vitest
+   for lazy-open + audience plumbing + hydration mapping.
+4. **Mobile** — the 3-tab aside is desktop-only (like the B7 panel).
+
 ### 2026-06-23 — M002/B7 AI-assisted authoring surface — **inventory search · analyze · fill · concierge chat wired into the unified graph view (behind tests)**
 
 **Decision (founder):** B7 lands on the **existing unified `/itinerary/[id]` view** — the

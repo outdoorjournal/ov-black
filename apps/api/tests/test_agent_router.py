@@ -28,7 +28,7 @@ import pytest
 from app.auth import AuthenticatedUser
 from app.db import get_session
 from app.main import app as fastapi_app
-from app.models import Client, TurnRole
+from app.models import Client, SessionAudience, TurnRole
 from app.routers import agent as agent_router_module
 from app.services.agent import ActorContext, SessionOutcome, TurnOutcome
 from fastapi.testclient import TestClient
@@ -139,11 +139,13 @@ class _FakeAgentSession:
         client_id: uuid.UUID,
         agentcore_session_id: str = "ac-sess-xyz",
         seeded_opener: str | None = None,
+        audience: SessionAudience = SessionAudience.traveler,
     ) -> None:
         self.id = session_id
         self.client_id = client_id
         self.agentcore_session_id = agentcore_session_id
         self.seeded_opener = seeded_opener
+        self.audience = audience
 
 
 def _fake_turn(
@@ -202,6 +204,7 @@ def test_post_sessions_advisor_owned_client_returns_201(
         client_id: uuid.UUID,  # noqa: ARG001
         itinerary_id: uuid.UUID | None = None,  # noqa: ARG001
         seeded_opener: str | None = None,  # noqa: ARG001
+        audience: SessionAudience = SessionAudience.traveler,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         assert actor.actor_kind == "advisor"
         assert actor.user_id == advisor
@@ -222,6 +225,47 @@ def test_post_sessions_advisor_owned_client_returns_201(
     assert body["itinerary_id"] == str(expected_itinerary_id)
 
 
+def test_post_sessions_advisor_audience_is_plumbed_and_returned(
+    client: TestClient,
+    fake_session: FakeSession,  # noqa: ARG001
+    override_actor_as_advisor: uuid.UUID,  # noqa: ARG001
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audience='advisor' reaches the service and rides back on the response."""
+    client_id = uuid.uuid4()
+    agent_sess = _FakeAgentSession(
+        session_id=uuid.uuid4(),
+        client_id=client_id,
+        audience=SessionAudience.advisor,
+    )
+    seen: dict[str, SessionAudience] = {}
+
+    async def _fake_open(
+        _factory: Any,
+        *,
+        actor: ActorContext,  # noqa: ARG001
+        client_id: uuid.UUID,  # noqa: ARG001
+        itinerary_id: uuid.UUID | None = None,  # noqa: ARG001
+        seeded_opener: str | None = None,  # noqa: ARG001
+        audience: SessionAudience = SessionAudience.traveler,
+    ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
+        seen["audience"] = audience
+        return SessionOutcome.OK, agent_sess, None
+
+    monkeypatch.setattr(agent_router_module, "open_or_reuse_session", _fake_open)
+
+    resp = client.post(
+        "/sessions",
+        json={"client_id": str(client_id), "audience": "advisor"},
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert seen["audience"] is SessionAudience.advisor
+    assert resp.json()["audience"] == "advisor"
+
+
 def test_post_sessions_cross_advisor_returns_404(
     client: TestClient,
     fake_session: FakeSession,
@@ -239,6 +283,7 @@ def test_post_sessions_cross_advisor_returns_404(
         client_id: uuid.UUID,
         itinerary_id: uuid.UUID | None = None,
         seeded_opener: str | None = None,  # noqa: ARG001
+        audience: SessionAudience = SessionAudience.traveler,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         return SessionOutcome.FORBIDDEN, None, None
 
@@ -280,6 +325,7 @@ def test_post_sessions_is_idempotent_on_reopen(
         client_id: uuid.UUID,
         itinerary_id: uuid.UUID | None = None,
         seeded_opener: str | None = None,  # noqa: ARG001
+        audience: SessionAudience = SessionAudience.traveler,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         call_count["n"] += 1
         return SessionOutcome.OK, agent_sess, itinerary_id

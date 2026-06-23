@@ -23,7 +23,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import TurnRole
+from app.models import SessionAudience, TurnRole
 
 
 class OpenSessionRequest(BaseModel):
@@ -46,6 +46,11 @@ class OpenSessionRequest(BaseModel):
     client_id: uuid.UUID
     itinerary_id: uuid.UUID | None = None
     seeded_opener: Annotated[str, Field(max_length=500)] | None = None
+    # Which conversation to open. ``traveler`` (default) is the client-facing
+    # thread — the existing behaviour, so travelers / basecamp / the chat page
+    # are unaffected. ``advisor`` opens a private advisor<->AI workspace the
+    # traveler never sees; only an advisor actor may request it.
+    audience: SessionAudience = SessionAudience.traveler
 
 
 class OpenSessionResponse(BaseModel):
@@ -65,6 +70,7 @@ class OpenSessionResponse(BaseModel):
     agentcore_session_id: str
     itinerary_id: uuid.UUID | None
     seeded_opener: str | None = None
+    audience: SessionAudience = SessionAudience.traveler
 
 
 class TurnRequest(BaseModel):

@@ -40,6 +40,7 @@ from app.models import (
     NodeHistory,
     NodeStatus,
     NodeType,
+    SessionAudience,
     TurnRole,
 )
 from app.models.client import ContactChannel
@@ -710,6 +711,45 @@ async def test_open_or_reuse_session_returns_existing_open_session(
     assert all(
         not isinstance(obj, AgentSession) for s in factory.sessions_created for obj in s.added
     )
+
+
+async def test_open_or_reuse_session_traveler_cannot_open_advisor_audience(
+    factory: FakeFactory,
+    client_row: Client,
+    user_actor: ActorContext,
+) -> None:
+    """A traveler may never open the private advisor audience — FORBIDDEN.
+
+    The gate fires after the ownership check (the traveler owns this client),
+    so this is specifically the audience guard, not a tenancy miss. Collapsed
+    to FORBIDDEN → the router maps it to a 404 existence-hiding shape.
+    """
+    outcome, session_row, _ = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=user_actor,
+        client_id=client_row.id,
+        audience=SessionAudience.advisor,
+    )
+    assert outcome is SessionOutcome.FORBIDDEN
+    assert session_row is None
+
+
+async def test_open_or_reuse_session_advisor_opens_advisor_audience(
+    factory: FakeFactory,
+    client_row: Client,
+    advisor_actor: ActorContext,
+) -> None:
+    """An advisor opens the private audience; the new row carries audience='advisor'."""
+    factory.open_agent_session_on_reuse = None
+    outcome, session_row, _ = await open_or_reuse_session(
+        factory,  # type: ignore[arg-type]
+        actor=advisor_actor,
+        client_id=client_row.id,
+        audience=SessionAudience.advisor,
+    )
+    assert outcome is SessionOutcome.OK
+    assert isinstance(session_row, AgentSession)
+    assert session_row.audience is SessionAudience.advisor
 
 
 async def test_open_or_reuse_session_inserts_when_none_exists(

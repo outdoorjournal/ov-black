@@ -57,6 +57,7 @@ from app.models import (
     ItineraryStatus,
     NodeStatus,
     NodeType,
+    SessionAudience,
     TurnRole,
 )
 from app.services import itineraries as itineraries_service
@@ -308,6 +309,7 @@ async def open_or_reuse_session(
     client_id: uuid.UUID,
     itinerary_id: uuid.UUID | None = None,
     seeded_opener: str | None = None,
+    audience: SessionAudience = SessionAudience.traveler,
 ) -> tuple[SessionOutcome, AgentSession | None, uuid.UUID | None]:
     """Idempotently open an AgentSession for a client.
 
@@ -349,6 +351,12 @@ async def open_or_reuse_session(
             return SessionOutcome.FORBIDDEN, None, None
         # actor_kind == 'agent' is internal — no additional gate here.
 
+        # A traveler may only ever open the client-facing thread; the private
+        # advisor workspace is staff-only. Collapsed to FORBIDDEN → 404 so a
+        # traveler can't even probe that an advisor audience exists.
+        if audience == SessionAudience.advisor and actor.actor_kind == "user":
+            return SessionOutcome.FORBIDDEN, None, None
+
         # If the caller is pinning the session, verify the itinerary
         # actually belongs to this client. Hides existence of foreign
         # itineraries behind the standard FORBIDDEN outcome.
@@ -365,6 +373,7 @@ async def open_or_reuse_session(
             await session.execute(
                 select(AgentSession).where(
                     AgentSession.client_id == client_id,
+                    AgentSession.audience == audience,
                     AgentSession.ended_at.is_(None),
                 )
             )
@@ -397,6 +406,7 @@ async def open_or_reuse_session(
             agentcore_session_id=str(uuid.uuid4()),
             itinerary_id=itinerary_id,
             seeded_opener=seeded_opener,
+            audience=audience,
         )
         session.add(new)
         await session.commit()
@@ -462,6 +472,10 @@ async def list_turns(
         return TurnOutcome.SESSION_NOT_FOUND
     if access is SessionOutcome.FORBIDDEN:
         return TurnOutcome.SESSION_NOT_YOURS
+    # A private advisor session is never readable by a traveler, even one who
+    # owns the client. Collapsed to 404 (existence-hiding) like every other gate.
+    if agent_session.audience == SessionAudience.advisor and actor.actor_kind != "advisor":
+        return TurnOutcome.SESSION_NOT_FOUND
 
     rows = (
         (

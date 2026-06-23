@@ -31,7 +31,7 @@ from sqlalchemy import select
 from app.agent.bedrock import AgentRuntimeClient
 from app.auth import AuthenticatedUser, require_user
 from app.db import get_session, get_sessionmaker
-from app.models import Profile, UserRole
+from app.models import Profile, SessionAudience, UserRole
 from app.schemas.agent import (
     AgentTurnSummary,
     OpenSessionRequest,
@@ -122,16 +122,19 @@ async def create_session_endpoint(
         client_id=payload.client_id,
         itinerary_id=payload.itinerary_id,
         seeded_opener=payload.seeded_opener,
+        audience=payload.audience,
     )
     if outcome is not SessionOutcome.OK or agent_session is None:
         # Collapsed 404 shape (D015) — FORBIDDEN and CLIENT_NOT_FOUND both
-        # land here so a caller cannot probe existence of a client_id.
+        # land here so a caller cannot probe existence of a client_id (or that
+        # a traveler asked for the advisor-only audience).
         raise HTTPException(status_code=404, detail="client_not_found")
     return OpenSessionResponse(
         session_id=agent_session.id,
         agentcore_session_id=agent_session.agentcore_session_id,
         itinerary_id=itinerary_id,
         seeded_opener=agent_session.seeded_opener,
+        audience=agent_session.audience,
     )
 
 
@@ -204,6 +207,10 @@ async def turn_endpoint(
     if agent_session is None or client_row is None:
         raise HTTPException(status_code=404, detail="session_not_found")
     if _pre_stream_authz(actor, client_row) is not TurnOutcome.OK:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    # A private advisor session never accepts a traveler's turn, even from the
+    # client who owns it — collapsed to 404 (existence-hiding).
+    if agent_session.audience == SessionAudience.advisor and actor.actor_kind != "advisor":
         raise HTTPException(status_code=404, detail="session_not_found")
 
     runtime = get_agent_runtime(request)

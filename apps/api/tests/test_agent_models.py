@@ -19,7 +19,7 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
-from app.models import AgentSession, AgentTurn, Client, TurnRole
+from app.models import AgentSession, AgentTurn, Client, SessionAudience, TurnRole
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -118,6 +118,35 @@ async def test_agent_session_round_trip(session: AsyncSession) -> None:
         assert fetched.ended_at is None
         assert isinstance(fetched.started_at, datetime)
         assert fetched.started_at.tzinfo is not None
+        # audience defaults to 'traveler' (server_default, 0018).
+        assert fetched.audience is SessionAudience.traveler
+    finally:
+        await _cleanup(session, advisor_id, client_id)
+
+
+@pytest.mark.asyncio
+async def test_agent_session_audience_advisor_round_trips(session: AsyncSession) -> None:
+    """A private advisor session persists audience='advisor' (0018)."""
+    advisor_id = uuid.uuid4()
+    client_id: uuid.UUID | None = None
+    email = f"advisor-{advisor_id.hex[:8]}@example.com"
+    try:
+        await _insert_auth_user(session, advisor_id, email)
+        client_id = await _make_client(session, advisor_id)
+
+        agent_session = AgentSession(
+            client_id=client_id,
+            agentcore_session_id="runtime-session-advisor",
+            audience=SessionAudience.advisor,
+        )
+        session.add(agent_session)
+        await session.commit()
+        await session.refresh(agent_session)
+
+        fetched = (
+            await session.execute(select(AgentSession).where(AgentSession.id == agent_session.id))
+        ).scalar_one()
+        assert fetched.audience is SessionAudience.advisor
     finally:
         await _cleanup(session, advisor_id, client_id)
 

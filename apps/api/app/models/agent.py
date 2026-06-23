@@ -34,6 +34,28 @@ turn_role_enum = PGEnum(
 )
 
 
+class SessionAudience(str, enum.Enum):
+    """Mirrors the public.session_audience enum from 0018.
+
+    Splits the client-facing conversation from a private advisor workspace:
+    ``traveler`` is the shared thread (the traveler + any advisor who joins);
+    ``advisor`` is the advisor<->AI session the traveler never sees.
+    """
+
+    traveler = "traveler"
+    advisor = "advisor"
+
+
+# Postgres owns the type (D003/D020); SQLAlchemy binds with create_type=False.
+session_audience_enum = PGEnum(
+    SessionAudience,
+    name="session_audience",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
+
 class AgentSession(Base):
     """One row per client conversation with the Bedrock AgentCore runtime.
 
@@ -82,6 +104,15 @@ class AgentSession(Base):
         nullable=True,
     )
     seeded_opener: Mapped[str | None] = mapped_column(nullable=True)
+    # Which conversation this session is: the client-facing thread
+    # ('traveler', default) or a private advisor workspace ('advisor'). Reuse
+    # is keyed per (client_id, audience); a traveler actor is gated to
+    # 'traveler' in open_or_reuse_session. See 0018.
+    audience: Mapped[SessionAudience] = mapped_column(
+        session_audience_enum,
+        nullable=False,
+        server_default=text("'traveler'"),
+    )
 
 
 class AgentTurn(Base):
