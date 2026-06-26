@@ -271,6 +271,12 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         calls["delete_edge"].append({"actor": actor, **kwargs})
         return returns.get("delete_edge")
 
+    # The PATCH/DELETE node endpoints resolve advisor-ness (G1) to stamp the
+    # actor kind. Stub it off the fake session; defaults to non-advisor so the
+    # existing USER-actor expectations hold. Flip via returns["is_advisor"].
+    async def _is_advisor(_session: Any, user_uuid: uuid.UUID | None) -> bool:
+        return bool(returns.get("is_advisor", False))
+
     # Patch the bound names inside the router module — that's the call site.
     from app.routers import itineraries as routers_itineraries
 
@@ -281,6 +287,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(routers_itineraries, "delete_node", _delete_node)
     monkeypatch.setattr(routers_itineraries, "add_edge", _add_edge)
     monkeypatch.setattr(routers_itineraries, "delete_edge", _delete_edge)
+    monkeypatch.setattr(routers_itineraries, "_is_requester_advisor", _is_advisor)
 
     # Also override the session dependency so no DB is required.
     async def _dep() -> Iterator[object]:
@@ -578,6 +585,128 @@ def test_delete_node_not_found_returns_404(
     iid, nid = uuid.uuid4(), uuid.uuid4()
     resp = client.delete(f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers)
     assert resp.status_code == 404
+
+
+# ── G1: status-gate actor resolution + outcome mapping + lock_reason ────────
+
+
+def test_patch_node_stamps_advisor_when_role_advisor(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """An advisor caller is stamped ADVISOR so the service gate lets them demote."""
+    stub_service["returns"]["is_advisor"] = True
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.patch(
+        f"/itinerary/{iid}/nodes/{nid}", json={"status": "proposed"}, headers=auth_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert stub_service["calls"]["update_node"][-1]["actor"].kind is ActorKind.ADVISOR
+
+
+def test_patch_node_stamps_user_for_non_advisor(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """A traveler/agent caller stays USER — they can't move firmed nodes."""
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.patch(f"/itinerary/{iid}/nodes/{nid}", json={"title": "x"}, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert stub_service["calls"]["update_node"][-1]["actor"].kind is ActorKind.USER
+
+
+def test_delete_node_stamps_advisor_when_role_advisor(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    stub_service["returns"]["is_advisor"] = True
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.delete(f"/itinerary/{iid}/nodes/{nid}", headers=auth_headers)
+    assert resp.status_code == 204
+    assert stub_service["calls"]["delete_node"][-1]["actor"].kind is ActorKind.ADVISOR
+
+
+def test_patch_node_status_locked_maps_to_409(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    stub_service["returns"]["update_node"] = ItineraryError(
+        outcome=ItineraryOutcome.STATUS_LOCKED, detail="status_locked"
+    )
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.patch(f"/itinerary/{iid}/nodes/{nid}", json={"title": "x"}, headers=auth_headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "status_locked"
+
+
+def test_patch_node_response_carries_lock_reason(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """A booked node serialized back through the write path carries lock_reason."""
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    stub_service["returns"]["update_node"] = Node(
+        id=nid,
+        itinerary_id=iid,
+        type=NodeType.hotel,
+        status=NodeStatus.booked,
+        title="Aman",
+        metadata_={},
+    )
+    resp = client.patch(
+        f"/itinerary/{iid}/nodes/{nid}", json={"title": "Aman"}, headers=auth_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["lock_reason"] == "status_locked"
+
+
+def test_graph_read_serializes_lock_reason(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    from app.services.itineraries import GraphView, NodeOut
+
+    iid, firmed_id, free_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    def _node_out(node_id: uuid.UUID, status: NodeStatus, lock_reason: str | None) -> Any:
+        return NodeOut(
+            id=node_id,
+            itinerary_id=iid,
+            parent_subgraph_id=None,
+            type=NodeType.hotel,
+            status=status,
+            title="n",
+            source=None,
+            source_id=None,
+            metadata={},
+            cost_amount=None,
+            cost_currency=None,
+            cost_kind=None,
+            starts_at=None,
+            duration_minutes=None,
+            depth=0,
+            lock_reason=lock_reason,
+        )
+
+    stub_service["returns"]["get_itinerary_graph"] = GraphView(
+        itinerary=Itinerary(id=iid, title="Como"),
+        nodes=[
+            _node_out(firmed_id, NodeStatus.booked, "status_locked"),
+            _node_out(free_id, NodeStatus.proposed, None),
+        ],
+        edges=[],
+    )
+    resp = client.get(f"/itinerary/{iid}", headers=auth_headers)
+    assert resp.status_code == 200
+    by_id = {n["id"]: n for n in resp.json()["nodes"]}
+    assert by_id[str(firmed_id)]["lock_reason"] == "status_locked"
+    assert by_id[str(free_id)]["lock_reason"] is None
 
 
 def test_create_edge_returns_201(

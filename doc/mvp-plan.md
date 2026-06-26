@@ -134,7 +134,7 @@ state files reflect the branch.*
 
 | Slice | Goal | Deliverables / touches | Acceptance |
 |---|---|---|---|
-| **G1 — Status-aware mutation gates** | Booked/finalized immutability. | `_check_status_gate` in `services/itineraries.py` (per `TravelGraph_Analysis` §11): `approved` editable only by advisor-after-demote; `booked`/`confirmed` immutable except advisor demotion/cancellation (writes visible `node_history`). Agent `update_node_status` inherits the gate; refusals return a crafted reason. Per-node `lock_reason` exposed so the agent can explain. | A `booked` node refuses traveler/agent edits with a crafted message; advisor demotion works + is logged; tests cover every status × actor cell. |
+| **G1 — Status-aware mutation gates** ✅ *landed — see §8* | Booked/finalized immutability. | `_check_status_gate` in `services/itineraries.py` (per `TravelGraph_Analysis` §11): `approved` editable only by advisor-after-demote; `booked`/`confirmed` immutable except advisor demotion/cancellation (writes visible `node_history`). Agent `update_node_status` inherits the gate; refusals return a crafted reason. Per-node `lock_reason` exposed so the agent can explain. | A `booked` node refuses traveler/agent edits with a crafted message; advisor demotion works + is logged; tests cover every status × actor cell. |
 | **G2 — Itinerary fork (versioned clone)** | Branch an itinerary (D-FORK). | Migration: `itineraries.forked_from_id`, `fork_status`, `nodes.forked_from_node_id` lineage. `services/fork.py::fork_itinerary` deep-copies nodes/edges: pre-booked → editable, `booked`/`confirmed` → carried **locked**. Agent tool + traveler-initiated fork. | Traveler forks an approved itinerary; the fork is independently editable; booked nodes are present but locked; lineage links each forked node to its origin. |
 | **G3 — Diff + reconcile surface** | Staff fold changes back in. | `services/fork.py::diff_fork` (added/removed/changed/moved via lineage pairing); Command-Center **diff view** (side-by-side baseline vs. fork); per-change **accept/discard** that mutates the live graph, gated by an Analyze feasibility check before accept. | Advisor opens a fork's diff, runs analyze, accepts a subset into the live plan and discards the rest; live itinerary reflects only accepted changes; booked nodes can't be changed via reconcile. |
 
@@ -192,16 +192,23 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 ## 7. Suggested next steps
 
-> The original three are largely done: B1–B6 landed behind tests, D-COST + D-ANALYZE are locked (B4/B5),
-> and F1 landed the work onto the `dev` trunk (2026-06-23 — see §8). D-FORK/D-PAY remain to lock before M004/M005.
+> B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004/G1 status gates landed** (2026-06-26 —
+> see §8). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto the `dev` trunk. **D-FORK** must
+> be locked before M004/G2; **D-PAY** before M005.
 
-1. **B7 — AI-assisted authoring surface**: the Command-Center editor that finally surfaces B1–B6 to an
-   advisor (inventory search · cost · run-analyze · run-fill · approve). Templates are **not** in scope — that's B8.
-2. Then pick the next track: **M003** (traveler details + vault, parallel) or **M004/G1** status gates
-   (which M005's money gate needs). Deployment (F2/F3) stays deferred until you choose to cut a release.
-3. **B8 — Templates: snapshot & reuse** is **deferred (no scheduled date)** — parked until prioritized.
-   When picked up: once an advisor can build a great itinerary, add snapshot-to-template + a deck to
-   instantiate saved templates. The backing schema (0015) already landed, so it can resume cold.
+1. **M004/G2 — Itinerary fork (versioned clone)**: the next M004 slice now that G1's immutability gate is
+   in. Lock **D-FORK** first (versioned clone + lineage), then a migration for `itineraries.forked_from_id`
+   / `nodes.forked_from_node_id` and `services/fork.py::fork_itinerary` (pre-booked → editable;
+   booked/confirmed → carried locked — G1's `_FIRMED_STATUSES` is the carry-locked set). G3 (diff/reconcile)
+   follows.
+2. **M005 — Invoicing & booking** is now unblocked on its hard deps: node cost (B4) **and** status gates
+   (G1) are both in. I3's money gate slots directly on top of G1 (promotion `approved → booked` requires a
+   paid invoice line). Lock **D-PAY** before I2.
+3. **A G1 web surface** (render the `lock_reason` badge + the crafted refusal copy on the itinerary view) is
+   an optional follow-up — the api-client wrapper already surfaces `status_locked`; no UI consumes it yet.
+4. **B8 — Templates: snapshot & reuse** stays **deferred (no scheduled date)** — parked until prioritized;
+   the backing schema (0015) already landed, so it can resume cold. Deployment (F2/F3) stays deferred until
+   you choose to cut a release.
 
 ---
 
@@ -210,6 +217,67 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-26 — M004/G1 Status-aware mutation gates — **booked/finalized nodes immutable except an advisor's logged demotion; per-node `lock_reason` so the agent can explain** (apps/api + agent tool + api-client)
+
+**Decisions (founder reading of §11, locked at build):** the gate keys on a
+node's **current** status. "Firmed" = `approved`/`booked`/`confirmed`. A firmed
+node is fully immutable to traveler/agent/system; an **advisor** may perform
+only a *pure status change* (the demotion / cancellation / advance escape
+hatch) — editing any other field on a firmed node is refused (`demote_before_
+edit`), and a firmed node can't be hard-deleted by anyone (`demote_before_
+delete`) so a booking's history lineage is never silently destroyed.
+**Promotion *into* a firmed status from a pre-firmed one is intentionally NOT
+gated here** — booked-promotion authority is M005's money gate. **No migration:**
+`lock_reason` is *computed* from status (resolved decision §11), not stored.
+
+**What landed (apps/api service + router, the agent tool, api-client wrappers):**
+- **`services/itineraries.py`** — new `ItineraryOutcome.STATUS_LOCKED`;
+  `_FIRMED_STATUSES`; pure `compute_lock_reason(status)` (→ `"status_locked"`
+  for firmed, else None) and `_check_status_gate(current_status, actor,
+  mutates_other_fields)`. `update_node` calls the gate after the no-op
+  short-circuit (on the **pre-update** status); `delete_node` refuses firmed
+  nodes for all actors. `NodeOut` carries a computed `lock_reason` (trailing
+  optional), populated in `get_itinerary_graph`.
+- **`routers/itineraries.py`** — PATCH/DELETE node endpoints now resolve
+  advisor-ness via `_is_requester_advisor` and stamp `ADVISOR` (same pattern as
+  `assemble`), so the gate can tell an advisor from a traveler/agent (the agent
+  carries the client JWT → resolves to USER). `STATUS_LOCKED → 409` with the
+  body token (`status_locked` / `demote_before_edit` / `demote_before_delete`)
+  the agent + web craft from. `NodeResponse` + both response builders expose
+  `lock_reason`.
+- **`apps/agent` tool `update_node_status`** — docstring now tells the agent a
+  `status_locked` refusal is not retryable and to offer to involve an advisor
+  ("that hotel is already booked; I'd need an advisor to move it").
+- **`packages/api-client`** — regenerated (`NodeResponse.lock_reason` flows
+  through); the `updateNode`/`updateNodeStatus` wrappers now disambiguate the
+  409 body into `status_locked` vs editor `locked` details.
+
+**What's tested:** apps/api **650 passed** (+67: full `status × actor × field-
+edit` unit matrix for `_check_status_gate`/`compute_lock_reason` in
+`tests/test_node_status_gate.py`, plus integration — traveler edit refused,
+agent status-flip of a confirmed node refused, advisor demotion works + writes
+an attributed `node_history` row, advisor field-edit-before-demote refused,
+demote-then-edit reopens, firmed delete refused for all, `lock_reason` rides the
+graph read; router stamping + 409 mapping + `lock_reason` serialization in
+`tests/test_itineraries.py`). ruff + mypy clean. `apps/agent` 34 passed.
+api-client `tsc` clean; apps/web **112 vitest** + typecheck + lint clean.
+`scripts/verify-sG1.sh` — **22/22 bullets**.
+
+**What remains (resume hooks):** (1) **Promotion gate** — who may move a node
+*into* `approved`/`booked`/`confirmed` is deferred: `approved → booked` is
+M005/I3's money gate (paid-invoice cover); pre-firmed→approved authority can be
+an advisor-only refinement later. (2) **Web "crafted message"** — the wrapper
+now surfaces `status_locked`, but no UI yet renders the lock badge / refusal
+copy on the itinerary surface (a web slice like B7's). (3) **Visible-note
+richness** — a demotion is a normal attributed history row (before.status
+firmed → after.status demoted); a distinct `op` / free-text reason can be added
+when the node-history UI surface lands. (4) **Editor-lock `lock_reason`** —
+`compute_lock_reason` is status-only (actor-independent); the itinerary-level
+editor lock still surfaces via the `LOCKED` outcome on write, not per-node.
+(5) Live-agent drive (a real turn hitting a `status_locked` 409) not in the e2e
+yet — `ovb` can drive it once wanted. **Next M004 slice is G2** (itinerary fork
+— needs D-FORK locked + a migration for `forked_from_id` lineage).
 
 ### 2026-06-26 — M003/V3 Secure document vault — **S3 + SSE-KMS presigned vault across Postgres + AWS + web; M003 complete** (full stack)
 

@@ -777,6 +777,11 @@ export type UpdateNodeStatusDetail =
   | "node_not_found"
   | "validation_error"
   | "network_error"
+  // The node's lifecycle status forbids the edit (G1): it's approved/booked/
+  // confirmed. Surfaced from the 409 body so the UI can craft the reason
+  // instead of retrying. ``locked`` is the sibling editor-session lock.
+  | "status_locked"
+  | "locked"
   | "unknown";
 
 /**
@@ -823,16 +828,33 @@ export async function updateNodeStatus(
     return {
       ok: false,
       status: response.status,
-      detail: parseUpdateNodeStatusDetail(response.status),
+      detail: parseUpdateNodeStatusDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }
 }
 
-function parseUpdateNodeStatusDetail(status: number): UpdateNodeStatusDetail {
+function parseUpdateNodeStatusDetail(
+  status: number,
+  error?: unknown,
+): UpdateNodeStatusDetail {
   if (status === 404) return "node_not_found";
   if (status === 422) return "validation_error";
+  if (status === 409) {
+    // Both the editor-session lock and the G1 status gate return 409; the body
+    // token disambiguates. status_locked / demote_before_edit / demote_before_
+    // delete are status-gate refusals; already_locked / locked_by_advisor are
+    // the editor lock.
+    const token =
+      typeof error === "object" && error !== null && "detail" in error
+        ? String((error as { detail?: unknown }).detail ?? "")
+        : "";
+    if (token.startsWith("demote_") || token === "status_locked") {
+      return "status_locked";
+    }
+    return "locked";
+  }
   return "unknown";
 }
 
@@ -879,7 +901,7 @@ export async function updateNode(
     return {
       ok: false,
       status: response.status,
-      detail: parseUpdateNodeStatusDetail(response.status),
+      detail: parseUpdateNodeStatusDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };

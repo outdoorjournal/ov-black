@@ -26,6 +26,13 @@ async def update_node_status(
     ``locked`` outcome — surface that to the user ("the advisor is
     editing right now; try again in a moment") rather than retrying.
 
+    If the node is already approved, booked, or confirmed, the API
+    refuses the change with a ``status_locked`` reason (the node also
+    carries a ``lock_reason`` you can read on the graph). That's not a
+    retryable error — explain it conversationally and offer to involve an
+    advisor ("that hotel is already booked; I'd need an advisor to move
+    it") rather than trying again.
+
     Returns the updated node.
     """
     pin = pin_ctx.get() or {}

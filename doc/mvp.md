@@ -127,10 +127,12 @@ either the live plan or a fork — they carry over locked.
 - A `booked` or `confirmed` node is **immutable** — edits by traveler or agent are refused with a crafted
   explanation; only an advisor can move it, and only through an explicit demotion/cancellation flow.
 
-**Status: 🔨 not built.** No fork/version concept; no diff/reconcile surface; **status-aware mutation
-gates (Phase 7) are design-only** — today a `booked` node can be re-titled by anyone holding the editor
-lock. The graph does have `is_selected_alt` / `alternative_to` for *local* swaps, but not whole-itinerary
-forking with reconcile.
+**Status: 🔨 partial — status gates landed; fork/reconcile not built.** **Status-aware mutation gates
+(Phase 7 / G1) landed behind tests:** a `booked`/`confirmed`/`approved` node is immutable to traveler &
+agent, an advisor may only demote/cancel it via a logged `node_history` row, and a computed per-node
+`lock_reason` lets the agent explain a refusal. **Still owed:** no fork/version concept and no
+diff/reconcile surface (G2/G3). The graph has `is_selected_alt` / `alternative_to` for *local* swaps, but
+not whole-itinerary forking with reconcile.
 
 ### Pillar 6 — One or more invoices total all booked inventory
 **Means:** The system can issue **one or more invoices** to the traveler(s). Collectively the invoices
@@ -161,7 +163,7 @@ in [mvp-plan.md](./mvp-plan.md) §8, not migrated.
 | 2 | Dream + profile build | ● | (UAT) | |
 | 3 | Multi-source fast build | node cost (B4) | OV/Duffel/Ratehawk/Places adapters + templates + linearization + Analyze shallow/standard (B5) | AI Fill (B6), authoring (B7), live-vendor validation, weather/flight live, deep Analyze |
 | 4 | Party details + vault | | parties/travelers tables | member model, traveler UI, vault/docs/expiry |
-| 5 | Fork + reconcile + immutability | | local alt edges | fork/version, diff/reconcile, status gates |
+| 5 | Fork + reconcile + immutability | status gates (G1) | local alt edges | fork/version, diff/reconcile |
 | 6 | Invoicing + pay-before-book | node cost (B4) | | invoices, line items, Braintree, money gate, node_offers/bookings |
 
 ---

@@ -54,6 +54,7 @@ class ItineraryOutcome(str, enum.Enum):
     VALIDATION_ERROR = "validation_error"
     FORBIDDEN = "forbidden"
     LOCKED = "locked"
+    STATUS_LOCKED = "status_locked"
 
 
 class ActorKind(str, enum.Enum):
@@ -110,6 +111,12 @@ class NodeOut(NamedTuple):
     starts_at: str | None
     duration_minutes: int | None
     depth: int
+    # Computed mutation-lock reason (G1). ``status_locked`` when the node's
+    # status is firmed (approved/booked/confirmed), else None. Actor-independent
+    # so it rides on every graph-read row; the agent pairs it with ``status`` to
+    # explain why an edit was refused. Trailing optional so existing NodeOut
+    # construction sites (and test stubs) don't need to pass it.
+    lock_reason: str | None = None
 
 
 class EdgeOut(NamedTuple):
@@ -382,6 +389,73 @@ async def _check_lock(
     )
 
 
+# ── Status gate (G1 — TravelGraph_Analysis §11) ─────────────────────────────
+
+# "Firmed" statuses are commitments: a node that's approved, booked, or
+# confirmed is immutable except through an explicit advisor-initiated status
+# change (demotion / cancellation / advance). The pre-firmed statuses are
+# freely editable — idea/proposed are still being shaped, and discarded is a
+# reversible side-state that restores to a prior status.
+_FIRMED_STATUSES: frozenset[NodeStatus] = frozenset(
+    {NodeStatus.approved, NodeStatus.booked, NodeStatus.confirmed}
+)
+
+
+def compute_lock_reason(status: NodeStatus) -> str | None:
+    """The agent-readable reason a node is mutation-locked, or None.
+
+    Computed from status alone (actor-independent) so it can ride on every
+    graph-read row: a firmed node carries ``"status_locked"`` and the agent
+    pairs it with the node's ``status`` to explain conversationally ("that
+    hotel is already booked; an advisor would need to move it"). Editor-session
+    locks are itinerary-level and surface via the ``LOCKED`` outcome on write,
+    not here.
+    """
+    if status in _FIRMED_STATUSES:
+        return "status_locked"
+    return None
+
+
+def _check_status_gate(
+    *,
+    current_status: NodeStatus,
+    actor: ActorContext,
+    mutates_other_fields: bool,
+) -> ItineraryError | None:
+    """Reject mutations that a node's lifecycle status forbids (§11).
+
+    Only firmed statuses (approved/booked/confirmed) are constrained:
+
+    - **Advisor** may perform a *pure status change* — the demotion /
+      cancellation / advance escape hatch, which is recorded in node_history
+      with ``actor_kind=advisor`` (the visible note the Style Guide requires).
+      Editing any other field on a firmed node is refused: the advisor must
+      demote it to a pre-firmed status first, then edit.
+    - **Non-advisor** (traveler / agent / system) cannot touch a firmed node at
+      all.
+
+    Pre-firmed statuses (idea/proposed/discarded) are unconstrained here.
+    Promotion *into* a firmed status from a pre-firmed one is intentionally NOT
+    gated in G1 — booked-promotion authority is M005's money gate (a node may
+    move ``approved → booked`` only when a paid invoice line covers it).
+    """
+    if current_status not in _FIRMED_STATUSES:
+        return None
+    if actor.kind is ActorKind.ADVISOR:
+        if mutates_other_fields:
+            # Advisor edit of a firmed node without demoting first.
+            return ItineraryError(
+                outcome=ItineraryOutcome.STATUS_LOCKED,
+                detail="demote_before_edit",
+            )
+        # Pure status change — the logged demotion / cancellation / advance.
+        return None
+    return ItineraryError(
+        outcome=ItineraryOutcome.STATUS_LOCKED,
+        detail="status_locked",
+    )
+
+
 # ── Public service surface ──────────────────────────────────────────────────
 
 
@@ -486,6 +560,7 @@ async def get_itinerary_graph(
                 starts_at=iso_start,
                 duration_minutes=duration_minutes,
                 depth=row.depth,
+                lock_reason=compute_lock_reason(NodeStatus(row.status)),
             )
         )
 
@@ -652,6 +727,16 @@ async def update_node(
     if not updates:
         return node  # No-op update is idempotent — don't write history.
 
+    # Status gate (G1): a firmed node is immutable except for an advisor's pure
+    # status change. ``node.status`` here is the CURRENT (pre-update) status.
+    status_err = _check_status_gate(
+        current_status=node.status,
+        actor=actor,
+        mutates_other_fields=any(key != "status" for key in updates),
+    )
+    if status_err is not None:
+        return status_err
+
     new_source = updates.get("source", node.source)
     new_source_id = updates.get("source_id", node.source_id)
     prov_err = _check_provenance(new_source, new_source_id)
@@ -728,6 +813,15 @@ async def delete_node(
     lock_err = await _check_lock(session, itinerary_id, actor)
     if lock_err is not None:
         return lock_err
+
+    # Status gate (G1): a firmed node can't be hard-deleted by anyone — even an
+    # advisor demotes it to a pre-firmed status (cancellation → discarded) first
+    # so the booking's history lineage is never silently destroyed.
+    if node.status in _FIRMED_STATUSES:
+        return ItineraryError(
+            outcome=ItineraryOutcome.STATUS_LOCKED,
+            detail="demote_before_delete",
+        )
 
     before = _snapshot_node(node)
     await session.delete(node)

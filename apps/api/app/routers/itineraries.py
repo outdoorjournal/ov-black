@@ -59,6 +59,7 @@ from app.services.itineraries import (
     add_node,
     approve_itinerary,
     assemble_initial_draft,
+    compute_lock_reason,
     create_itinerary,
     delete_edge,
     delete_node,
@@ -175,6 +176,10 @@ class NodeResponse(BaseModel):
     starts_at: str | None = None
     duration_minutes: int | None = None
     depth: int | None = None
+    # Computed mutation-lock reason (G1). ``"status_locked"`` when the node is
+    # firmed (approved/booked/confirmed), else None. Lets the agent/web explain
+    # a refused edit without re-deriving the rule client-side.
+    lock_reason: str | None = None
 
 
 class CreateEdgeRequest(BaseModel):
@@ -352,6 +357,11 @@ def _raise_for_error(err: ItineraryError) -> NoReturn:
         raise HTTPException(status_code=403, detail=err.detail or "forbidden")
     if err.outcome is ItineraryOutcome.LOCKED:
         raise HTTPException(status_code=409, detail=err.detail or "already_locked")
+    if err.outcome is ItineraryOutcome.STATUS_LOCKED:
+        # The node's lifecycle status forbids this mutation (G1). 409 like the
+        # editor lock; the detail token (status_locked / demote_before_edit /
+        # demote_before_delete) lets the agent + web craft the human reason.
+        raise HTTPException(status_code=409, detail=err.detail or "status_locked")
     # Defensive — every enum value is mapped above.
     logger.error("itinerary.router.unhandled_outcome", extra={"outcome": err.outcome.value})
     raise HTTPException(status_code=500, detail="internal_error")
@@ -382,6 +392,7 @@ def _node_response_from_out(n: Any) -> NodeResponse:
         starts_at=n.starts_at,
         duration_minutes=n.duration_minutes,
         depth=n.depth,
+        lock_reason=n.lock_reason,
     )
 
 
@@ -410,6 +421,7 @@ def _node_response_from_node(node: Any) -> NodeResponse:
         cost_kind=node.cost_kind,
         starts_at=starts_at,
         duration_minutes=duration_minutes,
+        lock_reason=compute_lock_reason(node.status),
     )
 
 
@@ -595,7 +607,12 @@ async def update_node_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> NodeResponse:
+    # Resolve actor kind so the status gate (G1) can tell an advisor (who may
+    # demote/cancel a firmed node) from a traveler/agent (who cannot). The
+    # agent carries the client's JWT, so it resolves to USER like a traveler.
     actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
     # Only forward fields the client actually set so "omitted" ≠ "set to None".
     fields = payload.model_dump(exclude_unset=True)
     result = await update_node(session, actor, itinerary_id=itinerary_id, node_id=node_id, **fields)
@@ -616,7 +633,10 @@ async def delete_node_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    # See update_node_endpoint: advisor resolution drives the G1 status gate.
     actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
     err = await delete_node(session, actor, itinerary_id=itinerary_id, node_id=node_id)
     if err is not None:
         _raise_for_error(err)
