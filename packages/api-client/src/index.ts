@@ -11,13 +11,18 @@ import { createClient } from "./generated/client/client.gen.js";
 import type { Client } from "./generated/client/types.gen.js";
 import {
   approveItineraryEndpointItineraryItineraryIdApprovePost,
+  archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete,
+  archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete,
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
+  attachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersPost,
   cancelAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdCancelPost,
   cancelClientInviteEndpointClientsClientIdInviteCancelPost,
   createClientContactEndpointClientsClientIdContactsPost,
   createClientEndpointClientsPost,
+  createClientPartyMemberEndpointClientsClientIdPartyMembersPost,
   createDossierFactEndpointClientsClientIdDossierFactsPost,
   createEdgeEndpointItineraryItineraryIdEdgesPost,
+  createMyPartyMemberEndpointMePartyMembersPost,
   createNodeEndpointItineraryItineraryIdNodesPost,
   createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost,
   createOsintFactEndpointClientsClientIdOsintFactsPost,
@@ -26,6 +31,7 @@ import {
   deleteClientContactEndpointClientsClientIdContactsContactIdDelete,
   deleteEdgeEndpointItineraryItineraryIdEdgesEdgeIdDelete,
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
+  detachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersMemberIdDelete,
   dismissOnboardingEndpointOnboardingDismissPost,
   fillGapEndpointItineraryItineraryIdFillPost,
   getAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdGet,
@@ -34,9 +40,12 @@ import {
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
   listAdvisorItinerariesEndpointItinerariesGet,
   listAnalysesEndpointItineraryItineraryIdAnalysesGet,
+  listClientPartyMembersEndpointClientsClientIdPartyMembersGet,
   listClientSessionsEndpointClientsClientIdSessionsGet,
   listClientsEndpointClientsGet,
+  listItineraryPartyEndpointItinerariesItineraryIdPartyGet,
   listMyItinerariesEndpointMeItinerariesGet,
+  listMyPartyMembersEndpointMePartyMembersGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
   lockItineraryEndpointItineraryItineraryIdLockPost,
   loginEndpointAuthLoginPost,
@@ -50,7 +59,9 @@ import {
   searchInventoryEndpointSearchInventoryGet,
   startAnalysisEndpointItineraryItineraryIdAnalysesPost,
   updateClientContactEndpointClientsClientIdContactsContactIdPatch,
+  updateClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdPatch,
   updateDossierFactEndpointClientsClientIdDossierFactsFactIdPatch,
+  updateMyPartyMemberEndpointMePartyMembersMemberIdPatch,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
   updateOsintFactEndpointClientsClientIdOsintFactsFactIdPatch,
   updateProfileFactEndpointClientsClientIdProfileFactsFactIdPatch,
@@ -86,9 +97,14 @@ import type {
   OnboardingOpenerResponse,
   OpenSessionRequest,
   OpenSessionResponse,
+  AttachPartyMemberRequest,
+  ItineraryPartyResponse,
   OsintFactCreate,
   OsintFactDetail,
   OsintFactUpdate,
+  PartyMemberCreate,
+  PartyMemberDetail,
+  PartyMemberUpdate,
   ProfileFactCreate,
   ProfileFactDetail,
   ProfileFactUpdate,
@@ -184,6 +200,24 @@ export type {
   ClientContactCreate,
   ClientContactDetail,
   ClientContactUpdate,
+} from "./generated/types.gen.js";
+
+// Party members (M003/V1): the durable, household-scoped traveler roster,
+// authored collaboratively by advisor (/clients/{id}/party-members), traveler
+// (/me/party-members), and agent. Plus the per-trip participation shapes for
+// the "who's traveling" attach on an itinerary. Re-exported so apps/web can
+// type the traveler form, the advisor completeness panel, and the attach UI.
+export type {
+  PartyMemberCreate,
+  PartyMemberUpdate,
+  PartyMemberDetail,
+  PartyMemberListResponse,
+  PartyMemberActor,
+  LoyaltyProgram,
+  EmergencyContact,
+  AttachPartyMemberRequest,
+  ItineraryPartyEntry,
+  ItineraryPartyResponse,
 } from "./generated/types.gen.js";
 
 // Advisor /itineraries (plural) — rich roster row with embedded client.
@@ -2257,6 +2291,324 @@ export async function listClientSessions(
           : response.status === 403
             ? "advisor_only"
             : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Party members (M003/V1) ───────────────────────────────────────────────
+//
+// The durable, household-scoped traveler roster, authored by three actors.
+// Two parallel surfaces share the same shapes: the traveler's own household
+// (/me/party-members) and an advisor's view of a client's household
+// (/clients/{id}/party-members). A third pair of routes attaches/detaches a
+// saved member onto a specific itinerary's party ("who's traveling"). All
+// collapse to `{ ok, member|members|party }` so apps/web branches on
+// `result.ok`; cross-tenant reads return 404 (D015 existence-hiding).
+
+export type PartyMemberDetailCode =
+  | "client_not_found"
+  | "itinerary_not_found"
+  | "party_member_not_found"
+  | "advisor_only"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+function _parsePartyMemberDetail(
+  status: number,
+  error: unknown,
+): PartyMemberDetailCode {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "client_not_found") return "client_not_found";
+  if (raw === "itinerary_not_found") return "itinerary_not_found";
+  if (raw === "party_member_not_found") return "party_member_not_found";
+  if (raw === "advisor_only") return "advisor_only";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "party_member_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type ListPartyMembersResult =
+  | { ok: true; members: PartyMemberDetail[] }
+  | { ok: false; status: number; detail: PartyMemberDetailCode };
+
+export type PartyMemberResult =
+  | { ok: true; member: PartyMemberDetail }
+  | { ok: false; status: number; detail: PartyMemberDetailCode };
+
+export type ItineraryPartyResult =
+  | { ok: true; party: ItineraryPartyResponse }
+  | { ok: false; status: number; detail: PartyMemberDetailCode };
+
+// Traveler self-service — the caller's own household (/me/party-members).
+
+export async function listMyPartyMembers(
+  client: Client,
+): Promise<ListPartyMembersResult> {
+  try {
+    const { data, error, response } =
+      await listMyPartyMembersEndpointMePartyMembersGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, members: data.members };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function createMyPartyMember(
+  client: Client,
+  body: PartyMemberCreate,
+): Promise<PartyMemberResult> {
+  try {
+    const { data, error, response } =
+      await createMyPartyMemberEndpointMePartyMembersPost({ client, body });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, member: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function updateMyPartyMember(
+  client: Client,
+  memberId: string,
+  body: PartyMemberUpdate,
+): Promise<PartyMemberResult> {
+  try {
+    const { data, error, response } =
+      await updateMyPartyMemberEndpointMePartyMembersMemberIdPatch({
+        client,
+        path: { member_id: memberId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, member: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function archiveMyPartyMember(
+  client: Client,
+  memberId: string,
+): Promise<PartyMemberResult> {
+  try {
+    const { data, error, response } =
+      await archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete({
+        client,
+        path: { member_id: memberId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, member: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// Advisor — a client's household (/clients/{id}/party-members).
+
+export async function listClientPartyMembers(
+  client: Client,
+  clientId: string,
+): Promise<ListPartyMembersResult> {
+  try {
+    const { data, error, response } =
+      await listClientPartyMembersEndpointClientsClientIdPartyMembersGet({
+        client,
+        path: { client_id: clientId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, members: data.members };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function createClientPartyMember(
+  client: Client,
+  clientId: string,
+  body: PartyMemberCreate,
+): Promise<PartyMemberResult> {
+  try {
+    const { data, error, response } =
+      await createClientPartyMemberEndpointClientsClientIdPartyMembersPost({
+        client,
+        path: { client_id: clientId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, member: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function updateClientPartyMember(
+  client: Client,
+  clientId: string,
+  memberId: string,
+  body: PartyMemberUpdate,
+): Promise<PartyMemberResult> {
+  try {
+    const { data, error, response } =
+      await updateClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdPatch(
+        {
+          client,
+          path: { client_id: clientId, member_id: memberId },
+          body,
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, member: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function archiveClientPartyMember(
+  client: Client,
+  clientId: string,
+  memberId: string,
+): Promise<PartyMemberResult> {
+  try {
+    const { data, error, response } =
+      await archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete(
+        {
+          client,
+          path: { client_id: clientId, member_id: memberId },
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, member: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// Per-trip participation — who's traveling on an itinerary.
+
+export async function listItineraryParty(
+  client: Client,
+  itineraryId: string,
+): Promise<ItineraryPartyResult> {
+  try {
+    const { data, error, response } =
+      await listItineraryPartyEndpointItinerariesItineraryIdPartyGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, party: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function attachItineraryPartyMember(
+  client: Client,
+  itineraryId: string,
+  body: AttachPartyMemberRequest,
+): Promise<ItineraryPartyResult> {
+  try {
+    const { data, error, response } =
+      await attachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersPost(
+        {
+          client,
+          path: { itinerary_id: itineraryId },
+          body,
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, party: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function detachItineraryPartyMember(
+  client: Client,
+  itineraryId: string,
+  memberId: string,
+): Promise<ItineraryPartyResult> {
+  try {
+    const { data, error, response } =
+      await detachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersMemberIdDelete(
+        {
+          client,
+          path: { itinerary_id: itineraryId, member_id: memberId },
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, party: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePartyMemberDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };

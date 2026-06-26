@@ -9,11 +9,15 @@ import {
   type DossierFactUpdate,
   type OsintFactCreate,
   type OsintFactUpdate,
+  type PartyMemberCreate,
+  type PartyMemberUpdate,
   type ProfileFactCreate,
   type ProfileFactUpdate,
   type RedactRequest,
+  archiveClientPartyMember,
   createApiClient,
   createClientContact,
+  createClientPartyMember,
   createDossierFact,
   createOsintFact,
   createProfileFact,
@@ -22,6 +26,7 @@ import {
   redactOsintFact,
   redactProfileFact,
   updateClientContact,
+  updateClientPartyMember,
   updateDossierFact,
   updateOsintFact,
   updateProfileFact,
@@ -37,6 +42,8 @@ const ERROR_COPY: Record<string, string> = {
   client_not_found: "This client could not be found.",
   fact_not_found: "This fact has already been removed.",
   contact_not_found: "This contact has already been removed.",
+  party_member_not_found: "This traveler has already been removed.",
+  itinerary_not_found: "This itinerary could not be found.",
   invalid_source_kind: "That source kind is not allowed for this tier.",
   validation_error: "Some fields look off. Double-check and try again.",
   network_error: "Could not reach the server. Try again in a moment.",
@@ -207,6 +214,46 @@ export async function deleteClientContactAction(
 ): Promise<FactActionResult> {
   const api = await _api();
   const result = await deleteClientContact(api, clientId, contactId);
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+// ── Party members (M003/V1) ───────────────────────────────────────────────
+//
+// The advisor's view of a client's durable, household-scoped travel party. The
+// same roster the traveler edits on /basecamp/party and the agent records
+// mid-conversation; here the advisor authors and reviews it for completeness.
+
+export async function createClientPartyMemberAction(
+  clientId: string,
+  payload: PartyMemberCreate,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await createClientPartyMember(api, clientId, payload);
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+export async function updateClientPartyMemberAction(
+  clientId: string,
+  memberId: string,
+  payload: PartyMemberUpdate,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await updateClientPartyMember(api, clientId, memberId, payload);
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+export async function archiveClientPartyMemberAction(
+  clientId: string,
+  memberId: string,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await archiveClientPartyMember(api, clientId, memberId);
   if (!result.ok) return _shape(result.detail);
   _bust(clientId);
   return { ok: true };

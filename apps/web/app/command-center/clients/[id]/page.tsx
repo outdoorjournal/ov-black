@@ -7,9 +7,11 @@ import {
   type ClientSessionSummary,
   type InviteStatus,
   type ItineraryStatus,
+  type PartyMemberDetail,
   createApiClient,
   getClient,
   listAdvisorItineraries,
+  listClientPartyMembers,
   listClientSessions,
 } from "@ov-black/api-client";
 
@@ -19,6 +21,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 
 import { ClientContactsSection } from "./_components/ClientContactsSection";
 import { ClientFactColumns } from "./_components/ClientFactColumns";
+import { ClientPartySection } from "./_components/ClientPartySection";
 
 // Auth-gated per request. Single-page workspace: header + dossier basics
 // (typed core), itineraries roster filtered to this client, recent sessions,
@@ -49,11 +52,13 @@ export default async function ClientDetailPage({
     accessToken ? { baseUrl: apiBaseUrl, accessToken } : { baseUrl: apiBaseUrl },
   );
 
-  const [clientResult, allItinerariesResult, sessionsResult] = await Promise.all([
-    getClient(api, id),
-    listAdvisorItineraries(api),
-    listClientSessions(api, id),
-  ]);
+  const [clientResult, allItinerariesResult, sessionsResult, partyResult] =
+    await Promise.all([
+      getClient(api, id),
+      listAdvisorItineraries(api),
+      listClientSessions(api, id),
+      listClientPartyMembers(api, id),
+    ]);
 
   if (!clientResult.ok) {
     if (clientResult.detail === "client_not_found") notFound();
@@ -82,6 +87,9 @@ export default async function ClientDetailPage({
       ? allItinerariesResult.itineraries.filter((i) => i.client.id === client.id)
       : [];
   const sessions = sessionsResult.ok ? sessionsResult.sessions : [];
+  const partyMembers: PartyMemberDetail[] = partyResult.ok
+    ? partyResult.members
+    : [];
 
   return (
     <main className="flex w-full flex-1 flex-col gap-12 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
@@ -151,6 +159,15 @@ export default async function ClientDetailPage({
           clientId={client.id}
           contacts={client.contacts ?? []}
         />
+      </Panel>
+
+      <Panel aria-labelledby="party-heading">
+        <SectionHeader
+          id="party-heading"
+          title="Travel party"
+          eyebrow={`${partyMembers.length}`}
+        />
+        <ClientPartySection clientId={client.id} members={partyMembers} />
       </Panel>
 
       <Panel aria-labelledby="itineraries-heading">

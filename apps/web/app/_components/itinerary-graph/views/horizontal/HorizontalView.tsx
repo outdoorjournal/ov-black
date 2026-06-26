@@ -56,6 +56,7 @@ import {
 
 import { AuthoringPanel } from "./AuthoringPanel";
 import { ConciergeChat } from "./ConciergeChat";
+import { PartyPanel } from "./PartyPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
 import { NodeCard } from "./NodeCard";
 import { MapStrip } from "./MapStrip";
@@ -128,7 +129,7 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
   // the agent conversation ("concierge"). Advisors default to Build; travelers
   // never see the toggle (they only get ChatPanel).
   const [asidePanel, setAsidePanel] = useState<
-    "build" | "concierge" | "client"
+    "build" | "concierge" | "client" | "party"
   >(canEdit ? "build" : "concierge");
   // Drag preview state. While `activeDragId` is set, we add a synthetic
   // "ghost" node to the layout in the day the pointer is over so other cards
@@ -646,26 +647,30 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                   data-testid="itinerary-graph-aside-tabs"
                   className="flex shrink-0 gap-1 border-b border-l border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
                 >
-                  {(["build", "concierge", "client"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      onClick={() => setAsidePanel(tab)}
-                      data-testid={`itinerary-graph-tab-${tab}`}
-                      aria-pressed={asidePanel === tab}
-                      className={`h-8 rounded-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
-                        asidePanel === tab
-                          ? "bg-ink/10 text-ink"
-                          : "text-ink/55 hover:bg-ink/5"
-                      }`}
-                    >
-                      {tab === "build"
-                        ? "Build"
-                        : tab === "concierge"
-                          ? "Concierge"
-                          : "Client thread"}
-                    </button>
-                  ))}
+                  {(["build", "concierge", "client", "party"] as const).map(
+                    (tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setAsidePanel(tab)}
+                        data-testid={`itinerary-graph-tab-${tab}`}
+                        aria-pressed={asidePanel === tab}
+                        className={`h-8 rounded-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
+                          asidePanel === tab
+                            ? "bg-ink/10 text-ink"
+                            : "text-ink/55 hover:bg-ink/5"
+                        }`}
+                      >
+                        {tab === "build"
+                          ? "Build"
+                          : tab === "concierge"
+                            ? "Concierge"
+                            : tab === "client"
+                              ? "Client thread"
+                              : "Party"}
+                      </button>
+                    ),
+                  )}
                 </div>
                 <div className="relative min-h-0 flex-1 border-l border-ink/10">
                   <div className={asidePanel === "build" ? "h-full" : "hidden"}>
@@ -697,6 +702,14 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                       hydrateHistory
                       intro="The client conversation — what you send here is visible to the traveler."
                       onScrollToNode={scrollToNode}
+                    />
+                  </div>
+                  <div className={asidePanel === "party" ? "h-full" : "hidden"}>
+                    <PartyPanel
+                      clientId={clientId}
+                      itineraryId={timeline.itinerary.id}
+                      apiBaseUrl={apiBaseUrl}
+                      accessToken={accessToken}
                     />
                   </div>
                 </div>

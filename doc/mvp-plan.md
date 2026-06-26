@@ -211,6 +211,57 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
 
+### 2026-06-25 — M003/V2 Traveler details form — **party roster surfaced to traveler + advisor + the itinerary "who's traveling" attach** (web + api-client)
+
+**Decisions (founder, locked at plan time):** the traveler form lives **under
+`/basecamp`** (`/basecamp/party`), the established self-scoped traveler home —
+not a new `/account` shell. The per-trip "who's traveling" attach is
+**advisor-only on the itinerary view**, so the traveler's itinerary view stays
+fully read-only (no write token leaked); travelers manage their roster on the
+form, advisors attach saved members to a specific trip.
+
+**What landed (pure web + wrapper slice — no apps/api / migration / SDK-regen
+change; V1's backend + the generated ops were already in place):**
+- **`packages/api-client` wrappers** for the 11 party routes, discriminated
+  `{ok,…}` like the rest, with a shared `_parsePartyMemberDetail` parser and
+  `PartyMember*` / `ItineraryParty*` type re-exports: traveler `/me/*`
+  (`listMyPartyMembers` + create/update/archive), advisor `/clients/{id}/*`
+  (same quartet), and per-trip `listItineraryParty` /
+  `attachItineraryPartyMember` / `detachItineraryPartyMember`. `tsc` build clean.
+- **Traveler `/basecamp/party`** — RSC (`listMyPartyMembers`, BasecampChrome) +
+  `PartyManager` (list/add/edit/archive, driven off props, revalidate-on-mutate)
+  + a shared **`PartyMemberForm`** (react-hook-form + zodResolver + useFieldArray
+  for loyalty programmes; emergency-contact + dietary/medical/mobility; dark
+  craft styling) + self-service server actions. A discreet "Your travel party →"
+  link added to the two non-first-touch basecamp variants.
+- **Advisor completeness + CRUD** — `ClientPartySection` (reuses the same
+  `PartyMemberForm`; "via {actor}" provenance) + advisor server actions, slotted
+  as a new **Travel party** panel on the command-center client detail page
+  (`listClientPartyMembers` added to its `Promise.all`).
+- **Advisor "who's traveling"** — a 4th **Party** tab in the itinerary
+  `HorizontalView` aside rendering a self-contained `PartyPanel` (takes the
+  store's staff creds like ConciergeChat; lists trip party + household roster,
+  attaches/detaches durable members, re-renders from the wrapper result). Kept
+  mounted alongside Build/Concierge/Client-thread.
+
+**What's tested:** new `apps/web/tests/party/` group (+11) — `PartyPanel`
+(loads trip+roster, picker excludes attached, Attach/Remove call the wrappers),
+`PartyManager`/`PartyMemberForm` (empty state, required-name blocks submit,
+value→payload mapping incl. loyalty + emergency, edit pre-fill/patch, archive),
+`ClientPartySection` (roster + provenance, create with client_id, archive).
+**Full web suite 103 passed** (was 92); `apps/web` typecheck + `next lint` +
+api-client `tsc` clean. apps/api untouched (V1 still green).
+
+**What remains (resume hooks):** **V3** secure vault (S3+SSE-KMS, presigned,
+expiry) — untouched, the last M003 slice. Mobile: the itinerary aside (incl. the
+new Party tab) stays desktop-only like Build/Concierge; `/basecamp/party` itself
+is responsive. **Traveler-initiated** per-trip attach is deferred by the locked
+decision (would need a write token on the traveler itinerary route). Live drive
+not exercised here beyond mocked unit tests — `ovb` already covers the V1
+backend e2e; Playwright can drive `/basecamp/party` + the Party tab through real
+Supabase login once wanted. No `scripts/verify-sV2.sh` (UI slice; vitest is the
+coverage).
+
 ### 2026-06-25 — M003/V1 Party member model — **durable, household-scoped traveler identity; collaborative across advisor + traveler + agent** (backend)
 
 **Decision (founder):** party details are a three-way collaboration — advisor,

@@ -12,6 +12,8 @@
 // internal state — the server never resolves to "active conversation"
 // because it's a transient client state, not a load shape.
 
+import Link from "next/link";
+
 import type {
   AgentTurnSummary,
   MyItinerarySummary,
@@ -64,7 +66,10 @@ export function BasecampShell({
 
       {variant === "post_first_touch" ? (
         <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[1fr_minmax(0,480px)] lg:gap-10">
-          <EmptyItinerariesHint />
+          <div className="flex flex-col gap-6">
+            <PartyLink />
+            <EmptyItinerariesHint />
+          </div>
           <RightRailChat
             clientId={clientId}
             accessToken={accessToken}
@@ -77,7 +82,10 @@ export function BasecampShell({
 
       {variant === "with_itineraries" ? (
         <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[1fr_minmax(0,480px)] lg:gap-10">
-          <ItineraryGrid itineraries={itineraries} />
+          <div className="flex flex-col gap-6">
+            <PartyLink />
+            <ItineraryGrid itineraries={itineraries} />
+          </div>
           <RightRailChat
             clientId={clientId}
             accessToken={accessToken}
@@ -88,6 +96,17 @@ export function BasecampShell({
         </div>
       ) : null}
     </BasecampChrome>
+  );
+}
+
+function PartyLink() {
+  return (
+    <Link
+      href="/basecamp/party"
+      className="self-start font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+    >
+      Your travel party →
+    </Link>
   );
 }
 
