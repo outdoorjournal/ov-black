@@ -125,7 +125,7 @@ state files reflect the branch.*
 
 | Slice | Goal | Deliverables / touches | Acceptance |
 |---|---|---|---|
-| **V1 — Party member model** | Identity-bearing travelers. | Migration extending `travelers` (0014): full name, DOB, nationality, dietary/medical/mobility, loyalty numbers, emergency contact, party↔client link; service + endpoints; RLS scoped to client + assigned advisor. | Traveler record persists per member; advisor reads it; agent can reference party constraints in Fill. |
+| **V1 — Party member model** 🔨 *landed — see §8* | Identity-bearing travelers, **remembered across trips**. | Migration **0019** adds a durable, client-scoped `party_members` (full name, DOB, nationality, dietary/medical/mobility, loyalty, emergency contact, actor provenance) + makes `travelers` the per-trip participation edge (`party_member_id`); service + **collaborative** endpoints for all three actors (advisor `/clients/{id}/party-members`, traveler `/me/party-members`, agent `record_party_member` + `/agent/context`); Fill reads structured member constraints; RLS scoped to client + (advisor or linked traveler). | Traveler record persists per member; advisor + traveler + agent all read/write it; the same member reattaches to a second trip without re-entry; agent references party constraints in Fill. |
 | **V2 — Traveler details form** | Client-facing entry. | `/account/party` (or in-trip) RSC + form (react-hook-form + zodResolver, craft-clean) to add/edit party members; "who's traveling" attaches members to an itinerary's `node_parties`/party. | Traveler fills missing details; data flows to V1; advisor sees completeness. |
 | **V3 — Secure vault** | Encrypted, expiry-tracked, reusable docs. | Migration `client_documents` (type, S3 key, expiry, owner, encryption ref); S3 bucket (SSE-KMS) via CDK; presigned upload/download endpoints scoped to client + advisor; expiry flagging (passport < 6mo). `/account/vault` upload UI; **documents reusable across trips** (attach existing doc to a new itinerary). | Traveler uploads a passport; advisor views it; expiry warns; same doc attaches to a second trip without re-upload. |
 
@@ -210,6 +210,65 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-25 — M003/V1 Party member model — **durable, household-scoped traveler identity; collaborative across advisor + traveler + agent** (backend)
+
+**Decision (founder):** party details are a three-way collaboration — advisor,
+traveler (self-service), and the agent (mid-conversation) all maintain them — and
+members must be **remembered across trips**. That reshaped V1: instead of
+extending the per-itinerary `travelers` table, we split *identity* from
+*participation*.
+
+**What landed:**
+- **Migration `0019_party_members.sql`** — new `public.party_members`: durable,
+  **client-scoped** identity (full_name, date_of_birth, nationality,
+  dietary/medical/mobility, loyalty_programs jsonb, emergency_contact jsonb,
+  relationship, is_primary w/ a one-active-primary partial unique index,
+  `created_by_actor`/`updated_by_actor` enum `party_member_actor`, `recorded_by`,
+  `archived_at` soft-delete). `travelers` becomes the **per-trip edge**
+  (`+party_member_id` FK, on delete set null). Defense-in-depth RLS (advisor OR
+  linked traveler) on party_members + the previously policy-less
+  parties/travelers/node_parties. Applied to local DB.
+- **Models/schemas** — `PartyMember` + `PartyMemberActor`; `Traveler.party_member_id`;
+  Pydantic create/update/detail + nested LoyaltyProgram/EmergencyContact +
+  itinerary-party shapes.
+- **Service `party_members.py`** — client-scoped CRUD (soft-archive), cooperative
+  one-primary demotion, attach/detach a member to an itinerary's default party
+  (idempotent), `list_itinerary_party`. App-level authz (the API runs as the
+  owner role; RLS is bypassed there).
+- **Endpoints** (`routers/party_members.py`) — advisor `/clients/{id}/party-members`
+  (require_advisor + owner scoping), traveler `/me/party-members` (require_user,
+  resolved from the JWT), per-trip `/itineraries/{id}/party[/members]` authorized
+  by access to the itinerary's client. All collapse to 404 (no existence leak).
+- **Agent** — active roster added to `GET /agent/context`; new backend-only
+  `POST /agent/party-members` (actor fixed to `agent`, whitelisted in
+  PUBLIC_PATHS) + a `record_party_member` Strands tool in the onboarding/planning
+  bundles; `get_traveler_context` doc notes party data is SHARED (the agent MAY
+  confirm it, unlike Dossier/OSINT).
+- **Fill** — `_party_constraints` now also reads the linked member's structured
+  `dietary` (folded into the allergen set — matched against declared item
+  allergens, so preferences stay inert) + `mobility`, so a constraint saved once
+  flows into feasibility on every trip.
+- **SDKs** — api-client + ovb CLI regenerated; ovb hand-wrappers for the new routes.
+
+**What's tested:** `apps/api` **565 passed** (ruff + mypy clean) incl. new
+`test_party_members_service.py` (CRUD, one-primary, archive, client-scoping,
+**reuse-across-two-itineraries**, member→Fill constraints, agent-context roster),
+`test_party_members_router.py` (advisor/traveler/cross-tenant-404/role-403/attach),
+`test_agent_internal_router.py` (context includes members; record stamps
+actor=agent). `scripts/verify-sV1.sh` — **15/15** bullets. ovb e2e
+(`test_pillar4_details_vault_e2e.py`) — advisor CRUD+attach, **reuse across two
+trips**, traveler self-service all pass against local. web typecheck + 92 vitest
+green; api-client builds.
+
+**What remains (resume hooks):** **V2** (traveler/advisor UI: `/account/party`
+form + "who's traveling" attach on the itinerary view — api-client `index.ts`
+wrappers for the party routes still need adding for the web layer). **V3** secure
+vault (S3+SSE-KMS, presigned, expiry) — untouched. Agent runtime tool is wired but
+only exercised by mocked unit tests; a live agent turn recording a member is not
+yet in the e2e (needs a real/`:8011` agent). NB: running the full `apps/api`
+integration suite resets local `auth.users` — rerun `scripts/provision-local-users.sh`
+before the e2e (done this session).
 
 ### 2026-06-23 — B7 follow-up: audience axis verified end-to-end — **0018 applied; full apps/api green; ovb e2e covers private-vs-shared sessions** (test/tooling only)
 

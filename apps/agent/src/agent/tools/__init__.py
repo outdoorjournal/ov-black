@@ -19,6 +19,7 @@ from agent.tools.set_mood import set_mood
 from agent.tools.traveler import (
     get_traveler_context,
     record_dossier_inference,
+    record_party_member,
     record_profile_fact,
 )
 
@@ -27,6 +28,7 @@ _TOOLS_ONBOARDING = [
     get_traveler_context,
     record_profile_fact,
     record_dossier_inference,
+    record_party_member,
     search_inventory,
     get_inventory_detail,
     propose_card,
@@ -37,6 +39,7 @@ _TOOLS_PLANNING = [
     get_traveler_context,
     record_profile_fact,
     record_dossier_inference,
+    record_party_member,
     get_itinerary,
     list_alternatives,
     search_inventory,

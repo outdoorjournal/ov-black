@@ -27,7 +27,7 @@ from __future__ import annotations
 import enum
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
@@ -43,6 +43,7 @@ from app.models import (
     FactSourceKind,
     OsintFact,
     OsintFactKind,
+    PartyMember,
     ProfileFact,
     ProfileFactKind,
 )
@@ -508,6 +509,7 @@ class TravelerContextRows:
     dossier_facts: list[DossierFact]
     profile_facts: list[ProfileFact]
     osint_facts: list[OsintFact]
+    party_members: list[PartyMember] = field(default_factory=list)
 
 
 async def load_agent_context(
@@ -580,12 +582,33 @@ async def load_agent_context(
         .all()
     )
 
+    # Active household members (0019) — the durable party the agent should know
+    # about ("remember previous travelers"). Primary first, then by name.
+    party_members = list(
+        (
+            await session.execute(
+                select(PartyMember)
+                .where(
+                    PartyMember.client_id == client_id,
+                    PartyMember.archived_at.is_(None),
+                )
+                .order_by(
+                    PartyMember.is_primary.desc(),
+                    PartyMember.full_name.asc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
     return TravelerContextRows(
         client=client,
         dossier=dossier,
         dossier_facts=dossier_facts,
         profile_facts=profile_facts,
         osint_facts=osint_facts,
+        party_members=party_members,
     )
 
 

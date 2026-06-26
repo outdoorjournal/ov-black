@@ -22,32 +22,84 @@ from __future__ import annotations
 import flows
 import pytest
 
+from ovb.sdk import Ovb
+
 pytestmark = pytest.mark.e2e
 
 
-async def test_traveler_adds_party_members() -> None:
-    """V1+V2 — identity-bearing party members captured by the traveler, read by the advisor.
+async def test_advisor_party_member_crud_and_attach_to_trip(
+    advisor: Ovb, client_under_test: tuple[str, str], built_itinerary: str
+) -> None:
+    """V1 — advisor saves a durable member, edits it, and attaches it to a trip.
 
-    Intended flow once the party-member model + form land (M003/V1, V2):
-
-        traveler = <linked traveler Ovb>
-        client_id = await traveler.my_client()
-
-        # 1. Traveler adds each party member with full identity + constraints.
-        await traveler.add_party_member(client_id, {
-            "full_name": "...", "date_of_birth": "...", "nationality": "...",
-            "dietary": ["vegetarian"], "medical": [...], "mobility": "...",
-            "loyalty": {...}, "emergency_contact": {...},
-        })
-
-        # 2. Advisor reads the same members back (RLS: client + assigned advisor only).
-        members = await advisor.list_party_members(client_id)
-        assert {m.full_name for m in members} >= {...}
-
-        # 3. The agent can reference party constraints in Fill (vegetarian → no-meat meals),
-        #    closing the B6 resume-hook-2 gap (richer party constraints from V1).
+    Proves the collaborative roster over the wire: create (actor=advisor) →
+    list → patch a constraint → attach onto the itinerary's party → the trip's
+    party resolves back to the same durable member.
     """
-    flows.skip_until("M003/V1+V2", "party-member identity model + traveler entry form")
+    client_id, _ = client_under_test
+
+    created = await advisor.create_party_member(
+        client_id,
+        {"full_name": "Avery Stone", "is_primary": True, "dietary": "no shellfish"},
+    )
+    assert created.full_name == "Avery Stone"
+    assert str(created.created_by_actor) == "advisor"
+    member_id = str(created.id)
+
+    listing = await advisor.list_party_members(client_id)
+    assert member_id in {str(m.id) for m in listing.members}
+
+    patched = await advisor.update_party_member(client_id, member_id, {"mobility": "wheelchair"})
+    assert patched.mobility == "wheelchair"
+
+    # Attach the saved member onto the seeded trip (same household → authorized).
+    party = await advisor.attach_party_member(built_itinerary, member_id)
+    assert member_id in {str(e.party_member_id) for e in party.members}
+    # The per-trip row resolves back to the durable member.
+    entry = next(e for e in party.members if str(e.party_member_id) == member_id)
+    assert entry.member is not None and entry.member.full_name == "Avery Stone"
+
+
+async def test_party_member_is_remembered_across_trips(
+    advisor: Ovb, client_under_test: tuple[str, str], built_itinerary: str
+) -> None:
+    """V1 — the same saved member attaches to a second itinerary without re-entry.
+
+    The "remember previous travelers" promise: a member lives on the client, so a
+    new trip just references the existing person rather than recreating them.
+    """
+    client_id, _ = client_under_test
+    member = await advisor.create_party_member(client_id, {"full_name": "Returning Guest"})
+    member_id = str(member.id)
+
+    # A second, distinct itinerary for the same client.
+    second = await flows.ensure_japan_itinerary(advisor, client_id=client_id)
+    if second == built_itinerary:
+        pytest.skip("demo itinerary is idempotent per client — need two distinct trips")
+
+    await advisor.attach_party_member(built_itinerary, member_id)
+    await advisor.attach_party_member(second, member_id)
+
+    party_a = await advisor.list_itinerary_party(built_itinerary)
+    party_b = await advisor.list_itinerary_party(second)
+    assert member_id in {str(e.party_member_id) for e in party_a.members}
+    assert member_id in {str(e.party_member_id) for e in party_b.members}
+
+
+async def test_traveler_self_service_party_member(
+    traveler: Ovb, linked_traveler_client_id: str
+) -> None:
+    """V1 — the traveler maintains their own household via /me (collaboration).
+
+    Self-skips when no linked-traveler identity is provisioned on this machine.
+    """
+    created = await traveler.create_my_party_member(
+        {"full_name": "My Companion", "dietary": "vegetarian"}
+    )
+    assert str(created.created_by_actor) == "traveler"
+
+    mine = await traveler.my_party_members()
+    assert str(created.id) in {str(m.id) for m in mine.members}
 
 
 async def test_passport_upload_to_vault_with_expiry_flag() -> None:

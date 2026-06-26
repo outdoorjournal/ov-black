@@ -36,6 +36,7 @@ from app.routers.inventory import router as inventory_router
 from app.routers.itineraries import router as itineraries_router
 from app.routers.me import router as me_router
 from app.routers.onboarding import router as onboarding_router
+from app.routers.party_members import router as party_members_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -173,6 +174,7 @@ app.add_middleware(
         "/agent/context",
         "/agent/profile/facts",
         "/agent/dossier/facts",
+        "/agent/party-members",
     },
 )
 
@@ -209,6 +211,7 @@ app.include_router(facts_router)
 app.include_router(agent_router)
 app.include_router(agent_internal_router)
 app.include_router(me_router)
+app.include_router(party_members_router)
 app.include_router(onboarding_router)
 app.include_router(demos_router)
 app.include_router(google_places_router)

@@ -1,7 +1,7 @@
 # Runbook — M001/F2 real staging deploy
 
-> Operator runbook for standing up **apps/api** in staging on ECS Fargate and proving the
-> M001 loop runs against real Supabase + real Bedrock. Companion to [mvp-plan.md](../mvp-plan.md)
+> Operator runbook for standing up **apps/api + apps/web** in staging on ECS Fargate (one shared,
+> HTTPS ALB) and proving the M001 loop runs against real Supabase + real Bedrock. Companion to [mvp-plan.md](../mvp-plan.md)
 > §3 (slice **F2**) and the CDK in [infra/cdk](../../infra/cdk/). Everything here is operator
 > work that needs AWS creds + the live Supabase project — it cannot run in hermetic CI.
 >
@@ -12,9 +12,15 @@
 
 ## 0. What this gets you
 
-A public ALB (`http://ov-black-api-staging-*.us-east-2.elb.amazonaws.com`) serving a **functioning**
-apps/api: it reaches the live Supabase Postgres, verifies real Supabase JWTs, and can invoke the
-Bedrock AgentCore runtime. HTTP only — TLS is a deliberate M001 deferral.
+ONE public ALB fronting **both** apps on ECS Fargate, over HTTPS with a real domain:
+- **web** — `https://black.dev.outdoorvoyage.com` (Next.js standalone container, :3000)
+- **api** — `https://api.black.dev.outdoorvoyage.com` (apps/api, :8000)
+
+Host-based routing on the shared ALB sends the api host → the API target group and everything else →
+web; HTTP:80 redirects to 443. The API reaches the live Supabase Postgres, verifies real Supabase
+JWTs, and can invoke the Bedrock AgentCore runtime. TLS is an ACM cert (`black.dev.outdoorvoyage.com`
++ `*.black.dev.outdoorvoyage.com`), DNS-validated in the `dev.outdoorvoyage.com` Route53 zone (same
+account).
 
 **Environment is real and already populated** in [`infra/cdk/cdk.json`](../../infra/cdk/cdk.json):
 account `437988666846`, region `us-east-2`, VPC `vpc-0b7a7ad7cc2e34da2`. You should not need to
@@ -51,6 +57,17 @@ You also need the **Supabase project credentials** (service-role key, DB passwor
 for the agent, the ability to provision a Bedrock AgentCore runtime.
 
 One-time per account (skip if already done): `pnpm -C infra/cdk cdk bootstrap aws://437988666846/us-east-2`.
+
+**Hosted zone id (required before deploy).** `cdk.json` ships `hostedZoneId` as a placeholder
+(`REPLACE_WITH_DEV_OUTDOORVOYAGE_ZONE_ID`). Fill it with the real id of the `dev.outdoorvoyage.com`
+zone or the cert + A records won't deploy:
+
+```bash
+aws route53 list-hosted-zones --profile tov-sso \
+  --query "HostedZones[?Name=='dev.outdoorvoyage.com.'].Id" --output text   # → /hostedzone/Z…
+```
+
+Put the bare `Z…` id into `ov-black:envs.staging.hostedZoneId` in `cdk.json`.
 
 ---
 
@@ -166,45 +183,60 @@ Magic-link email is sent by **Supabase Auth**, not apps/api — there are no SMT
 Supabase's built-in mailer is rate-limited and only sends to project members, so for real UAT:
 
 - Dashboard → **Authentication → Emails → SMTP Settings** → enable custom SMTP (SES/Postmark/etc.).
-- Set the sender, then under **URL Configuration** add the staging web origin to **Redirect URLs**
-  (the invite `redirect_to` must be allow-listed or the magic link 400s).
+- Set the sender, then under **URL Configuration** set the Site URL and add the web origin
+  `https://black.dev.outdoorvoyage.com` (and `https://black.dev.outdoorvoyage.com/auth/callback`) to
+  **Redirect URLs** — the invite `redirect_to` must be allow-listed or the magic link 400s.
 
-`WEB_ORIGIN` is left **unset** until the web app's staging origin exists — see §9. The API keeps its
-localhost default meanwhile, which is fine for the API-only checks in §8 but must be set before the
-human magic-link UAT (F3).
+`WEB_ORIGIN` is now wired automatically: the CDK derives it from `webHost`
+(`https://black.dev.outdoorvoyage.com`) and injects it into apps/api for CORS + magic-link redirects.
 
 ---
 
-## 7. Build, push, and deploy apps/api
+## 7. Build, push, and deploy apps/api + apps/web
 
-> **Build for `linux/amd64`.** The Fargate task sets no `runtimePlatform`, so it defaults to amd64. On
-> an Apple-Silicon machine a plain `docker build` produces arm64 and the task dies with an
-> exec-format error. `apps/api/Dockerfile` does not pin the platform — pass it on the CLI.
+> **Build for `linux/amd64`.** The Fargate tasks set no `runtimePlatform`, so they default to amd64.
+> On an Apple-Silicon machine a plain `docker build` produces arm64 and the task dies with an
+> exec-format error. Neither Dockerfile pins the platform — pass it on the CLI.
 
 ```bash
 ACCOUNT=437988666846; REGION=us-east-2
-REPO="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/ov-black-api-staging"
+ECR="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 TAG="sha-$(git rev-parse --short HEAD)"
 
 aws ecr get-login-password --profile tov-sso --region $REGION \
-  | docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
+  | docker login --username AWS --password-stdin "$ECR"
 
-docker buildx build --platform linux/amd64 -t "$REPO:$TAG" --push apps/api
+# apps/api — build context is apps/api.
+docker buildx build --platform linux/amd64 \
+  -t "$ECR/ov-black-api-staging:$TAG" --push apps/api
 
-# Deploy the service pointed at that image tag (omit -c imageTag and you ship hello-world).
-pnpm -C infra/cdk cdk deploy OvBlackApi-staging -c imageTag="$TAG"
+# apps/web — build context is the REPO ROOT (pnpm workspace + @ov-black/api-client),
+# -f the web Dockerfile. NO build args: public config (Supabase URL + anon key,
+# API base URL, Mapbox token) is read at RUNTIME from the web task env (OVB_*),
+# wired in cdk.json -> api-stack.ts. One image works for every environment.
+docker buildx build --platform linux/amd64 -f apps/web/Dockerfile \
+  -t "$ECR/ov-black-web-staging:$TAG" --push .
+
+# One deploy stands up the cert + DNS + both services. Omit a tag and that service
+# ships the hello-world placeholder.
+pnpm -C infra/cdk cdk deploy OvBlackApi-staging -c imageTag="$TAG" -c webImageTag="$TAG"
 ```
 
-`cdk deploy` prints `OvBlackApi-staging.AlbDnsName` — that is your `STAGING_API_URL` (prefix `http://`).
+**First deploy pauses on ACM validation** (a few minutes) while CloudFormation writes the DNS
+validation records into the `dev.outdoorvoyage.com` zone — automatic (same-account zone), not a
+manual step. `cdk deploy` then prints the `WebUrl` / `ApiUrl` outputs.
 
 ---
 
 ## 8. Verify
 
 ```bash
-export STAGING_API_URL="http://$(aws cloudformation describe-stacks \
-  --profile tov-sso --region us-east-2 --stack-name OvBlackApi-staging \
-  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text)"
+export STAGING_API_URL="https://api.black.dev.outdoorvoyage.com"
+
+# Quick smoke: both hosts answer 200 on /health, and http redirects to https.
+curl -fsS "$STAGING_API_URL/health" && echo
+curl -fsS https://black.dev.outdoorvoyage.com/health && echo
+curl -sS -o /dev/null -w 'http→ %{http_code}\n' http://black.dev.outdoorvoyage.com/   # expect 301
 
 # Mint a real Supabase JWT (needs the live project's service-role key).
 export OV_BLACK_STAGING_JWT="$(SUPABASE_URL=https://<ref>.supabase.co \
@@ -232,15 +264,12 @@ If the service won't stabilize, the circuit breaker rolls back; read the cause i
 
 ## 9. Still owed after F2 (tracked, not done here)
 
-- **`WEB_ORIGIN`** — set `ov-black:envs.staging.webOrigin` in `cdk.json` once the web app's staging
-  origin exists, then redeploy. Until then magic-link redirects target localhost.
 - **Remaining vendor providers** — `google_places` + `duffel` are wired (keys in the single
   `inventory-provider-keys` secret + enabled in `INVENTORY_PROVIDERS_ENABLED`, see §2/§3). Ratehawk is
   still owed: extend the flag to `ov,google_places,duffel,ratehawk`, add `ratehawk_key_id` +
   `ratehawk_api_key` as new JSON fields in that **same** secret (no new secret), and extract each into
   its env var in `api-stack.ts` (`EcsSecret.fromSecretsManager(secret, 'ratehawk_key_id')`). Out of
   scope for M001/F2.
-- **TLS / custom domain** — the ALB is HTTP-only (M001 concession); add ACM + an HTTPS listener.
 - **CDK-managed AgentCore** — runtime provisioning is still console/CLI out-of-band (S05 deferral).
 - **F3 founder craft-feel UAT** — run the M001 craft checks against this deploy (separate slice).
 

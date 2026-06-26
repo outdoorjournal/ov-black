@@ -2,19 +2,15 @@
 #
 # apps/web (Next.js 15, standalone) for ECS Fargate behind the shared ALB.
 #
-# IMPORTANT: build with the REPO ROOT as context, not apps/web, so the pnpm
-# workspace lockfile + the @ov-black/api-client workspace dependency are visible:
+# Build with the REPO ROOT as context (not apps/web), so the pnpm workspace
+# lockfile + the @ov-black/api-client workspace dependency are visible:
 #
 #   docker buildx build --platform linux/amd64 -f apps/web/Dockerfile \
-#     --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.black.dev.outdoorvoyage.com \
-#     --build-arg NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co \
-#     --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key> \
-#     --build-arg NEXT_PUBLIC_MAPBOX_API_KEY=<mapbox-public-token> \
 #     -t <acct>.dkr.ecr.us-east-2.amazonaws.com/ov-black-web-staging:<tag> --push .
 #
-# The four NEXT_PUBLIC_* values are inlined into the client bundle at `next build`
-# time (not read at runtime), so they MUST be passed as build args. All four are
-# public-by-design; the Supabase service-role key never touches this image.
+# NO build args: all public config (Supabase URL + anon key, API base URL, Mapbox
+# token) is read at RUNTIME from the ECS task env (OVB_*), so one image works for
+# every environment. See lib/env.ts + app/layout.tsx + infra/cdk/lib/api-stack.ts.
 
 # ── base: Node 24 + pnpm via corepack ────────────────────────────────────────
 FROM node:24-slim AS base
@@ -23,31 +19,27 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN corepack enable
 WORKDIR /repo
 
-# ── deps: resolve the web + api-client subgraph from the frozen lockfile ──────
-# Copy only manifests first so this layer caches until a dependency changes.
+# ── builder: install (with source present) then build api-client + web ────────
+# We copy source BEFORE `pnpm install` so the workspace is complete and pnpm
+# links @ov-black/api-client into apps/web/node_modules exactly as a local
+# install does — installing against bare manifests left next build unable to
+# resolve the workspace package.
 FROM base AS deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json ./
-COPY apps/web/package.json apps/web/
-COPY packages/api-client/package.json packages/api-client/
 COPY infra/cdk/package.json infra/cdk/
+COPY packages/api-client packages/api-client
+COPY apps/web apps/web
+# Install the web subgraph WITH devDependencies (typescript/next live there).
+# Do NOT set NODE_ENV=production before this — pnpm skips devDeps in production
+# mode, which leaves `tsc` missing for the api-client build. `next build` runs in
+# production regardless. infra/cdk's manifest is present so the frozen lockfile
+# stays satisfiable; its deps are neither installed-for-build nor shipped.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter=@ov-black/web...
 
-# ── builder: build api-client (tsc) then web (next build, standalone) ─────────
 FROM deps AS builder
-ARG NEXT_PUBLIC_API_BASE_URL
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG NEXT_PUBLIC_MAPBOX_API_KEY
-ENV NODE_ENV=production \
-    NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
-    NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
-    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
-    NEXT_PUBLIC_MAPBOX_API_KEY=$NEXT_PUBLIC_MAPBOX_API_KEY
-COPY packages/api-client packages/api-client
-COPY apps/web apps/web
-# pnpm runs `build` across the filtered subgraph in topological order:
-# @ov-black/api-client (tsc -> dist, since dist/ is gitignored) then @ov-black/web.
+# Build the web subgraph in topological order: @ov-black/api-client
+# (tsc -> dist, since dist/ is gitignored) then @ov-black/web.
 RUN pnpm --filter=@ov-black/web... run build
 
 # ── runner: minimal image with only the standalone server output ─────────────

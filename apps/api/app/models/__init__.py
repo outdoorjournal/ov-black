@@ -56,7 +56,13 @@ from app.models.osint_fact import (  # noqa: E402,F401  (re-exported)
     OsintFact,
     OsintFactKind,
 )
-from app.models.party import NodeParty, Party, Traveler  # noqa: E402,F401
+from app.models.party import (  # noqa: E402,F401  (re-exported)
+    NodeParty,
+    Party,
+    PartyMember,
+    PartyMemberActor,
+    Traveler,
+)
 from app.models.profile import Profile, UserRole  # noqa: E402,F401  (re-exported)
 from app.models.profile_fact import (  # noqa: E402,F401  (re-exported)
     ProfileFact,
@@ -104,6 +110,8 @@ __all__ = [
     "OsintFact",
     "OsintFactKind",
     "Party",
+    "PartyMember",
+    "PartyMemberActor",
     "Profile",
     "ProfileFact",
     "ProfileFactKind",

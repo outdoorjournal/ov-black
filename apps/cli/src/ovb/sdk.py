@@ -406,6 +406,81 @@ class Ovb:
             body["source_kind"] = source_kind
         return await self._raw("POST", f"/clients/{client_id}/{tier}/facts", json_body=body)
 
+    # ── party members (M003/V1) ──────────────────────────────────────────
+    async def list_party_members(
+        self, client_id: str, *, include_archived: bool = False
+    ) -> gm.PartyMemberListResponse:
+        params: dict[str, QueryValue] = {"include_archived": 1} if include_archived else {}
+        return await self._model(
+            gm.PartyMemberListResponse,
+            "GET",
+            f"/clients/{client_id}/party-members",
+            params=params,
+        )
+
+    async def create_party_member(
+        self, client_id: str, payload: dict[str, Any]
+    ) -> gm.PartyMemberDetail:
+        return await self._model(
+            gm.PartyMemberDetail, "POST", f"/clients/{client_id}/party-members", json_body=payload
+        )
+
+    async def update_party_member(
+        self, client_id: str, member_id: str, payload: dict[str, Any]
+    ) -> gm.PartyMemberDetail:
+        return await self._model(
+            gm.PartyMemberDetail,
+            "PATCH",
+            f"/clients/{client_id}/party-members/{member_id}",
+            json_body=payload,
+        )
+
+    async def archive_party_member(
+        self, client_id: str, member_id: str
+    ) -> gm.PartyMemberDetail:
+        return await self._model(
+            gm.PartyMemberDetail,
+            "DELETE",
+            f"/clients/{client_id}/party-members/{member_id}",
+        )
+
+    async def my_party_members(
+        self, *, include_archived: bool = False
+    ) -> gm.PartyMemberListResponse:
+        params: dict[str, QueryValue] = {"include_archived": 1} if include_archived else {}
+        return await self._model(
+            gm.PartyMemberListResponse, "GET", "/me/party-members", params=params
+        )
+
+    async def create_my_party_member(self, payload: dict[str, Any]) -> gm.PartyMemberDetail:
+        return await self._model(
+            gm.PartyMemberDetail, "POST", "/me/party-members", json_body=payload
+        )
+
+    async def list_itinerary_party(self, itinerary_id: str) -> gm.ItineraryPartyResponse:
+        return await self._model(
+            gm.ItineraryPartyResponse, "GET", f"/itineraries/{itinerary_id}/party"
+        )
+
+    async def attach_party_member(
+        self, itinerary_id: str, party_member_id: str
+    ) -> gm.ItineraryPartyResponse:
+        return await self._model(
+            gm.ItineraryPartyResponse,
+            "POST",
+            f"/itineraries/{itinerary_id}/party/members",
+            json_body={"party_member_id": party_member_id},
+        )
+
+    async def detach_party_member(
+        self, itinerary_id: str, member_id: str
+    ) -> gm.ItineraryPartyResponse:
+        return await self._model(
+            gm.ItineraryPartyResponse,
+            "DELETE",
+            f"/itineraries/{itinerary_id}/party/members/{member_id}",
+        )
+
     # ── sessions ─────────────────────────────────────────────────────────
     async def open_session(
         self,

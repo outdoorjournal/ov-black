@@ -10,12 +10,17 @@ import {
   Secret as EcsSecret,
 } from 'aws-cdk-lib/aws-ecs';
 import {
+  ApplicationListenerRule,
   ApplicationLoadBalancer,
   ApplicationProtocol,
   ApplicationTargetGroup,
   ListenerAction,
+  ListenerCondition,
   TargetType,
 } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { Certificate, CertificateValidation } from 'aws-cdk-lib/aws-certificatemanager';
+import { ARecord, HostedZone, RecordTarget } from 'aws-cdk-lib/aws-route53';
+import { LoadBalancerTarget } from 'aws-cdk-lib/aws-route53-targets';
 import { Effect, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { Secret as SmSecret } from 'aws-cdk-lib/aws-secretsmanager';
@@ -40,19 +45,34 @@ export interface ApiStackProps extends StackProps {
   readonly agentcoreRegion: string;
   /** Image tag to deploy. Defaults to `latest`; CI overrides via `-c imageTag=...`. */
   readonly imageTag?: string;
+  /** apps/web image tag → pulled from the web ECR repo. `-c webImageTag=...`. */
+  readonly webImageTag?: string;
+  /** Route53 hosted zone hosting the web + api A records (e.g. dev.outdoorvoyage.com). */
+  readonly hostedZoneId: string;
+  readonly zoneName: string;
+  /** Web app FQDN: ALB HTTPS default action + apex A record (e.g. black.dev.outdoorvoyage.com). */
+  readonly webHost: string;
+  /** API FQDN: ALB host-header rule + A record (e.g. api.black.dev.outdoorvoyage.com). */
+  readonly apiHost: string;
+  /** Public (browser-exposed) web config → injected into apps/web as OVB_* runtime env. */
+  readonly supabaseUrl: string;
+  readonly supabaseAnonKey: string;
+  readonly mapboxToken: string;
 }
 
 /**
- * apps/api on ECS Fargate behind an ALB (D002). Consumes the existing
- * NetworkStack's VPC (Control Tower: provisioned in a separate account-bound
- * repo) by ID + subnet attributes so this stack stays hermetic and synth works
- * without AWS credentials.
+ * apps/api AND apps/web on ECS Fargate behind ONE shared, internet-facing ALB
+ * (D002). Consumes the existing NetworkStack's VPC (Control Tower: provisioned in
+ * a separate account-bound repo) by ID + subnet attributes so this stack stays
+ * hermetic and synth works without AWS credentials.
  *
- * Surfaces (for the slice's demo bar):
- *   - ALB DNS serving HTTP on port 80 → target group /health on container 8000
- *   - CloudWatch log group /ecs/ov-black-api with 30d retention
- *   - IAM task role scoped to GetSecretValue on exactly the two Supabase secrets
- *   - ECR repo ov-black-api for the container image
+ * Surfaces:
+ *   - One ALB: HTTPS:443 (ACM cert, DNS-validated) → web TG (:3000) by default,
+ *     host api.<domain> → api TG (:8000); HTTP:80 redirects to 443.
+ *   - Route53 alias records for the web (apex) + api hosts at the ALB.
+ *   - Two ECR repos (ov-black-api, ov-black-web) + two CloudWatch log groups.
+ *   - IAM task role scoped to GetSecretValue on exactly the API's secrets; the
+ *     web task carries no secrets (NEXT_PUBLIC_* are baked at build time).
  */
 export class ApiStack extends Stack {
   readonly albDnsName: string;
@@ -92,9 +112,38 @@ export class ApiStack extends Stack {
       ],
     });
 
-    // ── CloudWatch log group ─────────────────────────────────────────────────
+    // ECR repo for the apps/web container (same lifecycle posture as the API repo).
+    const webRepository = new Repository(this, 'WebRepository', {
+      repositoryName: `ov-black-web-${props.envName}`,
+      imageScanOnPush: true,
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+      emptyOnDelete: props.envName !== 'prod',
+      lifecycleRules: [
+        {
+          description: 'Keep the last 10 tagged images.',
+          maxImageCount: 10,
+          tagStatus: TagStatus.TAGGED,
+          rulePriority: 1,
+          tagPrefixList: ['v', 'sha-', 'latest'],
+        },
+        {
+          description: 'Expire untagged images after 7 days.',
+          maxImageAge: Duration.days(7),
+          tagStatus: TagStatus.UNTAGGED,
+          rulePriority: 2,
+        },
+      ],
+    });
+
+    // ── CloudWatch log groups ────────────────────────────────────────────────
     const logGroup = new LogGroup(this, 'ApiLogGroup', {
       logGroupName: `/ecs/ov-black-api-${props.envName}`,
+      retention: RetentionDays.ONE_MONTH,
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
+    const webLogGroup = new LogGroup(this, 'WebLogGroup', {
+      logGroupName: `/ecs/ov-black-web-${props.envName}`,
       retention: RetentionDays.ONE_MONTH,
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
@@ -231,6 +280,44 @@ export class ApiStack extends Stack {
       essential: true,
     });
 
+    // ── apps/web task definition + container ─────────────────────────────────
+    // The web image is self-contained: NEXT_PUBLIC_* values are baked into the
+    // bundle at `next build` time (see apps/web/Dockerfile), so the runtime needs
+    // NO secrets and the web task role gets NO Secrets Manager / Bedrock grants.
+    const webImage = props.webImageTag
+      ? ContainerImage.fromEcrRepository(webRepository, props.webImageTag)
+      : ContainerImage.fromRegistry('public.ecr.aws/aws-containers/hello-app-runner:latest');
+
+    const webTaskDefinition = new FargateTaskDefinition(this, 'WebTaskDefinition', {
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      family: `ov-black-web-${props.envName}`,
+    });
+
+    webTaskDefinition.addContainer('web', {
+      containerName: 'web',
+      image: webImage,
+      logging: LogDriver.awsLogs({
+        logGroup: webLogGroup,
+        streamPrefix: 'web',
+      }),
+      environment: {
+        NODE_ENV: 'production',
+        // Next's standalone server reads PORT + HOSTNAME at startup.
+        PORT: '3000',
+        HOSTNAME: '0.0.0.0',
+        // Public web config read at RUNTIME (see apps/web/lib/env.ts). OVB_* names
+        // are deliberately NOT NEXT_PUBLIC_ so Next never inlines them at build —
+        // one image, configured per-environment here. All are browser-public.
+        OVB_API_BASE_URL: `https://${props.apiHost}`,
+        OVB_SUPABASE_URL: props.supabaseUrl,
+        OVB_SUPABASE_ANON_KEY: props.supabaseAnonKey,
+        OVB_MAPBOX_TOKEN: props.mapboxToken,
+      },
+      portMappings: [{ containerPort: 3000, name: 'web' }],
+      essential: true,
+    });
+
     // ── Service security group ───────────────────────────────────────────────
     const serviceSg = new SecurityGroup(this, 'ApiServiceSg', {
       vpc,
@@ -258,13 +345,35 @@ export class ApiStack extends Stack {
       maxHealthyPercent: 200,
     });
 
+    // apps/web service — same subnet/public-IP posture as the API service.
+    const webServiceSg = new SecurityGroup(this, 'WebServiceSg', {
+      vpc,
+      description: 'ov-black apps/web Fargate service - only accepts traffic from its ALB.',
+      allowAllOutbound: true,
+    });
+    const webService = new FargateService(this, 'WebService', {
+      cluster,
+      taskDefinition: webTaskDefinition,
+      desiredCount: 1,
+      assignPublicIp: isStaging,
+      vpcSubnets: {
+        subnetType: isStaging ? SubnetType.PUBLIC : SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [webServiceSg],
+      circuitBreaker: { rollback: true },
+      healthCheckGracePeriod: Duration.seconds(60),
+      minHealthyPercent: 50,
+      maxHealthyPercent: 200,
+    });
+
     // ── ALB (public) ─────────────────────────────────────────────────────────
     const albSg = new SecurityGroup(this, 'ApiAlbSg', {
       vpc,
-      description: 'ov-black apps/api ALB - public HTTP ingress for M001 staging (no TLS yet).',
+      description: 'ov-black shared ALB - public HTTP(80, redirect) + HTTPS(443) ingress.',
       allowAllOutbound: true,
     });
-    albSg.addIngressRule(Peer.anyIpv4(), Port.tcp(80), 'HTTP from Internet (M001 staging).');
+    albSg.addIngressRule(Peer.anyIpv4(), Port.tcp(80), 'HTTP from Internet (redirects to 443).');
+    albSg.addIngressRule(Peer.anyIpv4(), Port.tcp(443), 'HTTPS from Internet.');
 
     const alb = new ApplicationLoadBalancer(this, 'ApiAlb', {
       vpc,
@@ -306,10 +415,88 @@ export class ApiStack extends Stack {
     );
     targetGroup.addTarget(service);
 
-    alb.addListener('HttpListener', {
+    // ── apps/web target group ────────────────────────────────────────────────
+    const webTargetGroup = new ApplicationTargetGroup(this, 'WebTargetGroup', {
+      vpc,
+      port: 3000,
+      protocol: ApplicationProtocol.HTTP,
+      targetType: TargetType.IP,
+      healthCheck: {
+        // apps/web exposes /health (app/health/route.ts); the hello-world
+        // fallback image only answers on /.
+        path: props.webImageTag ? '/health' : '/',
+        healthyHttpCodes: '200',
+        interval: Duration.seconds(30),
+        timeout: Duration.seconds(5),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
+      },
+      deregistrationDelay: Duration.seconds(15),
+      targetGroupName: `ov-black-web-${props.envName}`,
+    });
+    webServiceSg.addIngressRule(
+      albSg,
+      Port.tcp(3000),
+      'ALB to web Fargate task on container port 3000.',
+    );
+    webTargetGroup.addTarget(webService);
+
+    // ── TLS certificate (regional, DNS-validated against the shared zone) ──────
+    // fromHostedZoneAttributes (NOT fromLookup) + CertificateValidation.fromDns
+    // keep `cdk synth` hermetic — no AWS calls at synth. At deploy, CloudFormation
+    // writes the validation CNAMEs into the same-account zone automatically.
+    const zone = HostedZone.fromHostedZoneAttributes(this, 'PlatformZone', {
+      hostedZoneId: props.hostedZoneId,
+      zoneName: props.zoneName,
+    });
+    const certificate = new Certificate(this, 'AlbCertificate', {
+      domainName: props.webHost,
+      // Wildcard covers apiHost (api.<webHost>) and any future <x>.<webHost>.
+      subjectAlternativeNames: [`*.${props.webHost}`],
+      validation: CertificateValidation.fromDns(zone),
+    });
+
+    // ── Listeners: HTTPS:443 (web default + api host rule) + HTTP:80 redirect ──
+    const httpsListener = alb.addListener('HttpsListener', {
+      port: 443,
+      protocol: ApplicationProtocol.HTTPS,
+      certificates: [certificate],
+      defaultAction: ListenerAction.forward([webTargetGroup]),
+    });
+    new ApplicationListenerRule(this, 'ApiHostRule', {
+      listener: httpsListener,
+      priority: 10,
+      conditions: [ListenerCondition.hostHeaders([props.apiHost])],
+      action: ListenerAction.forward([targetGroup]),
+    });
+    alb.addListener('HttpRedirect', {
       port: 80,
       protocol: ApplicationProtocol.HTTP,
-      defaultAction: ListenerAction.forward([targetGroup]),
+      defaultAction: ListenerAction.redirect({
+        protocol: 'HTTPS',
+        port: '443',
+        permanent: true,
+      }),
+    });
+
+    // ── DNS: alias both hosts at the shared ALB ───────────────────────────────
+    // recordName is relative to the zone, so strip the zone suffix from each FQDN.
+    const zoneSuffix = `.${props.zoneName}`;
+    const webRecordName = props.webHost.endsWith(zoneSuffix)
+      ? props.webHost.slice(0, -zoneSuffix.length)
+      : props.webHost;
+    const apiRecordName = props.apiHost.endsWith(zoneSuffix)
+      ? props.apiHost.slice(0, -zoneSuffix.length)
+      : props.apiHost;
+    new ARecord(this, 'WebAliasRecord', {
+      zone,
+      recordName: webRecordName,
+      target: RecordTarget.fromAlias(new LoadBalancerTarget(alb)),
+    });
+    new ARecord(this, 'ApiAliasRecord', {
+      zone,
+      recordName: apiRecordName,
+      target: RecordTarget.fromAlias(new LoadBalancerTarget(alb)),
     });
 
     this.albDnsName = alb.loadBalancerDnsName;
@@ -330,6 +517,21 @@ export class ApiStack extends Stack {
       value: logGroup.logGroupName,
       description: 'CloudWatch log group receiving apps/api container logs.',
       exportName: `ov-black-${props.envName}-api-log-group`,
+    });
+    new CfnOutput(this, 'WebEcrRepositoryUri', {
+      value: webRepository.repositoryUri,
+      description: 'ECR repository URI — push apps/web images here.',
+      exportName: `ov-black-${props.envName}-web-ecr-uri`,
+    });
+    new CfnOutput(this, 'WebUrl', {
+      value: `https://${props.webHost}`,
+      description: 'Public web URL (apex) served by the shared ALB.',
+      exportName: `ov-black-${props.envName}-web-url`,
+    });
+    new CfnOutput(this, 'ApiUrl', {
+      value: `https://${props.apiHost}`,
+      description: 'Public API URL served by the shared ALB.',
+      exportName: `ov-black-${props.envName}-api-url`,
     });
   }
 }

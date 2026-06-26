@@ -35,6 +35,14 @@ export interface EnvConfig {
   /** Public FQDNs served by the shared ALB. webHost is the apex; apiHost the API host. */
   readonly webHost: string;
   readonly apiHost: string;
+  /**
+   * Public (browser-exposed) web config, injected into apps/web as OVB_* runtime
+   * env. Non-secret by design — the anon key + Mapbox token ship to the browser —
+   * so they live in plain context, not Secrets Manager.
+   */
+  readonly supabaseUrl: string;
+  readonly supabaseAnonKey: string;
+  readonly mapboxToken: string;
 }
 
 interface RawEnvConfig {
@@ -50,6 +58,9 @@ interface RawEnvConfig {
   zoneName?: string;
   webHost?: string;
   apiHost?: string;
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+  mapboxToken?: string;
 }
 
 const DUMMY = {
@@ -65,6 +76,9 @@ const DUMMY = {
   zoneName: 'dev.outdoorvoyage.com',
   webHost: 'black.dev.outdoorvoyage.com',
   apiHost: 'api.black.dev.outdoorvoyage.com',
+  supabaseUrl: 'https://example.supabase.co',
+  supabaseAnonKey: 'dummy-anon-key',
+  mapboxToken: 'pk.dummy',
 } as const;
 
 export function loadEnvConfig(scope: Construct): EnvConfig {
@@ -105,6 +119,9 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
   const zoneName = raw.zoneName || DUMMY.zoneName;
   const webHost = raw.webHost || DUMMY.webHost;
   const apiHost = raw.apiHost || DUMMY.apiHost;
+  const supabaseUrl = raw.supabaseUrl || DUMMY.supabaseUrl;
+  const supabaseAnonKey = raw.supabaseAnonKey || DUMMY.supabaseAnonKey;
+  const mapboxToken = raw.mapboxToken || DUMMY.mapboxToken;
 
   // WEB_ORIGIN (magic-link redirect_to + CORS allow-list) is the web app's origin.
   // Derive it from webHost so there is a single source of truth; an explicit
@@ -125,5 +142,8 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
     zoneName,
     webHost,
     apiHost,
+    supabaseUrl,
+    supabaseAnonKey,
+    mapboxToken,
   };
 }

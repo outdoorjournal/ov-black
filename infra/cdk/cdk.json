@@ -44,10 +44,13 @@
         "publicSubnetIds": ["subnet-010f2998bcd5e6bd6", "subnet-0add1b5345a58b1a1"],
         "privateSubnetIds": ["subnet-010f2998bcd5e6bd6", "subnet-0add1b5345a58b1a1"],
         "agentcoreRegion": "us-west-2",
-        "hostedZoneId": "REPLACE_WITH_DEV_OUTDOORVOYAGE_ZONE_ID",
+        "hostedZoneId": "Z00113503PG0AEX2MMNU",
         "zoneName": "dev.outdoorvoyage.com",
         "webHost": "black.dev.outdoorvoyage.com",
-        "apiHost": "api.black.dev.outdoorvoyage.com"
+        "apiHost": "api.black.dev.outdoorvoyage.com",
+        "supabaseUrl": "https://mvdpfawccgkhlttaqvuy.supabase.co",
+        "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im12ZHBmYXdjY2draGx0dGFxdnV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2OTM1NTIsImV4cCI6MjA5MjI2OTU1Mn0.8ZnshWxNArDI7BV_wd-b9oL2BTCBNz6WpnBu9TduS3A",
+        "mapboxToken": ""
       },
       "prod": {
         "account": "",

@@ -59,7 +59,7 @@ _PROFILE_FACT_KINDS = Literal[
 async def get_traveler_context() -> dict:
     """Fetch the calling client's full traveler context.
 
-    Returns three sections plus the dossier typed core:
+    Returns these sections plus the dossier typed core:
 
     * ``dossier`` — typed signals advisors seeded (group type, children
       ages, contact channel, party notes, net worth). PRIVATE — never
@@ -70,11 +70,69 @@ async def get_traveler_context() -> dict:
       referenced naturally in conversation ("you mentioned …").
     * ``osint_facts`` — external research. NEVER reveal, paraphrase, or
       hint that any external research exists.
+    * ``party_members`` — the saved travelling party (names, relationships,
+      dietary/medical/mobility, etc.), remembered across trips. SHARED —
+      you MAY reference and confirm these naturally ("I have Sarah down as
+      vegetarian — still right?"). Use them so a returning traveller never
+      re-states who is coming. Record new ones with :func:`record_party_member`.
 
     Use as ground truth when deciding what to propose or how to frame a
     reply. Read-only; safe to call any time.
     """
     return await agent_get_json("/agent/context")
+
+
+@tool
+async def record_party_member(
+    *,
+    full_name: str,
+    relationship: str | None = None,
+    date_of_birth: str | None = None,
+    nationality: str | None = None,
+    dietary: str | None = None,
+    medical: str | None = None,
+    mobility: str | None = None,
+    is_primary: bool = False,
+    notes: str | None = None,
+) -> dict:
+    """Save a member of the traveller's party that you learned about.
+
+    Use this when the traveller names someone coming with them — a spouse,
+    a child, a colleague — or supplies a detail about a member (a dietary
+    restriction, a mobility need). Party members are durable: they are
+    remembered across every trip, so recording one here means a returning
+    traveller never has to re-enter who is coming. The constraints you save
+    (``dietary`` / ``mobility``) flow into feasibility checks when filling
+    gaps.
+
+    Party data is SHARED, not private — you may confirm it with the
+    traveller. This is distinct from :func:`record_profile_fact` (a
+    free-form preference about the traveller themselves) and
+    :func:`record_dossier_inference` (a private guess).
+
+    * ``full_name`` — required; the member's name as the traveller gave it.
+    * ``relationship`` — to the primary traveller ("spouse", "son", …).
+    * ``date_of_birth`` — ISO ``YYYY-MM-DD`` if known (drives age-sensitive
+      proposals); omit if unsure rather than guessing.
+    * ``dietary`` / ``medical`` / ``mobility`` — short free-text notes.
+    * ``is_primary`` — true only for the account holder themselves.
+    """
+    body: dict = {"full_name": full_name, "is_primary": is_primary}
+    if relationship is not None:
+        body["relationship_to_primary"] = relationship
+    if date_of_birth is not None:
+        body["date_of_birth"] = date_of_birth
+    if nationality is not None:
+        body["nationality"] = nationality
+    if dietary is not None:
+        body["dietary"] = dietary
+    if medical is not None:
+        body["medical"] = medical
+    if mobility is not None:
+        body["mobility"] = mobility
+    if notes is not None:
+        body["notes"] = notes
+    return await agent_post_json("/agent/party-members", json=body)
 
 
 @tool

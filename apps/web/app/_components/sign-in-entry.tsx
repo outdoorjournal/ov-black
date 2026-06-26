@@ -7,6 +7,8 @@ import {
   type RequestLoginDetail,
 } from "@ov-black/api-client";
 
+import { publicEnv } from "@/lib/env";
+
 type Status =
   | { kind: "idle" }
   | { kind: "submitting" }
@@ -34,7 +36,7 @@ export function SignInEntry() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
-  const apiBaseUrl = process.env["NEXT_PUBLIC_API_BASE_URL"] ?? "";
+  const { apiBaseUrl } = publicEnv();
   const client = useMemo(
     () => createApiClient({ baseUrl: apiBaseUrl }),
     [apiBaseUrl],

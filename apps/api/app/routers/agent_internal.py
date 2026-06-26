@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
+from app.models import PartyMemberActor
 from app.schemas.dossier import DossierDetail
 from app.schemas.facts import (
     AgentContext,
@@ -37,16 +38,19 @@ from app.schemas.facts import (
     OsintFactDetail,
     ProfileFactDetail,
 )
+from app.schemas.party_members import PartyMemberCreate, PartyMemberDetail
 from app.services.agent_token import (
     AgentTokenClaims,
     AgentTokenError,
     verify_agent_token,
 )
 from app.services.facts import (
+    _agent_recorded_by,
     load_agent_context,
     record_agent_dossier_inference,
     record_agent_profile_fact,
 )
+from app.services.party_members import create_party_member
 
 logger = logging.getLogger("ov_black.routers.agent_internal")
 
@@ -115,6 +119,9 @@ async def get_agent_context_endpoint(
         osint_facts=[
             OsintFactDetail.model_validate(f, from_attributes=True) for f in ctx.osint_facts
         ],
+        party_members=[
+            PartyMemberDetail.model_validate(m, from_attributes=True) for m in ctx.party_members
+        ],
     )
 
 
@@ -162,3 +169,31 @@ async def record_dossier_inference_endpoint(
         source_turn_id=payload.source_turn_id,
     )
     return DossierFactDetail.model_validate(fact, from_attributes=True)
+
+
+@router.post(
+    "/party-members",
+    status_code=status.HTTP_201_CREATED,
+    response_model=PartyMemberDetail,
+    summary="Record a party member the traveler mentioned (actor=agent).",
+)
+async def record_party_member_endpoint(
+    payload: PartyMemberCreate,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> PartyMemberDetail:
+    """Save a durable household member the traveler named in conversation.
+
+    ``actor`` is fixed to ``agent`` server-side (the body cannot override it);
+    ``recorded_by`` is the deterministic per-session stamp so the command
+    center can group "who the agent added during session X". Party data is
+    SHARED — the agent may confirm it with the traveler, unlike Dossier/OSINT.
+    """
+    member = await create_party_member(
+        session,
+        client_id=claims.client_id,
+        payload=payload,
+        actor=PartyMemberActor.agent,
+        recorded_by=_agent_recorded_by(claims.agentcore_session_id),
+    )
+    return PartyMemberDetail.model_validate(member, from_attributes=True)

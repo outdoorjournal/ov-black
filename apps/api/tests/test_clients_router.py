@@ -148,6 +148,12 @@ class FakeSession:
             ]
             return _ExecResult(matches)
 
+        # ── Party members (load_agent_context, M003/V1) ──
+        # The GET-by-id detail path now also loads the active party roster.
+        # This advisor fixture seeds none, so return an empty result.
+        if "from party_members" in sql:
+            return _ExecResult([])
+
         raise AssertionError(f"unexpected statement: {sql}")
 
     async def commit(self) -> None:  # pragma: no cover — router does not commit

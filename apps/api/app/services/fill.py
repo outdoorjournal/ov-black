@@ -469,33 +469,68 @@ async def _excluded_node_types(session: AsyncSession, analysis: Analysis | None)
     return excluded
 
 
+_MOBILITY_LIMIT_TERMS = {
+    "wheelchair", "limited", "low", "reduced", "cane", "walker", "assisted", "scooter"
+}
+
+
+def _dietary_terms(dietary: str | None) -> set[str]:
+    """Tokens from a member's free-text dietary field (0019).
+
+    Folded into the allergen set, which is matched against each item's *declared*
+    allergen list (not its prose) — so real allergen names ("nuts", "shellfish")
+    block a meal, while preferences ("vegetarian") never match a declared
+    allergen and are harmlessly inert.
+    """
+    if not dietary:
+        return set()
+    norm = dietary.lower()
+    for sep in (";", "/", "\n", "\t"):
+        norm = norm.replace(sep, ",")
+    terms: set[str] = set()
+    for phrase in norm.split(","):
+        phrase = phrase.strip()
+        if not phrase:
+            continue
+        terms.add(phrase)
+        terms.update(w for w in phrase.split() if len(w) >= 4)
+    return terms
+
+
 async def _party_constraints(
     session: AsyncSession, party_id: uuid.UUID | None
 ) -> tuple[set[str], bool]:
     """Aggregate hard/soft constraints across a party's travelers.
 
     Returns ``(allergens, has_mobility_limit)`` — empty/false when no party is
-    scoped or it has no travelers.
+    scoped or it has no travelers. Reads both the per-trip ``profile_attrs`` and
+    the durable member's structured ``dietary`` / ``mobility`` (0019), so a
+    constraint entered once on a saved member flows into Fill on every trip.
     """
     if party_id is None:
         return set(), False
     rows = (
-        (
-            await session.execute(
-                text("select profile_attrs from public.travelers where party_id = :pid"),
-                {"pid": party_id},
-            )
+        await session.execute(
+            text(
+                "select t.profile_attrs, pm.dietary, pm.mobility "
+                "from public.travelers t "
+                "left join public.party_members pm on pm.id = t.party_member_id "
+                "where t.party_id = :pid"
+            ),
+            {"pid": party_id},
         )
-        .scalars()
-        .all()
-    )
+    ).all()
     allergens: set[str] = set()
     has_mobility_limit = False
-    for attrs in rows:
-        attrs = attrs or {}
+    for profile_attrs, dietary, mobility in rows:
+        attrs = profile_attrs or {}
         for a in attrs.get("allergens", []) or []:
             allergens.add(str(a).casefold())
         if str(attrs.get("mobility", "")).casefold() in {"wheelchair", "limited", "low"}:
+            has_mobility_limit = True
+        # Durable member fields (0019) — structured identity reused across trips.
+        allergens.update(_dietary_terms(dietary))
+        if mobility and any(term in mobility.casefold() for term in _MOBILITY_LIMIT_TERMS):
             has_mobility_limit = True
     return allergens, has_mobility_limit
 

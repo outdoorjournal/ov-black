@@ -67,6 +67,13 @@ class AnalysisSummaryResponse(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
 
+class AttachPartyMemberRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    party_member_id: Annotated[UUID, Field(title='Party Member Id')]
+
+
 class AuthedHealthResponse(BaseModel):
     status: Annotated[str, Field(title='Status')]
     sub: Annotated[str, Field(title='Sub')]
@@ -316,6 +323,27 @@ class EditorialLink(BaseModel):
     title: Annotated[str | None, Field(title='Title')] = None
 
 
+class Name(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Name')]
+
+
+class Relationship(RootModel[str]):
+    root: Annotated[str, Field(max_length=120, title='Relationship')]
+
+
+class Phone(RootModel[str]):
+    root: Annotated[str, Field(max_length=60, title='Phone')]
+
+
+class EmergencyContact(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: Annotated[Name | None, Field(title='Name')] = None
+    relationship: Annotated[Relationship | None, Field(title='Relationship')] = None
+    phone: Annotated[Phone | None, Field(title='Phone')] = None
+
+
 class FactSourceKind(StrEnum):
     """
     Mirrors public.fact_source_kind from migration 0011.
@@ -474,6 +502,14 @@ class LoginRequest(BaseModel):
     email: Annotated[EmailStr, Field(title='Email')]
 
 
+class LoyaltyProgram(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    program: Annotated[str, Field(max_length=120, min_length=1, title='Program')]
+    number: Annotated[str, Field(max_length=120, min_length=1, title='Number')]
+
+
 class MyClientResponse(BaseModel):
     """
     Response for ``GET /me/client`` — the client_id the caller belongs to.
@@ -601,6 +637,127 @@ class OsintFactUpdate(BaseModel):
     )
     kind: OsintFactKind | None = None
     text: Annotated[Text | None, Field(title='Text')] = None
+
+
+class PartyMemberActor(StrEnum):
+    """
+    Mirrors the public.party_member_actor enum from 0019.
+
+    Who authored / last touched a member — party data is a three-way
+    collaboration between the advisor, the traveler (self-service), and the
+    agent (recorded mid-conversation).
+    """
+
+    advisor = 'advisor'
+    traveler = 'traveler'
+    agent = 'agent'
+
+
+class Nationality(RootModel[str]):
+    root: Annotated[str, Field(max_length=120, title='Nationality')]
+
+
+class Dietary(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Dietary')]
+
+
+class Medical(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Medical')]
+
+
+class Mobility(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Mobility')]
+
+
+class RelationshipToPrimary(RootModel[str]):
+    root: Annotated[str, Field(max_length=120, title='Relationship To Primary')]
+
+
+class Notes(RootModel[str]):
+    root: Annotated[str, Field(max_length=4000, title='Notes')]
+
+
+class PartyMemberCreate(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    full_name: Annotated[str, Field(max_length=200, min_length=1, title='Full Name')]
+    date_of_birth: Annotated[date_aliased | None, Field(title='Date Of Birth')] = None
+    nationality: Annotated[Nationality | None, Field(title='Nationality')] = None
+    dietary: Annotated[Dietary | None, Field(title='Dietary')] = None
+    medical: Annotated[Medical | None, Field(title='Medical')] = None
+    mobility: Annotated[Mobility | None, Field(title='Mobility')] = None
+    loyalty_programs: Annotated[
+        list[LoyaltyProgram] | None, Field(title='Loyalty Programs')
+    ] = None
+    emergency_contact: EmergencyContact | None = None
+    relationship_to_primary: Annotated[
+        RelationshipToPrimary | None, Field(title='Relationship To Primary')
+    ] = None
+    is_primary: Annotated[bool | None, Field(title='Is Primary')] = False
+    notes: Annotated[Notes | None, Field(title='Notes')] = None
+
+
+class PartyMemberDetail(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    full_name: Annotated[str, Field(title='Full Name')]
+    date_of_birth: Annotated[date_aliased | None, Field(title='Date Of Birth')]
+    nationality: Annotated[str | None, Field(title='Nationality')]
+    dietary: Annotated[str | None, Field(title='Dietary')]
+    medical: Annotated[str | None, Field(title='Medical')]
+    mobility: Annotated[str | None, Field(title='Mobility')]
+    loyalty_programs: Annotated[list[dict[str, Any]], Field(title='Loyalty Programs')]
+    emergency_contact: Annotated[dict[str, Any], Field(title='Emergency Contact')]
+    relationship_to_primary: Annotated[
+        str | None, Field(title='Relationship To Primary')
+    ]
+    is_primary: Annotated[bool, Field(title='Is Primary')]
+    notes: Annotated[str | None, Field(title='Notes')]
+    created_by_actor: PartyMemberActor
+    updated_by_actor: PartyMemberActor
+    archived_at: Annotated[AwareDatetime | None, Field(title='Archived At')]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class PartyMemberListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    members: Annotated[list[PartyMemberDetail], Field(title='Members')]
+
+
+class FullName(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, min_length=1, title='Full Name')]
+
+
+class PartyMemberUpdate(BaseModel):
+    """
+    All-optional patch; only fields explicitly set are applied.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    full_name: Annotated[FullName | None, Field(title='Full Name')] = None
+    date_of_birth: Annotated[date_aliased | None, Field(title='Date Of Birth')] = None
+    nationality: Annotated[Nationality | None, Field(title='Nationality')] = None
+    dietary: Annotated[Dietary | None, Field(title='Dietary')] = None
+    medical: Annotated[Medical | None, Field(title='Medical')] = None
+    mobility: Annotated[Mobility | None, Field(title='Mobility')] = None
+    loyalty_programs: Annotated[
+        list[LoyaltyProgram] | None, Field(title='Loyalty Programs')
+    ] = None
+    emergency_contact: EmergencyContact | None = None
+    relationship_to_primary: Annotated[
+        RelationshipToPrimary | None, Field(title='Relationship To Primary')
+    ] = None
+    is_primary: Annotated[bool | None, Field(title='Is Primary')] = None
+    notes: Annotated[Notes | None, Field(title='Notes')] = None
 
 
 class PlacePhoto(BaseModel):
@@ -1151,6 +1308,29 @@ class HotelItem(BaseModel):
     stars: Annotated[int | None, Field(title='Stars')] = None
 
 
+class ItineraryPartyEntry(BaseModel):
+    """
+    One traveler on an itinerary's party, with its durable member resolved.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    traveler_id: Annotated[UUID, Field(title='Traveler Id')]
+    party_id: Annotated[UUID, Field(title='Party Id')]
+    name: Annotated[str, Field(title='Name')]
+    party_member_id: Annotated[UUID | None, Field(title='Party Member Id')]
+    member: PartyMemberDetail | None
+
+
+class ItineraryPartyResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    members: Annotated[list[ItineraryPartyEntry], Field(title='Members')]
+
+
 class ItineraryResponse(BaseModel):
     id: Annotated[UUID, Field(title='Id')]
     title: Annotated[str, Field(title='Title')]
@@ -1395,6 +1575,7 @@ class AgentContext(BaseModel):
     dossier_facts: Annotated[list[DossierFactDetail], Field(title='Dossier Facts')]
     profile_facts: Annotated[list[ProfileFactDetail], Field(title='Profile Facts')]
     osint_facts: Annotated[list[OsintFactDetail], Field(title='Osint Facts')]
+    party_members: Annotated[list[PartyMemberDetail], Field(title='Party Members')]
 
 
 class AnalysisDetailResponse(BaseModel):

@@ -28,6 +28,7 @@ from app.models.dossier_fact import DossierFactKind, FactSourceKind
 from app.models.osint_fact import OsintFactKind
 from app.models.profile_fact import ProfileFactKind
 from app.schemas.dossier import DossierDetail
+from app.schemas.party_members import PartyMemberDetail
 
 # ── Dossier facts ────────────────────────────────────────────────────────
 
@@ -171,6 +172,9 @@ class AgentContext(BaseModel):
     dossier_facts: list[DossierFactDetail]
     profile_facts: list[ProfileFactDetail]
     osint_facts: list[OsintFactDetail]
+    # The durable household roster (0019). SHARED knowledge — unlike Dossier /
+    # OSINT, the agent MAY reference and confirm these with the traveler.
+    party_members: list[PartyMemberDetail]
 
 
 class AgentRecordProfileFactRequest(BaseModel):

@@ -63,6 +63,7 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
             self.dossier_facts: list[Any] = []
             self.profile_facts: list[Any] = []
             self.osint_facts: list[Any] = []
+            self.party_members: list[Any] = []
 
     async def _fake_load(_session: Any, *, client_id: uuid.UUID, **_kwargs: Any) -> _DummyCtx:
         return _DummyCtx(client_id)
@@ -117,10 +118,37 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
             updated_at=now,
         )
 
+    async def _fake_create_party_member(*_args: Any, **kwargs: Any):
+        from app.models import PartyMember
+
+        now = _now()
+        return PartyMember(
+            id=uuid.uuid4(),
+            client_id=kwargs["client_id"],
+            full_name=kwargs["payload"].full_name,
+            date_of_birth=None,
+            nationality=None,
+            dietary=kwargs["payload"].dietary,
+            medical=None,
+            mobility=None,
+            loyalty_programs=[],
+            emergency_contact={},
+            relationship_to_primary=kwargs["payload"].relationship_to_primary,
+            is_primary=kwargs["payload"].is_primary,
+            notes=None,
+            created_by_actor=kwargs["actor"],
+            updated_by_actor=kwargs["actor"],
+            recorded_by=kwargs["recorded_by"],
+            archived_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+
     monkeypatch.setattr(agent_internal_module, "record_agent_profile_fact", _fake_record_profile)
     monkeypatch.setattr(
         agent_internal_module, "record_agent_dossier_inference", _fake_record_dossier
     )
+    monkeypatch.setattr(agent_internal_module, "create_party_member", _fake_create_party_member)
 
 
 @pytest.fixture(autouse=True)
@@ -168,6 +196,7 @@ def test_get_context_with_valid_agent_token_returns_200(client: TestClient) -> N
     assert body["dossier_facts"] == []
     assert body["profile_facts"] == []
     assert body["osint_facts"] == []
+    assert body["party_members"] == []
 
 
 def test_get_context_with_no_authorization_header_returns_401(client: TestClient) -> None:
@@ -273,4 +302,27 @@ def test_post_dossier_inference_without_token_returns_401(client: TestClient) ->
         "/agent/dossier/facts",
         json={"kind": "passion", "text": "likely values seclusion"},
     )
+    assert resp.status_code == 401
+
+
+# ── POST /agent/party-members ─────────────────────────────────────────────
+
+
+def test_post_party_member_with_valid_token_stamps_agent_actor(client: TestClient) -> None:
+    resp = client.post(
+        "/agent/party-members",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"full_name": "Sarah", "relationship_to_primary": "spouse", "dietary": "vegetarian"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    # actor is fixed server-side — the agent cannot claim advisor/traveler authorship.
+    assert body["created_by_actor"] == "agent"
+    assert body["updated_by_actor"] == "agent"
+    assert body["full_name"] == "Sarah"
+    assert body["dietary"] == "vegetarian"
+
+
+def test_post_party_member_without_token_returns_401(client: TestClient) -> None:
+    resp = client.post("/agent/party-members", json={"full_name": "Sarah"})
     assert resp.status_code == 401
