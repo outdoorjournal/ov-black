@@ -25,6 +25,7 @@ from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
 from app.routers.analyze import router as analyze_router
 from app.routers.auth import router as auth_router
+from app.routers.client_documents import router as client_documents_router
 from app.routers.clients import router as clients_router
 from app.routers.demos import router as demos_router
 from app.routers.facts import router as facts_router
@@ -37,6 +38,7 @@ from app.routers.itineraries import router as itineraries_router
 from app.routers.me import router as me_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.party_members import router as party_members_router
+from app.vault.storage import MockVaultStorage, S3VaultStorage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -144,6 +146,18 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
             extra={"arn_tail": arn_tail, "mode": "boto3"},
         )
 
+    # ── Vault storage wiring (M003/V3) ─────────────────────────────────────
+    # Presigned S3 URLs for the document vault. Mirror the runtime mock: in
+    # local dev with no bucket configured, install a deterministic mock so
+    # pytest + uvicorn run without AWS. The bucket name (never a secret) is
+    # injected by CDK as VAULT_BUCKET_NAME in staging/prod.
+    if settings.env == "local" and not settings.vault_bucket_name:
+        _app.state.vault_storage = MockVaultStorage()
+        logger.info("vault.storage.configured", extra={"mode": "mock"})
+    else:
+        _app.state.vault_storage = S3VaultStorage(settings=settings)
+        logger.info("vault.storage.configured", extra={"mode": "s3"})
+
     try:
         yield
     finally:
@@ -207,6 +221,7 @@ app.include_router(analyze_router)
 app.include_router(fill_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)
+app.include_router(client_documents_router)
 app.include_router(facts_router)
 app.include_router(agent_router)
 app.include_router(agent_internal_router)

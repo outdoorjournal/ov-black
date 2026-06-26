@@ -163,6 +163,24 @@ class Settings(BaseSettings):
             "local dev / tests — callers must check before invoking."
         ),
     )
+    vault_bucket_name: str = Field(
+        default="",
+        description=(
+            "S3 bucket for the secure document vault (M003/V3). Empty during "
+            "local dev / tests — the lifespan wires a MockVaultStorage when "
+            "unset so pytest runs without AWS. Objects are SSE-KMS encrypted via "
+            "the bucket's default (aws/s3 managed) key."
+        ),
+    )
+    vault_presigned_ttl_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=3600,
+        description=(
+            "Lifetime of presigned upload/download URLs for vault documents. "
+            "Short by design (default 15 min) — access is re-minted per request."
+        ),
+    )
     agent_first_token_timeout_seconds: float = Field(
         default=8.0,
         ge=0.1,

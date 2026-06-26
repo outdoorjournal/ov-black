@@ -31,6 +31,11 @@ from app.models.client_contact import (  # noqa: E402,F401  (re-exported)
     ClientContact,
     ContactKind,
 )
+from app.models.document import (  # noqa: E402,F401  (re-exported)
+    ClientDocument,
+    DocumentActor,
+    DocumentType,
+)
 from app.models.dossier import Dossier  # noqa: E402,F401  (re-exported)
 from app.models.dossier_fact import (  # noqa: E402,F401  (re-exported)
     DossierFact,
@@ -86,9 +91,12 @@ __all__ = [
     "CardTemplate",
     "Client",
     "ClientContact",
+    "ClientDocument",
     "ContactChannel",
     "ContactKind",
     "CostKind",
+    "DocumentActor",
+    "DocumentType",
     "Dossier",
     "DossierFact",
     "DossierFactKind",

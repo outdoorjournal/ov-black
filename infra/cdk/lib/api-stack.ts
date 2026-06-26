@@ -23,6 +23,7 @@ import { ARecord, HostedZone, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { LoadBalancerTarget } from 'aws-cdk-lib/aws-route53-targets';
 import { Effect, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { BlockPublicAccess, Bucket, BucketEncryption, HttpMethods } from 'aws-cdk-lib/aws-s3';
 import type { Secret as SmSecret } from 'aws-cdk-lib/aws-secretsmanager';
 import type { Construct } from 'constructs';
 
@@ -196,6 +197,36 @@ export class ApiStack extends Stack {
         resources: ['*'],
       }),
     );
+    // ── Document vault bucket (M003/V3) ──────────────────────────────────────
+    // SSE-KMS at rest via the AWS-managed aws/s3 key (D-VAULT: AWS-managed for
+    // the MVP; a customer-managed key is a future tightening). Public access is
+    // fully blocked + TLS enforced; the browser reaches objects only via
+    // short-TTL presigned URLs minted by the API. A CORS rule lets the browser
+    // PUT/GET directly from the web origin. Versioned so an overwrite/delete is
+    // recoverable for HNW documents.
+    const vaultBucket = new Bucket(this, 'DocumentVault', {
+      bucketName: `ov-black-vault-${props.envName}`,
+      encryption: BucketEncryption.KMS_MANAGED,
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      versioned: true,
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+      cors: [
+        {
+          allowedMethods: [HttpMethods.PUT, HttpMethods.GET, HttpMethods.HEAD],
+          // The presigned PUT/GET is issued to the signed-in web origin only.
+          allowedOrigins: props.webOrigin ? [props.webOrigin] : ['*'],
+          allowedHeaders: ['*'],
+          exposedHeaders: ['ETag'],
+          maxAge: 3000,
+        },
+      ],
+    });
+    // The task role generates presigned URLs + may read/write objects directly.
+    // grantReadWrite covers the S3 actions; the aws/s3 managed key is granted to
+    // account principals via the S3 service, so no explicit KMS grant is needed.
+    vaultBucket.grantReadWrite(taskDefinition.taskRole);
+
     // Execution role (ECR pull + CloudWatch write) is added automatically by
     // the FargateTaskDefinition L2 when we attach the image and log driver.
 
@@ -235,6 +266,9 @@ export class ApiStack extends Stack {
         // the real key, each provider degrades to [] (a placeholder key 4xx/401s, never a
         // boot crash).
         INVENTORY_PROVIDERS_ENABLED: 'ov,google_places,duffel',
+        // Document vault bucket (M003/V3). Not a secret — the bucket name is
+        // safe in plain env; access is gated by the task role + presigned URLs.
+        VAULT_BUCKET_NAME: vaultBucket.bucketName,
         // Hand the ARNs to the app for reference/observability; the live values are
         // injected via the `secrets` block below (ECS native), NEVER baked into env.
         // The task role above is the only principal that can read them.
