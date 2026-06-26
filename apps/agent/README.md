@@ -42,19 +42,57 @@ local HTTP shim (see [apps/api/app/agent/bedrock.py](../api/app/agent/bedrock.py
 
 ```bash
 cd apps/agent
-uv run agentcore configure -e src/agent/app.py    # first run only
-uv run agentcore launch                           # build + push + create
+uv run agentcore configure -e src/agent/app.py    # first run only (see GOTCHA below)
+# Staging: tools must call back to the public API, so set BACKEND_BASE_URL.
+uv run agentcore launch \
+  --env BACKEND_BASE_URL=https://api.black.dev.outdoorvoyage.com \
+  --auto-update-on-conflict                        # build + push + update
 ```
 
 `agentcore launch` builds an ARM64 container via CodeBuild, pushes to
-ECR, creates/updates the runtime, and prints the new ARN. Write the
-ARN to Secrets Manager:
+ECR, updates the runtime, and prints the ARN. Write the ARN to Secrets
+Manager, then force a new API deployment so the ECS task re-reads it
+(secrets are injected at task start):
 
 ```bash
 aws secretsmanager put-secret-value \
-  --secret-id ov-black-staging/bedrock-agentcore-runtime-arn \
+  --secret-id ov-black/staging/bedrock-agentcore-runtime-arn \
   --secret-string <ARN>
+aws ecs update-service --cluster ov-black-api-staging \
+  --service <api-service> --force-new-deployment
 ```
+
+### ⚠️ GOTCHA — the toolkit flattens the `agent` package (must patch the Dockerfile)
+
+`agentcore configure` sets `source_path` to the entrypoint's directory
+(`src/agent`) and the generated `.bedrock_agentcore/<agent>/Dockerfile` does
+`COPY . .` into `/app` + `CMD python -m app`. That **flattens the package
+contents** into `/app`, so `app.py`'s package-qualified imports
+(`from agent.backend import …`) raise `ModuleNotFoundError: No module named
+'agent'` and the runtime crashes on first invoke with `RuntimeClientError:
+An error occurred when starting the runtime`. (The runtime still reports
+`READY` — the crash only surfaces on invoke.)
+
+The generated Dockerfile is gitignored and **regenerated on every
+`configure`**, so after each `configure` re-apply this patch (re-nest the
+package under `agent/`, before the `USER` switch so the moves are permitted):
+
+```dockerfile
+# (replace the trailing `USER bedrock_agentcore` + `COPY . .` + CMD block)
+COPY . .
+RUN mkdir -p agent && \
+    find . -maxdepth 1 -mindepth 1 \
+      ! -name agent ! -name requirements.txt ! -name Dockerfile ! -name '.*' \
+      -exec mv {} agent/ \; && \
+    chown -R bedrock_agentcore:bedrock_agentcore /app
+USER bedrock_agentcore
+CMD ["opentelemetry-instrument", "python", "-m", "agent"]
+```
+
+Also: when reconfiguring, pass `--ecr` the **full repository URI**
+(`<acct>.dkr.ecr.<region>.amazonaws.com/bedrock-agentcore-ov_black_agent`),
+not the bare repo name — the bare name produces a buildspec that does
+`docker login <name>` and fails CodeBuild with `no such host`.
 
 CDK-managed provisioning is deferred — `@aws-cdk/aws-bedrock-agentcore-alpha`
 has a known `IdleRuntimeSessionTimeout=60s` default bug (aws-cdk#36376).
