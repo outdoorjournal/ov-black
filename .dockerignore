@@ -6,6 +6,10 @@
 **/.turbo
 **/coverage
 cdk.out
+# Stale incremental-build cache: if copied in while dist/ is excluded, tsc trusts
+# it and skips re-emitting dist/index.js (emitting only .d.ts) — which broke the
+# api-client build. Force a clean full emit by never shipping the buildinfo.
+**/*.tsbuildinfo
 
 # Other workspaces / non-web source: not needed to build apps/web, and
 # excluding them keeps the context small. (apps/web's only workspace dep is
