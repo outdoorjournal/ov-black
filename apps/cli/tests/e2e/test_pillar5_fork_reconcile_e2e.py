@@ -20,57 +20,123 @@ so it lights up the moment G1 ships.
 
 from __future__ import annotations
 
+from typing import Any
+
 import flows
 import pytest
+
+from ovb.errors import ApiError
+from ovb.invariants import (
+    assert_no_violations,
+    fork_lineage_holds,
+    status_actor_gate_holds,
+)
+from ovb.sdk import Ovb
 
 pytestmark = pytest.mark.e2e
 
 
-async def test_booked_node_is_immutable_to_traveler_and_agent() -> None:
-    """G1 — status-aware mutation gate: booked/confirmed nodes are immutable.
+def _editable_bookable(graph: Any) -> Any | None:
+    """First currently-editable bookable node (a candidate to book then lock)."""
+    bookable = {"flight", "hotel", "experience", "meal"}
+    editable = {"idea", "proposed", "approved"}
+    return next(
+        (n for n in graph.nodes if str(n.type) in bookable and str(n.status) in editable),
+        None,
+    )
 
-    `ovb.invariants.status_actor_gate_holds` raises `NotImplementedError` today;
-    it becomes the assertion here when `services/itineraries._check_status_gate`
-    lands. Intended flow (M004/G1):
 
-        # status × actor matrix — every cell asserted:
-        #   idea/proposed     → editable by traveler, agent, advisor
-        #   approved          → advisor-only (after demote); traveler/agent refused
-        #   booked/confirmed  → immutable; only advisor demotion/cancellation moves it
-        for status in ("booked", "confirmed"):
-            node = await advisor.set_node_status(itin, node_id, status)
-            with pytest.raises(ApiError) as exc:
-                await traveler.update_node(itin, node_id, fields={"title": "changed"})
-            assert exc.value.status == 409                  # crafted refusal, not a 500
-            assert "booked" in exc.value.reason or node.lock_reason
+async def test_booked_node_is_immutable_to_traveler_and_agent(
+    advisor: Ovb, traveler: Ovb, built_itinerary: str
+) -> None:
+    """G1 — status-aware mutation gate: booked nodes are immutable to non-advisors.
 
-        # advisor demotion succeeds and writes a visible node_history note.
-        await advisor.demote_node(itin, node_id, reason="supplier cancelled")
-        assert_no_violations(status_actor_gate_holds(<graph>, <actor matrix>))
+    Drives the whole status×actor contract over the wire with two real JWTs (the
+    traveler is the same non-advisor path the agent uses): advisor books a node →
+    a traveler edit is refused 409 → an advisor field-edit is refused until they
+    demote → demotion (a pure status change) reopens it. The static lock_reason
+    half is asserted with ``status_actor_gate_holds``.
     """
-    flows.skip_until("M004/G1", "status-aware mutation gates (booked/confirmed immutability)")
+    itin = built_itinerary
+    graph = await advisor.get_graph(itin)
+    node = _editable_bookable(graph)
+    if node is None:
+        pytest.skip("no editable bookable node in the seeded itinerary to book")
+    node_id = str(node.id)
+
+    # Advisor books the node (proposed→booked is an ungated promotion in G1).
+    booked = await advisor.update_node(itin, node_id, fields={"status": "booked"})
+    assert str(booked.status) == "booked"
+    assert booked.lock_reason == "status_locked"
+
+    # Static contract: every firmed node advertises its lock_reason, no others do.
+    assert_no_violations(status_actor_gate_holds(await advisor.get_graph(itin)))
+
+    # A traveler (the agent's non-advisor path) is refused with a crafted 409.
+    with pytest.raises(ApiError) as exc:
+        await traveler.update_node(itin, node_id, fields={"title": "changed by traveler"})
+    assert exc.value.status == 409
+    assert exc.value.detail == "status_locked"
+
+    # Even an advisor must demote first — a field edit on a booked node is refused.
+    with pytest.raises(ApiError) as exc2:
+        await advisor.update_node(itin, node_id, fields={"title": "renamed without demoting"})
+    assert exc2.value.status == 409
+    assert exc2.value.detail == "demote_before_edit"
+
+    # Advisor demotion (a pure status change) succeeds and reopens the node.
+    demoted = await advisor.update_node(itin, node_id, fields={"status": "proposed"})
+    assert str(demoted.status) == "proposed"
+    edited = await advisor.update_node(itin, node_id, fields={"title": "now editable again"})
+    assert edited.title == "now editable again"
 
 
-async def test_traveler_forks_an_approved_itinerary() -> None:
+async def test_traveler_forks_an_approved_itinerary(
+    advisor: Ovb, traveler: Ovb, built_itinerary: str
+) -> None:
     """G2 — versioned-clone fork (D-FORK): pre-booked copies editable, booked carried locked.
 
-    Intended flow (M004/G2):
-
-        # 1. Start from an approved itinerary with a mix of statuses (incl. one booked).
-        fork = await traveler.fork_itinerary(itin)          # agent tool / traveler-initiated
-        assert fork.forked_from_id == itin
-
-        # 2. Pre-booked nodes copy in editable; booked/confirmed copy in LOCKED.
-        fg = await traveler.get_graph(fork.id)
-        assert all(n.forked_from_node_id for n in fg.nodes)  # lineage on every node
-        booked = [n for n in fg.nodes if str(n.status) in {"booked", "confirmed"}]
-        assert booked and all(n.locked for n in booked)
-
-        # 3. The fork mutates independently of the baseline (AI rewrites a day).
-        await traveler.update_node(fork.id, some_prebooked_node, fields={"title": "..."})
-        assert (await traveler.get_graph(itin))  # baseline unchanged
+    The owner forks an approved itinerary that has a booked node; the fork is a
+    faithful clone (lineage on every node, the booking carried locked, a different
+    itinerary) and is independently editable. A non-owner traveler can't fork it.
     """
-    flows.skip_until("M004/G2", "itinerary fork (versioned clone + lineage)")
+    itin = built_itinerary
+    graph = await advisor.get_graph(itin)
+    node = _editable_bookable(graph)
+    if node is None:
+        pytest.skip("no editable bookable node to book before forking")
+
+    # An approved itinerary carrying a booked node (the "can't fork away a booking" case).
+    await advisor.update_node(itin, str(node.id), fields={"status": "booked"})
+    await advisor.approve(itin)
+    baseline = await advisor.get_graph(itin)
+
+    # A non-owner traveler cannot fork someone else's itinerary.
+    with pytest.raises(ApiError) as exc:
+        await traveler.fork_itinerary(itin)
+    assert exc.value.status in (403, 404)
+
+    # The owner forks it; the fork is a faithful versioned clone.
+    fork = await advisor.fork_itinerary(itin)
+    assert str(fork.itinerary.forked_from_id) == itin
+    assert str(fork.itinerary.fork_status) == "open"
+    assert str(fork.itinerary.id) != itin
+    assert_no_violations(fork_lineage_holds(fork, baseline))
+
+    # The carried booking is present and locked in the fork.
+    carried = [n for n in fork.nodes if str(n.status) == "booked"]
+    assert carried and all(n.lock_reason == "status_locked" for n in carried)
+
+    # The fork edits independently of the baseline: rework a pre-booked fork node,
+    # the baseline node keeps its title.
+    prebooked = next(n for n in fork.nodes if str(n.status) != "booked")
+    origin_id = str(prebooked.forked_from_node_id)
+    baseline_title = next(n.title for n in baseline.nodes if str(n.id) == origin_id)
+    await advisor.update_node(
+        str(fork.itinerary.id), str(prebooked.id), fields={"title": "reworked in the fork"}
+    )
+    after = await advisor.get_graph(itin)
+    assert next(n.title for n in after.nodes if str(n.id) == origin_id) == baseline_title
 
 
 async def test_advisor_diffs_and_reconciles_a_fork() -> None:

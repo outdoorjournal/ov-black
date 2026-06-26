@@ -140,12 +140,83 @@ def require_finding(
         )
 
 
-# ── milestone-gated invariants (honest stubs) ────────────────────────────────
-def status_actor_gate_holds(*_args: Any, **_kwargs: Any) -> list[Violation]:
-    """M004/G1 — booked/confirmed immutability across actor × status."""
-    raise NotImplementedError(
-        "status×actor gate lands in M004/G1 (services/itineraries._check_status_gate)"
-    )
+# ── M004 gate / fork invariants ──────────────────────────────────────────────
+
+# Mirrors services/itineraries._FIRMED_STATUSES — the lifecycle states a node is
+# committed to and the G1 gate makes immutable (wherever the node lives).
+FIRMED_STATUSES = {"approved", "booked", "confirmed"}
+
+
+def status_actor_gate_holds(graph: gm.GraphResponse) -> list[Violation]:
+    """M004/G1 — the booked/confirmed immutability contract, read off the graph.
+
+    The dynamic half (a traveler/agent edit returns 409) is asserted directly in
+    the e2e with ``pytest.raises``; this is the *static* half: every firmed node
+    must advertise ``lock_reason='status_locked'`` so the agent can explain a
+    refusal, and no pre-firmed node may carry a stale lock_reason. Together they
+    are the observable surface of ``services/itineraries._check_status_gate``.
+    """
+    out: list[Violation] = []
+    for node in graph.nodes:
+        status = str(node.status)
+        lock_reason = getattr(node, "lock_reason", None)
+        if status in FIRMED_STATUSES and lock_reason != "status_locked":
+            out.append(
+                Violation(
+                    "missing_lock_reason",
+                    f"firmed node {node.id} ({status}) lacks lock_reason=status_locked",
+                )
+            )
+        if status not in FIRMED_STATUSES and lock_reason:
+            out.append(
+                Violation(
+                    "spurious_lock_reason",
+                    f"pre-firmed node {node.id} ({status}) carries lock_reason {lock_reason!r}",
+                )
+            )
+    return out
+
+
+def fork_lineage_holds(fork: gm.GraphResponse, baseline: gm.GraphResponse) -> list[Violation]:
+    """M004/G2 — a fork is a faithful versioned clone of its baseline.
+
+    Every fork node carries ``forked_from_node_id`` lineage to a distinct baseline
+    node; booked/confirmed nodes carry over with status preserved (carried locked);
+    the fork is a different itinerary whose ``forked_from_id`` is the baseline.
+    """
+    out: list[Violation] = []
+    baseline_ids = {str(n.id) for n in baseline.nodes}
+    baseline_status = {str(n.id): str(n.status) for n in baseline.nodes}
+
+    fork_itin = fork.itinerary
+    if getattr(fork_itin, "forked_from_id", None) is None:
+        out.append(Violation("fork_no_lineage", f"fork {fork_itin.id} has no forked_from_id"))
+    if str(fork_itin.id) == str(baseline.itinerary.id):
+        out.append(Violation("fork_not_distinct", "fork shares the baseline's id"))
+
+    seen_origins: set[str] = set()
+    for node in fork.nodes:
+        origin = getattr(node, "forked_from_node_id", None)
+        if origin is None:
+            out.append(Violation("node_no_lineage", f"fork node {node.id} has no lineage"))
+            continue
+        origin = str(origin)
+        if origin not in baseline_ids:
+            out.append(Violation("lineage_dangling", f"fork node {node.id} → unknown {origin}"))
+        if origin in seen_origins:
+            out.append(Violation("lineage_duplicate", f"two fork nodes share origin {origin}"))
+        seen_origins.add(origin)
+        # Carried-locked: a baseline booked/confirmed node keeps its status in the fork.
+        if baseline_status.get(origin) in {"booked", "confirmed"} and (
+            str(node.status) != baseline_status[origin]
+        ):
+            out.append(
+                Violation(
+                    "fork_unlocked_booking",
+                    f"fork node {node.id} demoted a carried {baseline_status[origin]} node",
+                )
+            )
+    return out
 
 
 def money_gate_reconciles(*_args: Any, **_kwargs: Any) -> list[Violation]:

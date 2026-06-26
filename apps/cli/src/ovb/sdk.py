@@ -208,6 +208,22 @@ class Ovb:
             gm.GraphResponse, "POST", f"/itinerary/{itinerary_id}/assemble", json_body=body
         )
 
+    async def fork_itinerary(
+        self, itinerary_id: str, *, title: str | None = None
+    ) -> gm.GraphResponse:
+        """Fork an itinerary into a versioned clone (G2); returns the fork's graph.
+
+        The response's ``itinerary.forked_from_id`` is the baseline and every node
+        carries ``forked_from_node_id`` lineage (+ a ``lock_reason`` on carried
+        booked nodes).
+        """
+        body: dict[str, Any] = {}
+        if title is not None:
+            body["title"] = title
+        return await self._model(
+            gm.GraphResponse, "POST", f"/itinerary/{itinerary_id}/fork", json_body=body
+        )
+
     # ── nodes ────────────────────────────────────────────────────────────
     async def add_node(
         self,

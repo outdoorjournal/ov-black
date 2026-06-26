@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from agent.schemas import Mode
 from agent.tools.fill import fill_gap
+from agent.tools.fork import fork_itinerary
 from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
 from agent.tools.mutations import update_node_status
@@ -49,6 +50,7 @@ _TOOLS_PLANNING = [
     propose_flight,
     assemble_draft,
     update_node_status,
+    fork_itinerary,
     set_mood,
 ]
 

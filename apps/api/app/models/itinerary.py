@@ -92,6 +92,19 @@ class ItineraryStatus(str, enum.Enum):
     approved = "approved"
 
 
+class ForkStatus(str, enum.Enum):
+    """Mirrors the public.fork_status Postgres enum (0021, G2).
+
+    The reconcile lifecycle of a fork: ``open`` (a fresh fork, still diverging),
+    ``reconciled`` (its accepted changes were folded back into the baseline),
+    ``abandoned`` (discarded without folding back). NULL on a baseline itinerary.
+    """
+
+    open = "open"
+    reconciled = "reconciled"
+    abandoned = "abandoned"
+
+
 # Reuse the Postgres-side enum types — SQLAlchemy must not try to CREATE TYPE,
 # the migration owns that. postgresql.ENUM surfaces create_type as a real
 # attribute (the generic sqlalchemy.Enum silently drops it), so tests can
@@ -144,6 +157,14 @@ itinerary_status_enum: PGEnum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
+fork_status_enum: PGEnum = PGEnum(
+    ForkStatus,
+    name="fork_status",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
 
 class Itinerary(Base):
     """Top-level container for a client's trip graph."""
@@ -186,6 +207,15 @@ class Itinerary(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # 0021 — fork lineage (G2). ``forked_from_id`` points at the baseline this
+    # itinerary was cloned from (NULL on a normal itinerary); ``fork_status``
+    # tracks the reconcile lifecycle and is NULL unless this row is a fork.
+    forked_from_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("itineraries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    fork_status: Mapped[ForkStatus | None] = mapped_column(fork_status_enum, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -274,6 +304,14 @@ class Node(Base):
     cost_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     cost_currency: Mapped[str | None] = mapped_column(nullable=True)
     cost_kind: Mapped[CostKind | None] = mapped_column(cost_kind_enum, nullable=True)
+    # 0021 — fork lineage (G2). The baseline node this one was copied from when its
+    # itinerary was forked; NULL for a hand-built / inventory-sourced node. ON
+    # DELETE SET NULL so editing the baseline node doesn't cascade into the fork.
+    forked_from_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("nodes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

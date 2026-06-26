@@ -127,12 +127,13 @@ either the live plan or a fork — they carry over locked.
 - A `booked` or `confirmed` node is **immutable** — edits by traveler or agent are refused with a crafted
   explanation; only an advisor can move it, and only through an explicit demotion/cancellation flow.
 
-**Status: 🔨 partial — status gates landed; fork/reconcile not built.** **Status-aware mutation gates
-(Phase 7 / G1) landed behind tests:** a `booked`/`confirmed`/`approved` node is immutable to traveler &
-agent, an advisor may only demote/cancel it via a logged `node_history` row, and a computed per-node
-`lock_reason` lets the agent explain a refusal. **Still owed:** no fork/version concept and no
-diff/reconcile surface (G2/G3). The graph has `is_selected_alt` / `alternative_to` for *local* swaps, but
-not whole-itinerary forking with reconcile.
+**Status: 🔨 partial — status gates + fork landed; reconcile not built.** **G1 status gates + G2 fork
+landed behind tests (incl. a live pillar-5 e2e):** a `booked`/`confirmed`/`approved` node is immutable to
+traveler & agent (advisor demote/cancel only, logged; per-node `lock_reason` lets the agent explain), and
+an itinerary can be **forked into a versioned clone** — a deep copy with per-node `forked_from_node_id`
+lineage, pre-booked nodes editable and booked/confirmed carried locked, independently editable from the
+baseline. **Still owed: G3 diff/reconcile** (pair fork↔baseline by lineage, accept/discard into the live
+plan after an Analyze check). `is_selected_alt` / `alternative_to` remain for *local* swaps.
 
 ### Pillar 6 — One or more invoices total all booked inventory
 **Means:** The system can issue **one or more invoices** to the traveler(s). Collectively the invoices
@@ -163,7 +164,7 @@ in [mvp-plan.md](./mvp-plan.md) §8, not migrated.
 | 2 | Dream + profile build | ● | (UAT) | |
 | 3 | Multi-source fast build | node cost (B4) | OV/Duffel/Ratehawk/Places adapters + templates + linearization + Analyze shallow/standard (B5) | AI Fill (B6), authoring (B7), live-vendor validation, weather/flight live, deep Analyze |
 | 4 | Party details + vault | | parties/travelers tables | member model, traveler UI, vault/docs/expiry |
-| 5 | Fork + reconcile + immutability | status gates (G1) | local alt edges | fork/version, diff/reconcile |
+| 5 | Fork + reconcile + immutability | status gates (G1) + fork (G2) | local alt edges | diff/reconcile (G3) |
 | 6 | Invoicing + pay-before-book | node cost (B4) | | invoices, line items, Braintree, money gate, node_offers/bookings |
 
 ---

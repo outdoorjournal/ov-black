@@ -36,6 +36,8 @@ from app.models import (
     Client,
     CostKind,
     EdgeType,
+    ForkStatus,
+    Itinerary,
     ItineraryStatus,
     NodeStatus,
     NodeType,
@@ -45,6 +47,7 @@ from app.models import (
 from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
 from app.services.card_mapping import inventory_item_to_card_metadata
+from app.services.fork import fork_itinerary
 from app.services.inventory import get_inventory_detail
 from app.services.itineraries import (
     ActorContext,
@@ -96,6 +99,11 @@ class ItineraryResponse(BaseModel):
     status: ItineraryStatus = ItineraryStatus.draft
     approved_by: uuid.UUID | None = None
     approved_at: datetime | None = None
+    # Fork lineage (G2). ``forked_from_id`` is the baseline this itinerary was
+    # cloned from (None on a normal itinerary); ``fork_status`` tracks the
+    # reconcile lifecycle and is None unless this row is a fork.
+    forked_from_id: uuid.UUID | None = None
+    fork_status: ForkStatus | None = None
 
 
 class CreateNodeRequest(BaseModel):
@@ -180,6 +188,8 @@ class NodeResponse(BaseModel):
     # firmed (approved/booked/confirmed), else None. Lets the agent/web explain
     # a refused edit without re-deriving the rule client-side.
     lock_reason: str | None = None
+    # Fork lineage (G2). The baseline node this one was copied from, or None.
+    forked_from_node_id: uuid.UUID | None = None
 
 
 class CreateEdgeRequest(BaseModel):
@@ -224,6 +234,15 @@ class AssembleDraftRequest(BaseModel):
     day_plan: list[DaySlotPayload] = Field(default_factory=list)
 
 
+class ForkItineraryRequest(BaseModel):
+    """Fork an itinerary into a versioned clone (G2). ``title`` defaults to
+    ``"{baseline} (fork)"`` when omitted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=512)
+
+
 # ── Actor resolution ────────────────────────────────────────────────────────
 
 
@@ -256,6 +275,14 @@ def _advisor_actor_from_user(user: AuthenticatedUser) -> ActorContext:
     except (ValueError, AttributeError):
         user_uuid = None
     return ActorContext(user_id=user_uuid, kind=ActorKind.ADVISOR, actor_id=user.sub)
+
+
+async def _load_itinerary(session: AsyncSession, itinerary_id: uuid.UUID) -> Itinerary | None:
+    """Load an itinerary row by id (or None). Extracted so the fork endpoint's
+    authz pre-load can be monkeypatched by route-level tests that stub the DB."""
+    return (
+        await session.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
 
 
 async def _resolve_client_auth_user_id(
@@ -331,6 +358,38 @@ async def assert_itinerary_readable(
     raise HTTPException(status_code=403, detail="forbidden")
 
 
+async def assert_itinerary_forkable(
+    session: AsyncSession,
+    user: AuthenticatedUser,
+    itinerary: Any,
+) -> None:
+    """Only the owning client, the creator, or an advisor may fork an itinerary.
+
+    Stricter than the draft-read gate (which admits any authenticated user to an
+    *approved* itinerary): a fork writes a brand-new itinerary onto the client, so
+    we require a real relationship to the baseline regardless of its status. The
+    agent acting for the client carries the client's JWT, so the owner branch
+    admits it. 403 ``forbidden`` so the SDK discriminates deterministically.
+    """
+    actor = _actor_from_user(user)
+    is_owner = False
+    if actor.user_id is not None and itinerary.client_id is not None:
+        owning_auth_user_id = await _resolve_client_auth_user_id(session, itinerary.client_id)
+        is_owner = owning_auth_user_id is not None and owning_auth_user_id == actor.user_id
+    is_creator = (
+        actor.user_id is not None
+        and itinerary.created_by is not None
+        and actor.user_id == itinerary.created_by
+    )
+    if is_owner or is_creator or await _is_requester_advisor(session, actor.user_id):
+        return
+    logger.info(
+        "itinerary.fork_denied",
+        extra={"sub_hint": (user.sub or "")[:8], "itinerary_id": str(itinerary.id)},
+    )
+    raise HTTPException(status_code=403, detail="forbidden")
+
+
 # ── Outcome mapping ────────────────────────────────────────────────────────
 
 
@@ -393,6 +452,7 @@ def _node_response_from_out(n: Any) -> NodeResponse:
         duration_minutes=n.duration_minutes,
         depth=n.depth,
         lock_reason=n.lock_reason,
+        forked_from_node_id=n.forked_from_node_id,
     )
 
 
@@ -422,6 +482,30 @@ def _node_response_from_node(node: Any) -> NodeResponse:
         starts_at=starts_at,
         duration_minutes=duration_minutes,
         lock_reason=compute_lock_reason(node.status),
+        forked_from_node_id=getattr(node, "forked_from_node_id", None),
+    )
+
+
+def _graph_to_response(view: Any) -> GraphResponse:
+    """Assemble a GraphResponse from a service GraphView (itinerary + nodes + edges).
+
+    Shared by the graph-read and fork endpoints so fork lineage (on the itinerary
+    and every node) serializes identically everywhere.
+    """
+    return GraphResponse(
+        itinerary=_itinerary_to_response(view.itinerary),
+        nodes=[_node_response_from_out(n) for n in view.nodes],
+        edges=[
+            EdgeResponse(
+                id=e.id,
+                itinerary_id=e.itinerary_id,
+                from_node_id=e.from_node_id,
+                to_node_id=e.to_node_id,
+                type=e.type,
+                metadata=e.metadata,
+            )
+            for e in view.edges
+        ],
     )
 
 
@@ -470,29 +554,7 @@ async def get_itinerary_endpoint(
     # Draft-read gate (shared with the analyze endpoints).
     await assert_itinerary_readable(session, user, result.itinerary)
     # mypy: result is GraphView past this point
-    return GraphResponse(
-        itinerary=ItineraryResponse(
-            id=result.itinerary.id,
-            title=result.itinerary.title,
-            client_id=result.itinerary.client_id,
-            created_by=result.itinerary.created_by,
-            status=result.itinerary.status or ItineraryStatus.draft,
-            approved_by=result.itinerary.approved_by,
-            approved_at=result.itinerary.approved_at,
-        ),
-        nodes=[_node_response_from_out(n) for n in result.nodes],
-        edges=[
-            EdgeResponse(
-                id=e.id,
-                itinerary_id=e.itinerary_id,
-                from_node_id=e.from_node_id,
-                to_node_id=e.to_node_id,
-                type=e.type,
-                metadata=e.metadata,
-            )
-            for e in result.edges
-        ],
-    )
+    return _graph_to_response(result)
 
 
 @router.post(
@@ -652,6 +714,8 @@ def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
         status=itinerary.status or ItineraryStatus.draft,
         approved_by=itinerary.approved_by,
         approved_at=itinerary.approved_at,
+        forked_from_id=getattr(itinerary, "forked_from_id", None),
+        fork_status=getattr(itinerary, "fork_status", None),
     )
 
 
@@ -718,6 +782,43 @@ async def approve_itinerary_endpoint(
             raise HTTPException(status_code=409, detail="already_approved")
         _raise_for_error(result)
     return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{itinerary_id}/fork",
+    response_model=GraphResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Fork an itinerary into an independently-editable versioned clone (G2).",
+)
+async def fork_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: ForkItineraryRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> GraphResponse:
+    """Deep-copy ``itinerary_id`` into a new fork and return the fork's graph.
+
+    Traveler-initiated (and the agent, via the client's JWT). Pre-booked nodes
+    copy in editable; booked/confirmed nodes copy in carried-locked (the G1 gate
+    keeps them immutable in the fork). Every node carries ``forked_from_node_id``
+    lineage; the itinerary carries ``forked_from_id``.
+    """
+    baseline = await _load_itinerary(session, itinerary_id)
+    if baseline is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_forkable(session, user, baseline)
+    # Stamp the actor kind so the fork's history rows attribute correctly and a
+    # later advisor edit on the fork resolves to ADVISOR (G1 gate).
+    actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
+    result = await fork_itinerary(session, actor, itinerary_id=itinerary_id, title=payload.title)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    view = await get_itinerary_graph(session, result.id)
+    if isinstance(view, ItineraryError):
+        _raise_for_error(view)
+    return _graph_to_response(view)
 
 
 @router.post(

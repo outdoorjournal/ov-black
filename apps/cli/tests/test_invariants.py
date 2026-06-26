@@ -146,8 +146,27 @@ def test_analysis_finding_helpers() -> None:
         require_finding(analysis, category="weather")
 
 
-def test_milestone_gated_checks_are_honest_stubs() -> None:
-    with pytest.raises(NotImplementedError):
-        status_actor_gate_holds()
+def test_money_gate_remains_an_honest_stub() -> None:
+    """M005/I3 hasn't landed — its invariant must still refuse to false-green."""
     with pytest.raises(NotImplementedError):
         money_gate_reconciles()
+
+
+def test_status_actor_gate_holds_checks_lock_reason() -> None:
+    """G1 landed: a firmed node must advertise lock_reason; a pre-firmed must not."""
+    iid = "11111111-1111-1111-1111-111111111111"
+    booked_id = "22222222-2222-2222-2222-222222222222"
+    proposed_id = "33333333-3333-3333-3333-333333333333"
+    clean = make_graph(
+        iid,
+        nodes=[
+            make_node(booked_id, iid, status="booked", lock_reason="status_locked"),
+            make_node(proposed_id, iid, status="proposed", lock_reason=None),
+        ],
+    )
+    assert status_actor_gate_holds(clean) == []
+
+    # A booked node missing its lock_reason is a contract violation.
+    broken = make_graph(iid, nodes=[make_node(booked_id, iid, status="booked", lock_reason=None)])
+    violations = status_actor_gate_holds(broken)
+    assert any(v.code == "missing_lock_reason" for v in violations)

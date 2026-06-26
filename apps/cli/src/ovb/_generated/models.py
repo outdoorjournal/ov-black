@@ -472,6 +472,36 @@ class FlightStatus(BaseModel):
     aircraft: Annotated[str | None, Field(title='Aircraft')] = None
 
 
+class Title(RootModel[str]):
+    root: Annotated[str, Field(max_length=512, title='Title')]
+
+
+class ForkItineraryRequest(BaseModel):
+    """
+    Fork an itinerary into a versioned clone (G2). ``title`` defaults to
+    ``"{baseline} (fork)"`` when omitted.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: Annotated[Title | None, Field(title='Title')] = None
+
+
+class ForkStatus(StrEnum):
+    """
+    Mirrors the public.fork_status Postgres enum (0021, G2).
+
+    The reconcile lifecycle of a fork: ``open`` (a fresh fork, still diverging),
+    ``reconciled`` (its accepted changes were folded back into the baseline),
+    ``abandoned`` (discarded without folding back). NULL on a baseline itinerary.
+    """
+
+    open = 'open'
+    reconciled = 'reconciled'
+    abandoned = 'abandoned'
+
+
 class GapModel(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1473,6 +1503,8 @@ class ItineraryResponse(BaseModel):
     status: ItineraryStatus | None = 'draft'
     approved_by: Annotated[UUID | None, Field(title='Approved By')] = None
     approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')] = None
+    forked_from_id: Annotated[UUID | None, Field(title='Forked From Id')] = None
+    fork_status: ForkStatus | None = None
 
 
 class MealItem(BaseModel):
@@ -1516,6 +1548,10 @@ class NodeResponse(BaseModel):
     starts_at: Annotated[str | None, Field(title='Starts At')] = None
     duration_minutes: Annotated[int | None, Field(title='Duration Minutes')] = None
     depth: Annotated[int | None, Field(title='Depth')] = None
+    lock_reason: Annotated[str | None, Field(title='Lock Reason')] = None
+    forked_from_node_id: Annotated[UUID | None, Field(title='Forked From Node Id')] = (
+        None
+    )
 
 
 class NoteItem(BaseModel):

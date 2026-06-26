@@ -117,6 +117,9 @@ class NodeOut(NamedTuple):
     # explain why an edit was refused. Trailing optional so existing NodeOut
     # construction sites (and test stubs) don't need to pass it.
     lock_reason: str | None = None
+    # Fork lineage (G2): the baseline node this one was copied from, or None for a
+    # hand-built / inventory-sourced node. Lets the G3 diff pair nodes by lineage.
+    forked_from_node_id: uuid.UUID | None = None
 
 
 class EdgeOut(NamedTuple):
@@ -513,25 +516,27 @@ async def get_itinerary_graph(
         with recursive subgraph(
             id, itinerary_id, parent_subgraph_id, type, status, title,
             source, source_id, metadata, cost_amount, cost_currency, cost_kind,
-            starts_at, depth
+            starts_at, forked_from_node_id, depth
         ) as (
             select n.id, n.itinerary_id, n.parent_subgraph_id, n.type, n.status,
                    n.title, n.source, n.source_id, n.metadata, n.cost_amount,
-                   n.cost_currency, n.cost_kind, n.starts_at, 0
+                   n.cost_currency, n.cost_kind, n.starts_at,
+                   n.forked_from_node_id, 0
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
             union all
             select c.id, c.itinerary_id, c.parent_subgraph_id, c.type, c.status,
                    c.title, c.source, c.source_id, c.metadata, c.cost_amount,
-                   c.cost_currency, c.cost_kind, c.starts_at, s.depth + 1
+                   c.cost_currency, c.cost_kind, c.starts_at,
+                   c.forked_from_node_id, s.depth + 1
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
         )
         select id, itinerary_id, parent_subgraph_id, type, status, title,
                source, source_id, metadata, cost_amount, cost_currency,
-               cost_kind, starts_at, depth
+               cost_kind, starts_at, forked_from_node_id, depth
           from subgraph
          order by depth, id
         """
@@ -561,6 +566,7 @@ async def get_itinerary_graph(
                 duration_minutes=duration_minutes,
                 depth=row.depth,
                 lock_reason=compute_lock_reason(NodeStatus(row.status)),
+                forked_from_node_id=row.forked_from_node_id,
             )
         )
 

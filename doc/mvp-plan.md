@@ -135,7 +135,7 @@ state files reflect the branch.*
 | Slice | Goal | Deliverables / touches | Acceptance |
 |---|---|---|---|
 | **G1 — Status-aware mutation gates** ✅ *landed — see §8* | Booked/finalized immutability. | `_check_status_gate` in `services/itineraries.py` (per `TravelGraph_Analysis` §11): `approved` editable only by advisor-after-demote; `booked`/`confirmed` immutable except advisor demotion/cancellation (writes visible `node_history`). Agent `update_node_status` inherits the gate; refusals return a crafted reason. Per-node `lock_reason` exposed so the agent can explain. | A `booked` node refuses traveler/agent edits with a crafted message; advisor demotion works + is logged; tests cover every status × actor cell. |
-| **G2 — Itinerary fork (versioned clone)** | Branch an itinerary (D-FORK). | Migration: `itineraries.forked_from_id`, `fork_status`, `nodes.forked_from_node_id` lineage. `services/fork.py::fork_itinerary` deep-copies nodes/edges: pre-booked → editable, `booked`/`confirmed` → carried **locked**. Agent tool + traveler-initiated fork. | Traveler forks an approved itinerary; the fork is independently editable; booked nodes are present but locked; lineage links each forked node to its origin. |
+| **G2 — Itinerary fork (versioned clone)** ✅ *landed — see §8* | Branch an itinerary (D-FORK). | Migration: `itineraries.forked_from_id`, `fork_status`, `nodes.forked_from_node_id` lineage. `services/fork.py::fork_itinerary` deep-copies nodes/edges: pre-booked → editable, `booked`/`confirmed` → carried **locked**. Agent tool + traveler-initiated fork. | Traveler forks an approved itinerary; the fork is independently editable; booked nodes are present but locked; lineage links each forked node to its origin. |
 | **G3 — Diff + reconcile surface** | Staff fold changes back in. | `services/fork.py::diff_fork` (added/removed/changed/moved via lineage pairing); Command-Center **diff view** (side-by-side baseline vs. fork); per-change **accept/discard** that mutates the live graph, gated by an Analyze feasibility check before accept. | Advisor opens a fork's diff, runs analyze, accepts a subset into the live plan and discards the rest; live itinerary reflects only accepted changes; booked nodes can't be changed via reconcile. |
 
 ### M005 — Invoicing & booking (Pillar 6 + the money gate)
@@ -192,20 +192,22 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 ## 7. Suggested next steps
 
-> B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004/G1 status gates landed** (2026-06-26 —
-> see §8). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto the `dev` trunk. **D-FORK** must
-> be locked before M004/G2; **D-PAY** before M005.
+> B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004/G1 + G2 landed** (2026-06-26 — see §8;
+> D-FORK locked as versioned-clone). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto the
+> `dev` trunk. **D-PAY** must be locked before M005.
 
-1. **M004/G2 — Itinerary fork (versioned clone)**: the next M004 slice now that G1's immutability gate is
-   in. Lock **D-FORK** first (versioned clone + lineage), then a migration for `itineraries.forked_from_id`
-   / `nodes.forked_from_node_id` and `services/fork.py::fork_itinerary` (pre-booked → editable;
-   booked/confirmed → carried locked — G1's `_FIRMED_STATUSES` is the carry-locked set). G3 (diff/reconcile)
-   follows.
-2. **M005 — Invoicing & booking** is now unblocked on its hard deps: node cost (B4) **and** status gates
-   (G1) are both in. I3's money gate slots directly on top of G1 (promotion `approved → booked` requires a
-   paid invoice line). Lock **D-PAY** before I2.
-3. **A G1 web surface** (render the `lock_reason` badge + the crafted refusal copy on the itinerary view) is
-   an optional follow-up — the api-client wrapper already surfaces `status_locked`; no UI consumes it yet.
+1. **M004/G3 — Diff + reconcile**: the last M004 slice. `services/fork.py::diff_fork` (added/removed/
+   changed/moved by `forked_from_node_id` pairing), a Command-Center side-by-side diff view, and per-change
+   accept/discard that mutates the live graph through the same lock/queue path — gated by an Analyze
+   feasibility check before accept (the fork already carries geo). The `fork_status` transitions
+   (`open → reconciled`/`abandoned`) land here. The pillar-5 e2e `test_advisor_diffs_and_reconciles_a_fork`
+   is the scaffold waiting to light up.
+2. **M005 — Invoicing & booking** is now fully unblocked on its hard deps: node cost (B4) **and** status
+   gates (G1) are both in. I3's money gate slots directly on top of G1 (promotion `approved → booked`
+   requires a paid invoice line). Lock **D-PAY** before I2.
+3. **A G1/G2 web surface** (render the `lock_reason` badge + crafted refusal copy; a fork action + the G3
+   diff view) is a later web slice — the api-client wrapper already surfaces `status_locked` and the fork
+   route; no UI consumes them yet.
 4. **B8 — Templates: snapshot & reuse** stays **deferred (no scheduled date)** — parked until prioritized;
    the backing schema (0015) already landed, so it can resume cold. Deployment (F2/F3) stays deferred until
    you choose to cut a release.
@@ -217,6 +219,65 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-26 — M004/G2 Itinerary fork (versioned clone) — **deep-copy clone with per-node lineage; booked carried locked; pillar-5 e2e lit up** (migration + apps/api + agent tool + both SDKs + e2e)
+
+**Decision (D-FORK, locked):** a fork is a **versioned clone** — a fresh
+itinerary (`forked_from_id`) carrying a deep copy of the baseline's nodes/edges,
+each node stamped with `forked_from_node_id` lineage so G3 diff/reconcile pairs
+fork↔baseline by lineage (not fuzzy match). In-graph `alternative_to` stays for
+*local* swaps (a different axis). **Carry-locked rule:** booked/confirmed copy in
+with status **preserved** (the G1 gate makes them immutable wherever they land —
+you can't fork away a paid booking); `approved` **demotes to `proposed`** so the
+fork is reworkable; idea/proposed/discarded unchanged. **Promotion gating** of
+`approved → booked` is still M005's money gate (unchanged from G1).
+
+**What landed:**
+- **Migration `0021_itinerary_fork.sql`** (idempotent, 0014–0020 idiom; applied to
+  local DB): `fork_status` enum (`open`/`reconciled`/`abandoned`),
+  `itineraries.forked_from_id` (ON DELETE SET NULL) + `fork_status`,
+  `nodes.forked_from_node_id` (ON DELETE SET NULL), partial lineage indexes.
+- **Models** — `ForkStatus` + `fork_status_enum`; `Itinerary.forked_from_id` /
+  `fork_status`; `Node.forked_from_node_id`.
+- **`services/fork.py::fork_itinerary`** — one-transaction deep copy: clone nodes
+  (status transform + lineage), two-pass remap of self-FKs (`parent_subgraph_id`,
+  `attached_to_node_id`) onto the fork's ids, **one raw lineage-joined UPDATE to
+  copy the ORM-invisible PostGIS `location`/`route`** (so the fork stays
+  analyzable for G3), remap edges, `op='insert'` history per node/edge.
+- **Router** — `POST /itinerary/{id}/fork` → 201 + the fork's `GraphResponse`;
+  `assert_itinerary_forkable` (owner/creator/advisor, stricter than the draft-read
+  gate); `_load_itinerary` extracted (monkeypatchable). `ItineraryResponse` +=
+  `forked_from_id`/`fork_status`; `NodeResponse`/`NodeOut`/the graph CTE +=
+  `forked_from_node_id`; shared `_graph_to_response` helper.
+- **Agent** — `tools/fork.py::fork_itinerary` (planning bundle) — "make an
+  alternate version" → POST `/fork`, returns the fork graph.
+- **SDKs** — api-client + ovb regenerated (fork route + the new fields);
+  `ovb.sdk.Ovb.fork_itinerary` hand-wrapper; the api-client `updateNode` wrapper
+  already disambiguates `status_locked` (G1).
+
+**What's tested:** apps/api **664 passed** (+14: `test_fork.py` — status-transform
+unit matrix, clone-with-lineage + carried-locked + edge-remap, baseline
+independence, **PostGIS copy**, NOT_FOUND, and router 201/404/403/401), ruff +
+mypy clean. apps/agent 34. api-client `tsc` + apps/web typecheck clean. ovb
+offline **51 passed** (incl. the now-real `status_actor_gate_holds` +
+`fork_lineage_holds` invariants). **Pillar-5 e2e lit up against a live local
+stack** (`test_pillar5_fork_reconcile_e2e.py`): `test_traveler_forks_an_approved_
+itinerary` (owner forks; lineage + carried-locked + independence; non-owner
+traveler 403) **and** the now-landable `test_booked_node_is_immutable_to_
+traveler_and_agent` (G1 over the wire with two JWTs) both **pass**; G3 reconcile
+stays `skip_until`. `scripts/verify-sG2.sh` — **15/15**.
+
+**What remains (resume hooks):** (1) **G3 — diff + reconcile** is next:
+`services/fork.py::diff_fork` (added/removed/changed/moved by lineage pairing), a
+Command-Center diff view, per-change accept/discard gated by an Analyze
+feasibility check (the fork already carries geo, so Analyze runs on it). The
+`fork_status` transitions (`open → reconciled`/`abandoned`) land there.
+(2) **Traveler-initiated fork over a traveler-owned itinerary** isn't in the e2e
+(the harness has no traveler-owned itinerary; the e2e forks as the owner-advisor
+and asserts the non-owner 403). (3) **Agent re-pin** — the fork tool creates the
+fork but doesn't re-pin the session to it, so the agent can't yet mutate the fork
+in the same turn; wire a re-pin when the conversational fork flow is built.
+(4) No web surface for fork yet (a later web slice).
 
 ### 2026-06-26 — M004/G1 Status-aware mutation gates — **booked/finalized nodes immutable except an advisor's logged demotion; per-node `lock_reason` so the agent can explain** (apps/api + agent tool + api-client)
 
