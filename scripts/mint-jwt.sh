@@ -60,6 +60,7 @@ admin() {
 }
 
 curl -sf -o /dev/null "$SUPABASE_URL/auth/v1/settings" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
   || die "Supabase Auth not reachable at $SUPABASE_URL"
 
 # 1. ensure user exists (idempotent — same shape as bootstrap-login.sh)
