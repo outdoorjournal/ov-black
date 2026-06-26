@@ -10,14 +10,17 @@ Acceptance (mvp.md Pillar 4):
     to client + assigned advisor, with expiry tracking (flag passports < 6 months).
   - Documents are stored once and re-attachable to a later trip.
 
-Status: 🔨 NOT BUILT (M003). The `parties`/`travelers` tables exist (migration
-0014) but carry no member-identity/document model, no traveler entry surface, and
-there is no vault. These tests are complete scaffolds that `skip_until` the slice
-that lands the backend — they do not depend on a live stack, so the skip reason is
-always the *milestone*, never the environment.
+Status: ✅ BUILT. V1 (party member model, 0019) and V3 (secure document vault,
+0020 — S3 + SSE-KMS + presigned, D-VAULT) have landed; these tests drive both
+over the wire against `local`. The vault's storage is the AWS-free
+MockVaultStorage there, so the upload/download tests exercise the API/DB contract
+(init → complete → list → download) rather than a real byte PUT — a real
+presigned round-trip is only exercisable against a deployed bucket (F2 staging).
 """
 
 from __future__ import annotations
+
+from datetime import date, timedelta
 
 import flows
 import pytest
@@ -102,36 +105,84 @@ async def test_traveler_self_service_party_member(
     assert str(created.id) in {str(m.id) for m in mine.members}
 
 
-async def test_passport_upload_to_vault_with_expiry_flag() -> None:
-    """V3 — encrypted, access-scoped passport upload with expiry flagging.
+async def test_passport_upload_to_vault_with_expiry_flag(
+    traveler: Ovb, advisor: Ovb, linked_traveler_client_id: str
+) -> None:
+    """V3 — presigned upload, expiry flagging, advisor visibility, member link.
 
-    Intended flow once the vault lands (M003/V3 — S3 + SSE-KMS + presigned, D-VAULT):
-
-        # 1. Traveler requests a presigned upload URL, scoped to their client.
-        slot = await traveler.request_vault_upload(
-            client_id, doc_type="passport", expiry="2026-10-01")
-        await put_to_presigned(slot.upload_url, passport_bytes)   # direct-to-S3, not via our API
-
-        # 2. Advisor (assigned) can list + fetch it via a presigned download URL.
-        docs = await advisor.list_vault(client_id)
-        assert any(d.type == "passport" for d in docs)
-
-        # 3. Expiry tracking: a passport valid < 6 months is flagged.
-        assert docs[0].expires_soon is True
-
-        # 4. Access control: an *unassigned* advisor / another client is refused (403).
+    Drives the real vault over the wire (against `local`, where storage is the
+    MockVaultStorage — so we exercise the init→complete→download API/DB contract,
+    not a real byte PUT):
+      1. traveler links a child party member,
+      2. inits a passport upload expiring < 6 months out → presigned PUT URL,
+      3. confirms it (complete) → uploaded,
+      4. lists it back with expires_soon flagged + the member name resolved,
+      5. mints a presigned download URL,
+      6. the assigned advisor sees the same document.
     """
-    flows.skip_until("M003/V3", "secure document vault (S3 + SSE-KMS, presigned, expiry)")
+    # A member to attribute the document to (e.g. a child's passport).
+    member = await traveler.create_my_party_member({"full_name": "Small Traveler"})
+
+    soon = (date.today() + timedelta(days=30)).isoformat()
+    init = await traveler.init_my_document(
+        {
+            "doc_type": "passport",
+            "file_name": "passport.pdf",
+            "content_type": "application/pdf",
+            "label": "Kid passport",
+            "party_member_id": str(member.id),
+            "expires_at": soon,
+        }
+    )
+    assert init.upload_url  # a presigned PUT URL is returned to the uploader
+    assert init.document.uploaded_at is None  # pending until confirmed
+    doc_id = str(init.document.id)
+
+    confirmed = await traveler.complete_my_document(doc_id, size_bytes=2048)
+    assert confirmed.uploaded_at is not None
+
+    mine = await traveler.my_documents()
+    row = next(d for d in mine.documents if str(d.id) == doc_id)
+    assert row.expires_soon is True and row.expired is False
+    assert row.party_member_name == "Small Traveler"
+
+    dl = await traveler.download_my_document(doc_id)
+    assert dl.url  # a presigned GET URL
+
+    # The assigned advisor sees the same household document.
+    advisor_view = await advisor.list_client_documents(linked_traveler_client_id)
+    assert doc_id in {str(d.id) for d in advisor_view.documents}
 
 
-async def test_document_reuses_across_trips() -> None:
-    """V3 — a stored document attaches to a second itinerary without re-upload.
+async def test_document_reuses_across_trips(
+    advisor: Ovb, client_under_test: tuple[str, str], built_itinerary: str
+) -> None:
+    """V3 — a stored document is available on every trip without re-upload.
 
-    Intended flow:
-
-        doc = (await advisor.list_vault(client_id))[0]
-        second = await advisor.create_itinerary(client_id=client_id)
-        await advisor.attach_document(second.id, doc.id)   # reference, not re-upload
-        assert doc.id in {d.id for d in await advisor.itinerary_documents(second.id)}
+    Documents are client-scoped (household assets), so the itinerary read-only
+    listing surfaces the same document on two distinct trips — no attach, no
+    re-upload (the cross-trip reuse promise).
     """
-    flows.skip_until("M003/V3", "cross-trip document reuse (attach existing vault doc)")
+    client_id, _ = client_under_test
+
+    init = await advisor.init_client_document(
+        client_id,
+        {
+            "doc_type": "insurance",
+            "file_name": "policy.pdf",
+            "content_type": "application/pdf",
+            "label": "Travel insurance",
+        },
+    )
+    doc_id = str(init.document.id)
+    await advisor.complete_client_document(client_id, doc_id, size_bytes=512)
+
+    second = await flows.ensure_japan_itinerary(advisor, client_id=client_id)
+    if second == built_itinerary:
+        pytest.skip("demo itinerary is idempotent per client — need two distinct trips")
+
+    docs_a = await advisor.itinerary_documents(built_itinerary)
+    docs_b = await advisor.itinerary_documents(second)
+    # Same household → the one stored document shows on both trips, no re-upload.
+    assert doc_id in {str(d.id) for d in docs_a.documents}
+    assert doc_id in {str(d.id) for d in docs_b.documents}

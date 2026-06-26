@@ -481,6 +481,96 @@ class Ovb:
             f"/itineraries/{itinerary_id}/party/members/{member_id}",
         )
 
+    # ── document vault (M003/V3) ─────────────────────────────────────────
+    # Upload is a two-step presigned flow: init (→ presigned PUT) then complete.
+    # Against `local` the storage is mocked, so the upload_url points nowhere —
+    # the e2e drives the API/DB contract, not a real byte PUT.
+    async def list_client_documents(
+        self, client_id: str, *, include_archived: bool = False
+    ) -> gm.DocumentListResponse:
+        params: dict[str, QueryValue] = {"include_archived": 1} if include_archived else {}
+        return await self._model(
+            gm.DocumentListResponse,
+            "GET",
+            f"/clients/{client_id}/documents",
+            params=params,
+        )
+
+    async def init_client_document(
+        self, client_id: str, payload: dict[str, Any]
+    ) -> gm.DocumentInitResponse:
+        return await self._model(
+            gm.DocumentInitResponse,
+            "POST",
+            f"/clients/{client_id}/documents",
+            json_body=payload,
+        )
+
+    async def complete_client_document(
+        self, client_id: str, document_id: str, *, size_bytes: int | None = None
+    ) -> gm.DocumentDetail:
+        return await self._model(
+            gm.DocumentDetail,
+            "POST",
+            f"/clients/{client_id}/documents/{document_id}/complete",
+            json_body={"size_bytes": size_bytes},
+        )
+
+    async def download_client_document(
+        self, client_id: str, document_id: str
+    ) -> gm.DocumentDownloadResponse:
+        return await self._model(
+            gm.DocumentDownloadResponse,
+            "GET",
+            f"/clients/{client_id}/documents/{document_id}/download",
+        )
+
+    async def archive_client_document(
+        self, client_id: str, document_id: str
+    ) -> gm.DocumentDetail:
+        return await self._model(
+            gm.DocumentDetail,
+            "DELETE",
+            f"/clients/{client_id}/documents/{document_id}",
+        )
+
+    async def my_documents(
+        self, *, include_archived: bool = False
+    ) -> gm.DocumentListResponse:
+        params: dict[str, QueryValue] = {"include_archived": 1} if include_archived else {}
+        return await self._model(
+            gm.DocumentListResponse, "GET", "/me/documents", params=params
+        )
+
+    async def init_my_document(self, payload: dict[str, Any]) -> gm.DocumentInitResponse:
+        return await self._model(
+            gm.DocumentInitResponse, "POST", "/me/documents", json_body=payload
+        )
+
+    async def complete_my_document(
+        self, document_id: str, *, size_bytes: int | None = None
+    ) -> gm.DocumentDetail:
+        return await self._model(
+            gm.DocumentDetail,
+            "POST",
+            f"/me/documents/{document_id}/complete",
+            json_body={"size_bytes": size_bytes},
+        )
+
+    async def download_my_document(self, document_id: str) -> gm.DocumentDownloadResponse:
+        return await self._model(
+            gm.DocumentDownloadResponse,
+            "GET",
+            f"/me/documents/{document_id}/download",
+        )
+
+    async def itinerary_documents(self, itinerary_id: str) -> gm.DocumentListResponse:
+        return await self._model(
+            gm.DocumentListResponse,
+            "GET",
+            f"/itineraries/{itinerary_id}/documents",
+        )
+
     # ── sessions ─────────────────────────────────────────────────────────
     async def open_session(
         self,

@@ -13,10 +13,14 @@ import {
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete,
   archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete,
+  archiveClientDocumentEndpointClientsClientIdDocumentsDocumentIdDelete,
+  archiveMyDocumentEndpointMeDocumentsDocumentIdDelete,
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
   attachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersPost,
   cancelAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdCancelPost,
   cancelClientInviteEndpointClientsClientIdInviteCancelPost,
+  completeClientDocumentEndpointClientsClientIdDocumentsDocumentIdCompletePost,
+  completeMyDocumentEndpointMeDocumentsDocumentIdCompletePost,
   createClientContactEndpointClientsClientIdContactsPost,
   createClientEndpointClientsPost,
   createClientPartyMemberEndpointClientsClientIdPartyMembersPost,
@@ -33,17 +37,24 @@ import {
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
   detachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersMemberIdDelete,
   dismissOnboardingEndpointOnboardingDismissPost,
+  downloadClientDocumentEndpointClientsClientIdDocumentsDocumentIdDownloadGet,
+  downloadMyDocumentEndpointMeDocumentsDocumentIdDownloadGet,
   fillGapEndpointItineraryItineraryIdFillPost,
   getAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdGet,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
+  initClientDocumentEndpointClientsClientIdDocumentsPost,
+  initMyDocumentEndpointMeDocumentsPost,
   listAdvisorItinerariesEndpointItinerariesGet,
   listAnalysesEndpointItineraryItineraryIdAnalysesGet,
+  listClientDocumentsEndpointClientsClientIdDocumentsGet,
   listClientPartyMembersEndpointClientsClientIdPartyMembersGet,
   listClientSessionsEndpointClientsClientIdSessionsGet,
   listClientsEndpointClientsGet,
+  listItineraryDocumentsEndpointItinerariesItineraryIdDocumentsGet,
   listItineraryPartyEndpointItinerariesItineraryIdPartyGet,
+  listMyDocumentsEndpointMeDocumentsGet,
   listMyItinerariesEndpointMeItinerariesGet,
   listMyPartyMembersEndpointMePartyMembersGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
@@ -59,8 +70,10 @@ import {
   searchInventoryEndpointSearchInventoryGet,
   startAnalysisEndpointItineraryItineraryIdAnalysesPost,
   updateClientContactEndpointClientsClientIdContactsContactIdPatch,
+  updateClientDocumentEndpointClientsClientIdDocumentsDocumentIdPatch,
   updateClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdPatch,
   updateDossierFactEndpointClientsClientIdDossierFactsFactIdPatch,
+  updateMyDocumentEndpointMeDocumentsDocumentIdPatch,
   updateMyPartyMemberEndpointMePartyMembersMemberIdPatch,
   updateNodeEndpointItineraryItineraryIdNodesNodeIdPatch,
   updateOsintFactEndpointClientsClientIdOsintFactsFactIdPatch,
@@ -98,6 +111,12 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   AttachPartyMemberRequest,
+  DocumentCompleteRequest,
+  DocumentDetail,
+  DocumentDownloadResponse,
+  DocumentInitRequest,
+  DocumentInitResponse,
+  DocumentUpdate,
   ItineraryPartyResponse,
   OsintFactCreate,
   OsintFactDetail,
@@ -218,6 +237,22 @@ export type {
   AttachPartyMemberRequest,
   ItineraryPartyEntry,
   ItineraryPartyResponse,
+} from "./generated/types.gen.js";
+
+// Document vault (M003/V3): the secure, household-scoped document store. Upload
+// is a two-step presigned flow (init → browser PUT to S3 → complete); reads mint
+// a presigned GET. Re-exported so apps/web can type the upload form + the
+// traveler/advisor vault surfaces. Detail shapes never carry the S3 key.
+export type {
+  DocumentType,
+  DocumentActor,
+  DocumentInitRequest,
+  DocumentInitResponse,
+  DocumentUpdate,
+  DocumentDetail,
+  DocumentListResponse,
+  DocumentCompleteRequest,
+  DocumentDownloadResponse,
 } from "./generated/types.gen.js";
 
 // Advisor /itineraries (plural) — rich roster row with embedded client.
@@ -2609,6 +2644,378 @@ export async function detachItineraryPartyMember(
       ok: false,
       status: response.status,
       detail: _parsePartyMemberDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Document vault (M003/V3) ──────────────────────────────────────────────
+//
+// The secure, household-scoped document store. Upload is a two-step presigned
+// flow: ``init`` persists metadata + returns a presigned PUT (the browser PUTs
+// straight to S3 — NOT through this client), then ``complete`` confirms.
+// Downloads mint a presigned GET. Two parallel surfaces (traveler ``/me/*`` and
+// advisor ``/clients/{id}/*``) share the shapes; a third lists an itinerary's
+// client's documents read-only. Detail shapes never carry the S3 key.
+
+export type DocumentDetailCode =
+  | "client_not_found"
+  | "itinerary_not_found"
+  | "document_not_found"
+  | "party_member_not_found"
+  | "advisor_only"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+function _parseDocumentDetail(
+  status: number,
+  error: unknown,
+): DocumentDetailCode {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "client_not_found") return "client_not_found";
+  if (raw === "itinerary_not_found") return "itinerary_not_found";
+  if (raw === "document_not_found") return "document_not_found";
+  if (raw === "party_member_not_found") return "party_member_not_found";
+  if (raw === "advisor_only") return "advisor_only";
+  if (status === 403) return "advisor_only";
+  if (status === 404) return "document_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type ListDocumentsResult =
+  | { ok: true; documents: DocumentDetail[] }
+  | { ok: false; status: number; detail: DocumentDetailCode };
+
+export type DocumentResult =
+  | { ok: true; document: DocumentDetail }
+  | { ok: false; status: number; detail: DocumentDetailCode };
+
+export type DocumentInitResult =
+  | { ok: true; document: DocumentDetail; uploadUrl: string }
+  | { ok: false; status: number; detail: DocumentDetailCode };
+
+export type DocumentDownloadResult =
+  | { ok: true; url: string }
+  | { ok: false; status: number; detail: DocumentDetailCode };
+
+// Traveler self-service — the caller's own household (/me/documents).
+
+export async function listMyDocuments(
+  client: Client,
+): Promise<ListDocumentsResult> {
+  try {
+    const { data, error, response } = await listMyDocumentsEndpointMeDocumentsGet(
+      { client },
+    );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, documents: data.documents };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function initMyDocumentUpload(
+  client: Client,
+  body: DocumentInitRequest,
+): Promise<DocumentInitResult> {
+  try {
+    const { data, error, response } = await initMyDocumentEndpointMeDocumentsPost(
+      { client, body },
+    );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data.document, uploadUrl: data.upload_url };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function completeMyDocument(
+  client: Client,
+  documentId: string,
+  body: DocumentCompleteRequest = {},
+): Promise<DocumentResult> {
+  try {
+    const { data, error, response } =
+      await completeMyDocumentEndpointMeDocumentsDocumentIdCompletePost({
+        client,
+        path: { document_id: documentId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function getMyDocumentDownload(
+  client: Client,
+  documentId: string,
+): Promise<DocumentDownloadResult> {
+  try {
+    const { data, error, response } =
+      await downloadMyDocumentEndpointMeDocumentsDocumentIdDownloadGet({
+        client,
+        path: { document_id: documentId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, url: data.url };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function updateMyDocument(
+  client: Client,
+  documentId: string,
+  body: DocumentUpdate,
+): Promise<DocumentResult> {
+  try {
+    const { data, error, response } =
+      await updateMyDocumentEndpointMeDocumentsDocumentIdPatch({
+        client,
+        path: { document_id: documentId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function archiveMyDocument(
+  client: Client,
+  documentId: string,
+): Promise<DocumentResult> {
+  try {
+    const { data, error, response } =
+      await archiveMyDocumentEndpointMeDocumentsDocumentIdDelete({
+        client,
+        path: { document_id: documentId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// Advisor — a client's household (/clients/{id}/documents).
+
+export async function listClientDocuments(
+  client: Client,
+  clientId: string,
+): Promise<ListDocumentsResult> {
+  try {
+    const { data, error, response } =
+      await listClientDocumentsEndpointClientsClientIdDocumentsGet({
+        client,
+        path: { client_id: clientId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, documents: data.documents };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function initClientDocumentUpload(
+  client: Client,
+  clientId: string,
+  body: DocumentInitRequest,
+): Promise<DocumentInitResult> {
+  try {
+    const { data, error, response } =
+      await initClientDocumentEndpointClientsClientIdDocumentsPost({
+        client,
+        path: { client_id: clientId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data.document, uploadUrl: data.upload_url };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function completeClientDocument(
+  client: Client,
+  clientId: string,
+  documentId: string,
+  body: DocumentCompleteRequest = {},
+): Promise<DocumentResult> {
+  try {
+    const { data, error, response } =
+      await completeClientDocumentEndpointClientsClientIdDocumentsDocumentIdCompletePost(
+        {
+          client,
+          path: { client_id: clientId, document_id: documentId },
+          body,
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function getClientDocumentDownload(
+  client: Client,
+  clientId: string,
+  documentId: string,
+): Promise<DocumentDownloadResult> {
+  try {
+    const { data, error, response } =
+      await downloadClientDocumentEndpointClientsClientIdDocumentsDocumentIdDownloadGet(
+        {
+          client,
+          path: { client_id: clientId, document_id: documentId },
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, url: data.url };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function updateClientDocument(
+  client: Client,
+  clientId: string,
+  documentId: string,
+  body: DocumentUpdate,
+): Promise<DocumentResult> {
+  try {
+    const { data, error, response } =
+      await updateClientDocumentEndpointClientsClientIdDocumentsDocumentIdPatch({
+        client,
+        path: { client_id: clientId, document_id: documentId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export async function archiveClientDocument(
+  client: Client,
+  clientId: string,
+  documentId: string,
+): Promise<DocumentResult> {
+  try {
+    const { data, error, response } =
+      await archiveClientDocumentEndpointClientsClientIdDocumentsDocumentIdDelete(
+        {
+          client,
+          path: { client_id: clientId, document_id: documentId },
+        },
+      );
+    if (error === undefined && data !== undefined) {
+      return { ok: true, document: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// Per-trip read-only — the itinerary's client's documents.
+
+export async function listItineraryDocuments(
+  client: Client,
+  itineraryId: string,
+): Promise<ListDocumentsResult> {
+  try {
+    const { data, error, response } =
+      await listItineraryDocumentsEndpointItinerariesItineraryIdDocumentsGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, documents: data.documents };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseDocumentDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };

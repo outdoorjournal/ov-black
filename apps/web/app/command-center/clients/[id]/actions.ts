@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import {
   type ClientContactCreate,
   type ClientContactUpdate,
+  type DocumentInitRequest,
+  type DocumentUpdate,
   type DossierFactCreate,
   type DossierFactUpdate,
   type OsintFactCreate,
@@ -14,7 +16,9 @@ import {
   type ProfileFactCreate,
   type ProfileFactUpdate,
   type RedactRequest,
+  archiveClientDocument,
   archiveClientPartyMember,
+  completeClientDocument,
   createApiClient,
   createClientContact,
   createClientPartyMember,
@@ -22,10 +26,13 @@ import {
   createOsintFact,
   createProfileFact,
   deleteClientContact,
+  getClientDocumentDownload,
+  initClientDocumentUpload,
   redactDossierFact,
   redactOsintFact,
   redactProfileFact,
   updateClientContact,
+  updateClientDocument,
   updateClientPartyMember,
   updateDossierFact,
   updateOsintFact,
@@ -43,6 +50,7 @@ const ERROR_COPY: Record<string, string> = {
   fact_not_found: "This fact has already been removed.",
   contact_not_found: "This contact has already been removed.",
   party_member_not_found: "This traveler has already been removed.",
+  document_not_found: "This document has already been removed.",
   itinerary_not_found: "This itinerary could not be found.",
   invalid_source_kind: "That source kind is not allowed for this tier.",
   validation_error: "Some fields look off. Double-check and try again.",
@@ -257,4 +265,74 @@ export async function archiveClientPartyMemberAction(
   if (!result.ok) return _shape(result.detail);
   _bust(clientId);
   return { ok: true };
+}
+
+// ── Documents (M003/V3) ────────────────────────────────────────────────────
+//
+// The advisor's view of a client's secure vault. Same two-step presigned upload
+// as the traveler surface; init returns the presigned PUT (the browser uploads),
+// complete confirms. The bytes never pass through here.
+
+export type DocInitActionResult =
+  | { ok: true; uploadUrl: string; documentId: string }
+  | { error: string };
+export type DocDownloadActionResult =
+  | { ok: true; url: string }
+  | { error: string };
+
+export async function initClientDocumentUploadAction(
+  clientId: string,
+  meta: DocumentInitRequest,
+): Promise<DocInitActionResult> {
+  const api = await _api();
+  const result = await initClientDocumentUpload(api, clientId, meta);
+  if (!result.ok) return { error: ERROR_COPY[result.detail] ?? "Something went wrong. Try again." };
+  return { ok: true, uploadUrl: result.uploadUrl, documentId: result.document.id };
+}
+
+export async function completeClientDocumentAction(
+  clientId: string,
+  documentId: string,
+  sizeBytes: number | null,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await completeClientDocument(api, clientId, documentId, {
+    size_bytes: sizeBytes,
+  });
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+export async function updateClientDocumentAction(
+  clientId: string,
+  documentId: string,
+  patch: DocumentUpdate,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await updateClientDocument(api, clientId, documentId, patch);
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+export async function archiveClientDocumentAction(
+  clientId: string,
+  documentId: string,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await archiveClientDocument(api, clientId, documentId);
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+export async function getClientDocumentDownloadAction(
+  clientId: string,
+  documentId: string,
+): Promise<DocDownloadActionResult> {
+  const api = await _api();
+  const result = await getClientDocumentDownload(api, clientId, documentId);
+  if (!result.ok) return { error: ERROR_COPY[result.detail] ?? "Something went wrong. Try again." };
+  return { ok: true, url: result.url };
 }

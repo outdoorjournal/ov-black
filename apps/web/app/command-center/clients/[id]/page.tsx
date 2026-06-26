@@ -6,11 +6,13 @@ import {
   type ClientDetail,
   type ClientSessionSummary,
   type InviteStatus,
+  type DocumentDetail,
   type ItineraryStatus,
   type PartyMemberDetail,
   createApiClient,
   getClient,
   listAdvisorItineraries,
+  listClientDocuments,
   listClientPartyMembers,
   listClientSessions,
 } from "@ov-black/api-client";
@@ -20,6 +22,7 @@ import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 import { ClientContactsSection } from "./_components/ClientContactsSection";
+import { ClientDocumentsSection } from "./_components/ClientDocumentsSection";
 import { ClientFactColumns } from "./_components/ClientFactColumns";
 import { ClientPartySection } from "./_components/ClientPartySection";
 
@@ -52,13 +55,19 @@ export default async function ClientDetailPage({
     accessToken ? { baseUrl: apiBaseUrl, accessToken } : { baseUrl: apiBaseUrl },
   );
 
-  const [clientResult, allItinerariesResult, sessionsResult, partyResult] =
-    await Promise.all([
-      getClient(api, id),
-      listAdvisorItineraries(api),
-      listClientSessions(api, id),
-      listClientPartyMembers(api, id),
-    ]);
+  const [
+    clientResult,
+    allItinerariesResult,
+    sessionsResult,
+    partyResult,
+    documentsResult,
+  ] = await Promise.all([
+    getClient(api, id),
+    listAdvisorItineraries(api),
+    listClientSessions(api, id),
+    listClientPartyMembers(api, id),
+    listClientDocuments(api, id),
+  ]);
 
   if (!clientResult.ok) {
     if (clientResult.detail === "client_not_found") notFound();
@@ -89,6 +98,9 @@ export default async function ClientDetailPage({
   const sessions = sessionsResult.ok ? sessionsResult.sessions : [];
   const partyMembers: PartyMemberDetail[] = partyResult.ok
     ? partyResult.members
+    : [];
+  const documents: DocumentDetail[] = documentsResult.ok
+    ? documentsResult.documents
     : [];
 
   return (
@@ -168,6 +180,19 @@ export default async function ClientDetailPage({
           eyebrow={`${partyMembers.length}`}
         />
         <ClientPartySection clientId={client.id} members={partyMembers} />
+      </Panel>
+
+      <Panel aria-labelledby="vault-heading">
+        <SectionHeader
+          id="vault-heading"
+          title="Vault"
+          eyebrow={`${documents.length}`}
+        />
+        <ClientDocumentsSection
+          clientId={client.id}
+          documents={documents}
+          members={partyMembers}
+        />
       </Panel>
 
       <Panel aria-labelledby="itineraries-heading">

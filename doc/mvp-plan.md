@@ -127,7 +127,7 @@ state files reflect the branch.*
 |---|---|---|---|
 | **V1 — Party member model** 🔨 *landed — see §8* | Identity-bearing travelers, **remembered across trips**. | Migration **0019** adds a durable, client-scoped `party_members` (full name, DOB, nationality, dietary/medical/mobility, loyalty, emergency contact, actor provenance) + makes `travelers` the per-trip participation edge (`party_member_id`); service + **collaborative** endpoints for all three actors (advisor `/clients/{id}/party-members`, traveler `/me/party-members`, agent `record_party_member` + `/agent/context`); Fill reads structured member constraints; RLS scoped to client + (advisor or linked traveler). | Traveler record persists per member; advisor + traveler + agent all read/write it; the same member reattaches to a second trip without re-entry; agent references party constraints in Fill. |
 | **V2 — Traveler details form** | Client-facing entry. | `/account/party` (or in-trip) RSC + form (react-hook-form + zodResolver, craft-clean) to add/edit party members; "who's traveling" attaches members to an itinerary's `node_parties`/party. | Traveler fills missing details; data flows to V1; advisor sees completeness. |
-| **V3 — Secure vault** | Encrypted, expiry-tracked, reusable docs. | Migration `client_documents` (type, S3 key, expiry, owner, encryption ref); S3 bucket (SSE-KMS) via CDK; presigned upload/download endpoints scoped to client + advisor; expiry flagging (passport < 6mo). `/account/vault` upload UI; **documents reusable across trips** (attach existing doc to a new itinerary). | Traveler uploads a passport; advisor views it; expiry warns; same doc attaches to a second trip without re-upload. |
+| **V3 — Secure vault** ✅ *landed — see §8* | Encrypted, expiry-tracked, reusable docs. | Migration `client_documents` (type, S3 key, expiry, owner, encryption ref); S3 bucket (SSE-KMS) via CDK; presigned upload/download endpoints scoped to client + advisor; expiry flagging (passport < 6mo). `/account/vault` upload UI; **documents reusable across trips** (attach existing doc to a new itinerary). | Traveler uploads a passport; advisor views it; expiry warns; same doc attaches to a second trip without re-upload. |
 
 ### M004 — Status gates, fork & reconcile (Pillar 5)
 *Goal: AI forking + staff reconcile, with booked inventory immutable. (TravelGraph Phase 7 + fork.)*
@@ -210,6 +210,66 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-26 — M003/V3 Secure document vault — **S3 + SSE-KMS presigned vault across Postgres + AWS + web; M003 complete** (full stack)
+
+**Decisions (founder, locked at plan time + during build):** upload is a
+**presigned PUT** (browser → S3 direct; download a presigned GET) — bytes never
+touch the API. Documents are **client-scoped** household assets (no per-trip link
+table; the itinerary surface is read-only), but may be **optionally linked to a
+party member** (a child's passport). **AWS-managed SSE-KMS** (`aws/s3` key) for
+the MVP; CMK is a future tightening. Traveler UI lives at **`/basecamp/vault`**
+(consistent with V2). Plus a traveler-editable **`notes`** field.
+
+**What landed (Postgres + AWS/CDK + apps/api + api-client + apps/web + ovb e2e):**
+- **Migration `0020_client_documents.sql`** (mirrors 0019): `document_type` +
+  `document_actor` enums; `client_documents` — client-scoped, optional
+  `party_member_id` (on delete set null), `s3_key` (never returned/logged),
+  `expires_at`, `notes`, `uploaded_at` (null until confirmed), soft-archive;
+  active/expiry/member partial indexes; collaborative RLS. Applied locally.
+- **apps/api** — `models/document.py` (PGEnums, create_type=False);
+  `vault/storage.py` — a `VaultStorage` protocol with lazy-boto3 `S3VaultStorage`
+  (presigned PUT/GET; bucket default SSE-KMS) + AWS-free `MockVaultStorage`,
+  wired in `main.lifespan` (mock when `env=local` + no bucket — the bedrock-mock
+  idiom); `config` adds `vault_bucket_name` + `vault_presigned_ttl_seconds`;
+  `schemas/client_documents.py` (init/complete/update/detail/download +
+  `expired`/`expires_soon` derivation + resolved `party_member_name`, never the
+  s3_key); `services/client_documents.py` (CRUD, soft-archive, deterministic
+  sanitized `build_s3_key`, same-client party-member validation);
+  `routers/client_documents.py` — advisor `/clients/{id}/documents`, traveler
+  `/me/documents` (both: init → complete → download + list/patch/archive), and a
+  read-only `/itineraries/{id}/documents`. All 404 existence-hiding.
+- **infra/cdk** — `DocumentVault` S3 bucket (`KMS_MANAGED` SSE-KMS, block-all-
+  public, `enforceSSL`, versioned, RETAIN(prod)/DESTROY(staging), CORS PUT/GET
+  from the web origin); `grantReadWrite(taskRole)`; `VAULT_BUCKET_NAME` →
+  container env. Synth hermetic.
+- **api-client + apps/web** — discriminated wrappers for all 13 doc routes;
+  `/basecamp/vault` (RSC + `VaultManager` + shared `DocumentList` +
+  `DocumentUploadForm` doing the init→browser-PUT→complete flow +
+  `DocumentMetaForm`) with a "belongs to" member select + notes + expiry badges;
+  advisor `ClientDocumentsSection` (Vault panel on the client page, reuses the
+  list); read-only itinerary **Vault** tab (`VaultPanel`); `Your vault →` link in
+  the basecamp shell.
+
+**What's tested:** apps/api **583 passed** (+18: model guard incl. pure key/
+expiry units, service CRUD + party-link + **caplog s3_key redaction sweep**,
+router init→complete→download + authz 404/403 + itinerary read-only); ruff +
+mypy clean. CDK `synth` green (bucket asserted: SSE-KMS, block-public, CORS,
+grant, env). api-client `tsc` clean. apps/web **112 vitest passed** (+9: upload
+flow with mocked fetch/actions, list + expiry badges + download/archive, the
+read-only VaultPanel) + typecheck + lint clean. ovb regenerated + **pillar-4 e2e
+5 passed** against `local` (the 2 V3 scaffolds replaced with real init → complete
+→ list (expires_soon + member name) → presigned download → advisor-sees-it, and
+cross-trip reuse over two itineraries).
+
+**What remains (resume hooks):** S3 object deletion on archive is deferred
+(soft-delete the row; a bucket lifecycle policy is the cleanup path). A **real**
+presigned round-trip (SSE-KMS + CORS against a deployed bucket) is only
+exercisable at F2 staging — locally `MockVaultStorage` proves the wiring, so the
+web upload PUT to `mock-s3.local` no-ops in a browser. Customer-managed KMS key
+is a future security tightening. Mobile: the itinerary Vault tab is desktop-only;
+`/basecamp/vault` is responsive. **With V3, M003 (Pillar 4) is complete** —
+party model (V1) + traveler details UI (V2) + secure vault (V3) all landed.
 
 ### 2026-06-25 — M003/V2 Traveler details form — **party roster surfaced to traveler + advisor + the itinerary "who's traveling" attach** (web + api-client)
 

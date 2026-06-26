@@ -221,6 +221,78 @@ class DaySlotPayload(BaseModel):
     node_ids_in_order: Annotated[list[UUID], Field(title='Node Ids In Order')]
 
 
+class DocumentActor(StrEnum):
+    """
+    Mirrors the public.document_actor enum from 0020.
+
+    Who uploaded / last touched a document. Unlike party members, the agent does
+    not handle files — only the advisor and the traveler (self-service).
+    """
+
+    advisor = 'advisor'
+    traveler = 'traveler'
+
+
+class SizeBytes(RootModel[int]):
+    root: Annotated[int, Field(ge=0, title='Size Bytes')]
+
+
+class DocumentCompleteRequest(BaseModel):
+    """
+    Confirm the S3 PUT succeeded; optionally record the byte size.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    size_bytes: Annotated[SizeBytes | None, Field(title='Size Bytes')] = None
+
+
+class DocumentDownloadResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    url: Annotated[str, Field(title='Url')]
+
+
+class Label1(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Label')]
+
+
+class Notes(RootModel[str]):
+    root: Annotated[str, Field(max_length=4000, title='Notes')]
+
+
+class DocumentType(StrEnum):
+    """
+    Mirrors the public.document_type enum from 0020.
+    """
+
+    passport = 'passport'
+    visa = 'visa'
+    drivers_license = 'drivers_license'
+    national_id = 'national_id'
+    vaccination = 'vaccination'
+    insurance = 'insurance'
+    loyalty_card = 'loyalty_card'
+    other = 'other'
+
+
+class DocumentUpdate(BaseModel):
+    """
+    All-optional patch; only fields explicitly set are applied.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    doc_type: DocumentType | None = None
+    label: Annotated[Label1 | None, Field(title='Label')] = None
+    party_member_id: Annotated[UUID | None, Field(title='Party Member Id')] = None
+    expires_at: Annotated[date_aliased | None, Field(title='Expires At')] = None
+    notes: Annotated[Notes | None, Field(title='Notes')] = None
+
+
 class DossierDetail(BaseModel):
     """
     Full Dossier typed-core read-through shape.
@@ -671,10 +743,6 @@ class Mobility(RootModel[str]):
 
 class RelationshipToPrimary(RootModel[str]):
     root: Annotated[str, Field(max_length=120, title='Relationship To Primary')]
-
-
-class Notes(RootModel[str]):
-    root: Annotated[str, Field(max_length=4000, title='Notes')]
 
 
 class PartyMemberCreate(BaseModel):
@@ -1153,6 +1221,72 @@ class DestinationItem(BaseModel):
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['destination'], Field(title='Kind')] = 'destination'
+
+
+class DocumentDetail(BaseModel):
+    """
+    Metadata view — never carries the s3_key or a URL.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    party_member_id: Annotated[UUID | None, Field(title='Party Member Id')]
+    party_member_name: Annotated[str | None, Field(title='Party Member Name')]
+    doc_type: DocumentType
+    label: Annotated[str | None, Field(title='Label')]
+    file_name: Annotated[str, Field(title='File Name')]
+    content_type: Annotated[str, Field(title='Content Type')]
+    size_bytes: Annotated[int | None, Field(title='Size Bytes')]
+    expires_at: Annotated[date_aliased | None, Field(title='Expires At')]
+    notes: Annotated[str | None, Field(title='Notes')]
+    expired: Annotated[bool, Field(title='Expired')]
+    expires_soon: Annotated[bool, Field(title='Expires Soon')]
+    uploaded_at: Annotated[AwareDatetime | None, Field(title='Uploaded At')]
+    created_by_actor: DocumentActor
+    archived_at: Annotated[AwareDatetime | None, Field(title='Archived At')]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class DocumentInitRequest(BaseModel):
+    """
+    Begin an upload: persist metadata + mint a presigned PUT.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    doc_type: DocumentType
+    file_name: Annotated[str, Field(max_length=400, min_length=1, title='File Name')]
+    content_type: Annotated[
+        str, Field(max_length=200, min_length=1, title='Content Type')
+    ]
+    label: Annotated[Label1 | None, Field(title='Label')] = None
+    party_member_id: Annotated[UUID | None, Field(title='Party Member Id')] = None
+    expires_at: Annotated[date_aliased | None, Field(title='Expires At')] = None
+    notes: Annotated[Notes | None, Field(title='Notes')] = None
+
+
+class DocumentInitResponse(BaseModel):
+    """
+    The created (pending) document + the one-time presigned PUT URL.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    document: DocumentDetail
+    upload_url: Annotated[str, Field(title='Upload Url')]
+
+
+class DocumentListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    documents: Annotated[list[DocumentDetail], Field(title='Documents')]
 
 
 class DossierFactCreate(BaseModel):
