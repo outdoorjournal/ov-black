@@ -121,7 +121,10 @@ export function loadEnvConfig(scope: Construct): EnvConfig {
   const apiHost = raw.apiHost || DUMMY.apiHost;
   const supabaseUrl = raw.supabaseUrl || DUMMY.supabaseUrl;
   const supabaseAnonKey = raw.supabaseAnonKey || DUMMY.supabaseAnonKey;
-  const mapboxToken = raw.mapboxToken || DUMMY.mapboxToken;
+  // The Mapbox token is intentionally kept out of cdk.json (and git history).
+  // Real deploys inject it via the OVB_MAPBOX_TOKEN env var; synth falls back to
+  // the dummy so it stays hermetic.
+  const mapboxToken = raw.mapboxToken || process.env.OVB_MAPBOX_TOKEN || DUMMY.mapboxToken;
 
   // WEB_ORIGIN (magic-link redirect_to + CORS allow-list) is the web app's origin.
   // Derive it from webHost so there is a single source of truth; an explicit
