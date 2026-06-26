@@ -4,9 +4,11 @@ import { Repository, TagStatus } from 'aws-cdk-lib/aws-ecr';
 import {
   Cluster,
   ContainerImage,
+  CpuArchitecture,
   FargateService,
   FargateTaskDefinition,
   LogDriver,
+  OperatingSystemFamily,
   Secret as EcsSecret,
 } from 'aws-cdk-lib/aws-ecs';
 import {
@@ -160,6 +162,14 @@ export class ApiStack extends Stack {
       cpu: 512,
       memoryLimitMiB: 1024,
       family: `ov-black-api-${props.envName}`,
+      // Run on Graviton (arm64): cheaper compute AND it lets the images build
+      // natively on Apple-Silicon dev machines (no slow amd64 QEMU emulation).
+      // apps/agent already targets arm64; the apps/api + apps/web Dockerfiles are
+      // arch-neutral, so we just build --platform linux/arm64.
+      runtimePlatform: {
+        cpuArchitecture: CpuArchitecture.ARM64,
+        operatingSystemFamily: OperatingSystemFamily.LINUX,
+      },
     });
 
     // Task role: the role the container itself assumes. Scope secretsmanager
@@ -232,17 +242,29 @@ export class ApiStack extends Stack {
 
     // Image selection: when CI (or a manual deploy) passes `-c imageTag=<sha>`
     // we pull that tag from the stack's ECR repo. With no imageTag, the repo
-    // may be empty (first-ever deploy, or staging reset), so fall back to the
-    // public App Runner hello-world image just to get the stack green. Any CI
-    // deploy that forgets imageTag will visibly ship hello-world — that is the
-    // signal, not a silent regression onto an old apps/api tag.
+    // may be empty (first-ever deploy, or staging reset), so fall back to a
+    // public multi-arch busybox placeholder just to get the stack green. Two
+    // hard requirements drove this choice: (1) MUST be multi-arch — the task
+    // runs on arm64 (Graviton), and the old hello-app-runner image was
+    // amd64-only, so an arm64 task can't run it; (2) MUST be able to listen on
+    // the *container* port (8000), which the ALB health check targets — busybox
+    // httpd takes `-p`, whereas a stock nginx is pinned to :80. The command
+    // below serves a 200 on `/`. Any deploy that forgets imageTag will visibly
+    // ship busybox — that is the signal, not a silent regression onto an old tag.
+    const usingFallbackImage = !props.imageTag;
     const image = props.imageTag
       ? ContainerImage.fromEcrRepository(repository, props.imageTag)
-      : ContainerImage.fromRegistry('public.ecr.aws/aws-containers/hello-app-runner:latest');
+      : ContainerImage.fromRegistry('public.ecr.aws/docker/library/busybox:latest');
 
     taskDefinition.addContainer('api', {
       containerName: 'api',
       image,
+      // Fallback only: make busybox httpd serve a 200 on `/` at the container
+      // port (8000) so the ALB health check passes. The real apps/api image has
+      // its own entrypoint and ignores this.
+      ...(usingFallbackImage
+        ? { command: ['sh', '-c', 'echo ok > /tmp/index.html && exec httpd -f -p 8000 -h /tmp'] }
+        : {}),
       logging: LogDriver.awsLogs({
         logGroup,
         streamPrefix: 'api',
@@ -318,19 +340,32 @@ export class ApiStack extends Stack {
     // The web image is self-contained: NEXT_PUBLIC_* values are baked into the
     // bundle at `next build` time (see apps/web/Dockerfile), so the runtime needs
     // NO secrets and the web task role gets NO Secrets Manager / Bedrock grants.
+    // Multi-arch busybox placeholder (arm64-capable, listens on the container
+    // port 3000) when no webImageTag — same rationale as the API fallback above.
+    const usingWebFallbackImage = !props.webImageTag;
     const webImage = props.webImageTag
       ? ContainerImage.fromEcrRepository(webRepository, props.webImageTag)
-      : ContainerImage.fromRegistry('public.ecr.aws/aws-containers/hello-app-runner:latest');
+      : ContainerImage.fromRegistry('public.ecr.aws/docker/library/busybox:latest');
 
     const webTaskDefinition = new FargateTaskDefinition(this, 'WebTaskDefinition', {
       cpu: 512,
       memoryLimitMiB: 1024,
       family: `ov-black-web-${props.envName}`,
+      // arm64 (Graviton) — same rationale as the API task def above.
+      runtimePlatform: {
+        cpuArchitecture: CpuArchitecture.ARM64,
+        operatingSystemFamily: OperatingSystemFamily.LINUX,
+      },
     });
 
     webTaskDefinition.addContainer('web', {
       containerName: 'web',
       image: webImage,
+      // Fallback only: busybox httpd serves a 200 on `/` at the web container
+      // port (3000) for the ALB health check. The real apps/web image ignores it.
+      ...(usingWebFallbackImage
+        ? { command: ['sh', '-c', 'echo ok > /tmp/index.html && exec httpd -f -p 3000 -h /tmp'] }
+        : {}),
       logging: LogDriver.awsLogs({
         logGroup: webLogGroup,
         streamPrefix: 'web',
@@ -503,7 +538,13 @@ export class ApiStack extends Stack {
       conditions: [ListenerCondition.hostHeaders([props.apiHost])],
       action: ListenerAction.forward([targetGroup]),
     });
-    alb.addListener('HttpRedirect', {
+    // Construct id is deliberately 'HttpListener' (NOT 'HttpRedirect'): the
+    // pre-TLS stack already had an HTTP:80 listener under that id. Reusing it
+    // keeps the same CloudFormation logical id, so this deploy MODIFIES the
+    // existing port-80 listener in place (forward → redirect) instead of trying
+    // to create a second listener on port 80 — which collides ("A listener
+    // already exists on this port") because CFN creates before it deletes.
+    alb.addListener('HttpListener', {
       port: 80,
       protocol: ApplicationProtocol.HTTP,
       defaultAction: ListenerAction.redirect({
