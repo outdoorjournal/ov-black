@@ -43,6 +43,14 @@ from app.models.dossier_fact import (  # noqa: E402,F401  (re-exported)
     FactSourceKind,
 )
 from app.models.invite import Invite  # noqa: E402,F401  (re-exported)
+from app.models.invoice import (  # noqa: E402,F401  (re-exported)
+    Invoice,
+    InvoiceLineItem,
+    InvoiceLineKind,
+    InvoiceStatus,
+    Payment,
+    PaymentStatus,
+)
 from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     CostKind,
     Edge,
@@ -108,6 +116,10 @@ __all__ = [
     "FindingSeverity",
     "ForkStatus",
     "Invite",
+    "Invoice",
+    "InvoiceLineItem",
+    "InvoiceLineKind",
+    "InvoiceStatus",
     "Itinerary",
     "ItineraryStatus",
     "Node",
@@ -122,6 +134,8 @@ __all__ = [
     "Party",
     "PartyMember",
     "PartyMemberActor",
+    "Payment",
+    "PaymentStatus",
     "Profile",
     "ProfileFact",
     "ProfileFactKind",

@@ -181,7 +181,7 @@ state files reflect the branch.*
 Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommendations in **bold**):
 
 - **D-FORK** (before M004/G2): **versioned-clone fork** with lineage + diff/reconcile; `alternative_to` stays for local swaps.
-- **D-PAY** (before M005/I2): **Braintree**; gate `booked` on **paid**, advisor override to *issued* (logged).
+- **D-PAY** (before M005/I2): **LOCKED as D025** — **Braintree** (Python SDK, sandbox for MVP) behind a gateway-agnostic `PaymentGateway` protocol; gate `booked` on **paid**, advisor override to *issued* (logged). I1 (invoices) + I2 (payment) landed; the money gate itself is I3.
 - **D-COST** (before M002/B4): **first-class `nodes.cost_amount` + `cost_currency`**; minimal multi-currency (store native, one display currency).
 - **D-VAULT** (before M003/V3): **S3 + SSE-KMS** + presigned, access-scoped; expiry in Postgres; client-side encryption deferred.
 - **D-ANALYZE** (before M002/B5): **shallow + standard only**; defer deep/real-time external calls.
@@ -193,12 +193,15 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 > B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004 complete (G1 + G2 + G3 landed**;
 > see §8 — D-FORK locked as versioned-clone). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto
-> the `dev` trunk. **D-PAY** must be locked before M005.
+> the `dev` trunk. **D-PAY locked as D025** (Braintree); **M005/I1 (invoices) + I2 (payment) landed** — see §8.
 
-1. **M005 — Invoicing & booking** is the remaining MVP track, now fully unblocked on its hard deps: node
-   cost (B4) **and** status gates (G1) are both in, and G3 closed out M004. I3's money gate slots directly
-   on top of G1 (promotion `approved → booked` requires a paid invoice line). **Lock D-PAY before I2**
-   (recommendation: Braintree; gate `booked` on `paid`, advisor override to `issued`, logged).
+1. **M005 — Invoicing & booking**: **I1 (invoices + signed ledger) and I2 (Braintree payment) are done**
+   (D-PAY locked as D025). **Next is I3 — the money gate + booking workflow**: gate `approved → booked` on a
+   covering **paid** invoice line (advisor override to *issued*, logged), the advisor "record booking" flow
+   (supplier confirmation # → `booked` → `confirmed`), the `node_offers` + `bookings` tables (D024 draft in
+   §8), flight re-price-before-book, and the **reconciliation invariant** (Σ paid lines ⇔ Σ booked node
+   costs) asserted in tests + a verify script. `mark_invoice_paid` + `sum_node_costs(statuses=…)` already
+   exist for it to build on.
 2. **A G1 web surface for the lock badge** (render `lock_reason` + crafted refusal copy on the canvas) is
    still a later web slice — G3 shipped the fork *diff/reconcile* UI, but the per-node booked-lock badge on
    the main canvas isn't surfaced yet (the api-client already exposes `status_locked`).
@@ -213,6 +216,93 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-27 — M005/I1 + I2 Invoicing & Braintree payment — **full-stack: signed-ledger invoices, gateway-agnostic Braintree payment, advisor assemble + traveler pay surfaces; D-PAY locked as D025. M005 I1 + I2 complete (I3 money gate next).**
+
+**Decisions (founder, locked this session):** **D-PAY = Braintree + paid-gate
+(recorded as D025)**. Scope for the session was **I1 + I2 together**. Founder
+shaped three things at plan time: (1) line items are a **signed ledger / journal**
+(discounts, child/elderly adjustments, voids-as-reversals — not a flat node-price
+list); (2) the payment record is **gateway-agnostic + polymorphic** (Braintree
+today, swappable), capturing as much processor state as possible; (3) **write
+cross-reference data onto the Braintree side too** so the two systems map both
+ways; plus (4) **e2e**.
+
+**What landed (I1 — invoices):**
+- **Migration `0023_invoices.sql`** (applied to local DB): `invoice_status`
+  (draft/issued/paid/void) + `invoice_line_kind`
+  (charge/discount/adjustment/tax/fee/reversal) enums; `invoices` (itinerary-
+  scoped) + `invoice_line_items` (a **signed** amount, `node_id`,
+  `reverses_line_item_id`, one-reversal-per-line partial unique index);
+  defense-in-depth SELECT RLS (advisor/owner via itinerary→client, mirroring
+  0019/0020). **No stored total** — `total = Σ lines` is the single source of
+  truth (mvp-plan §5).
+- **`models/invoice.py`** (`Invoice`/`InvoiceLineItem` + enums, PGEnum
+  create_type=False) and **`services/invoices.py`** — reuses the
+  `ActorContext`/`ItineraryError`/`ItineraryOutcome` envelope:
+  create/add-line/add-line-from-node (B4 cost)/`void_line_item` (append-only
+  reversal)/remove (draft-only)/issue/void/`mark_invoice_paid`/get/list.
+  `draft` assembles freely; `issued` is append-only (adjusting lines only);
+  `paid`/`void` are closed.
+- **`routers/invoices.py`** (registered in `main.py`) — advisor-only writes,
+  owner/advisor read gate (shared authz helpers); both SDKs regenerated +
+  discriminated wrappers (`createInvoice`/`addInvoiceLineItem`/
+  `voidInvoiceLineItem`/`issueInvoice`/…); `ovb invoices` CLI group; a web
+  **`InvoicePanel`** advisor "Invoices" tab (charge-from-node, signed
+  adjustments, per-line void, issue) wired into the canvas.
+
+**What landed (I2 — payment):**
+- **Gateway-agnostic abstraction**: `payments/base.py` (`PaymentGateway`
+  protocol + normalized `SaleResult` + `new_gateway_reference`) and
+  `payments/braintree_gateway.py` (`BraintreeGateway` ported from voyage-site,
+  a deterministic `FakeGateway`, and `build_gateway` — real when keys set, Fake
+  in non-prod, **None in prod-without-keys** so a missing secret refuses).
+  Wired on `app.state` in the lifespan (mirrors the agent-runtime/vault mocks).
+- **Migration `0024_payments.sql`** (applied): `payment_status` enum +
+  `payments` table separating OUR `gateway_reference` (= processor order id,
+  two-way cross-ref) from `processor_transaction_id`, normalized portable
+  columns (instrument/last-four/response code), and a polymorphic `raw` jsonb.
+- **`services/payments.py`** (`generate_client_token` + `pay_invoice` — charges
+  an *issued* invoice, records a row per attempt, flips to `paid` on success,
+  sends `reference` + `{invoice,itinerary,client}` to the gateway) + two router
+  endpoints (`/payment-token`, `/pay`, owner-or-advisor); both SDKs + `ovb
+  invoices pay`/`token`; a traveler **`PayInvoiceView`** (Braintree drop-in) at
+  `/invoices/[id]`. **CDK**: a `braintree-keys` JSON secret in `SecretsStack`
+  injected as `BRAINTREE_*` env in `ApiStack` (sandbox for staging).
+  Redaction: nonce/txn-id/last-four/raw never logged; `braintree` added to the
+  mypy untyped-imports override.
+
+**What's tested:** `apps/api` **703 passed** (+20: `test_invoices.py` — signed
+ledger totals, journal-entry void incl. already-reversed, currency-match,
+node-without-cost, issue/append-only/void lifecycle, draft delete + list, router
+201/403/401 + owner read gate; `test_payments.py` — pay settles + marks paid +
+cross-ref, decline records failed + keeps issued, requires-issued,
+payments_unconfigured, log-redaction sweep, router pay 200/401 + token 200,
+unit token helpers), ruff + mypy clean. **api-client** rebuilt (tsc clean) +
+**ovb** offline **53 passed**. `apps/web` **126 passed** (+9:
+`invoicePanel.test.tsx` ×6 — ledger render, create, signed adjustment, void
+line, issue, read-only gate; `payInvoiceView.test.tsx` ×3 — drop-in mount, pay
+tokenize→post→receipt, paid-invoice receipt) + typecheck + lint. **CDK synth**
+green. `scripts/verify-sI1.sh` **20/20**, `scripts/verify-sI2.sh` **22/22**.
+
+**What remains (resume hooks):** (1) **I3 — the money gate** is the next slice:
+`approved → booked` requires a covering paid line (advisor override→issued,
+logged), the `node_offers` + `bookings` tables (D024 draft in §8), flight
+re-price-before-book, the advisor "record booking" flow, and the reconciliation
+invariant (Σ paid lines ⇔ Σ booked node costs) in tests + a verify script.
+`mark_invoice_paid` + `sum_node_costs(statuses=…)` already exist for it. (2)
+**`test_m005_invoicing_e2e.py`** is written + collects + lints but **self-skips**
+on this machine (the local API's Supabase auth config isn't populated in
+`apps/api/.env`); it follows the pillar-5 e2e harness and asserts the full
+assemble→discount→void→issue→pay loop via the `ovb` SDK (pay uses
+`fake-valid-nonce`, valid for both the Fake gateway and the Braintree sandbox).
+Its behavior is independently covered by the live-Postgres integration tests.
+(3) **Live Braintree sandbox** pay verification needs real merchant/public/
+private keys in `.env` (build/CI/tests need none — FakeGateway). (4) **No
+"list my invoices across itineraries" endpoint** yet — the traveler reaches an
+invoice by id (`/invoices/[id]`); a basecamp listing is a later web slice.
+**With I1 + I2, M005 is two-thirds done — I3 (money gate + booking) is the
+remaining MVP slice.**
 
 ### 2026-06-27 — M004/G3 Diff + reconcile (+ conversational fork) — **full-stack: lineage diff, advisor reconcile through the live status-gate path, agent re-pins to the alternative, Command-Center diff view; pillar-5 e2e fully lit up. M004 (Pillar 5) complete.**
 

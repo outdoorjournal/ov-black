@@ -20,6 +20,7 @@ from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.providers.ratehawk import RatehawkProvider
 from app.inventory.registry import get_registry
+from app.payments import build_gateway
 from app.routers.advisor_itineraries import router as advisor_itineraries_router
 from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
@@ -34,6 +35,7 @@ from app.routers.integrations.flight_status import router as flight_status_route
 from app.routers.integrations.google_places import router as google_places_router
 from app.routers.integrations.weather import router as weather_router
 from app.routers.inventory import router as inventory_router
+from app.routers.invoices import router as invoices_router
 from app.routers.itineraries import router as itineraries_router
 from app.routers.me import router as me_router
 from app.routers.onboarding import router as onboarding_router
@@ -158,6 +160,23 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         _app.state.vault_storage = S3VaultStorage(settings=settings)
         logger.info("vault.storage.configured", extra={"mode": "s3"})
 
+    # ── Payments gateway wiring (M005/I2, D025) ────────────────────────────
+    # Mirror the runtime/vault mocks: a real Braintree gateway when keys are
+    # set, a deterministic Fake in non-prod when unconfigured (so pytest +
+    # uvicorn run without Braintree), and None in production-without-keys so a
+    # missing secret refuses rather than silently faking a charge.
+    _app.state.payment_gateway = build_gateway(settings)
+    logger.info(
+        "payments.gateway.configured",
+        extra={
+            "mode": (
+                _app.state.payment_gateway.name
+                if _app.state.payment_gateway is not None
+                else "unconfigured"
+            )
+        },
+    )
+
     try:
         yield
     finally:
@@ -216,6 +235,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(itineraries_router)
+app.include_router(invoices_router)
 app.include_router(advisor_itineraries_router)
 app.include_router(analyze_router)
 app.include_router(fill_router)

@@ -22,6 +22,7 @@ export class SecretsStack extends Stack {
   readonly bedrockAgentCoreRuntimeArn: Secret;
   readonly agentTokenSigningSecret: Secret;
   readonly inventoryProviderKeys: Secret;
+  readonly braintreeKeys: Secret;
 
   constructor(scope: Construct, id: string, props: SecretsStackProps) {
     super(scope, id, props);
@@ -124,6 +125,23 @@ export class SecretsStack extends Stack {
       removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
+    // Braintree gateway credentials (M005/I2, D025/D-PAY) — one JSON secret with
+    // the three keys ApiStack extracts into BRAINTREE_MERCHANT_ID /
+    // BRAINTREE_PUBLIC_KEY / BRAINTREE_PRIVATE_KEY. Seeded EMPTY so the field
+    // extraction resolves before the operator populates real values; with empty
+    // keys apps/api degrades to the Fake gateway in non-prod and refuses
+    // (`payments_unconfigured`) in prod. Staging runs the Braintree SANDBOX.
+    // NEVER log these values.
+    this.braintreeKeys = new Secret(this, 'BraintreeKeys', {
+      secretName: `${namePrefix}/braintree-keys`,
+      description:
+        'Braintree gateway credentials consumed by apps/api. JSON: {merchant_id, public_key, private_key}. Sandbox for staging. NEVER log these values.',
+      secretStringValue: SecretValue.unsafePlainText(
+        JSON.stringify({ merchant_id: '', public_key: '', private_key: '' }),
+      ),
+      removalPolicy: props.envName === 'prod' ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
     new CfnOutput(this, 'SupabaseServiceRoleArn', {
       value: this.supabaseServiceRole.secretArn,
       description: 'ARN of the Supabase service-role-key secret.',
@@ -158,6 +176,12 @@ export class SecretsStack extends Stack {
       value: this.inventoryProviderKeys.secretArn,
       description: 'ARN of the inventory-provider vendor-keys secret (JSON: google_places, duffel).',
       exportName: `ov-black-${props.envName}-inventory-provider-keys-arn`,
+    });
+
+    new CfnOutput(this, 'BraintreeKeysArn', {
+      value: this.braintreeKeys.secretArn,
+      description: 'ARN of the Braintree gateway-keys secret (JSON: merchant_id, public_key, private_key).',
+      exportName: `ov-black-${props.envName}-braintree-keys-arn`,
     });
   }
 }

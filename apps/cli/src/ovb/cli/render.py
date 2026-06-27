@@ -29,6 +29,9 @@ STATUS_STYLE: dict[str, str] = {
     "confirmed": "bold blue",
     "discarded": "dim strike",
     "draft": "yellow",
+    "issued": "cyan",
+    "paid": "bold blue",
+    "void": "dim strike",
 }
 
 SEVERITY_STYLE: dict[str, str] = {
@@ -113,6 +116,44 @@ def itineraries_table(payload: Any) -> Table:
             str(r.get("status", "")),
             str(client_name or ""),
             str(r.get("node_count", "")),
+        )
+    return t
+
+
+def invoices_table(payload: Any) -> Table:
+    rows = to_jsonable(payload)
+    t = Table(title="invoices", header_style="bold")
+    for col in ("id", "label", "status", "total", "currency"):
+        t.add_column(col)
+    for r in rows if isinstance(rows, list) else []:
+        t.add_row(
+            str(r.get("id", "")),
+            r.get("label", ""),
+            str(r.get("status", "")),
+            str(r.get("total", "")),
+            r.get("currency", ""),
+        )
+    return t
+
+
+def invoice_panel(payload: Any) -> Table:
+    d = to_jsonable(payload)
+    status = str(d.get("status", ""))
+    title = Text()
+    title.append(f"{d.get('label', '')} ", style="bold")
+    title.append(f"[{status}] ", style=STATUS_STYLE.get(status, "white"))
+    title.append(f"total {d.get('total', '')} {d.get('currency', '')}")
+    t = Table(title=title, header_style="bold")
+    for col in ("kind", "description", "amount", "currency", "node", "reverses"):
+        t.add_column(col)
+    for line in d.get("lines", []) or []:
+        t.add_row(
+            str(line.get("kind", "")),
+            line.get("description", ""),
+            str(line.get("amount", "")),
+            line.get("currency", ""),
+            str(line.get("node_id") or ""),
+            str(line.get("reverses_line_item_id") or ""),
         )
     return t
 

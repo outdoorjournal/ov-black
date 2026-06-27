@@ -57,6 +57,7 @@ import {
 import { AuthoringPanel } from "./AuthoringPanel";
 import { ConciergeChat } from "./ConciergeChat";
 import { DiffPanel } from "./DiffPanel";
+import { InvoicePanel } from "./InvoicePanel";
 import { PartyPanel } from "./PartyPanel";
 import { VaultPanel } from "./VaultPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
@@ -136,7 +137,7 @@ export function HorizontalView({
   // the agent conversation ("concierge"). Advisors default to Build; travelers
   // never see the toggle (they only get ChatPanel).
   const [asidePanel, setAsidePanel] = useState<
-    "build" | "diff" | "concierge" | "client" | "party" | "vault"
+    "build" | "diff" | "concierge" | "client" | "party" | "vault" | "invoices"
   >(canEdit ? "build" : "concierge");
   // This itinerary is an alternative version (a fork) when it has a baseline.
   const forkedFromId = timeline.itinerary.forked_from_id ?? null;
@@ -699,6 +700,7 @@ export function HorizontalView({
                       "client",
                       "party",
                       "vault",
+                      "invoices",
                     ] as const
                   ).map((tab) => (
                     <button
@@ -723,7 +725,9 @@ export function HorizontalView({
                               ? "Client thread"
                               : tab === "party"
                                 ? "Party"
-                                : "Vault"}
+                                : tab === "vault"
+                                  ? "Vault"
+                                  : "Invoices"}
                     </button>
                   ))}
                 </div>
@@ -784,6 +788,16 @@ export function HorizontalView({
                       itineraryId={timeline.itinerary.id}
                       apiBaseUrl={apiBaseUrl}
                       accessToken={accessToken}
+                    />
+                  </div>
+                  <div
+                    className={asidePanel === "invoices" ? "h-full" : "hidden"}
+                  >
+                    <InvoicePanel
+                      itineraryId={timeline.itinerary.id}
+                      apiBaseUrl={apiBaseUrl}
+                      accessToken={accessToken}
+                      editable={editable}
                     />
                   </div>
                 </div>

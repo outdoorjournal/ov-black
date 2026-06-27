@@ -42,6 +42,8 @@ export interface ApiStackProps extends StackProps {
   readonly agentTokenSigningSecret: SmSecret;
   /** One JSON secret holding every vendor key; ApiStack extracts each field (google_places, duffel). */
   readonly inventoryProviderKeysSecret: SmSecret;
+  /** One JSON secret holding the Braintree keys; ApiStack extracts merchant_id/public_key/private_key (M005/I2). */
+  readonly braintreeKeysSecret: SmSecret;
   /** Web app origin → WEB_ORIGIN. Empty means "not wired yet"; we skip injection then. */
   readonly webOrigin: string;
   /** Region of the Bedrock AgentCore runtime → AWS_REGION for apps/api's boto3 client. */
@@ -185,6 +187,7 @@ export class ApiStack extends Stack {
           props.bedrockAgentCoreRuntimeArnSecret.secretArn,
           props.agentTokenSigningSecret.secretArn,
           props.inventoryProviderKeysSecret.secretArn,
+          props.braintreeKeysSecret.secretArn,
         ],
       }),
     );
@@ -302,6 +305,9 @@ export class ApiStack extends Stack {
         AGENT_TOKEN_SIGNING_SECRET_ARN: props.agentTokenSigningSecret.secretArn,
         // One secret, two JSON fields → two env vars (extracted in the secrets block below).
         INVENTORY_PROVIDER_KEYS_SECRET_ARN: props.inventoryProviderKeysSecret.secretArn,
+        // Braintree (M005/I2): staging runs the SANDBOX; prod runs production. The
+        // three keys come from the braintree-keys JSON secret (extracted below).
+        BRAINTREE_ENVIRONMENT: props.envName === 'prod' ? 'production' : 'sandbox',
         // WEB_ORIGIN drives invite redirect_to + CORS. Only injected once the web
         // app's staging origin is known; until then apps/api keeps its own default
         // rather than booting with WEB_ORIGIN='' (which would break both).
@@ -331,6 +337,17 @@ export class ApiStack extends Stack {
           'google_places',
         ),
         DUFFEL_API_KEY: EcsSecret.fromSecretsManager(props.inventoryProviderKeysSecret, 'duffel'),
+        // Braintree keys live in one JSON secret — extract each field into the flat
+        // env var apps/api's Settings reads (M005/I2).
+        BRAINTREE_MERCHANT_ID: EcsSecret.fromSecretsManager(
+          props.braintreeKeysSecret,
+          'merchant_id',
+        ),
+        BRAINTREE_PUBLIC_KEY: EcsSecret.fromSecretsManager(props.braintreeKeysSecret, 'public_key'),
+        BRAINTREE_PRIVATE_KEY: EcsSecret.fromSecretsManager(
+          props.braintreeKeysSecret,
+          'private_key',
+        ),
       },
       portMappings: [{ containerPort: 8000, name: 'api' }],
       essential: true,

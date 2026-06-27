@@ -29,6 +29,7 @@ const apiStack = new ApiStack(app, `OvBlackApi-${config.envName}`, {
   bedrockAgentCoreRuntimeArnSecret: secretsStack.bedrockAgentCoreRuntimeArn,
   agentTokenSigningSecret: secretsStack.agentTokenSigningSecret,
   inventoryProviderKeysSecret: secretsStack.inventoryProviderKeys,
+  braintreeKeysSecret: secretsStack.braintreeKeys,
   webOrigin: config.webOrigin,
   agentcoreRegion: config.agentcoreRegion,
   hostedZoneId: config.hostedZoneId,

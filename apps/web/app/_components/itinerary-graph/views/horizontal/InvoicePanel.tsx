@@ -1,0 +1,467 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import {
+  type InvoiceLineItemResponse,
+  type InvoiceResponse,
+  type NodeResponse,
+  addInvoiceLineItem,
+  createApiClient,
+  createInvoice,
+  getInvoice,
+  getItinerary,
+  issueInvoice,
+  listInvoices,
+  voidInvoice,
+  voidInvoiceLineItem,
+} from "@ov-black/api-client";
+
+// Advisor invoicing surface — the itinerary-aside Invoices tab (M005/I1).
+//
+// Self-contained like DiffPanel: it takes the staff credentials the store holds
+// (travelers never receive them) and calls the invoice wrappers directly. An
+// advisor assembles one or more invoices from the itinerary's approved bookable
+// nodes, layers signed adjustments (a discount/child line is negative), voids a
+// line as an append-only reversal, and issues the invoice. The total is the
+// server-computed Σ(lines).
+
+const ATTENTION = "#8b2a1d";
+
+const ERROR_COPY: Record<string, string> = {
+  not_found: "This invoice could not be found.",
+  advisor_only: "Invoicing is advisor-only.",
+  forbidden: "You don't have access to these invoices.",
+  invoice_not_draft: "This invoice is issued — only adjustments can be added now.",
+  invoice_closed: "This invoice is closed.",
+  currency_mismatch: "That line's currency doesn't match the invoice.",
+  node_has_no_cost: "That item has no cost to charge.",
+  already_reversed: "That line was already voided.",
+  no_line_items: "Add at least one line before issuing.",
+  network_error: "Could not reach the server. Try again in a moment.",
+};
+
+function copy(detail: string): string {
+  return ERROR_COPY[detail] ?? "Something went wrong. Try again.";
+}
+
+const ADJUSTMENT_KINDS = ["discount", "adjustment", "tax", "fee"] as const;
+
+function chargeableNodes(nodes: NodeResponse[], currency: string): NodeResponse[] {
+  return nodes.filter(
+    (n) =>
+      n.status === "approved" &&
+      n.cost_amount != null &&
+      n.cost_currency === currency,
+  );
+}
+
+export function InvoicePanel({
+  apiBaseUrl,
+  accessToken,
+  itineraryId,
+  editable,
+}: {
+  apiBaseUrl: string | null;
+  accessToken: string | null;
+  itineraryId: string;
+  editable: boolean;
+}) {
+  const [invoices, setInvoices] = useState<InvoiceResponse[]>([]);
+  const [nodes, setNodes] = useState<NodeResponse[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [newLabel, setNewLabel] = useState("Deposit");
+  const [newCurrency, setNewCurrency] = useState("USD");
+  const [creating, setCreating] = useState(false);
+
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const api =
+    apiBaseUrl && accessToken
+      ? createApiClient({ baseUrl: apiBaseUrl, accessToken })
+      : null;
+
+  const refresh = useCallback(async () => {
+    if (!api) return;
+    const [inv, graph] = await Promise.all([
+      listInvoices(api, itineraryId),
+      getItinerary(api, itineraryId),
+    ]);
+    if (!mounted.current) return;
+    if (inv.ok) setInvoices(inv.invoices);
+    else setError(copy(inv.detail));
+    if (graph.ok) setNodes(graph.nodes);
+    setLoaded(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itineraryId, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const create = useCallback(async () => {
+    if (!api || creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const result = await createInvoice(api, itineraryId, {
+        label: newLabel,
+        currency: newCurrency.trim().toUpperCase(),
+      });
+      if (!mounted.current) return;
+      if (result.ok) await refresh();
+      else setError(copy(result.detail));
+    } finally {
+      if (mounted.current) setCreating(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itineraryId, newLabel, newCurrency, creating]);
+
+  return (
+    <div
+      data-testid="invoice-panel"
+      className="flex h-full flex-col gap-5 overflow-y-auto bg-paper px-4 py-4 text-ink"
+    >
+      <header className="flex items-baseline justify-between gap-2">
+        <h3 className="font-serif text-lg tracking-tight text-ink">Invoices</h3>
+      </header>
+
+      {/* New invoice */}
+      {editable ? (
+        <section className="flex flex-col gap-2 border-y border-ink/10 py-3">
+          <span className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/55">
+            New invoice
+          </span>
+          <div className="flex items-center gap-2">
+            <input
+              aria-label="Invoice label"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm text-ink"
+            />
+            <input
+              aria-label="Invoice currency"
+              value={newCurrency}
+              onChange={(e) => setNewCurrency(e.target.value)}
+              maxLength={3}
+              className="w-16 rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm uppercase text-ink"
+            />
+            <button
+              type="button"
+              onClick={() => void create()}
+              disabled={creating}
+              data-testid="invoice-create"
+              className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              {creating ? "Creating…" : "Create"}
+            </button>
+          </div>
+        </section>
+      ) : (
+        <p className="font-sans text-xs italic text-ink/50">
+          Hold the edit lock to assemble invoices.
+        </p>
+      )}
+
+      {!loaded ? (
+        <p className="font-sans text-sm text-ink/50">Loading…</p>
+      ) : invoices.length === 0 ? (
+        <p className="font-sans text-sm italic text-ink/50">
+          No invoices yet. Create one over the approved bookable nodes.
+        </p>
+      ) : (
+        invoices.map((invoice) => (
+          <InvoiceCard
+            key={invoice.id}
+            invoice={invoice}
+            nodes={nodes}
+            editable={editable}
+            api={api}
+            onChanged={refresh}
+            onError={setError}
+          />
+        ))
+      )}
+
+      {error ? (
+        <p role="alert" className="font-sans text-xs font-medium" style={{ color: ATTENTION }}>
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const STATUS_TONE: Record<string, string> = {
+  draft: "text-ink/55",
+  issued: "text-[#1d4e8b]",
+  paid: "text-[#1d6b3a]",
+  void: "text-ink/40 line-through",
+};
+
+function InvoiceCard({
+  invoice,
+  nodes,
+  editable,
+  api,
+  onChanged,
+  onError,
+}: {
+  invoice: InvoiceResponse;
+  nodes: NodeResponse[];
+  editable: boolean;
+  api: ReturnType<typeof createApiClient> | null;
+  onChanged: () => Promise<void>;
+  onError: (msg: string | null) => void;
+}) {
+  const [adjKind, setAdjKind] = useState<(typeof ADJUSTMENT_KINDS)[number]>(
+    "discount",
+  );
+  const [adjAmount, setAdjAmount] = useState("");
+  const [adjDesc, setAdjDesc] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const lines = invoice.lines ?? [];
+  const reversedIds = new Set(
+    lines
+      .map((l) => l.reverses_line_item_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const open = invoice.status === "draft" || invoice.status === "issued";
+  const canWrite = editable && open && api !== null;
+
+  const run = useCallback(
+    async (fn: () => Promise<{ ok: boolean; detail?: string }>) => {
+      if (busy) return;
+      setBusy(true);
+      onError(null);
+      try {
+        const result = await fn();
+        if (result.ok) await onChanged();
+        else onError(copy(result.detail ?? "unknown"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, onChanged, onError],
+  );
+
+  const chargeNode = (nodeId: string) => {
+    if (!api || !nodeId) return;
+    void run(() =>
+      addInvoiceLineItem(api, invoice.id, { node_id: nodeId, kind: "charge" }),
+    );
+  };
+
+  const addAdjustment = () => {
+    if (!api || !adjAmount.trim()) return;
+    void run(() =>
+      addInvoiceLineItem(api, invoice.id, {
+        kind: adjKind,
+        description: adjDesc,
+        amount: adjAmount.trim(),
+        currency: invoice.currency,
+      }),
+    ).then(() => {
+      setAdjAmount("");
+      setAdjDesc("");
+    });
+  };
+
+  const candidates = chargeableNodes(nodes, invoice.currency);
+
+  return (
+    <section
+      data-testid={`invoice-${invoice.id}`}
+      className="flex flex-col gap-2 border-b border-ink/10 pb-4"
+    >
+      <header className="flex items-baseline justify-between gap-2">
+        <span className="font-serif text-base text-ink">{invoice.label || "Invoice"}</span>
+        <span className="flex items-baseline gap-2">
+          <span
+            className={`font-sans text-[10px] uppercase tracking-[0.18em] ${
+              STATUS_TONE[invoice.status] ?? "text-ink/55"
+            }`}
+          >
+            {invoice.status}
+          </span>
+          <span className="font-sans text-sm tabular-nums text-ink" data-testid="invoice-total">
+            {invoice.total} {invoice.currency}
+          </span>
+        </span>
+      </header>
+
+      {lines.length === 0 ? (
+        <p className="font-sans text-xs italic text-ink/45">No lines yet.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-ink/10 border-y border-ink/10">
+          {lines.map((line) => (
+            <LineRow
+              key={line.id}
+              line={line}
+              reversed={reversedIds.has(line.id)}
+              canWrite={canWrite}
+              onVoid={() =>
+                api &&
+                void run(() => voidInvoiceLineItem(api, invoice.id, line.id))
+              }
+            />
+          ))}
+        </ul>
+      )}
+
+      {canWrite ? (
+        <div className="flex flex-col gap-2 pt-1">
+          {/* Charge an approved node's cost (draft only) */}
+          {invoice.status === "draft" && candidates.length > 0 ? (
+            <label className="flex items-center gap-2 font-sans text-xs text-ink/70">
+              <span className="shrink-0 uppercase tracking-[0.14em] text-ink/45">
+                Charge
+              </span>
+              <select
+                aria-label="Charge a node"
+                data-testid="invoice-charge-node"
+                defaultValue=""
+                onChange={(e) => {
+                  chargeNode(e.target.value);
+                  e.target.value = "";
+                }}
+                className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 text-sm text-ink"
+              >
+                <option value="" disabled>
+                  Add a node charge…
+                </option>
+                {candidates.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.title} · {n.cost_currency} {n.cost_amount}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {/* Signed adjustment (discount / child / tax / fee) */}
+          <div className="flex items-center gap-1.5">
+            <select
+              aria-label="Adjustment kind"
+              value={adjKind}
+              onChange={(e) =>
+                setAdjKind(e.target.value as (typeof ADJUSTMENT_KINDS)[number])
+              }
+              className="rounded-md border border-ink/20 bg-paper px-1.5 py-1 text-xs text-ink"
+            >
+              {ADJUSTMENT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Adjustment description"
+              placeholder="e.g. Child discount"
+              value={adjDesc}
+              onChange={(e) => setAdjDesc(e.target.value)}
+              className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 text-xs text-ink"
+            />
+            <input
+              aria-label="Adjustment amount"
+              placeholder="-250.00"
+              value={adjAmount}
+              onChange={(e) => setAdjAmount(e.target.value)}
+              className="w-24 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right text-xs tabular-nums text-ink"
+            />
+            <button
+              type="button"
+              onClick={addAdjustment}
+              disabled={busy}
+              data-testid="invoice-add-adjustment"
+              className="rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              Add
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            {invoice.status === "draft" ? (
+              <button
+                type="button"
+                onClick={() =>
+                  api && void run(() => issueInvoice(api, invoice.id))
+                }
+                disabled={busy}
+                data-testid="invoice-issue"
+                className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+              >
+                Issue
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => api && void run(() => voidInvoice(api, invoice.id))}
+              disabled={busy}
+              data-testid="invoice-void"
+              className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] text-ink/70 transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              Void invoice
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function LineRow({
+  line,
+  reversed,
+  canWrite,
+  onVoid,
+}: {
+  line: InvoiceLineItemResponse;
+  reversed: boolean;
+  canWrite: boolean;
+  onVoid: () => void;
+}) {
+  const isReversal = line.kind === "reversal";
+  const negative = Number(line.amount) < 0;
+  return (
+    <li className="flex items-center gap-3 py-2" data-testid={`line-${line.id}`}>
+      <div className="min-w-0 flex-1">
+        <p
+          className={`truncate font-sans text-sm ${
+            reversed ? "text-ink/40 line-through" : "text-ink/90"
+          }`}
+        >
+          {line.description || line.kind}
+        </p>
+        <p className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+          {line.kind}
+        </p>
+      </div>
+      <span
+        className={`shrink-0 font-sans text-sm tabular-nums ${
+          negative ? "text-[#8b2a1d]" : "text-ink/90"
+        }`}
+      >
+        {line.amount} {line.currency}
+      </span>
+      {canWrite && !isReversal && !reversed ? (
+        <button
+          type="button"
+          onClick={onVoid}
+          data-testid={`line-void-${line.id}`}
+          className="shrink-0 rounded-md border border-ink/15 px-2 py-0.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/55 transition-colors hover:bg-ink/5"
+        >
+          Void
+        </button>
+      ) : null}
+    </li>
+  );
+}

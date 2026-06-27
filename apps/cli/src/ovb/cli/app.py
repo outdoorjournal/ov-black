@@ -11,7 +11,17 @@ import typer
 
 from ovb import __version__
 from ovb.cli._run import CliState
-from ovb.cli.commands import admin, analyze, chat, clients, graph, inventory, itinerary, scenario
+from ovb.cli.commands import (
+    admin,
+    analyze,
+    chat,
+    clients,
+    graph,
+    inventory,
+    invoices,
+    itinerary,
+    scenario,
+)
 from ovb.config import resolve_profile
 
 app = typer.Typer(
@@ -49,6 +59,7 @@ def _root(
 
 
 app.add_typer(itinerary.app, name="itinerary")
+app.add_typer(invoices.app, name="invoices")
 app.add_typer(graph.node_app, name="node")
 app.add_typer(graph.edge_app, name="edge")
 app.add_typer(inventory.app, name="inventory")

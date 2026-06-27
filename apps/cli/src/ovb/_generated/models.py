@@ -11,6 +11,19 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, EmailStr, Field, RootModel
 
 
+class Amount(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
+    ]
+
+
+class Currency(RootModel[str]):
+    root: Annotated[str, Field(max_length=3, min_length=3, title='Currency')]
+
+
 class AdvisorItineraryClient(BaseModel):
     """
     Embedded client shape for the advisor roster row.
@@ -193,6 +206,15 @@ class CostKind(StrEnum):
 
     per_person = 'per_person'
     total = 'total'
+
+
+class CreateInvoiceRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    label: Annotated[str | None, Field(max_length=256, title='Label')] = ''
+    currency: Annotated[str, Field(max_length=3, min_length=3, title='Currency')]
+    due_at: Annotated[AwareDatetime | None, Field(title='Due At')] = None
 
 
 class CreateItineraryRequest(BaseModel):
@@ -553,6 +575,38 @@ class InviteEvent(BaseModel):
     status: Annotated[Status1, Field(title='Status')]
 
 
+class InvoiceLineKind(StrEnum):
+    """
+    Mirrors the public.invoice_line_kind Postgres enum (0023).
+
+    What a (signed) line represents. ``charge``/``tax``/``fee`` are normally
+    positive; ``discount``/``adjustment``/``reversal`` are normally negative.
+    ``reversal`` is the journal-entry void — it negates the line it points at
+    via ``reverses_line_item_id``.
+    """
+
+    charge = 'charge'
+    discount = 'discount'
+    adjustment = 'adjustment'
+    tax = 'tax'
+    fee = 'fee'
+    reversal = 'reversal'
+
+
+class InvoiceStatus(StrEnum):
+    """
+    Mirrors the public.invoice_status Postgres enum (0023).
+
+    ``draft`` (advisor assembling) → ``issued`` (sent, payable) → ``paid`` (a
+    covering payment settled, I2); ``void`` is the terminal cancel.
+    """
+
+    draft = 'draft'
+    issued = 'issued'
+    paid = 'paid'
+    void = 'void'
+
+
 class ItineraryStatus(StrEnum):
     """
     Mirrors the public.itinerary_status Postgres enum (0006).
@@ -877,6 +931,31 @@ class PartyMemberUpdate(BaseModel):
     notes: Annotated[Notes | None, Field(title='Notes')] = None
 
 
+class PayInvoiceRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    payment_method_nonce: Annotated[
+        str, Field(max_length=4096, min_length=1, title='Payment Method Nonce')
+    ]
+
+
+class PaymentStatus(StrEnum):
+    """
+    Mirrors the public.payment_status Postgres enum (0024).
+
+    ``refunded`` is future-proofing — I2 only writes ``succeeded`` / ``failed``.
+    """
+
+    succeeded = 'succeeded'
+    failed = 'failed'
+    refunded = 'refunded'
+
+
+class PaymentTokenResponse(BaseModel):
+    client_token: Annotated[str, Field(title='Client Token')]
+
+
 class PlacePhoto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1135,6 +1214,17 @@ class WeatherForecast(BaseModel):
     temp_c_low: Annotated[float, Field(title='Temp C Low')]
     precipitation_chance: Annotated[float, Field(title='Precipitation Chance')]
     summary: Annotated[str, Field(title='Summary')]
+
+
+class AddLineItemRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: InvoiceLineKind | None = 'charge'
+    description: Annotated[str | None, Field(max_length=512, title='Description')] = ''
+    amount: Annotated[float | Amount | None, Field(title='Amount')] = None
+    currency: Annotated[Currency | None, Field(title='Currency')] = None
+    node_id: Annotated[UUID | None, Field(title='Node Id')] = None
 
 
 class AdvisorItinerarySummary(BaseModel):
@@ -1550,6 +1640,25 @@ class HotelItem(BaseModel):
     stars: Annotated[int | None, Field(title='Stars')] = None
 
 
+class InvoiceLineItemResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    invoice_id: Annotated[UUID, Field(title='Invoice Id')]
+    node_id: Annotated[UUID | None, Field(title='Node Id')] = None
+    kind: InvoiceLineKind
+    description: Annotated[str, Field(title='Description')]
+    amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
+    ]
+    currency: Annotated[str, Field(title='Currency')]
+    reverses_line_item_id: Annotated[
+        UUID | None, Field(title='Reverses Line Item Id')
+    ] = None
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+
 class ItineraryPartyEntry(BaseModel):
     """
     One traveler on an itinerary's party, with its durable member resolved.
@@ -1729,6 +1838,26 @@ class OsintFactDetail(BaseModel):
     redacted_reason: Annotated[str | None, Field(title='Redacted Reason')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class PaymentResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    status: PaymentStatus
+    amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
+    ]
+    currency: Annotated[str, Field(title='Currency')]
+    gateway: Annotated[str, Field(title='Gateway')]
+    gateway_reference: Annotated[str, Field(title='Gateway Reference')]
+    processor_transaction_id: Annotated[
+        str | None, Field(title='Processor Transaction Id')
+    ] = None
+    instrument_type: Annotated[str | None, Field(title='Instrument Type')] = None
+    last_four: Annotated[str | None, Field(title='Last Four')] = None
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
 
 class PlaceDetail(BaseModel):
@@ -1925,6 +2054,24 @@ class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
     edges: Annotated[list[EdgeResponse], Field(title='Edges')]
+
+
+class InvoiceResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    label: Annotated[str, Field(title='Label')]
+    status: InvoiceStatus
+    currency: Annotated[str, Field(title='Currency')]
+    due_at: Annotated[AwareDatetime | None, Field(title='Due At')] = None
+    total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Total')
+    ]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    lines: Annotated[list[InvoiceLineItemResponse] | None, Field(title='Lines')] = None
+    payments: Annotated[list[PaymentResponse] | None, Field(title='Payments')] = None
 
 
 class ReconcileResponse(BaseModel):

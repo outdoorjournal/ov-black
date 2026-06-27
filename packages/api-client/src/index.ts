@@ -38,6 +38,16 @@ import {
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
   detachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersMemberIdDelete,
   diffForkEndpointItineraryForkIdDiffGet,
+  createInvoiceEndpointItineraryItineraryIdInvoicesPost,
+  listInvoicesEndpointItineraryItineraryIdInvoicesGet,
+  getInvoiceEndpointInvoicesInvoiceIdGet,
+  addLineItemEndpointInvoicesInvoiceIdLineItemsPost,
+  voidLineItemEndpointInvoicesInvoiceIdLineItemsLineIdVoidPost,
+  deleteLineItemEndpointInvoicesInvoiceIdLineItemsLineIdDelete,
+  issueInvoiceEndpointInvoicesInvoiceIdIssuePost,
+  voidInvoiceEndpointInvoicesInvoiceIdVoidPost,
+  paymentTokenEndpointInvoicesInvoiceIdPaymentTokenPost,
+  payInvoiceEndpointInvoicesInvoiceIdPayPost,
   dismissOnboardingEndpointOnboardingDismissPost,
   downloadClientDocumentEndpointClientsClientIdDocumentsDocumentIdDownloadGet,
   downloadMyDocumentEndpointMeDocumentsDocumentIdDownloadGet,
@@ -107,6 +117,13 @@ import type {
   ForkDiffResponse,
   GraphResponse,
   ItineraryResponse,
+  AddLineItemRequest,
+  CreateInvoiceRequest,
+  InvoiceResponse,
+  InvoiceLineItemResponse,
+  PayInvoiceRequest,
+  PaymentResponse,
+  PaymentTokenResponse,
   NodeChangeResponse,
   ReconcileOutcomeResponse,
   ReconcileRequest,
@@ -214,6 +231,22 @@ export type {
   ReconcileResponse,
   ReconcileOutcomeResponse,
   RequestReconcileRequest,
+} from "./generated/types.gen.js";
+
+// Invoices (M005/I1). One itinerary -> N invoices; the InvoiceResponse carries
+// the signed ledger (InvoiceLineItemResponse[]) and the computed total. The
+// advisor InvoicePanel types its assemble/issue/void surface from one module.
+export type {
+  CreateInvoiceRequest,
+  AddLineItemRequest,
+  InvoiceResponse,
+  InvoiceLineItemResponse,
+  InvoiceStatus,
+  InvoiceLineKind,
+  PayInvoiceRequest,
+  PaymentResponse,
+  PaymentTokenResponse,
+  PaymentStatus,
 } from "./generated/types.gen.js";
 
 // Clients (S03): advisor-facing /clients surface — the request/response
@@ -3218,6 +3251,366 @@ export async function abandonFork(
       ok: false,
       status: response.status,
       detail: _parseForkReconcileDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Invoices (M005/I1) ──────────────────────────────────────────────────────
+
+export type InvoiceDetail =
+  | "not_found"
+  | "advisor_only"
+  | "forbidden"
+  | "invoice_not_draft"
+  | "invoice_closed"
+  | "currency_mismatch"
+  | "node_has_no_cost"
+  | "already_reversed"
+  | "no_line_items"
+  | "line_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+const _INVOICE_TOKENS = new Set<InvoiceDetail>([
+  "invoice_not_draft",
+  "invoice_closed",
+  "currency_mismatch",
+  "node_has_no_cost",
+  "already_reversed",
+  "no_line_items",
+  "line_not_found",
+]);
+
+function _parseInvoiceDetail(status: number, error?: unknown): InvoiceDetail {
+  const token = _detailToken(error);
+  if (_INVOICE_TOKENS.has(token as InvoiceDetail)) return token as InvoiceDetail;
+  if (status === 404) return "not_found";
+  if (status === 403) return token === "advisor_only" ? "advisor_only" : "forbidden";
+  if (status === 400 || status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type CreateInvoiceResult =
+  | { ok: true; invoice: InvoiceResponse }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** POST /itinerary/{itinerary_id}/invoices — create a draft invoice (advisor). */
+export async function createInvoice(
+  client: Client,
+  itineraryId: string,
+  body: CreateInvoiceRequest,
+): Promise<CreateInvoiceResult> {
+  try {
+    const { data, error, response } =
+      await createInvoiceEndpointItineraryItineraryIdInvoicesPost({
+        client,
+        path: { itinerary_id: itineraryId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListInvoicesResult =
+  | { ok: true; invoices: InvoiceResponse[] }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** GET /itinerary/{itinerary_id}/invoices — list (advisor or owning client). */
+export async function listInvoices(
+  client: Client,
+  itineraryId: string,
+): Promise<ListInvoicesResult> {
+  try {
+    const { data, error, response } =
+      await listInvoicesEndpointItineraryItineraryIdInvoicesGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoices: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type GetInvoiceResult =
+  | { ok: true; invoice: InvoiceResponse }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** GET /invoices/{invoice_id} — invoice with its ledger + total. */
+export async function getInvoice(
+  client: Client,
+  invoiceId: string,
+): Promise<GetInvoiceResult> {
+  try {
+    const { data, error, response } = await getInvoiceEndpointInvoicesInvoiceIdGet({
+      client,
+      path: { invoice_id: invoiceId },
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type AddLineItemResult =
+  | { ok: true; line: InvoiceLineItemResponse }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/**
+ * POST /invoices/{invoice_id}/line-items (advisor). A manual signed line (a
+ * discount/adjustment is negative), or a charge derived from a node's cost when
+ * `amount` is omitted and `node_id` is set.
+ */
+export async function addInvoiceLineItem(
+  client: Client,
+  invoiceId: string,
+  body: AddLineItemRequest,
+): Promise<AddLineItemResult> {
+  try {
+    const { data, error, response } =
+      await addLineItemEndpointInvoicesInvoiceIdLineItemsPost({
+        client,
+        path: { invoice_id: invoiceId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, line: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type VoidLineItemResult =
+  | { ok: true; line: InvoiceLineItemResponse }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** POST /invoices/{invoice_id}/line-items/{line_id}/void — append a reversal (advisor). */
+export async function voidInvoiceLineItem(
+  client: Client,
+  invoiceId: string,
+  lineId: string,
+): Promise<VoidLineItemResult> {
+  try {
+    const { data, error, response } =
+      await voidLineItemEndpointInvoicesInvoiceIdLineItemsLineIdVoidPost({
+        client,
+        path: { invoice_id: invoiceId, line_id: lineId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, line: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type RemoveLineItemResult =
+  | { ok: true }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** DELETE /invoices/{invoice_id}/line-items/{line_id} — draft-only hard delete (advisor). */
+export async function removeInvoiceLineItem(
+  client: Client,
+  invoiceId: string,
+  lineId: string,
+): Promise<RemoveLineItemResult> {
+  try {
+    const { error, response } =
+      await deleteLineItemEndpointInvoicesInvoiceIdLineItemsLineIdDelete({
+        client,
+        path: { invoice_id: invoiceId, line_id: lineId },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type IssueInvoiceResult =
+  | { ok: true; invoice: InvoiceResponse }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** POST /invoices/{invoice_id}/issue — draft → issued (advisor). */
+export async function issueInvoice(
+  client: Client,
+  invoiceId: string,
+): Promise<IssueInvoiceResult> {
+  try {
+    const { data, error, response } =
+      await issueInvoiceEndpointInvoicesInvoiceIdIssuePost({
+        client,
+        path: { invoice_id: invoiceId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type VoidInvoiceResult =
+  | { ok: true; invoice: InvoiceResponse }
+  | { ok: false; status: number; detail: InvoiceDetail };
+
+/** POST /invoices/{invoice_id}/void — cancel an invoice (advisor). */
+export async function voidInvoice(
+  client: Client,
+  invoiceId: string,
+): Promise<VoidInvoiceResult> {
+  try {
+    const { data, error, response } =
+      await voidInvoiceEndpointInvoicesInvoiceIdVoidPost({
+        client,
+        path: { invoice_id: invoiceId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Payments (M005/I2) ──────────────────────────────────────────────────────
+
+export type PaymentDetail =
+  | "not_found"
+  | "forbidden"
+  | "invoice_not_issued"
+  | "payment_declined"
+  | "payments_unconfigured"
+  | "nothing_to_pay"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+const _PAYMENT_TOKENS = new Set<PaymentDetail>([
+  "invoice_not_issued",
+  "payment_declined",
+  "payments_unconfigured",
+  "nothing_to_pay",
+]);
+
+function _parsePaymentDetail(status: number, error?: unknown): PaymentDetail {
+  const token = _detailToken(error);
+  if (_PAYMENT_TOKENS.has(token as PaymentDetail)) return token as PaymentDetail;
+  if (status === 404) return "not_found";
+  if (status === 403) return "forbidden";
+  if (status === 400 || status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type GetPaymentTokenResult =
+  | { ok: true; clientToken: string }
+  | { ok: false; status: number; detail: PaymentDetail };
+
+/** POST /invoices/{invoice_id}/payment-token — a gateway client token for the drop-in. */
+export async function getPaymentToken(
+  client: Client,
+  invoiceId: string,
+): Promise<GetPaymentTokenResult> {
+  try {
+    const { data, error, response } =
+      await paymentTokenEndpointInvoicesInvoiceIdPaymentTokenPost({
+        client,
+        path: { invoice_id: invoiceId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, clientToken: data.client_token };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePaymentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type PayInvoiceResult =
+  | { ok: true; invoice: InvoiceResponse }
+  | { ok: false; status: number; detail: PaymentDetail };
+
+/**
+ * POST /invoices/{invoice_id}/pay — charge an issued invoice with a tokenized
+ * card nonce (owning client or advisor). Returns the updated invoice (now
+ * `paid`, with the payment in its history). `payment_declined` on a soft refusal.
+ */
+export async function payInvoice(
+  client: Client,
+  invoiceId: string,
+  body: PayInvoiceRequest,
+): Promise<PayInvoiceResult> {
+  try {
+    const { data, error, response } =
+      await payInvoiceEndpointInvoicesInvoiceIdPayPost({
+        client,
+        path: { invoice_id: invoiceId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePaymentDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };

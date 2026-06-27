@@ -268,6 +268,97 @@ class Ovb:
             gm.ItineraryResponse, "POST", f"/itinerary/{fork_id}/abandon", json_body={}
         )
 
+    # ── invoices (M005/I1) ───────────────────────────────────────────────
+    async def create_invoice(
+        self,
+        itinerary_id: str,
+        *,
+        label: str = "",
+        currency: str,
+        due_at: str | None = None,
+    ) -> gm.InvoiceResponse:
+        """Create a draft invoice over an itinerary (advisor)."""
+        body: dict[str, Any] = {"label": label, "currency": currency}
+        if due_at is not None:
+            body["due_at"] = due_at
+        return await self._model(
+            gm.InvoiceResponse, "POST", f"/itinerary/{itinerary_id}/invoices", json_body=body
+        )
+
+    async def list_invoices(self, itinerary_id: str) -> list[gm.InvoiceResponse]:
+        """List an itinerary's invoices (advisor or owning client)."""
+        return await self._list(
+            gm.InvoiceResponse, "GET", f"/itinerary/{itinerary_id}/invoices"
+        )
+
+    async def get_invoice(self, invoice_id: str) -> gm.InvoiceResponse:
+        """Get an invoice with its ledger + total."""
+        return await self._model(gm.InvoiceResponse, "GET", f"/invoices/{invoice_id}")
+
+    async def add_invoice_line(
+        self,
+        invoice_id: str,
+        *,
+        kind: str = "charge",
+        description: str = "",
+        amount: str | None = None,
+        currency: str | None = None,
+        node_id: str | None = None,
+    ) -> gm.InvoiceLineItemResponse:
+        """Append a line. Omit ``amount`` + pass ``node_id`` to charge a node's cost."""
+        body: dict[str, Any] = {"kind": kind, "description": description}
+        if amount is not None:
+            body["amount"] = amount
+        if currency is not None:
+            body["currency"] = currency
+        if node_id is not None:
+            body["node_id"] = node_id
+        return await self._model(
+            gm.InvoiceLineItemResponse,
+            "POST",
+            f"/invoices/{invoice_id}/line-items",
+            json_body=body,
+        )
+
+    async def void_invoice_line(
+        self, invoice_id: str, line_id: str
+    ) -> gm.InvoiceLineItemResponse:
+        """Void a line by appending a reversal (advisor)."""
+        return await self._model(
+            gm.InvoiceLineItemResponse,
+            "POST",
+            f"/invoices/{invoice_id}/line-items/{line_id}/void",
+        )
+
+    async def remove_invoice_line(self, invoice_id: str, line_id: str) -> None:
+        """Hard-delete a line (draft-only, advisor)."""
+        await self._send("DELETE", f"/invoices/{invoice_id}/line-items/{line_id}")
+
+    async def issue_invoice(self, invoice_id: str) -> gm.InvoiceResponse:
+        """Issue a draft invoice (advisor)."""
+        return await self._model(gm.InvoiceResponse, "POST", f"/invoices/{invoice_id}/issue")
+
+    async def void_invoice(self, invoice_id: str) -> gm.InvoiceResponse:
+        """Void (cancel) an invoice (advisor)."""
+        return await self._model(gm.InvoiceResponse, "POST", f"/invoices/{invoice_id}/void")
+
+    async def payment_token(self, invoice_id: str) -> gm.PaymentTokenResponse:
+        """Mint a gateway client token for the drop-in (owning client or advisor)."""
+        return await self._model(
+            gm.PaymentTokenResponse, "POST", f"/invoices/{invoice_id}/payment-token"
+        )
+
+    async def pay_invoice(
+        self, invoice_id: str, *, payment_method_nonce: str
+    ) -> gm.InvoiceResponse:
+        """Pay an issued invoice with a tokenized card nonce; returns the paid invoice."""
+        return await self._model(
+            gm.InvoiceResponse,
+            "POST",
+            f"/invoices/{invoice_id}/pay",
+            json_body={"payment_method_nonce": payment_method_nonce},
+        )
+
     # ── nodes ────────────────────────────────────────────────────────────
     async def add_node(
         self,

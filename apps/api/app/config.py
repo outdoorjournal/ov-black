@@ -139,6 +139,30 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    # ── Payments (M005/I2, D025/D-PAY): Braintree ─────────────────────────
+    # The gateway is selected by config; when these are empty the payments
+    # service degrades to a Fake gateway (CI/local need no credentials) and a
+    # live pay call returns ``payments_unconfigured``. NEVER log the keys.
+    braintree_environment: str = Field(
+        default="sandbox",
+        description="Braintree environment: 'sandbox' (default, MVP) or 'production'.",
+    )
+    braintree_merchant_id: str = Field(
+        default="",
+        description="Braintree merchant id. When empty, payments degrade to the Fake gateway.",
+        repr=False,
+    )
+    braintree_public_key: str = Field(
+        default="",
+        description="Braintree public key. NEVER log this value.",
+        repr=False,
+    )
+    braintree_private_key: str = Field(
+        default="",
+        description="Braintree private key. NEVER log this value.",
+        repr=False,
+    )
+
     inventory_providers_enabled: str = Field(
         default="ov,mock",
         description=(
