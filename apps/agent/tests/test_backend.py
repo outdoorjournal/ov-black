@@ -57,4 +57,5 @@ def test_pin_ctx_default_shape() -> None:
         "client_id": None,
         "itinerary_id": None,
         "actor_kind": "user",
+        "audience": "traveler",
     }

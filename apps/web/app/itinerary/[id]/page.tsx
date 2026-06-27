@@ -65,12 +65,21 @@ export default async function ItineraryPage({ params }: PageProps) {
     result.edges,
   );
 
+  // When this is an alternative version (a fork, G3), resolve the baseline's
+  // title so the banner can name the agreed plan it diverges from.
+  let baselineTitle: string | null = null;
+  if (result.itinerary.forked_from_id) {
+    const baseline = await getItinerary(api, result.itinerary.forked_from_id);
+    if (baseline.ok) baselineTitle = baseline.itinerary.title;
+  }
+
   return (
     <ItineraryGraphView
       timeline={timeline}
       itineraryId={itineraryId}
       status={status}
       canEdit={canEdit}
+      baselineTitle={baselineTitle}
       // Credentials only for staff — travelers never receive a token.
       {...(canEdit ? { apiBaseUrl, accessToken } : {})}
     />

@@ -219,6 +219,64 @@ def fork_lineage_holds(fork: gm.GraphResponse, baseline: gm.GraphResponse) -> li
     return out
 
 
+def reconcile_holds(
+    live: gm.GraphResponse,
+    accepted: list[Any],
+    baseline: gm.GraphResponse,
+) -> list[Violation]:
+    """M004/G3 — after reconcile, accepted changes are folded into the live
+    baseline and no booked/confirmed node was mutated.
+
+    ``accepted`` is the list of accepted diff changes (``NodeChangeResponse``);
+    ``baseline`` is the pre-reconcile baseline graph, ``live`` the post-reconcile
+    one. Each accepted ``removed`` is absent from ``live``; each accepted
+    ``changed`` onto a pre-firmed node reflects the fork's value. A change onto a
+    booked/confirmed node is *expected* to be kept (immutability) — verified
+    unchanged instead of folded in.
+    """
+    out: list[Violation] = []
+    before_by_id = {str(n.id): n for n in baseline.nodes}
+    live_by_id = {str(n.id): n for n in live.nodes}
+    firmed = {"booked", "confirmed"}
+
+    # Booked/confirmed baseline nodes are never changed by reconcile.
+    for nid, node in before_by_id.items():
+        if str(node.status) in firmed:
+            live_node = live_by_id.get(nid)
+            if live_node is None:
+                out.append(Violation("reconcile_dropped_booking", f"booked node {nid} removed"))
+            elif str(live_node.title) != str(node.title) or str(live_node.status) != str(
+                node.status
+            ):
+                out.append(Violation("reconcile_changed_booking", f"booked node {nid} mutated"))
+
+    for change in accepted:
+        kind = str(getattr(change, "kind", ""))
+        raw_bnid = getattr(change, "baseline_node_id", None)
+        bnid = str(raw_bnid) if raw_bnid is not None else None
+        if bnid is None:
+            continue
+        before_node = before_by_id.get(bnid)
+        was_firmed = before_node is not None and str(before_node.status) in firmed
+        if kind == "removed":
+            if bnid in live_by_id and not was_firmed:
+                out.append(
+                    Violation("reconcile_kept_removed", f"node {bnid} still present after remove")
+                )
+        elif kind == "changed" and bnid in live_by_id and not was_firmed:
+            after = getattr(change, "after", None) or {}
+            fields = list(getattr(change, "fields", None) or [])
+            if (
+                "title" in fields
+                and "title" in after
+                and str(live_by_id[bnid].title) != str(after["title"])
+            ):
+                out.append(
+                    Violation("reconcile_unapplied_change", f"node {bnid} title not folded in")
+                )
+    return out
+
+
 def money_gate_reconciles(*_args: Any, **_kwargs: Any) -> list[Violation]:
     """M005/I3 — Σ(paid invoice lines) ⇔ Σ(booked node costs), re-priced amount."""
     raise NotImplementedError(

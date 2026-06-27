@@ -175,6 +175,13 @@ class AgentContext(BaseModel):
     # The durable household roster (0019). SHARED knowledge — unlike Dossier /
     # OSINT, the agent MAY reference and confirm these with the traveler.
     party_members: list[PartyMemberDetail]
+    # Fork-awareness (G3). When the session is pinned to a fork, ``is_alternative``
+    # is true, ``baseline_title`` names the agreed plan it diverges from, and
+    # ``reconcile_requested`` reflects a pending merge ask. The agent uses these to
+    # talk about "an alternative version" and whether staff have been asked to merge.
+    is_alternative: bool = False
+    baseline_title: str | None = None
+    reconcile_requested: bool = False
 
 
 class AgentRecordProfileFactRequest(BaseModel):

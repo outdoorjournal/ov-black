@@ -47,7 +47,17 @@ from app.models import (
 from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
 from app.services.card_mapping import inventory_item_to_card_metadata
-from app.services.fork import fork_itinerary
+from app.services.fork import (
+    ForkDiff,
+    NodeChange,
+    ReconcileDecision,
+    ReconcileResult,
+    abandon_fork,
+    diff_fork,
+    fork_itinerary,
+    reconcile_fork,
+    request_reconcile,
+)
 from app.services.inventory import get_inventory_detail
 from app.services.itineraries import (
     ActorContext,
@@ -104,6 +114,10 @@ class ItineraryResponse(BaseModel):
     # reconcile lifecycle and is None unless this row is a fork.
     forked_from_id: uuid.UUID | None = None
     fork_status: ForkStatus | None = None
+    # Reconcile request (G3). Set when a traveler/agent asks staff to merge this
+    # fork; cleared on reconcile/abandon. None on a fork with no pending request.
+    reconcile_requested_at: datetime | None = None
+    reconcile_request_note: str | None = None
 
 
 class CreateNodeRequest(BaseModel):
@@ -241,6 +255,82 @@ class ForkItineraryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, max_length=512)
+
+
+# ── G3 fork diff / reconcile ────────────────────────────────────────────────
+
+
+class NodeChangeResponse(BaseModel):
+    """One divergence in a fork's diff (added/removed/changed/moved).
+
+    ``change_id`` is the stable handle the reconcile request references in its
+    decisions. ``before`` is the baseline snapshot, ``after`` the fork snapshot
+    (one is null for added/removed). ``fields`` names the changed content fields
+    (plus ``"position"`` when a content change also moved).
+    """
+
+    change_id: uuid.UUID
+    kind: str
+    fork_node_id: uuid.UUID | None = None
+    baseline_node_id: uuid.UUID | None = None
+    fields: list[str] = Field(default_factory=list)
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
+class ForkDiffResponse(BaseModel):
+    fork_id: uuid.UUID
+    baseline_id: uuid.UUID
+    added: list[NodeChangeResponse]
+    removed: list[NodeChangeResponse]
+    changed: list[NodeChangeResponse]
+    moved: list[NodeChangeResponse]
+
+
+class ReconcileDecisionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    change_id: uuid.UUID
+    accept: bool
+
+
+class ReconcileRequest(BaseModel):
+    """Advisor per-change accept/discard verdicts, with the feasibility gate.
+
+    ``analysis_id`` pins which Analyze run gates the pass (defaults to the fork's
+    latest completed run); ``override_block`` is the advisor's explicit, logged
+    escape hatch past a ``block`` finding.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    decisions: list[ReconcileDecisionPayload] = Field(default_factory=list)
+    analysis_id: uuid.UUID | None = None
+    override_block: bool = False
+
+
+class ReconcileOutcomeResponse(BaseModel):
+    """What happened to one decided change: applied / discarded / refused_booked
+    / failed / skipped (see ``services.fork.ReconcileOutcome``)."""
+
+    change_id: uuid.UUID
+    kind: str
+    result: str
+    detail: str | None = None
+
+
+class ReconcileResponse(BaseModel):
+    """The post-reconcile live baseline graph + the fork + per-change outcomes."""
+
+    baseline: GraphResponse
+    fork: ItineraryResponse
+    outcomes: list[ReconcileOutcomeResponse]
+
+
+class RequestReconcileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=2000)
 
 
 # ── Actor resolution ────────────────────────────────────────────────────────
@@ -509,6 +599,42 @@ def _graph_to_response(view: Any) -> GraphResponse:
     )
 
 
+def _node_change_response(change: NodeChange) -> NodeChangeResponse:
+    return NodeChangeResponse(
+        change_id=change.change_id,
+        kind=change.kind,
+        fork_node_id=change.fork_node_id,
+        baseline_node_id=change.baseline_node_id,
+        fields=list(change.fields),
+        before=change.before,
+        after=change.after,
+    )
+
+
+def _fork_diff_response(diff: ForkDiff) -> ForkDiffResponse:
+    return ForkDiffResponse(
+        fork_id=diff.fork_id,
+        baseline_id=diff.baseline_id,
+        added=[_node_change_response(c) for c in diff.added],
+        removed=[_node_change_response(c) for c in diff.removed],
+        changed=[_node_change_response(c) for c in diff.changed],
+        moved=[_node_change_response(c) for c in diff.moved],
+    )
+
+
+def _reconcile_response(result: ReconcileResult, baseline_view: Any) -> ReconcileResponse:
+    return ReconcileResponse(
+        baseline=_graph_to_response(baseline_view),
+        fork=_itinerary_to_response(result.fork),
+        outcomes=[
+            ReconcileOutcomeResponse(
+                change_id=o.change_id, kind=o.kind, result=o.result, detail=o.detail
+            )
+            for o in result.outcomes
+        ],
+    )
+
+
 # ── Routes ──────────────────────────────────────────────────────────────────
 
 
@@ -716,6 +842,8 @@ def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
         approved_at=itinerary.approved_at,
         forked_from_id=getattr(itinerary, "forked_from_id", None),
         fork_status=getattr(itinerary, "fork_status", None),
+        reconcile_requested_at=getattr(itinerary, "reconcile_requested_at", None),
+        reconcile_request_note=getattr(itinerary, "reconcile_request_note", None),
     )
 
 
@@ -819,6 +947,113 @@ async def fork_itinerary_endpoint(
     if isinstance(view, ItineraryError):
         _raise_for_error(view)
     return _graph_to_response(view)
+
+
+@router.get(
+    "/{fork_id}/diff",
+    response_model=ForkDiffResponse,
+    summary="Diff a fork against its baseline (added/removed/changed/moved).",
+)
+async def diff_fork_endpoint(
+    fork_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ForkDiffResponse:
+    """Pair a fork's nodes to their baseline origins by lineage and bucket the
+    divergence. Owner / creator / advisor only (``assert_itinerary_forkable``)."""
+    fork = await _load_itinerary(session, fork_id)
+    if fork is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_forkable(session, user, fork)
+    result = await diff_fork(session, fork_id=fork_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _fork_diff_response(result)
+
+
+@router.post(
+    "/{fork_id}/reconcile",
+    response_model=ReconcileResponse,
+    summary="Fold accepted fork changes into the live baseline (advisor only).",
+)
+async def reconcile_fork_endpoint(
+    fork_id: uuid.UUID,
+    payload: ReconcileRequest,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+) -> ReconcileResponse:
+    """Apply each accepted change to the baseline through the lock/queue +
+    status-gate path; booked nodes are refused per-change, not applied. Refuses
+    the whole pass on a ``block`` Analyze finding unless ``override_block``.
+    Advisor-only (``require_advisor`` + stamps ADVISOR)."""
+    actor = _advisor_actor_from_user(user)
+    decisions = [
+        ReconcileDecision(change_id=d.change_id, accept=d.accept) for d in payload.decisions
+    ]
+    result = await reconcile_fork(
+        session,
+        actor,
+        fork_id=fork_id,
+        decisions=decisions,
+        analysis_id=payload.analysis_id,
+        override_block=payload.override_block,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    baseline_view = await get_itinerary_graph(session, result.itinerary.id)
+    if isinstance(baseline_view, ItineraryError):
+        _raise_for_error(baseline_view)
+    return _reconcile_response(result, baseline_view)
+
+
+@router.post(
+    "/{fork_id}/request-reconcile",
+    response_model=ItineraryResponse,
+    summary="Ask staff to merge this fork (traveler/agent; advisor executes).",
+)
+async def request_reconcile_endpoint(
+    fork_id: uuid.UUID,
+    payload: RequestReconcileRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ItineraryResponse:
+    """Stamp a pending reconcile request on the fork. Owner / creator / advisor;
+    the traveler can request but only an advisor executes the merge."""
+    fork = await _load_itinerary(session, fork_id)
+    if fork is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_forkable(session, user, fork)
+    actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
+    result = await request_reconcile(session, actor, fork_id=fork_id, note=payload.note)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{fork_id}/abandon",
+    response_model=ItineraryResponse,
+    summary="Abandon a fork without merging (advisor or owner).",
+)
+async def abandon_fork_endpoint(
+    fork_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ItineraryResponse:
+    """Mark the fork ``abandoned`` and clear any pending reconcile request."""
+    fork = await _load_itinerary(session, fork_id)
+    if fork is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_forkable(session, user, fork)
+    actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
+    result = await abandon_fork(session, actor, fork_id=fork_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
 
 
 @router.post(

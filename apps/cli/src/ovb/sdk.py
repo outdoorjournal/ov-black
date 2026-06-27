@@ -224,6 +224,50 @@ class Ovb:
             gm.GraphResponse, "POST", f"/itinerary/{itinerary_id}/fork", json_body=body
         )
 
+    # ── fork diff / reconcile (G3) ───────────────────────────────────────
+    async def fork_diff(self, fork_id: str) -> gm.ForkDiffResponse:
+        """Diff a fork against its baseline (added/removed/changed/moved)."""
+        return await self._model(gm.ForkDiffResponse, "GET", f"/itinerary/{fork_id}/diff")
+
+    async def reconcile_fork(
+        self,
+        fork_id: str,
+        *,
+        decisions: list[dict[str, Any]],
+        analysis_id: str | None = None,
+        override_block: bool = False,
+    ) -> gm.ReconcileResponse:
+        """Fold accepted fork changes into the live baseline (advisor only).
+
+        ``decisions`` is a list of ``{"change_id": ..., "accept": bool}``.
+        """
+        body: dict[str, Any] = {"decisions": decisions, "override_block": override_block}
+        if analysis_id is not None:
+            body["analysis_id"] = analysis_id
+        return await self._model(
+            gm.ReconcileResponse, "POST", f"/itinerary/{fork_id}/reconcile", json_body=body
+        )
+
+    async def request_reconcile(
+        self, fork_id: str, *, note: str | None = None
+    ) -> gm.ItineraryResponse:
+        """Ask staff to merge this fork (traveler/agent; advisor executes)."""
+        body: dict[str, Any] = {}
+        if note is not None:
+            body["note"] = note
+        return await self._model(
+            gm.ItineraryResponse,
+            "POST",
+            f"/itinerary/{fork_id}/request-reconcile",
+            json_body=body,
+        )
+
+    async def abandon_fork(self, fork_id: str) -> gm.ItineraryResponse:
+        """Abandon a fork without merging (advisor or owner)."""
+        return await self._model(
+            gm.ItineraryResponse, "POST", f"/itinerary/{fork_id}/abandon", json_body={}
+        )
+
     # ── nodes ────────────────────────────────────────────────────────────
     async def add_node(
         self,
@@ -451,9 +495,7 @@ class Ovb:
             json_body=payload,
         )
 
-    async def archive_party_member(
-        self, client_id: str, member_id: str
-    ) -> gm.PartyMemberDetail:
+    async def archive_party_member(self, client_id: str, member_id: str) -> gm.PartyMemberDetail:
         return await self._model(
             gm.PartyMemberDetail,
             "DELETE",
@@ -541,22 +583,16 @@ class Ovb:
             f"/clients/{client_id}/documents/{document_id}/download",
         )
 
-    async def archive_client_document(
-        self, client_id: str, document_id: str
-    ) -> gm.DocumentDetail:
+    async def archive_client_document(self, client_id: str, document_id: str) -> gm.DocumentDetail:
         return await self._model(
             gm.DocumentDetail,
             "DELETE",
             f"/clients/{client_id}/documents/{document_id}",
         )
 
-    async def my_documents(
-        self, *, include_archived: bool = False
-    ) -> gm.DocumentListResponse:
+    async def my_documents(self, *, include_archived: bool = False) -> gm.DocumentListResponse:
         params: dict[str, QueryValue] = {"include_archived": 1} if include_archived else {}
-        return await self._model(
-            gm.DocumentListResponse, "GET", "/me/documents", params=params
-        )
+        return await self._model(gm.DocumentListResponse, "GET", "/me/documents", params=params)
 
     async def init_my_document(self, payload: dict[str, Any]) -> gm.DocumentInitResponse:
         return await self._model(

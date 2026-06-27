@@ -494,6 +494,30 @@ async def list_turns(
 # ── stream_turn ────────────────────────────────────────────────────────────
 
 
+async def _fork_baseline_title(
+    session: AsyncSession, itinerary_id: uuid.UUID | None
+) -> str | None:
+    """The baseline title when ``itinerary_id`` is a fork, else None (G3).
+
+    A non-None return (even an empty string) means the pinned itinerary is an
+    alternative version, so the prompt frames it as such. None means it is a
+    normal itinerary (or unpinned) and no fork framing is added.
+    """
+    if itinerary_id is None:
+        return None
+    forked_from_id = (
+        await session.execute(
+            select(Itinerary.forked_from_id).where(Itinerary.id == itinerary_id)
+        )
+    ).scalar_one_or_none()
+    if forked_from_id is None:
+        return None
+    title = (
+        await session.execute(select(Itinerary.title).where(Itinerary.id == forked_from_id))
+    ).scalar_one_or_none()
+    return title or ""
+
+
 async def _detect_mode(
     session: AsyncSession,
     *,
@@ -960,6 +984,10 @@ async def stream_turn(
         profile_facts = ctx_rows.profile_facts if ctx_rows else []
         osint_facts = ctx_rows.osint_facts if ctx_rows else []
 
+        # Fork-awareness (G3): if the session is pinned to a fork, frame the
+        # prompt around "an alternative version" of the baseline.
+        fork_baseline_title = await _fork_baseline_title(db, agent_session.itinerary_id)
+
         # Assemble prompt + context OUTSIDE the log-safe zone.
         traveler_ctx = assemble_traveler_context(
             dossier=dossier,
@@ -967,6 +995,7 @@ async def stream_turn(
             profile_facts=profile_facts,
             osint_facts=osint_facts,
             client_full_name=client_row.full_name,
+            alternative_of=fork_baseline_title,
         )
         system_prompt = build_system_prompt(traveler_ctx)
         agentcore_session_id = agent_session.agentcore_session_id
@@ -1050,6 +1079,12 @@ async def stream_turn(
         "actor_kind": actor.actor_kind,
         "client_id": str(client_id),
         "itinerary_id": (str(pinned_itinerary_id) if pinned_itinerary_id else None),
+        # Thread the session's audience so the fork tool can re-pin the session
+        # (POST /sessions) to the right (client_id, audience) thread (G3, §4.1).
+        # audience is NOT NULL in the DB; default defensively for stubs/old rows.
+        "audience": (
+            agent_session.audience.value if agent_session.audience is not None else "traveler"
+        ),
     }
 
     assembled_text = ""

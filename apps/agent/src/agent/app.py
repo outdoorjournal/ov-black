@@ -81,6 +81,7 @@ async def invoke(payload, context=None):  # type: ignore[no-untyped-def]
             "client_id": str(req.client_id),
             "itinerary_id": str(req.itinerary_id) if req.itinerary_id else None,
             "actor_kind": req.actor_kind,
+            "audience": req.audience,
         }
     )
 

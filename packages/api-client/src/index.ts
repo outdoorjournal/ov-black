@@ -10,6 +10,7 @@
 import { createClient } from "./generated/client/client.gen.js";
 import type { Client } from "./generated/client/types.gen.js";
 import {
+  abandonForkEndpointItineraryForkIdAbandonPost,
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete,
   archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete,
@@ -36,6 +37,7 @@ import {
   deleteEdgeEndpointItineraryItineraryIdEdgesEdgeIdDelete,
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
   detachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersMemberIdDelete,
+  diffForkEndpointItineraryForkIdDiffGet,
   dismissOnboardingEndpointOnboardingDismissPost,
   downloadClientDocumentEndpointClientsClientIdDocumentsDocumentIdDownloadGet,
   downloadMyDocumentEndpointMeDocumentsDocumentIdDownloadGet,
@@ -65,8 +67,10 @@ import {
   redactOsintFactEndpointClientsClientIdOsintFactsFactIdDelete,
   redactProfileFactEndpointClientsClientIdProfileFactsFactIdDelete,
   redeemInviteEndpointAuthRedeemInvitePost,
+  reconcileForkEndpointItineraryForkIdReconcilePost,
   reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
+  requestReconcileEndpointItineraryForkIdRequestReconcilePost,
   searchInventoryEndpointSearchInventoryGet,
   startAnalysisEndpointItineraryItineraryIdAnalysesPost,
   updateClientContactEndpointClientsClientIdContactsContactIdPatch,
@@ -100,8 +104,14 @@ import type {
   EdgeResponse,
   FillRequest,
   FillResponse,
+  ForkDiffResponse,
   GraphResponse,
   ItineraryResponse,
+  NodeChangeResponse,
+  ReconcileOutcomeResponse,
+  ReconcileRequest,
+  ReconcileResponse,
+  RequestReconcileRequest,
   LoginRequest,
   MyItinerarySummary,
   MyOnboardingSessionResponse,
@@ -190,6 +200,20 @@ export type {
   GapModel,
   GeoPointResponse,
   CreateNodeFromInventoryRequest,
+} from "./generated/types.gen.js";
+
+// Fork diff / reconcile (M004/G3). The advisor diff view renders the four
+// buckets (NodeChangeResponse) side by side, runs the feasibility gate, and
+// reconciles a per-change selection; the per-change ReconcileOutcomeResponse
+// reports applied / refused_booked honestly. Re-exported so apps/web types the
+// DiffPanel from one module.
+export type {
+  ForkDiffResponse,
+  NodeChangeResponse,
+  ReconcileRequest,
+  ReconcileResponse,
+  ReconcileOutcomeResponse,
+  RequestReconcileRequest,
 } from "./generated/types.gen.js";
 
 // Clients (S03): advisor-facing /clients surface — the request/response
@@ -3038,6 +3062,162 @@ export async function listItineraryDocuments(
       ok: false,
       status: response.status,
       detail: _parseDocumentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Fork diff / reconcile (M004/G3) ─────────────────────────────────────────
+
+export type ForkReconcileDetail =
+  | "not_found"
+  | "not_a_fork"
+  | "fork_infeasible"
+  | "advisor_only"
+  | "forbidden"
+  | "network_error"
+  | "unknown";
+
+function _detailToken(error: unknown): string {
+  return typeof error === "object" && error !== null && "detail" in error
+    ? String((error as { detail?: unknown }).detail ?? "")
+    : "";
+}
+
+function _parseForkReconcileDetail(
+  status: number,
+  error?: unknown,
+): ForkReconcileDetail {
+  const token = _detailToken(error);
+  if (token === "not_a_fork" || token === "fork_infeasible") return token;
+  if (status === 404) return "not_found";
+  if (status === 403) return token === "advisor_only" ? "advisor_only" : "forbidden";
+  return "unknown";
+}
+
+export type GetForkDiffResult =
+  | { ok: true; diff: ForkDiffResponse }
+  | { ok: false; status: number; detail: ForkReconcileDetail };
+
+/**
+ * Typed wrapper for GET /itinerary/{fork_id}/diff — the fork's divergence from
+ * its baseline (added/removed/changed/moved), paired by lineage. Owner/creator/
+ * advisor only.
+ */
+export async function getForkDiff(
+  client: Client,
+  forkItineraryId: string,
+): Promise<GetForkDiffResult> {
+  try {
+    const { data, error, response } =
+      await diffForkEndpointItineraryForkIdDiffGet({
+        client,
+        path: { fork_id: forkItineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, diff: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseForkReconcileDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ReconcileForkResult =
+  | { ok: true; result: ReconcileResponse }
+  | { ok: false; status: number; detail: ForkReconcileDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{fork_id}/reconcile (advisor only). Folds
+ * the accepted changes into the live baseline; per-change outcomes (applied /
+ * refused_booked / discarded) come back in the body, not as a 409 — a booked
+ * refusal is the expected "kept (booked)" row, not an error.
+ */
+export async function reconcileFork(
+  client: Client,
+  forkItineraryId: string,
+  body: ReconcileRequest,
+): Promise<ReconcileForkResult> {
+  try {
+    const { data, error, response } =
+      await reconcileForkEndpointItineraryForkIdReconcilePost({
+        client,
+        path: { fork_id: forkItineraryId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, result: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseForkReconcileDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type RequestReconcileResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: ForkReconcileDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{fork_id}/request-reconcile. The traveler
+ * (or agent) asks staff to merge the alternative; an advisor executes it.
+ */
+export async function requestReconcile(
+  client: Client,
+  forkItineraryId: string,
+  body: RequestReconcileRequest = {},
+): Promise<RequestReconcileResult> {
+  try {
+    const { data, error, response } =
+      await requestReconcileEndpointItineraryForkIdRequestReconcilePost({
+        client,
+        path: { fork_id: forkItineraryId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseForkReconcileDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type AbandonForkResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: ForkReconcileDetail };
+
+/** Typed wrapper for POST /itinerary/{fork_id}/abandon (advisor or owner). */
+export async function abandonFork(
+  client: Client,
+  forkItineraryId: string,
+): Promise<AbandonForkResult> {
+  try {
+    const { data, error, response } =
+      await abandonForkEndpointItineraryForkIdAbandonPost({
+        client,
+        path: { fork_id: forkItineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseForkReconcileDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };

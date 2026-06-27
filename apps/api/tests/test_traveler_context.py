@@ -148,6 +148,43 @@ def test_dossier_section_skipped_when_no_dossier_and_no_facts() -> None:
     assert "Profile (traveler self-expressed" in out
 
 
+def test_alternative_version_framing_leads_when_fork() -> None:
+    """G3: a forked pin gets a leading 'alternative version' directive."""
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[],
+        osint_facts=[],
+        client_full_name="Alex Stone",
+        alternative_of="Japan in Spring",
+    )
+    assert "ALTERNATIVE VERSION of 'Japan in Spring'" in out
+    assert "cannot merge it yourself" in out
+    # The directive leads the prompt (most salient instruction every turn).
+    assert out.index("ALTERNATIVE VERSION") < out.index("Alex Stone")
+
+
+def test_no_alternative_framing_for_a_normal_itinerary() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[_profile_fact("x")],
+        osint_facts=[],
+    )
+    assert "ALTERNATIVE VERSION" not in out
+
+
+def test_alternative_framing_falls_back_when_baseline_untitled() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[],
+        osint_facts=[],
+        alternative_of="",  # a fork whose baseline carries no title
+    )
+    assert "ALTERNATIVE VERSION of 'the agreed plan'" in out
+
+
 def test_profile_facts_render_with_source_kind_and_kind_tags() -> None:
     out = assemble_traveler_context(
         dossier=None,

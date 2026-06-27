@@ -136,7 +136,7 @@ state files reflect the branch.*
 |---|---|---|---|
 | **G1 — Status-aware mutation gates** ✅ *landed — see §8* | Booked/finalized immutability. | `_check_status_gate` in `services/itineraries.py` (per `TravelGraph_Analysis` §11): `approved` editable only by advisor-after-demote; `booked`/`confirmed` immutable except advisor demotion/cancellation (writes visible `node_history`). Agent `update_node_status` inherits the gate; refusals return a crafted reason. Per-node `lock_reason` exposed so the agent can explain. | A `booked` node refuses traveler/agent edits with a crafted message; advisor demotion works + is logged; tests cover every status × actor cell. |
 | **G2 — Itinerary fork (versioned clone)** ✅ *landed — see §8* | Branch an itinerary (D-FORK). | Migration: `itineraries.forked_from_id`, `fork_status`, `nodes.forked_from_node_id` lineage. `services/fork.py::fork_itinerary` deep-copies nodes/edges: pre-booked → editable, `booked`/`confirmed` → carried **locked**. Agent tool + traveler-initiated fork. | Traveler forks an approved itinerary; the fork is independently editable; booked nodes are present but locked; lineage links each forked node to its origin. |
-| **G3 — Diff + reconcile surface** | Staff fold changes back in. | `services/fork.py::diff_fork` (added/removed/changed/moved via lineage pairing); Command-Center **diff view** (side-by-side baseline vs. fork); per-change **accept/discard** that mutates the live graph, gated by an Analyze feasibility check before accept. | Advisor opens a fork's diff, runs analyze, accepts a subset into the live plan and discards the rest; live itinerary reflects only accepted changes; booked nodes can't be changed via reconcile. |
+| **G3 — Diff + reconcile surface** ✅ *landed — see §8* | Staff fold changes back in **+ conversational fork**. | `services/fork.py::diff_fork` (added/removed/changed/moved via lineage pairing); Command-Center **diff view** (side-by-side baseline vs. fork); per-change **accept/discard** that mutates the live graph, gated by an Analyze feasibility check before accept. **Folds in the conversational fork** (agent re-pins to the alternative + traveler request-reconcile). **Locked:** advisor *executes* reconcile, traveler *requests*; full-stack (incl. the web diff view); session re-pins to the fork (persisted); agent calls it "an alternative version." | Advisor opens a fork's diff, runs analyze, accepts a subset into the live plan and discards the rest; live itinerary reflects only accepted changes; booked nodes can't be changed via reconcile. |
 
 ### M005 — Invoicing & booking (Pillar 6 + the money gate)
 *Goal: invoices total booked inventory; pay-before-book; advisor books to confirmed.*
@@ -173,7 +173,6 @@ state files reflect the branch.*
 | **PostGIS / geo feasibility accuracy in Analyze.** | Start with haversine + per-mode speed caps (no live traffic) for standard depth; defer real-time to post-MVP deep mode. |
 | **Vault security for HNW clients.** | SSE-KMS + presigned, access-scoped URLs + RLS; never log document content/keys (extend the existing redaction discipline); legal review of OSINT/doc retention. |
 | **Vendor rate limits / flakiness** (Duffel, Ratehawk, Places). | Provider abstraction already isolates this; apply R018 silent-retry + crafted-failure; agent treats "no results" as a conversational pivot. |
-| **Planning-doc drift** (GSD already drifted 9 migrations behind before it was retired). | Keep `doc/mvp-plan.md` updated per slice — it's now the single forward ledger. |
 
 ---
 
@@ -192,23 +191,18 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 ## 7. Suggested next steps
 
-> B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004/G1 + G2 landed** (2026-06-26 — see §8;
-> D-FORK locked as versioned-clone). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto the
-> `dev` trunk. **D-PAY** must be locked before M005.
+> B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004 complete (G1 + G2 + G3 landed**;
+> see §8 — D-FORK locked as versioned-clone). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto
+> the `dev` trunk. **D-PAY** must be locked before M005.
 
-1. **M004/G3 — Diff + reconcile**: the last M004 slice. `services/fork.py::diff_fork` (added/removed/
-   changed/moved by `forked_from_node_id` pairing), a Command-Center side-by-side diff view, and per-change
-   accept/discard that mutates the live graph through the same lock/queue path — gated by an Analyze
-   feasibility check before accept (the fork already carries geo). The `fork_status` transitions
-   (`open → reconciled`/`abandoned`) land here. The pillar-5 e2e `test_advisor_diffs_and_reconciles_a_fork`
-   is the scaffold waiting to light up.
-2. **M005 — Invoicing & booking** is now fully unblocked on its hard deps: node cost (B4) **and** status
-   gates (G1) are both in. I3's money gate slots directly on top of G1 (promotion `approved → booked`
-   requires a paid invoice line). Lock **D-PAY** before I2.
-3. **A G1/G2 web surface** (render the `lock_reason` badge + crafted refusal copy; a fork action + the G3
-   diff view) is a later web slice — the api-client wrapper already surfaces `status_locked` and the fork
-   route; no UI consumes them yet.
-4. **B8 — Templates: snapshot & reuse** stays **deferred (no scheduled date)** — parked until prioritized;
+1. **M005 — Invoicing & booking** is the remaining MVP track, now fully unblocked on its hard deps: node
+   cost (B4) **and** status gates (G1) are both in, and G3 closed out M004. I3's money gate slots directly
+   on top of G1 (promotion `approved → booked` requires a paid invoice line). **Lock D-PAY before I2**
+   (recommendation: Braintree; gate `booked` on `paid`, advisor override to `issued`, logged).
+2. **A G1 web surface for the lock badge** (render `lock_reason` + crafted refusal copy on the canvas) is
+   still a later web slice — G3 shipped the fork *diff/reconcile* UI, but the per-node booked-lock badge on
+   the main canvas isn't surfaced yet (the api-client already exposes `status_locked`).
+3. **B8 — Templates: snapshot & reuse** stays **deferred (no scheduled date)** — parked until prioritized;
    the backing schema (0015) already landed, so it can resume cold. Deployment (F2/F3) stays deferred until
    you choose to cut a release.
 
@@ -219,6 +213,84 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-27 — M004/G3 Diff + reconcile (+ conversational fork) — **full-stack: lineage diff, advisor reconcile through the live status-gate path, agent re-pins to the alternative, Command-Center diff view; pillar-5 e2e fully lit up. M004 (Pillar 5) complete.**
+
+**Decisions (founder, locked at plan time — see the now-retired
+[g3-fork-reconcile-handoff.md](./g3-fork-reconcile-handoff.md)):** advisor
+*executes* reconcile, traveler *requests*; **full-stack** (backend + agent + the
+web diff view all ship together); the session **re-pins to the fork** (persisted
+across turns + in-process for the same turn); the agent's prose calls it **"an
+alternative version,"** never a fork. **Feasibility:** warn + explicit advisor
+override (logged); default refuse-without-override on a `block` finding.
+**Booked/confirmed never change via reconcile** — enforced for free because
+reconcile mutates the live graph through the same `update_node`/`delete_node`
+service path (the G1 gate refuses them per-change).
+
+**What landed (3 phases):**
+- **Phase 1 — backend** (`apps/api`): migration `0022_fork_reconcile.sql`
+  (`itineraries.reconcile_requested_at` + `reconcile_request_note` + partial
+  index; the diff itself needs no new columns — it pairs by G2's
+  `forked_from_node_id` lineage). `services/fork.py`: `diff_fork` (added/removed/
+  changed/moved, with the **intrinsic approved→proposed demotion excluded**;
+  changed & moved kept disjoint via a `"position"` sub-flag), `reconcile_fork`
+  (advisor-only; applies accepted changes to the **baseline** through the gated
+  service funcs — approved baseline nodes auto-demote first, booked/confirmed are
+  refused per-change; feasibility gate over the fork's latest completed Analyze),
+  `request_reconcile` + `abandon_fork`. Four `/itinerary/{fork_id}` endpoints
+  (`GET /diff`, `POST /reconcile` [`require_advisor`], `POST /request-reconcile`,
+  `POST /abandon`) + response models; `ItineraryResponse` carries the request
+  stamp. `not_a_fork`/`fork_infeasible` reuse `VALIDATION_ERROR` detail tokens.
+- **Phase 2 — agent** (`apps/agent` + `apps/api`): the G2 fork tool now **re-pins
+  the session to the fork** (DB via the idempotent `POST /sessions` reuse path +
+  in-process `pin_ctx` for the rest of the turn); `audience` threaded
+  TurnPayload→pin_ctx→`/sessions` so the re-pin keeps the advisor-vs-traveler
+  thread. New tools `request_reconcile` (traveler-facing) + `reconcile_alternative`
+  (advisor-only, coarse accept-all/abandon), both in the planning bundle.
+  `assemble_traveler_context` leads with an **"alternative version of '{baseline}'"**
+  directive when the pin is a fork; `GET /agent/context` carries
+  `is_alternative`/`baseline_title`/`reconcile_requested`.
+- **Phase 3 — web** (`apps/web` + `packages/api-client`): discriminated wrappers
+  `getForkDiff`/`reconcileFork`/`requestReconcile`/`abandonFork`. A self-contained
+  **`DiffPanel`** (advisor Diff tab, shown only on a fork) renders the four buckets
+  side-by-side with per-change Accept toggles, a **Run feasibility check** (polls
+  Analyze, `block` in `#8b2a1d`), and **Reconcile selected** → honest per-change
+  outcomes (a booked refusal reads "kept (booked)"); writes gate on the lock. An
+  **"alternative version of {baseline}"** banner renders whenever `forked_from_id`
+  is set, with a baseline link + advisor "Reconcile…" affordance; `page.tsx`
+  resolves the baseline title for it.
+
+**What's tested:** `apps/api` **683 passed** (+19: `test_fork_reconcile.py` — diff
+buckets incl. demotion-exclusion, reconcile subset + booked refusal + reconciled
+status, feasibility gate, request/abandon, router 200/advisor-403/401; plus the
+context fork-awareness + the `assemble_traveler_context` directive), ruff + mypy
+clean. `apps/agent` **41 passed** (+7: bundle registration, fork re-pin request +
+re-pin-failure resilience, request_reconcile, advisor-only reconcile guard,
+accept-all decision build, abandon). `apps/cli` offline **53 passed** (+2
+`reconcile_holds` invariant). `apps/web` **117 passed** (+5 DiffPanel: buckets,
+toggle→decisions, outcomes incl. booked "kept", lock-gating, empty state) +
+typecheck + lint. Both SDKs regenerated; api-client `tsc` clean. **Pillar-5 e2e
+fully lit up against a live local stack** — `test_advisor_diffs_and_reconciles_a_
+fork` (book → fork → rework+add → diff → analyze → accept-subset/discard → live
+baseline reflects only accepted, booking untouched) **and**
+`test_traveler_requests_and_advisor_reconciles` (traveler forks + requests, can't
+execute [403], advisor reconciles → `reconciled` + request cleared) both **pass**;
+the G2 forks/immutability tests still pass. `scripts/verify-sG3.sh` — **27/27**.
+
+**What remains (resume hooks):** (1) **`moved` reconcile** rewires only the moved
+node's own predecessor/successor `follows` edges (best-effort, §8 "don't
+over-engineer"); time-only and parent-subgraph moves are detected in the diff but
+not auto-applied — a follow-on if staff hit it. (2) **Reconcile re-approval** —
+applying a change to an approved baseline node demotes it to `proposed` (it's no
+longer the approved version); the advisor re-approves via the normal flow rather
+than reconcile restoring approval. (3) **No full-view banner/tab render test** —
+DiffPanel is unit-tested and the banner/Diff-tab gating is typecheck- + static-
+guard-covered (no jsdom harness renders the whole canvas). (4) **Real agent turn**
+driving a conversational fork+request end-to-end needs the local agent on :8080;
+the e2e drives the same routes via the SDK where the agent backend is dark.
+**With G3, M004 (Pillar 5) is complete** — status gates (G1) + versioned-clone
+fork (G2) + diff/reconcile + conversational fork (G3) all landed. **Next: M005
+(invoicing & booking)** — unblocked on cost (B4) + gates (G1); lock **D-PAY** first.
 
 ### 2026-06-26 — M004/G2 Itinerary fork (versioned clone) — **deep-copy clone with per-node lineage; booked carried locked; pillar-5 e2e lit up** (migration + apps/api + agent tool + both SDKs + e2e)
 

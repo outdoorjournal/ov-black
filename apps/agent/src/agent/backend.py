@@ -46,7 +46,12 @@ reads + private fact writes that the traveler must not be able to call.
 # Stashed so individual tools can read the itinerary pin without plumbing.
 pin_ctx: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "agent_pin",
-    default={"client_id": None, "itinerary_id": None, "actor_kind": "user"},
+    default={
+        "client_id": None,
+        "itinerary_id": None,
+        "actor_kind": "user",
+        "audience": "traveler",
+    },
 )
 
 

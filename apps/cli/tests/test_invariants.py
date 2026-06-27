@@ -12,6 +12,7 @@ from ovb.invariants import (
     cost_totals,
     graph_integrity,
     money_gate_reconciles,
+    reconcile_holds,
     redaction_leak,
     require_finding,
     status_actor_gate_holds,
@@ -170,3 +171,80 @@ def test_status_actor_gate_holds_checks_lock_reason() -> None:
     broken = make_graph(iid, nodes=[make_node(booked_id, iid, status="booked", lock_reason=None)])
     violations = status_actor_gate_holds(broken)
     assert any(v.code == "missing_lock_reason" for v in violations)
+
+
+def _change(**over: object) -> gm.NodeChangeResponse:
+    base: dict[str, object] = {"change_id": ITIN, "kind": "changed", "fields": []}
+    base.update(over)
+    return gm.NodeChangeResponse.model_validate(base)
+
+
+def test_reconcile_holds_folds_accepted_and_keeps_booking() -> None:
+    """G3: accepted changes land in the live baseline; the booking is untouched."""
+    iid = ITIN
+    keep = "22222222-2222-2222-2222-222222222222"
+    booked = "33333333-3333-3333-3333-333333333333"
+    drop = "44444444-4444-4444-4444-444444444444"
+
+    baseline = make_graph(
+        iid,
+        nodes=[
+            make_node(keep, iid, status="proposed", title="old"),
+            make_node(booked, iid, status="booked", title="Aman", lock_reason="status_locked"),
+            make_node(drop, iid, status="proposed", title="to remove"),
+        ],
+    )
+    # Accepted: keep's title folded in, drop removed; the booking carries over intact.
+    live = make_graph(
+        iid,
+        nodes=[
+            make_node(keep, iid, status="proposed", title="new"),
+            make_node(booked, iid, status="booked", title="Aman", lock_reason="status_locked"),
+        ],
+    )
+    accepted = [
+        _change(
+            change_id=keep,
+            kind="changed",
+            baseline_node_id=keep,
+            fields=["title"],
+            after={"title": "new"},
+        ),
+        _change(change_id=drop, kind="removed", baseline_node_id=drop, fields=[]),
+    ]
+    assert reconcile_holds(live, accepted, baseline) == []
+
+
+def test_reconcile_holds_flags_unapplied_change_and_mutated_booking() -> None:
+    """G3: a change that didn't fold in, and a mutated booking, are violations."""
+    iid = ITIN
+    keep = "22222222-2222-2222-2222-222222222222"
+    booked = "33333333-3333-3333-3333-333333333333"
+
+    baseline = make_graph(
+        iid,
+        nodes=[
+            make_node(keep, iid, status="proposed", title="old"),
+            make_node(booked, iid, status="booked", title="Aman", lock_reason="status_locked"),
+        ],
+    )
+    # The accepted title was NOT applied, and the booking's title was mutated.
+    live = make_graph(
+        iid,
+        nodes=[
+            make_node(keep, iid, status="proposed", title="old"),
+            make_node(booked, iid, status="booked", title="Tampered", lock_reason="status_locked"),
+        ],
+    )
+    accepted = [
+        _change(
+            change_id=keep,
+            kind="changed",
+            baseline_node_id=keep,
+            fields=["title"],
+            after={"title": "new"},
+        ),
+    ]
+    codes = {v.code for v in reconcile_holds(live, accepted, baseline)}
+    assert "reconcile_unapplied_change" in codes
+    assert "reconcile_changed_booking" in codes

@@ -85,14 +85,30 @@ def assemble_traveler_context(
     profile_facts: list[ProfileFact],
     osint_facts: list[OsintFact],
     client_full_name: str | None = None,
+    alternative_of: str | None = None,
 ) -> str:
     """Return the three-tier context block for the system prompt.
 
     The output is plaintext — no JSON, no Markdown — because the runtime
     appends its mode-specific rubric on top of this and concatenation is
     the simplest reliable framing.
+
+    When ``alternative_of`` is set, the pinned itinerary is a fork (G3): a
+    leading directive frames it as "an alternative version" of the named
+    baseline so the agent's prose never calls it a fork and never claims it can
+    merge it itself.
     """
     sections: list[str] = []
+
+    # Lead with the fork framing so it's the most salient instruction every turn.
+    if alternative_of is not None:
+        baseline = alternative_of or "the agreed plan"
+        sections.append(
+            f"You are working on an ALTERNATIVE VERSION of '{baseline}', not the "
+            "agreed plan. Always refer to it as an alternative version (never a "
+            '"fork"). The traveler can ask you to request that staff merge it into '
+            "the agreed plan; you cannot merge it yourself."
+        )
 
     if client_full_name:
         sections.append(f"Client: {client_full_name}")

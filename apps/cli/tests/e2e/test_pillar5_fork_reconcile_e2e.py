@@ -27,8 +27,10 @@ import pytest
 
 from ovb.errors import ApiError
 from ovb.invariants import (
+    BOOKABLE_TYPES,
     assert_no_violations,
     fork_lineage_holds,
+    reconcile_holds,
     status_actor_gate_holds,
 )
 from ovb.sdk import Ovb
@@ -139,24 +141,114 @@ async def test_traveler_forks_an_approved_itinerary(
     assert next(n.title for n in after.nodes if str(n.id) == origin_id) == baseline_title
 
 
-async def test_advisor_diffs_and_reconciles_a_fork() -> None:
+async def test_advisor_diffs_and_reconciles_a_fork(
+    advisor: Ovb, harness: Any, built_itinerary: str
+) -> None:
     """G3 — diff + reconcile: accept a subset into the live plan after an Analyze check.
 
-    Intended flow (M004/G3):
-
-        # 1. Diff the fork against its baseline by lineage pairing.
-        diff = await advisor.diff_fork(fork.id)             # added/removed/changed/moved
-        assert diff.added or diff.changed
-
-        # 2. Feasibility-gate before accepting (reuse B5 Analyze on the fork).
-        analysis = await flows.analyze_and_wait(harness, advisor, fork.id)
-        assert str(analysis.status) == "completed"
-
-        # 3. Accept a subset → mutates the LIVE graph through the same lock/queue path.
-        await advisor.reconcile(fork.id, accept=[change_a.id], discard=[change_b.id])
-        live = await advisor.get_graph(itin)
-        assert change_a applied and change_b absent
-
-        # 4. A booked node cannot be changed via reconcile (gate from G1 still holds).
+    Books a node (so the fork carries a locked booking reconcile must never touch),
+    forks, reworks a pre-booked node + adds one, diffs by lineage, runs Analyze on
+    the fork, then accepts the rework and discards the add — and asserts the live
+    baseline reflects only the accepted change while the booking is untouched.
     """
-    flows.skip_until("M004/G3", "fork diff + reconcile surface")
+    itin = built_itinerary
+    graph = await advisor.get_graph(itin)
+
+    # Book a node so the fork carries a locked booking.
+    bookable = _editable_bookable(graph)
+    if bookable is None:
+        pytest.skip("no editable bookable node to book before forking")
+    await advisor.update_node(itin, str(bookable.id), fields={"status": "booked"})
+    await advisor.approve(itin)
+
+    fork = await advisor.fork_itinerary(itin)
+    fork_id = str(fork.itinerary.id)
+
+    # Rework a pre-booked content node (→ changed) and add a node (→ added).
+    prebooked = next(
+        n
+        for n in fork.nodes
+        if str(n.status) == "proposed" and str(n.type) in BOOKABLE_TYPES
+    )
+    origin_id = str(prebooked.forked_from_node_id)
+    await advisor.update_node(
+        fork_id, str(prebooked.id), fields={"title": "Slower Kyoto morning"}
+    )
+    added = await advisor.add_node(
+        fork_id, type="experience", title="Tea ceremony", status="proposed"
+    )
+
+    diff = await advisor.fork_diff(fork_id)
+    change_keep = next(c for c in diff.changed if str(c.baseline_node_id) == origin_id)
+    change_drop = next(c for c in diff.added if str(c.fork_node_id) == str(added.id))
+
+    # Feasibility-gate on the fork (it carries geo from G2, so standard Analyze runs).
+    analysis = await flows.analyze_and_wait(harness, advisor, fork_id)
+    assert str(analysis.status) == "completed"
+
+    baseline_before = await advisor.get_graph(itin)
+    result = await advisor.reconcile_fork(
+        fork_id,
+        decisions=[
+            {"change_id": str(change_keep.change_id), "accept": True},
+            {"change_id": str(change_drop.change_id), "accept": False},
+        ],
+        analysis_id=str(analysis.id),
+    )
+    outcomes = {str(o.change_id): str(o.result) for o in result.outcomes}
+    assert outcomes[str(change_keep.change_id)] == "applied"
+    assert outcomes[str(change_drop.change_id)] == "discarded"
+
+    # The live baseline reflects only the accepted change; the discarded add is absent.
+    live = await advisor.get_graph(itin)
+    assert next(n.title for n in live.nodes if str(n.id) == origin_id) == "Slower Kyoto morning"
+    assert all(str(n.title) != "Tea ceremony" for n in live.nodes)
+    # Invariant: accepted folded in, the carried booking never mutated.
+    assert_no_violations(reconcile_holds(live, [change_keep], baseline_before))
+
+
+async def test_traveler_requests_and_advisor_reconciles(
+    advisor: Ovb, traveler: Ovb, linked_traveler_client_id: str
+) -> None:
+    """G3 conversational fork — the traveler requests a merge; the advisor executes it.
+
+    The traveler owns an itinerary (via their linked client), forks it, reworks the
+    alternative, and *requests* reconciliation — but cannot execute it (403). The
+    advisor sees the pending request, reconciles, and the live baseline reflects the
+    merge while the request is cleared.
+    """
+    client_id = linked_traveler_client_id
+    itin = await advisor.create_itinerary(title="Traveler trip", client_id=client_id)
+    itin_id = str(itin.id)
+    n1 = await advisor.add_node(
+        itin_id, type="experience", title="Original plan", status="proposed"
+    )
+    await advisor.approve(itin_id)
+
+    # The traveler forks their own itinerary and reworks the alternative.
+    fork = await traveler.fork_itinerary(itin_id)
+    fork_id = str(fork.itinerary.id)
+    fork_node = next(n for n in fork.nodes if str(n.forked_from_node_id) == str(n1.id))
+    await traveler.update_node(
+        fork_id, str(fork_node.id), fields={"title": "Traveler's alternative"}
+    )
+
+    # The traveler can REQUEST a merge but not execute one.
+    requested = await traveler.request_reconcile(fork_id, note="prefer the slower version")
+    assert requested.reconcile_requested_at is not None
+    with pytest.raises(ApiError) as exc:
+        await traveler.reconcile_fork(fork_id, decisions=[])
+    assert exc.value.status == 403
+
+    # The advisor sees the request and executes the reconcile.
+    diff = await advisor.fork_diff(fork_id)
+    change = next(c for c in diff.changed if str(c.baseline_node_id) == str(n1.id))
+    result = await advisor.reconcile_fork(
+        fork_id, decisions=[{"change_id": str(change.change_id), "accept": True}]
+    )
+    assert result.outcomes[0].result == "applied"
+    assert str(result.fork.fork_status) == "reconciled"
+    assert result.fork.reconcile_requested_at is None
+
+    live = await advisor.get_graph(itin_id)
+    assert next(n.title for n in live.nodes if str(n.id) == str(n1.id)) == "Traveler's alternative"

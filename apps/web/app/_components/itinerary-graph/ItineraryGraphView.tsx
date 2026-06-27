@@ -38,6 +38,8 @@ export type ItineraryGraphViewProps = {
   startLocked?: boolean;
   /** Which view to render. Defaults to the horizontal timeline. */
   view?: ItineraryGraphViewKind;
+  /** Title of the baseline this itinerary forked from (G3), for the banner. */
+  baselineTitle?: string | null;
 };
 
 export function ItineraryGraphView({
@@ -49,6 +51,7 @@ export function ItineraryGraphView({
   accessToken = null,
   startLocked = false,
   view = "horizontal",
+  baselineTitle = null,
 }: ItineraryGraphViewProps) {
   return (
     <itineraryGraphStore.Provider
@@ -62,7 +65,9 @@ export function ItineraryGraphView({
         startLocked,
       }}
     >
-      {view === "horizontal" ? <HorizontalView timeline={timeline} /> : null}
+      {view === "horizontal" ? (
+        <HorizontalView timeline={timeline} baselineTitle={baselineTitle} />
+      ) : null}
     </itineraryGraphStore.Provider>
   );
 }

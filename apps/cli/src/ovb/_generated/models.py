@@ -658,6 +658,25 @@ class MyOnboardingSessionResponse(BaseModel):
     has_prior_session: Annotated[bool, Field(title='Has Prior Session')]
 
 
+class NodeChangeResponse(BaseModel):
+    """
+    One divergence in a fork's diff (added/removed/changed/moved).
+
+    ``change_id`` is the stable handle the reconcile request references in its
+    decisions. ``before`` is the baseline snapshot, ``after`` the fork snapshot
+    (one is null for added/removed). ``fields`` names the changed content fields
+    (plus ``"position"`` when a content change also moved).
+    """
+
+    change_id: Annotated[UUID, Field(title='Change Id')]
+    kind: Annotated[str, Field(title='Kind')]
+    fork_node_id: Annotated[UUID | None, Field(title='Fork Node Id')] = None
+    baseline_node_id: Annotated[UUID | None, Field(title='Baseline Node Id')] = None
+    fields: Annotated[list[str] | None, Field(title='Fields')] = None
+    before: Annotated[dict[str, Any] | None, Field(title='Before')] = None
+    after: Annotated[dict[str, Any] | None, Field(title='After')] = None
+
+
 class NodeStatus(StrEnum):
     """
     Mirrors the public.node_status Postgres enum.
@@ -927,6 +946,45 @@ class Range(BaseModel):
     max: Annotated[float | None, Field(title='Max')] = None
 
 
+class ReconcileDecisionPayload(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    change_id: Annotated[UUID, Field(title='Change Id')]
+    accept: Annotated[bool, Field(title='Accept')]
+
+
+class ReconcileOutcomeResponse(BaseModel):
+    """
+    What happened to one decided change: applied / discarded / refused_booked
+    / failed / skipped (see ``services.fork.ReconcileOutcome``).
+    """
+
+    change_id: Annotated[UUID, Field(title='Change Id')]
+    kind: Annotated[str, Field(title='Kind')]
+    result: Annotated[str, Field(title='Result')]
+    detail: Annotated[str | None, Field(title='Detail')] = None
+
+
+class ReconcileRequest(BaseModel):
+    """
+    Advisor per-change accept/discard verdicts, with the feasibility gate.
+
+    ``analysis_id`` pins which Analyze run gates the pass (defaults to the fork's
+    latest completed run); ``override_block`` is the advisor's explicit, logged
+    escape hatch past a ``block`` finding.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    decisions: Annotated[
+        list[ReconcileDecisionPayload] | None, Field(title='Decisions')
+    ] = None
+    analysis_id: Annotated[UUID | None, Field(title='Analysis Id')] = None
+    override_block: Annotated[bool | None, Field(title='Override Block')] = False
+
+
 class RedactRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -943,6 +1001,17 @@ class RedeemInviteRequest(BaseModel):
 
     code: Annotated[str, Field(max_length=128, min_length=1, title='Code')]
     email: Annotated[EmailStr, Field(title='Email')]
+
+
+class Note(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Note')]
+
+
+class RequestReconcileRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    note: Annotated[Note | None, Field(title='Note')] = None
 
 
 class RadiusM(RootModel[int]):
@@ -1450,6 +1519,15 @@ class FlightItem(BaseModel):
     kind: Annotated[Literal['flight'], Field(title='Kind')] = 'flight'
 
 
+class ForkDiffResponse(BaseModel):
+    fork_id: Annotated[UUID, Field(title='Fork Id')]
+    baseline_id: Annotated[UUID, Field(title='Baseline Id')]
+    added: Annotated[list[NodeChangeResponse], Field(title='Added')]
+    removed: Annotated[list[NodeChangeResponse], Field(title='Removed')]
+    changed: Annotated[list[NodeChangeResponse], Field(title='Changed')]
+    moved: Annotated[list[NodeChangeResponse], Field(title='Moved')]
+
+
 class HTTPValidationError(BaseModel):
     detail: Annotated[list[ValidationError] | None, Field(title='Detail')] = None
 
@@ -1505,6 +1583,12 @@ class ItineraryResponse(BaseModel):
     approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')] = None
     forked_from_id: Annotated[UUID | None, Field(title='Forked From Id')] = None
     fork_status: ForkStatus | None = None
+    reconcile_requested_at: Annotated[
+        AwareDatetime | None, Field(title='Reconcile Requested At')
+    ] = None
+    reconcile_request_note: Annotated[
+        str | None, Field(title='Reconcile Request Note')
+    ] = None
 
 
 class MealItem(BaseModel):
@@ -1746,6 +1830,11 @@ class AgentContext(BaseModel):
     profile_facts: Annotated[list[ProfileFactDetail], Field(title='Profile Facts')]
     osint_facts: Annotated[list[OsintFactDetail], Field(title='Osint Facts')]
     party_members: Annotated[list[PartyMemberDetail], Field(title='Party Members')]
+    is_alternative: Annotated[bool | None, Field(title='Is Alternative')] = False
+    baseline_title: Annotated[str | None, Field(title='Baseline Title')] = None
+    reconcile_requested: Annotated[bool | None, Field(title='Reconcile Requested')] = (
+        False
+    )
 
 
 class AnalysisDetailResponse(BaseModel):
@@ -1836,3 +1925,13 @@ class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
     edges: Annotated[list[EdgeResponse], Field(title='Edges')]
+
+
+class ReconcileResponse(BaseModel):
+    """
+    The post-reconcile live baseline graph + the fork + per-change outcomes.
+    """
+
+    baseline: GraphResponse
+    fork: ItineraryResponse
+    outcomes: Annotated[list[ReconcileOutcomeResponse], Field(title='Outcomes')]

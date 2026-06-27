@@ -23,12 +23,14 @@ compromised tool cannot escalate one tier into another.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import PartyMemberActor
+from app.models import AgentSession, Itinerary, PartyMemberActor
 from app.schemas.dossier import DossierDetail
 from app.schemas.facts import (
     AgentContext,
@@ -79,6 +81,38 @@ def require_agent_token(
         raise HTTPException(status_code=401, detail="agent_unauthorized") from exc
 
 
+async def _resolve_session_fork_state(
+    session: AsyncSession, session_id: uuid.UUID
+) -> tuple[bool, str | None, bool]:
+    """(is_alternative, baseline_title, reconcile_requested) for the session's pin (G3).
+
+    Extracted so the agent-context route tests can stub it (the route's other DB
+    read, ``load_agent_context``, is already stubbed the same way).
+    """
+    pinned_itinerary_id = (
+        await session.execute(
+            select(AgentSession.itinerary_id).where(AgentSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+    if pinned_itinerary_id is None:
+        return (False, None, False)
+    fork_row = (
+        await session.execute(
+            select(Itinerary.forked_from_id, Itinerary.reconcile_requested_at).where(
+                Itinerary.id == pinned_itinerary_id
+            )
+        )
+    ).first()
+    if fork_row is None or fork_row.forked_from_id is None:
+        return (False, None, False)
+    baseline_title = (
+        await session.execute(
+            select(Itinerary.title).where(Itinerary.id == fork_row.forked_from_id)
+        )
+    ).scalar_one_or_none()
+    return (True, baseline_title, fork_row.reconcile_requested_at is not None)
+
+
 @router.get(
     "/context",
     response_model=AgentContext,
@@ -106,9 +140,17 @@ async def get_agent_context_endpoint(
             updated_at=ctx.dossier.updated_at,
         )
 
+    # Fork-awareness (G3): is the session pinned to a fork (alternative version)?
+    is_alternative, baseline_title, reconcile_requested = await _resolve_session_fork_state(
+        session, claims.session_id
+    )
+
     return AgentContext(
         client_id=ctx.client.id,
         client_full_name=ctx.client.full_name,
+        is_alternative=is_alternative,
+        baseline_title=baseline_title,
+        reconcile_requested=reconcile_requested,
         dossier=dossier_detail,
         dossier_facts=[
             DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts

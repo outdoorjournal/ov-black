@@ -61,6 +61,9 @@ class TurnPayload(BaseModel):
     - ``actor_kind`` — ``user`` (client) or ``advisor``.
     - ``client_id`` — UUID of the ``clients`` row.
     - ``itinerary_id`` — non-null for planning / approved-itinerary Q&A.
+    - ``audience`` — ``traveler`` (shared client thread) or ``advisor`` (the
+      private advisor session). Threaded so the fork tool can re-pin the session
+      to the fork on the correct ``(client_id, audience)`` thread (G3).
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -74,6 +77,7 @@ class TurnPayload(BaseModel):
     actor_kind: Literal["user", "advisor"] = "user"
     client_id: uuid.UUID
     itinerary_id: uuid.UUID | None = None
+    audience: Literal["traveler", "advisor"] = "traveler"
 
 
 class ProposeCardArgs(BaseModel):

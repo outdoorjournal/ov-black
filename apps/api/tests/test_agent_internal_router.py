@@ -70,6 +70,12 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(agent_internal_module, "load_agent_context", _fake_load)
 
+    # Default: the session is not pinned to a fork (G3). Individual tests override.
+    async def _fake_fork_state(_session: Any, _session_id: Any) -> tuple[bool, str | None, bool]:
+        return (False, None, False)
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_fork_state", _fake_fork_state)
+
     # Side-by-side stubs for the two write paths. The stamp the routes
     # validate via DossierFactDetail / ProfileFactDetail expects every
     # timestamp populated, so the stubs fill them eagerly.
@@ -197,6 +203,27 @@ def test_get_context_with_valid_agent_token_returns_200(client: TestClient) -> N
     assert body["profile_facts"] == []
     assert body["osint_facts"] == []
     assert body["party_members"] == []
+    # Not a fork by default — the fork-awareness fields are off.
+    assert body["is_alternative"] is False
+    assert body["baseline_title"] is None
+    assert body["reconcile_requested"] is False
+
+
+def test_get_context_surfaces_fork_awareness(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G3: a session pinned to a fork reports is_alternative + baseline_title."""
+
+    async def _fork(_session: Any, _session_id: Any) -> tuple[bool, str | None, bool]:
+        return (True, "Japan in Spring", True)
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_fork_state", _fork)
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_alternative"] is True
+    assert body["baseline_title"] == "Japan in Spring"
+    assert body["reconcile_requested"] is True
 
 
 def test_get_context_with_no_authorization_header_returns_401(client: TestClient) -> None:

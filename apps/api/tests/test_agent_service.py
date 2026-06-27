@@ -300,6 +300,11 @@ class FakeFactory:
         if "itineraries.locked_by" in sql_lower and "itineraries.id" in sql_lower:
             return FakeResult(rows=[None])
 
+        # G3 — _fork_baseline_title selects forked_from_id; these tests never use
+        # a fork, so report "not a fork" (NULL) before the generic id branch.
+        if "itineraries.forked_from_id" in sql_lower:
+            return FakeResult(rows=[None])
+
         # S07 T03 — itinerary-by-id (add_node exists-check).
         if "itineraries" in sql_lower and "itineraries.id" in sql_lower:
             bound = {}

@@ -216,6 +216,14 @@ class Itinerary(Base):
         nullable=True,
     )
     fork_status: Mapped[ForkStatus | None] = mapped_column(fork_status_enum, nullable=True)
+    # 0022 — reconcile request (G3). A traveler/agent can't merge a fork; they
+    # stamp ``reconcile_requested_at`` (+ an optional note) to ask staff to. NULL
+    # until requested, cleared on reconcile/abandon. Both live only on a fork row.
+    reconcile_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    reconcile_request_note: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

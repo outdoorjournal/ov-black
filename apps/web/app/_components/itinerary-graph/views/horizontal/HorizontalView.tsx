@@ -56,6 +56,7 @@ import {
 
 import { AuthoringPanel } from "./AuthoringPanel";
 import { ConciergeChat } from "./ConciergeChat";
+import { DiffPanel } from "./DiffPanel";
 import { PartyPanel } from "./PartyPanel";
 import { VaultPanel } from "./VaultPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
@@ -93,12 +94,17 @@ const SCROLL_HINT_STEP_PX = 320;
 
 interface HorizontalViewProps {
   timeline: ItineraryTimeline;
+  /** Title of the baseline this itinerary forked from (G3), for the banner. */
+  baselineTitle?: string | null;
 }
 
 // The horizontal view is a pure consumer of itineraryGraphStore — the store
 // Provider is owned by <ItineraryGraphView> one level up, so the same store
 // instance is shared with any future view.
-export function HorizontalView({ timeline }: HorizontalViewProps) {
+export function HorizontalView({
+  timeline,
+  baselineTitle = null,
+}: HorizontalViewProps) {
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const edges = itineraryGraphStore.useStore((s) => s.edges);
   const pendingProposals = itineraryGraphStore.useStore((s) => s.pendingProposals);
@@ -130,8 +136,11 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
   // the agent conversation ("concierge"). Advisors default to Build; travelers
   // never see the toggle (they only get ChatPanel).
   const [asidePanel, setAsidePanel] = useState<
-    "build" | "concierge" | "client" | "party" | "vault"
+    "build" | "diff" | "concierge" | "client" | "party" | "vault"
   >(canEdit ? "build" : "concierge");
+  // This itinerary is an alternative version (a fork) when it has a baseline.
+  const forkedFromId = timeline.itinerary.forked_from_id ?? null;
+  const isAlternative = Boolean(forkedFromId);
   // Drag preview state. While `activeDragId` is set, we add a synthetic
   // "ghost" node to the layout in the day the pointer is over so other cards
   // in that column slide down to make room before the drop is committed.
@@ -556,6 +565,40 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
         </div>
       </header>
 
+      {/* Alternative-version banner (G3): very obvious we're not on the agreed
+          plan whenever this itinerary forked from a baseline. */}
+      {isAlternative ? (
+        <div
+          data-testid="alternative-banner"
+          role="note"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm"
+        >
+          <span className="font-serif text-sm italic text-ink/80">
+            You&rsquo;re viewing an alternative version
+            {baselineTitle ? ` of “${baselineTitle}”` : " of the agreed plan"}.
+          </span>
+          {forkedFromId ? (
+            <a
+              href={`/itinerary/${forkedFromId}`}
+              className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/50 transition-colors hover:text-ink"
+            >
+              View the agreed plan →
+            </a>
+          ) : null}
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => setAsidePanel("diff")}
+              data-testid="alternative-banner-reconcile"
+              className="font-sans text-[10px] uppercase tracking-[0.2em] transition-colors hover:opacity-70"
+              style={{ color: "#8b2a1d" }}
+            >
+              Reconcile&hellip;
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* md+ layout: axis (fixed left) + canvas (h+v scroll) + chat aside,
           all sitting above the bottom map strip. */}
       <div className="hidden min-h-0 flex-1 flex-col md:flex">
@@ -649,7 +692,14 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                   className="flex shrink-0 gap-1 border-b border-l border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
                 >
                   {(
-                    ["build", "concierge", "client", "party", "vault"] as const
+                    [
+                      "build",
+                      ...(isAlternative ? (["diff"] as const) : []),
+                      "concierge",
+                      "client",
+                      "party",
+                      "vault",
+                    ] as const
                   ).map((tab) => (
                     <button
                       key={tab}
@@ -665,13 +715,15 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                     >
                       {tab === "build"
                         ? "Build"
-                        : tab === "concierge"
-                          ? "Concierge"
-                          : tab === "client"
-                            ? "Client thread"
-                            : tab === "party"
-                              ? "Party"
-                              : "Vault"}
+                        : tab === "diff"
+                          ? "Diff"
+                          : tab === "concierge"
+                            ? "Concierge"
+                            : tab === "client"
+                              ? "Client thread"
+                              : tab === "party"
+                                ? "Party"
+                                : "Vault"}
                     </button>
                   ))}
                 </div>
@@ -682,6 +734,17 @@ export function HorizontalView({ timeline }: HorizontalViewProps) {
                       days={timeline.days}
                     />
                   </div>
+                  {isAlternative ? (
+                    <div className={asidePanel === "diff" ? "h-full" : "hidden"}>
+                      <DiffPanel
+                        apiBaseUrl={apiBaseUrl}
+                        accessToken={accessToken}
+                        forkItineraryId={timeline.itinerary.id}
+                        baselineItineraryId={forkedFromId}
+                        editable={editable}
+                      />
+                    </div>
+                  ) : null}
                   <div
                     className={asidePanel === "concierge" ? "h-full" : "hidden"}
                   >
