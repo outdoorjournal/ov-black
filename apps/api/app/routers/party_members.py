@@ -77,13 +77,9 @@ def _detail(member: PartyMember) -> PartyMemberDetail:
 # ── shared resolution ────────────────────────────────────────────────────
 
 
-async def _resolve_traveler_client(
-    session: AsyncSession, user: AuthenticatedUser
-) -> Client:
+async def _resolve_traveler_client(session: AsyncSession, user: AuthenticatedUser) -> Client:
     """The client the calling traveler belongs to, or 404."""
-    client = await resolve_client_for_auth_user(
-        session, user_id=_uid(user), email=user.email
-    )
+    client = await resolve_client_for_auth_user(session, user_id=_uid(user), email=user.email)
     if client is None:
         raise _NOT_FOUND
     return client
@@ -326,9 +322,7 @@ async def attach_itinerary_party_member_endpoint(
     session: AsyncSession = Depends(get_session),
 ) -> ItineraryPartyResponse:
     client_id = await _authorize_itinerary_client(session, user, itinerary_id)
-    member = await get_party_member(
-        session, client_id=client_id, member_id=payload.party_member_id
-    )
+    member = await get_party_member(session, client_id=client_id, member_id=payload.party_member_id)
     if member is None:
         # The member must belong to this itinerary's household.
         raise _MEMBER_NOT_FOUND
@@ -348,7 +342,5 @@ async def detach_itinerary_party_member_endpoint(
     session: AsyncSession = Depends(get_session),
 ) -> ItineraryPartyResponse:
     await _authorize_itinerary_client(session, user, itinerary_id)
-    await detach_member_from_itinerary(
-        session, itinerary_id=itinerary_id, member_id=member_id
-    )
+    await detach_member_from_itinerary(session, itinerary_id=itinerary_id, member_id=member_id)
     return await list_itinerary_party_endpoint(itinerary_id, user=user, session=session)

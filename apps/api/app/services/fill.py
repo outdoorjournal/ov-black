@@ -470,7 +470,14 @@ async def _excluded_node_types(session: AsyncSession, analysis: Analysis | None)
 
 
 _MOBILITY_LIMIT_TERMS = {
-    "wheelchair", "limited", "low", "reduced", "cane", "walker", "assisted", "scooter"
+    "wheelchair",
+    "limited",
+    "low",
+    "reduced",
+    "cane",
+    "walker",
+    "assisted",
+    "scooter",
 }
 
 

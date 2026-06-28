@@ -194,9 +194,7 @@ async def archive_party_member(
 # ── per-trip participation (attach a durable member to an itinerary) ──────
 
 
-async def _ensure_default_party(
-    session: AsyncSession, *, itinerary_id: uuid.UUID
-) -> Party:
+async def _ensure_default_party(session: AsyncSession, *, itinerary_id: uuid.UUID) -> Party:
     """The itinerary's default ("All travelers") party, created if absent."""
     party = (
         await session.execute(
@@ -254,15 +252,19 @@ async def detach_member_from_itinerary(
 ) -> bool:
     """Remove a member's per-trip rows from an itinerary. True if anything went."""
     rows = (
-        await session.execute(
-            select(Traveler)
-            .join(Party, Party.id == Traveler.party_id)
-            .where(
-                Party.itinerary_id == itinerary_id,
-                Traveler.party_member_id == member_id,
+        (
+            await session.execute(
+                select(Traveler)
+                .join(Party, Party.id == Traveler.party_id)
+                .where(
+                    Party.itinerary_id == itinerary_id,
+                    Traveler.party_member_id == member_id,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not rows:
         return False
     for row in rows:
@@ -292,7 +294,5 @@ async def load_itinerary_client_id(
 ) -> uuid.UUID | None:
     """The client that owns an itinerary — the spine of the attach authz check."""
     return (
-        await session.execute(
-            select(Itinerary.client_id).where(Itinerary.id == itinerary_id)
-        )
+        await session.execute(select(Itinerary.client_id).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()

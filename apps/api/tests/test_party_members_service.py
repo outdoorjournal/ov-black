@@ -218,9 +218,7 @@ async def test_archive_soft_deletes_and_hides_from_active(
     assert member.id in {m.id for m in with_archived}
 
 
-async def test_get_member_is_client_scoped(
-    session: AsyncSession, household: _Household
-) -> None:
+async def test_get_member_is_client_scoped(session: AsyncSession, household: _Household) -> None:
     member = await create_party_member(
         session,
         client_id=household.client_id,
@@ -229,9 +227,7 @@ async def test_get_member_is_client_scoped(
         recorded_by=household.advisor_id,
     )
     # A different (random) client id must not resolve this member.
-    stranger = await get_party_member(
-        session, client_id=uuid.uuid4(), member_id=member.id
-    )
+    stranger = await get_party_member(session, client_id=uuid.uuid4(), member_id=member.id)
     assert stranger is None
 
 
@@ -265,9 +261,7 @@ async def test_member_is_reused_across_two_itineraries(
     assert party_b[0][0].party_member_id == member.id
 
     # detaching from trip A leaves trip B intact
-    assert await detach_member_from_itinerary(
-        session, itinerary_id=trip_a, member_id=member.id
-    )
+    assert await detach_member_from_itinerary(session, itinerary_id=trip_a, member_id=member.id)
     assert await list_itinerary_party(session, itinerary_id=trip_a) == []
     assert len(await list_itinerary_party(session, itinerary_id=trip_b)) == 1
 
