@@ -60,6 +60,7 @@ from app.models import (
     SessionAudience,
     TurnRole,
 )
+from app.observability import emit_metric
 from app.services import itineraries as itineraries_service
 from app.services.agent_token import AgentTokenError, mint_agent_token
 from app.services.facts import load_agent_context
@@ -1411,6 +1412,20 @@ async def stream_turn(
             "model": model_tag,
         },
     )
+
+    # Turn-level SLO metrics (R015: 2 s first-token target). Outcome dimension
+    # lets a dashboard split healthy turns from fallbacks; first-token is the
+    # number to alert on. No content — ids/latency only.
+    outcome = "fallback" if fallback_fired else "ok"
+    emit_metric("agent.turn.latency", latency_ms, unit="Milliseconds", dimensions={"Outcome": outcome})
+    emit_metric("agent.turn.count", 1, dimensions={"Outcome": outcome, "Retried": str(attempt_count)})
+    if first_token_ms is not None:
+        emit_metric(
+            "agent.turn.first_token",
+            first_token_ms,
+            unit="Milliseconds",
+            dimensions={"Outcome": outcome},
+        )
 
     # ── D. Best-effort AgentCore Memory write ──────────────────────────────
     memory_id = settings.bedrock_agentcore_memory_id

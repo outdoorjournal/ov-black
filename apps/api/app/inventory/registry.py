@@ -21,6 +21,7 @@ from functools import lru_cache
 from typing import Any
 
 from app.inventory.schemas import InventoryItem
+from app.observability import span
 
 logger = logging.getLogger("ov_black.inventory")
 
@@ -123,12 +124,17 @@ class InventoryProviderRegistry:
         if not selected:
             return []
 
-        results = await asyncio.gather(
-            *(
-                provider.search(kinds=kinds, keyword=keyword, filters=filters, ctx=ctx)
-                for provider in selected
-            )
-        )
+        async def _timed_search(provider: InventoryProvider) -> list[InventoryItem]:
+            # One span + latency metric per provider call, so a slow/aggregating
+            # upstream (Duffel polls GDS synchronously; Ratehawk fans out) is
+            # attributable in a single search request instead of hiding in the
+            # gather's wall-clock.
+            async with span("inventory.provider.search", metric=True, source=provider.source):
+                return await provider.search(
+                    kinds=kinds, keyword=keyword, filters=filters, ctx=ctx
+                )
+
+        results = await asyncio.gather(*(_timed_search(provider) for provider in selected))
         flattened: list[InventoryItem] = [item for batch in results for item in batch]
         flattened.sort(key=lambda item: (item.source, item.source_id))
         return flattened
