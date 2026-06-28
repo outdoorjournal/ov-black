@@ -50,6 +50,28 @@ def skip_until(slice_id: str, what: str) -> NoReturn:
     pytest.skip(f"{what} — lands in {slice_id} (mvp-plan.md); scaffold ready, backend not built")
 
 
+# Agent error reasons that mean "this box can't actually run a turn" (no Bedrock
+# creds / model upstream down) — infra, not a product failure. We skip toward F3
+# (live-agent UAT), mirroring the API-unreachable + payments-unconfigured skips.
+_AGENT_UNAVAILABLE_REASONS = frozenset({"upstream_unavailable", "agent_unavailable"})
+
+
+def require_live_agent_turn(result: Any) -> None:
+    """Self-skip when a turn errored because the agent upstream is unavailable.
+
+    A turn that *ran* but produced no tool call is a product signal the caller
+    handles (e.g. the deterministic mock records no fact); this only catches the
+    *infrastructure* case — the model backend is unreachable — so a credential-less
+    local box self-skips instead of false-failing. Other turn errors fall through
+    to the caller's own ``assert result.ok``.
+    """
+    if result.ok:
+        return
+    reason = result.error.reason if result.error else ""
+    if reason in _AGENT_UNAVAILABLE_REASONS:
+        pytest.skip(f"agent upstream unavailable ({reason}) — live-agent turns are verified in F3")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Identity / client setup
 # ─────────────────────────────────────────────────────────────────────────────
@@ -279,3 +301,50 @@ def find_fill_gap(graph: gm.GraphResponse) -> Gap | None:
     if widest is None or widest_span <= 0:
         return None
     return Gap(start=widest[0].isoformat(), end=widest[1].isoformat())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Booking through the M005 money gate — the only path a node reaches ``booked``
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def book_node_via_money_gate(
+    advisor: Ovb,
+    itinerary_id: str,
+    node_id: str,
+    *,
+    amount: str = "1000.00",
+    currency: str = "USD",
+) -> None:
+    """Drive a node to ``booked`` the way the product does: through a paid invoice.
+
+    Since M005 a node can't be flipped straight to ``booked`` via ``update_node``
+    (the gate refuses it with ``use_booking_flow``); booking authority is the money
+    gate. This prices + approves the node (demoting first if it's already firmed),
+    charges + issues + pays a covering invoice line, then books it — the same
+    sequence Pillar 6 proves in detail. Self-skips when no payment gateway is wired
+    on the target (the honest skip, mirroring Pillar 6), so a credential-less stack
+    doesn't false-fail.
+    """
+    graph = await advisor.get_graph(itinerary_id)
+    node = next((n for n in graph.nodes if str(n.id) == node_id), None)
+    # Editing a firmed node needs a demotion first (G1); pre-firmed nodes edit freely.
+    if node is not None and str(node.status) in {"approved", "booked", "confirmed"}:
+        await advisor.update_node(itinerary_id, node_id, fields={"status": "proposed"})
+    await advisor.update_node(
+        itinerary_id,
+        node_id,
+        fields={"cost_amount": amount, "cost_currency": currency, "cost_kind": "total"},
+    )
+    await advisor.update_node(itinerary_id, node_id, fields={"status": "approved"})
+
+    invoice = await advisor.create_invoice(itinerary_id, label="Booking", currency=currency)
+    await advisor.add_invoice_line(str(invoice.id), node_id=node_id)
+    await advisor.issue_invoice(str(invoice.id))
+    try:
+        await advisor.pay_invoice(str(invoice.id), payment_method_nonce="fake-valid-nonce")
+    except ApiError as exc:
+        if exc.detail == "payments_unconfigured":
+            pytest.skip("no payment gateway wired on this target (prod without keys)")
+        raise
+    await advisor.book_node(itinerary_id, node_id)

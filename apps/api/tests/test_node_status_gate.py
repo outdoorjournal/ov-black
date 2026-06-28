@@ -242,6 +242,47 @@ async def test_agent_status_flip_of_confirmed_node_refused(db_session: AsyncSess
 
 @integration
 @pytest.mark.asyncio
+async def test_direct_booked_promotion_via_update_node_refused(db_session: AsyncSession) -> None:
+    """The money gate (M005/I3) can't be bypassed: a direct flip to booked is refused.
+
+    Booking authority is ``services.bookings`` (a covering paid invoice line, a fresh
+    offer, a recorded booking). ``update_node`` must refuse a straight
+    proposed→booked promotion with ``CONFLICT`` / ``use_booking_flow`` rather than
+    silently moving the node — and the router maps that to 409, not 500.
+    """
+    itinerary = await create_itinerary(db_session, _actor(ActorKind.ADVISOR), title="gate")
+    try:
+        node = await add_node(
+            db_session,
+            _actor(ActorKind.ADVISOR),
+            itinerary_id=itinerary.id,
+            type=NodeType.hotel,
+            status=NodeStatus.approved,
+            title="Aman Tokyo",
+        )
+        assert isinstance(node, Node)
+        for target in (NodeStatus.booked, NodeStatus.confirmed):
+            err = await update_node(
+                db_session,
+                _actor(ActorKind.ADVISOR),
+                itinerary_id=itinerary.id,
+                node_id=node.id,
+                status=target,
+            )
+            assert isinstance(err, ItineraryError)
+            assert err.outcome is ItineraryOutcome.CONFLICT
+            assert err.detail == "use_booking_flow"
+        # The refusals didn't move the node off approved.
+        fresh = (
+            await db_session.execute(select(Node.status).where(Node.id == node.id))
+        ).scalar_one()
+        assert fresh is NodeStatus.approved
+    finally:
+        await _cleanup(itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_advisor_demotion_works_and_is_logged(db_session: AsyncSession) -> None:
     itinerary = await create_itinerary(db_session, _actor(ActorKind.ADVISOR), title="gate")
     try:

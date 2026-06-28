@@ -511,6 +511,13 @@ def _raise_for_error(err: ItineraryError) -> NoReturn:
         # editor lock; the detail token (status_locked / demote_before_edit /
         # demote_before_delete) lets the agent + web craft the human reason.
         raise HTTPException(status_code=409, detail=err.detail or "status_locked")
+    if err.outcome is ItineraryOutcome.CONFLICT:
+        # A precondition on related state failed — e.g. the M005 money gate: a
+        # node can't be flipped straight to booked/confirmed via update_node
+        # (that authority is services.bookings). 409 so the caller can tell
+        # "not allowed yet" from a 400; the detail token (use_booking_flow, …)
+        # lets the agent + web craft the human reason.
+        raise HTTPException(status_code=409, detail=err.detail or "conflict")
     # Defensive — every enum value is mapped above.
     logger.error("itinerary.router.unhandled_outcome", extra={"outcome": err.outcome.value})
     raise HTTPException(status_code=500, detail="internal_error")

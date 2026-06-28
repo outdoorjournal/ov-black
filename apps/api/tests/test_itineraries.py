@@ -50,6 +50,7 @@ from app.services.itineraries import (
     get_itinerary_graph,
     update_node,
 )
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import (
@@ -539,6 +540,48 @@ def test_patch_node_forwards_cost_fields(
     assert call["cost_amount"] == Decimal("1234.50")
     assert call["cost_currency"] == "USD"
     assert call["cost_kind"] is CostKind.total
+
+
+def test_patch_node_conflict_maps_to_409(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """A CONFLICT outcome (M005 money gate) must map to 409, never fall through to 500.
+
+    Regression: ``ItineraryOutcome.CONFLICT`` (e.g. the ``use_booking_flow`` refusal
+    when a node is flipped straight to booked via update_node) was unmapped in
+    ``_raise_for_error`` and surfaced as a 500 ``internal_error``.
+    """
+    stub_service["returns"]["update_node"] = ItineraryError(
+        outcome=ItineraryOutcome.CONFLICT,
+        detail="use_booking_flow",
+    )
+    iid, nid = uuid.uuid4(), uuid.uuid4()
+    resp = client.patch(
+        f"/itinerary/{iid}/nodes/{nid}",
+        json={"status": "booked"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "use_booking_flow"
+
+
+def test_raise_for_error_maps_every_outcome_below_500() -> None:
+    """No error outcome may silently fall through to a 500 in the router mapping.
+
+    ``_raise_for_error`` claims "every enum value is mapped above"; this pins that
+    claim so a newly added ``ItineraryOutcome`` can't regress into ``internal_error``.
+    """
+    from app.routers.itineraries import _raise_for_error
+
+    for outcome in ItineraryOutcome:
+        if outcome is ItineraryOutcome.OK:
+            continue  # not an error envelope
+        with pytest.raises(HTTPException) as exc:
+            _raise_for_error(ItineraryError(outcome=outcome, detail="x"))
+        status = exc.value.status_code
+        assert status < 500, f"{outcome.value} fell through to {status}"
 
 
 def test_create_node_forwards_cost_fields(

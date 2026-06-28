@@ -11,11 +11,12 @@ Acceptance (mvp.md Pillar 5):
   - A booked/confirmed node is immutable — edits by traveler/agent refused with a
     crafted explanation; only an advisor moves it, via explicit demotion.
 
-Status: 🔨 NOT BUILT (M004). No fork/version concept, no diff/reconcile surface;
-status-aware mutation gates are design-only — today a booked node can be retitled
-by anyone holding the editor lock. These scaffolds `skip_until` the slice that
-lands each piece; the immutability test is wired to `ovb.invariants`' honest stub
-so it lights up the moment G1 ships.
+Status: ✅ BUILT (M004 + the M005 money gate). Fork/version, diff/reconcile, and the
+status×actor mutation gates have landed. Booking is now exclusively the money gate's
+job (M005): a node reaches ``booked`` only through a paid invoice, so these tests
+book via ``flows.book_node_via_money_gate`` and assert that a *direct* status flip is
+refused. They self-skip only where the traveler identity or a payment gateway isn't
+wired on the box.
 """
 
 from __future__ import annotations
@@ -66,8 +67,10 @@ async def test_booked_node_is_immutable_to_traveler_and_agent(
         pytest.skip("no editable bookable node in the seeded itinerary to book")
     node_id = str(node.id)
 
-    # Advisor books the node (proposed→booked is an ungated promotion in G1).
-    booked = await advisor.update_node(itin, node_id, fields={"status": "booked"})
+    # Advisor books the node through the money gate (since M005 the only path to
+    # ``booked`` — a direct update_node status flip is refused, asserted below).
+    await flows.book_node_via_money_gate(advisor, itin, node_id)
+    booked = next(n for n in (await advisor.get_graph(itin)).nodes if str(n.id) == node_id)
     assert str(booked.status) == "booked"
     assert booked.lock_reason == "status_locked"
 
@@ -93,6 +96,25 @@ async def test_booked_node_is_immutable_to_traveler_and_agent(
     assert edited.title == "now editable again"
 
 
+async def test_direct_booked_flip_is_refused_use_booking_flow(
+    advisor: Ovb, built_itinerary: str
+) -> None:
+    """The money gate (M005) can't be bypassed: a direct flip to booked is a clean 409.
+
+    Booking authority is the money gate (a covering paid invoice line); a straight
+    ``update_node(status='booked')`` must be refused with ``409 use_booking_flow`` —
+    never a 500 (regression: ``CONFLICT`` was unmapped in the itinerary router).
+    """
+    node = _editable_bookable(await advisor.get_graph(built_itinerary))
+    if node is None:
+        pytest.skip("no editable bookable node to attempt a direct booking on")
+
+    with pytest.raises(ApiError) as exc:
+        await advisor.update_node(built_itinerary, str(node.id), fields={"status": "booked"})
+    assert exc.value.status == 409, exc.value
+    assert exc.value.detail == "use_booking_flow"
+
+
 async def test_traveler_forks_an_approved_itinerary(
     advisor: Ovb, traveler: Ovb, built_itinerary: str
 ) -> None:
@@ -109,7 +131,7 @@ async def test_traveler_forks_an_approved_itinerary(
         pytest.skip("no editable bookable node to book before forking")
 
     # An approved itinerary carrying a booked node (the "can't fork away a booking" case).
-    await advisor.update_node(itin, str(node.id), fields={"status": "booked"})
+    await flows.book_node_via_money_gate(advisor, itin, str(node.id))
     await advisor.approve(itin)
     baseline = await advisor.get_graph(itin)
 
@@ -158,7 +180,7 @@ async def test_advisor_diffs_and_reconciles_a_fork(
     bookable = _editable_bookable(graph)
     if bookable is None:
         pytest.skip("no editable bookable node to book before forking")
-    await advisor.update_node(itin, str(bookable.id), fields={"status": "booked"})
+    await flows.book_node_via_money_gate(advisor, itin, str(bookable.id))
     await advisor.approve(itin)
 
     fork = await advisor.fork_itinerary(itin)
@@ -166,14 +188,10 @@ async def test_advisor_diffs_and_reconciles_a_fork(
 
     # Rework a pre-booked content node (→ changed) and add a node (→ added).
     prebooked = next(
-        n
-        for n in fork.nodes
-        if str(n.status) == "proposed" and str(n.type) in BOOKABLE_TYPES
+        n for n in fork.nodes if str(n.status) == "proposed" and str(n.type) in BOOKABLE_TYPES
     )
     origin_id = str(prebooked.forked_from_node_id)
-    await advisor.update_node(
-        fork_id, str(prebooked.id), fields={"title": "Slower Kyoto morning"}
-    )
+    await advisor.update_node(fork_id, str(prebooked.id), fields={"title": "Slower Kyoto morning"})
     added = await advisor.add_node(
         fork_id, type="experience", title="Tea ceremony", status="proposed"
     )
