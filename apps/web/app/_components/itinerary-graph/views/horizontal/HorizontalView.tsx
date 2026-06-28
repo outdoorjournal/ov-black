@@ -40,7 +40,10 @@ import {
   useState,
 } from "react";
 
+import { AlternativeControls } from "../../shared/AlternativeControls";
 import { Card } from "../../shared/ExpandedCard";
+import { NotesPanel } from "../../shared/NotesPanel";
+import { attachedNotesByHost } from "../../shared/attachedNotes";
 import type { ItineraryTimeline, NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
 import { offsetHoursOr, tzDayKey } from "../../model/horizontalTime";
@@ -52,7 +55,9 @@ import {
 } from "./layout";
 import {
   itineraryGraphStore,
+  selectCanLeaveNote,
   selectEditable,
+  selectTravelerEditable,
 } from "../../store/itineraryGraphStore";
 
 import { AuthoringPanel } from "./AuthoringPanel";
@@ -109,6 +114,11 @@ export function HorizontalView({
 }: HorizontalViewProps) {
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const edges = itineraryGraphStore.useStore((s) => s.edges);
+  // Attached `note` nodes grouped by host (0014) — drives the per-card badge
+  // and the note list in a card's expanded detail sheet.
+  const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
+  const canLeaveNote = itineraryGraphStore.useStore(selectCanLeaveNote);
+  const addAttachedNote = itineraryGraphStore.useStore((s) => s.addAttachedNote);
   const pendingProposals = itineraryGraphStore.useStore((s) => s.pendingProposals);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
@@ -121,6 +131,12 @@ export function HorizontalView({
   const releasePending = itineraryGraphStore.useStore((s) => s.releasePending);
   const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
   const editable = itineraryGraphStore.useStore(selectEditable);
+  // Travelers may drag-move on their OWN alternative (a draft fork). Cards
+  // become draggable when either staff hold the lock (`editable`) or the
+  // traveler is on their alternative (`travelerEditable`); advisor-only panels
+  // stay gated on `editable` alone.
+  const travelerEditable = itineraryGraphStore.useStore(selectTravelerEditable);
+  const draggable = editable || travelerEditable;
   // API creds — only present for staff (the server withholds them from
   // travelers), so the Concierge chat below is implicitly advisor-only.
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
@@ -570,6 +586,7 @@ export function HorizontalView({
               onAddNode={handleAddNode}
             />
           ) : null}
+          <AlternativeControls />
           <ZoomControls />
         </div>
       </header>
@@ -654,7 +671,7 @@ export function HorizontalView({
                 pendingProposals={pendingProposals}
                 flashNodeId={flashNodeId}
                 focusedNodeId={focusedNodeId}
-                editable={editable}
+                editable={draggable}
                 tzOffsetHours={timeline.timezoneOffsetHours}
                 axisWidth={TIME_GUTTER}
                 activeDragId={drag.activeId}
@@ -674,6 +691,7 @@ export function HorizontalView({
                 }
                 onMeasureCard={handleMeasureCard}
                 onScrollToNode={scrollToNode}
+                attachedNotes={attachedNotes}
               />
             </div>
             <ScrollHint
@@ -858,6 +876,13 @@ export function HorizontalView({
               onClick={(e) => e.stopPropagation()}
             >
               <Card node={expandedNode} mood={timeline.mood} />
+              {expandedNode.type !== "note" ? (
+                <NotesPanel
+                  notes={attachedNotes.get(expandedNode.id) ?? []}
+                  canAdd={canLeaveNote}
+                  onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
+                />
+              ) : null}
               {editable ? (
                 <NodeEditPanel
                   key={expandedNode.id}

@@ -37,6 +37,7 @@ import {
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
   detachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersMemberIdDelete,
   diffForkEndpointItineraryForkIdDiffGet,
+  forkItineraryEndpointItineraryItineraryIdForkPost,
   createInvoiceEndpointItineraryItineraryIdInvoicesPost,
   listInvoicesEndpointItineraryItineraryIdInvoicesGet,
   getInvoiceEndpointInvoicesInvoiceIdGet,
@@ -3062,6 +3063,52 @@ function _parseForkReconcileDetail(
   if (status === 404) return "not_found";
   if (status === 403) return token === "advisor_only" ? "advisor_only" : "forbidden";
   return "unknown";
+}
+
+export type ForkItineraryDetail =
+  | "not_found"
+  | "forbidden"
+  | "network_error"
+  | "unknown";
+
+export type ForkItineraryResult =
+  | { ok: true; graph: GraphResponse }
+  | { ok: false; status: number; detail: ForkItineraryDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/fork (G2). Deep-copies the
+ * itinerary into an independently-editable alternative version and returns the
+ * fork's graph — `graph.itinerary.id` is the new fork. Owner/creator/advisor
+ * only (403 → `forbidden`); 404 → `not_found`.
+ */
+export async function forkItinerary(
+  client: Client,
+  itineraryId: string,
+  title?: string,
+): Promise<ForkItineraryResult> {
+  try {
+    const { data, error, response } =
+      await forkItineraryEndpointItineraryItineraryIdForkPost({
+        client,
+        path: { itinerary_id: itineraryId },
+        body: title ? { title } : {},
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, graph: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail:
+        response.status === 404
+          ? "not_found"
+          : response.status === 403
+            ? "forbidden"
+            : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }
 
 export type GetForkDiffResult =

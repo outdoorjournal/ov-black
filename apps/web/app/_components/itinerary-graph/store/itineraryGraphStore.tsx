@@ -31,8 +31,10 @@ import {
   createNodeFromInventory,
   deleteNode,
   fillGap,
+  forkItinerary,
   getAnalysis,
   releaseItineraryLock,
+  requestReconcile,
   searchInventory,
   startAnalysis,
   updateNode,
@@ -129,6 +131,11 @@ export type ItineraryGraphState = {
   releasePending: boolean;
   approvePending: boolean;
 
+  // ── alternative (fork) lifecycle, traveler-facing ──
+  creatingAlternative: boolean;
+  requestingMerge: boolean;
+  mergeRequested: boolean;
+
   // ── horizontal-view UI state ──
   pxPerMinute: number;
 
@@ -166,6 +173,17 @@ export type ItineraryGraphState = {
     metadata?: Record<string, unknown>;
   }) => void;
   removeNode: (id: string) => void;
+  // ── traveler notes (feedback for staff; gated by `selectCanLeaveNote`) ──
+  // Attach a note to a host node ("why are we doing this at 1:30?").
+  addAttachedNote: (hostId: string, text: string) => void;
+  // Drop a free-standing note on a day at noon ("a dinner between these").
+  addFreeStandingNote: (dayKey: string, text: string) => void;
+  // ── alternative (fork) actions ──
+  // Branch an alternative version off this itinerary; `onForked` receives the
+  // new fork id so the caller can navigate to it.
+  createAlternative: (onForked: (forkId: string) => void) => void;
+  // Ask staff to merge this alternative back into the agreed plan.
+  requestMerge: () => void;
 
   // ── authoring (B7): inventory search · analyze · fill ──
   // Reads (search/analyze/fill) gate on `canEdit`; the two writes
@@ -225,6 +243,31 @@ export type ItineraryGraphInit = {
 export function selectEditable(s: ItineraryGraphState): boolean {
   return (
     s.canEdit && s.lockStatus === "locked-by-me" && s.status !== "approved"
+  );
+}
+
+/**
+ * Anyone viewing with credentials may leave a note — it's feedback for staff,
+ * not a graph edit, so it bypasses the advisor lock/approve gate. The backend's
+ * write gate (owner / advisor) is the real authority; a non-owner viewing an
+ * approved itinerary will simply get a 403 and we revert the optimistic add.
+ */
+export function selectCanLeaveNote(s: ItineraryGraphState): boolean {
+  return Boolean(s.apiBaseUrl && s.accessToken);
+}
+
+/**
+ * Travelers may reshape (drag-move) only their OWN alternative version — a fork
+ * (`forked_from_id` set) that's still a draft. The agreed plan is never edited
+ * directly from the traveler side; they branch an alternative first. Advisors
+ * keep their lock-based `selectEditable` path.
+ */
+export function selectTravelerEditable(s: ItineraryGraphState): boolean {
+  return (
+    !s.canEdit &&
+    s.status !== "approved" &&
+    Boolean(s.sample.itinerary?.forked_from_id) &&
+    Boolean(s.apiBaseUrl && s.accessToken)
   );
 }
 
@@ -339,6 +382,10 @@ export const itineraryGraphStore = createStoreContext<
         lockPending: false,
         releasePending: false,
         approvePending: false,
+
+        creatingAlternative: false,
+        requestingMerge: false,
+        mergeRequested: Boolean(timeline.itinerary?.reconcile_requested_at),
 
         pxPerMinute: ZOOM_PRESETS.day,
 
@@ -515,7 +562,8 @@ export const itineraryGraphStore = createStoreContext<
             flashNodeId: id,
           });
           // Persist committed nodes only (proposals aren't persisted yet).
-          if (!selectEditable(get())) return;
+          // Advisors (lock) or a traveler on their own alternative may persist.
+          if (!selectEditable(get()) && !selectTravelerEditable(get())) return;
           const c = client();
           if (!c) return;
           const moved = get().nodes.find((n) => n.id === id);
@@ -583,6 +631,109 @@ export const itineraryGraphStore = createStoreContext<
               if (!result.ok) set({ nodes: previousNodes });
             },
           );
+        },
+
+        addAttachedNote: (hostId, text) => {
+          const s = get();
+          const body = text.trim();
+          if (!body || !selectCanLeaveNote(s)) return;
+          const c = client();
+          if (!c) return;
+          const tempId = `tmp-note-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+          const optimistic: NodeResponse = {
+            id: tempId,
+            itinerary_id: s.itineraryId,
+            parent_subgraph_id: null,
+            type: "note",
+            status: "proposed",
+            title: body,
+            source: null,
+            source_id: null,
+            metadata: {},
+            attached_to_node_id: hostId,
+          };
+          set({ nodes: [...s.nodes, optimistic], flashNodeId: hostId });
+          void createNode(c, {
+            itineraryId: s.itineraryId,
+            body: {
+              type: "note",
+              title: body,
+              status: "proposed",
+              attached_to_node_id: hostId,
+            },
+          }).then((result) => {
+            set((cur) => ({
+              nodes: result.ok
+                ? cur.nodes.map((n) => (n.id === tempId ? result.node : n))
+                : cur.nodes.filter((n) => n.id !== tempId),
+            }));
+          });
+        },
+
+        createAlternative: (onForked) => {
+          const s = get();
+          if (s.creatingAlternative) return;
+          const c = client();
+          if (!c) return;
+          set({ creatingAlternative: true });
+          void forkItinerary(c, s.itineraryId)
+            .then((result) => {
+              if (result.ok) onForked(result.graph.itinerary.id);
+            })
+            .finally(() => set({ creatingAlternative: false }));
+        },
+        requestMerge: () => {
+          const s = get();
+          if (s.requestingMerge || s.mergeRequested) return;
+          const c = client();
+          if (!c) return;
+          set({ requestingMerge: true });
+          void requestReconcile(c, s.itineraryId)
+            .then((result) => {
+              if (result.ok) set({ mergeRequested: true });
+            })
+            .finally(() => set({ requestingMerge: false }));
+        },
+        addFreeStandingNote: (dayKey, text) => {
+          const s = get();
+          const body = text.trim();
+          if (!body || !selectCanLeaveNote(s)) return;
+          const c = client();
+          if (!c) return;
+          // Drop it at noon on the chosen day, in the trip's own offset.
+          const startIso = rebaseStartToDayAndMinute(
+            dayKey,
+            12 * 60,
+            s.sample.timezoneOffsetHours,
+          );
+          const tempId = `tmp-note-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+          const optimistic: NodeResponse = {
+            id: tempId,
+            itinerary_id: s.itineraryId,
+            parent_subgraph_id: null,
+            type: "note",
+            status: "proposed",
+            title: body,
+            source: null,
+            source_id: null,
+            metadata: { start_time: startIso },
+          };
+          set({ nodes: [...s.nodes, optimistic], flashNodeId: tempId });
+          void createNode(c, {
+            itineraryId: s.itineraryId,
+            body: {
+              type: "note",
+              title: body,
+              status: "proposed",
+              starts_at: startIso,
+            },
+          }).then((result) => {
+            set((cur) => ({
+              nodes: result.ok
+                ? cur.nodes.map((n) => (n.id === tempId ? result.node : n))
+                : cur.nodes.filter((n) => n.id !== tempId),
+            }));
+          });
         },
 
         // ── authoring (B7): inventory search · analyze · fill ───────────────

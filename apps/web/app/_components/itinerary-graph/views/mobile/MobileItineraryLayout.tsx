@@ -15,7 +15,10 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AlternativeControls } from "../../shared/AlternativeControls";
 import { Card } from "../../shared/ExpandedCard";
+import { NotesPanel } from "../../shared/NotesPanel";
+import { attachedNotesByHost } from "../../shared/attachedNotes";
 import type {
   ItineraryTimeline,
   NodeResponse,
@@ -24,7 +27,10 @@ import {
   dayIndexForNode,
   groupNodesByDay,
 } from "../../shared/groupNodesByDay";
-import { itineraryGraphStore } from "../../store/itineraryGraphStore";
+import {
+  itineraryGraphStore,
+  selectCanLeaveNote,
+} from "../../store/itineraryGraphStore";
 
 import { ConciergeSheet } from "./ConciergeSheet";
 import { DayStrip } from "./DayStrip";
@@ -51,6 +57,12 @@ export function MobileItineraryLayout({
   const groups = useMemo(
     () => groupNodesByDay([...nodes, ...pendingProposals], timeline.days, tz),
     [nodes, pendingProposals, timeline.days, tz],
+  );
+  const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
+  const canLeaveNote = itineraryGraphStore.useStore(selectCanLeaveNote);
+  const addAttachedNote = itineraryGraphStore.useStore((s) => s.addAttachedNote);
+  const addFreeStandingNote = itineraryGraphStore.useStore(
+    (s) => s.addFreeStandingNote,
   );
 
   const [activeDay, setActiveDay] = useState(0);
@@ -119,17 +131,22 @@ export function MobileItineraryLayout({
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-paper text-ink">
-      <header className="shrink-0 border-b border-ink/10 px-4 pb-1.5 pt-3">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
-          OV Black · Itinerary
+      <header className="flex shrink-0 items-start justify-between gap-2 border-b border-ink/10 px-4 pb-1.5 pt-3">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
+            OV Black · Itinerary
+          </div>
+          <div className="font-serif text-lg leading-tight text-ink">
+            {timeline.label}
+            {timeline.subtitle ? (
+              <span className="ml-2 text-[12px] italic text-ink/55">
+                {timeline.subtitle}
+              </span>
+            ) : null}
+          </div>
         </div>
-        <div className="font-serif text-lg leading-tight text-ink">
-          {timeline.label}
-          {timeline.subtitle ? (
-            <span className="ml-2 text-[12px] italic text-ink/55">
-              {timeline.subtitle}
-            </span>
-          ) : null}
+        <div className="shrink-0 pt-1">
+          <AlternativeControls />
         </div>
       </header>
 
@@ -152,6 +169,9 @@ export function MobileItineraryLayout({
               tzOffsetHours={tz}
               flashNodeId={flashNodeId}
               onCardClick={(id) => setExpandedId(id)}
+              attachedNotes={attachedNotes}
+              canLeaveNote={canLeaveNote}
+              onAddDayNote={addFreeStandingNote}
             />
           </section>
         ))}
@@ -192,6 +212,13 @@ export function MobileItineraryLayout({
               onClick={(e) => e.stopPropagation()}
             >
               <Card node={expandedNode} mood={timeline.mood} />
+              {expandedNode.type !== "note" ? (
+                <NotesPanel
+                  notes={attachedNotes.get(expandedNode.id) ?? []}
+                  canAdd={canLeaveNote}
+                  onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
+                />
+              ) : null}
             </motion.div>
           </motion.div>
         ) : null}

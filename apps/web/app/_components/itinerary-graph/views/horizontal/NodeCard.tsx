@@ -37,6 +37,9 @@ interface NodeCardProps {
   // When the parent layout is below the compact zoom breakpoint, render
   // the strip variant (180px-wide, single-line) instead of the glance card.
   compact?: boolean;
+  // Count of `note` nodes attached to this one (0014). When > 0 the card shows
+  // a small badge; the notes themselves are read in the expanded detail sheet.
+  attachedNoteCount?: number;
 }
 
 // The node graph collapses every ground transport leg into the single `transit`
@@ -96,6 +99,7 @@ export function NodeCard({
   onClick,
   flash,
   compact = false,
+  attachedNoteCount = 0,
 }: NodeCardProps) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
@@ -103,7 +107,7 @@ export function NodeCard({
   // Make the whole shell a button so cards click-through to a detail sheet
   // and we keep the keyboard semantics the cards prototype already gives.
   const wrapperClass = [
-    "block w-full text-left",
+    "relative block w-full text-left",
     flash ? "ring-2 ring-amber-400/70 rounded-lg" : "",
     "transition-shadow",
   ].join(" ");
@@ -138,6 +142,15 @@ export function NodeCard({
           <CardBody node={node} kind={kind} tzOffsetHours={tzOffsetHours} />
         )}
       </CardShell>
+      {attachedNoteCount > 0 ? (
+        <span
+          data-testid="attached-note-badge"
+          aria-label={`${attachedNoteCount} note${attachedNoteCount === 1 ? "" : "s"}`}
+          className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full border border-amber-900/25 bg-[#fbf1c7] px-1 font-sans text-[10px] font-semibold leading-none text-amber-900 shadow-sm"
+        >
+          ✎ {attachedNoteCount}
+        </span>
+      ) : null}
     </button>
   );
 }

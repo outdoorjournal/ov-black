@@ -6,13 +6,21 @@
 // card width; the bottom padding clears the peeked concierge sheet.
 
 import { NodeCard } from "../horizontal/NodeCard";
+import { NotesPanel } from "../../shared/NotesPanel";
 import type { DayGroup } from "../../shared/groupNodesByDay";
+import type { NodeResponse } from "../../model/horizontalTypes";
 
 interface DayTimelineProps {
   group: DayGroup;
   tzOffsetHours: number;
   flashNodeId: string | null;
   onCardClick: (id: string) => void;
+  // Host node id → attached `note` nodes, for the per-card note badge.
+  attachedNotes?: Map<string, NodeResponse[]>;
+  // When set, a per-day composer lets the traveler drop a free-standing note
+  // ("a dinner between these") on this day for staff to act on.
+  canLeaveNote?: boolean;
+  onAddDayNote?: (dayKey: string, text: string) => void;
 }
 
 export function DayTimeline({
@@ -20,14 +28,31 @@ export function DayTimeline({
   tzOffsetHours,
   flashNodeId,
   onCardClick,
+  attachedNotes,
+  canLeaveNote = false,
+  onAddDayNote,
 }: DayTimelineProps) {
+  const dayComposer =
+    canLeaveNote && onAddDayNote ? (
+      <div className="mx-auto w-[260px]">
+        <NotesPanel
+          notes={[]}
+          canAdd
+          onAddNote={(text) => onAddDayNote(group.date, text)}
+        />
+      </div>
+    ) : null;
+
   if (group.items.length === 0) {
     return (
-      <div className="px-6 py-16 text-center font-serif text-[14px] italic text-ink/45">
-        Nothing planned for {group.label} yet.
-        <div className="mt-1 font-sans text-[11px] not-italic text-ink/40">
+      <div className="px-6 py-16 text-center">
+        <div className="font-serif text-[14px] italic text-ink/45">
+          Nothing planned for {group.label} yet.
+        </div>
+        <div className="mt-1 font-sans text-[11px] text-ink/40">
           Ask the concierge below for an idea.
         </div>
+        <div className="mt-4 text-left">{dayComposer}</div>
       </div>
     );
   }
@@ -41,8 +66,10 @@ export function DayTimeline({
           tzOffsetHours={tzOffsetHours}
           flash={flashNodeId === node.id}
           onClick={() => onCardClick(node.id)}
+          attachedNoteCount={attachedNotes?.get(node.id)?.length ?? 0}
         />
       ))}
+      {dayComposer}
     </div>
   );
 }

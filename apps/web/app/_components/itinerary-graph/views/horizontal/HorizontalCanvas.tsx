@@ -73,6 +73,8 @@ interface HorizontalCanvasProps {
   onDismissProposal: (id: string) => void;
   onMeasureCard: (id: string, height: number) => void;
   onScrollToNode: (id: string) => void;
+  // Host node id → attached `note` nodes, for the per-card note badge.
+  attachedNotes?: Map<string, NodeResponse[]>;
 }
 
 function MeasuredCard({
@@ -117,6 +119,7 @@ export function HorizontalCanvas({
   onDismissProposal,
   onMeasureCard,
   onScrollToNode,
+  attachedNotes,
 }: HorizontalCanvasProps) {
   const positioned = Array.from(layout.positions.values());
   const proposalIds = useMemo(
@@ -326,6 +329,7 @@ export function HorizontalCanvas({
                   onDismiss={() => onDismissProposal(p.node.id)}
                   tzOffsetHours={tzOffsetHours}
                   compact={p.compact}
+                  attachedNoteCount={attachedNotes?.get(p.node.id)?.length ?? 0}
                 />
               );
             })}
@@ -492,6 +496,7 @@ function CardWrap({
   onDismiss,
   tzOffsetHours,
   compact,
+  attachedNoteCount,
 }: {
   p: PositionedHNode;
   axisWidth: number;
@@ -508,6 +513,7 @@ function CardWrap({
   onDismiss: () => void;
   tzOffsetHours: number;
   compact: boolean;
+  attachedNoteCount: number;
 }) {
   // Draggable only when staff editing is unlocked AND the node isn't a
   // locked-status (approved/confirmed) row.
@@ -578,6 +584,7 @@ function CardWrap({
               onClick={onClick}
               flash={isFlashing}
               compact={compact}
+              attachedNoteCount={attachedNoteCount}
             />
           </motion.div>
           {isProposal ? (

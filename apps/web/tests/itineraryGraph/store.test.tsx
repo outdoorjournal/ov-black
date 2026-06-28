@@ -15,7 +15,9 @@ import type {
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/types";
 import {
   itineraryGraphStore,
+  selectCanLeaveNote,
   selectEditable,
+  selectTravelerEditable,
   type ItineraryGraphInit,
   type ItineraryGraphState,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
@@ -129,5 +131,50 @@ describe("editing actions are inert for non-editable viewers", () => {
     expect(locked.result.current.getState().lockStatus).toBe("locked-by-me");
     const unlocked = renderStore({ role: "advisor" });
     expect(unlocked.result.current.getState().lockStatus).toBe("unlocked");
+  });
+
+  test("a traveler note action is inert without credentials (no token → no-op)", () => {
+    const { result } = renderStore({ role: "client" }); // accessToken null by default
+    act(() => {
+      result.current.getState().addAttachedNote("n1", "why 1:30?");
+    });
+    expect(result.current.getState().nodes).toHaveLength(1);
+  });
+});
+
+describe("selectCanLeaveNote", () => {
+  test("needs both apiBaseUrl and accessToken", () => {
+    const base = {} as ItineraryGraphState;
+    expect(selectCanLeaveNote({ ...base, apiBaseUrl: null, accessToken: null })).toBe(false);
+    expect(selectCanLeaveNote({ ...base, apiBaseUrl: "x", accessToken: null })).toBe(false);
+    expect(selectCanLeaveNote({ ...base, apiBaseUrl: "x", accessToken: "t" })).toBe(true);
+  });
+});
+
+describe("selectTravelerEditable", () => {
+  const fork = {
+    canEdit: false,
+    status: "draft",
+    apiBaseUrl: "x",
+    accessToken: "t",
+    sample: { itinerary: { forked_from_id: "base-1" } },
+  } as unknown as ItineraryGraphState;
+
+  test("true on the traveler's own draft alternative with creds", () => {
+    expect(selectTravelerEditable(fork)).toBe(true);
+  });
+  test("false for advisors (they use the lock path)", () => {
+    expect(selectTravelerEditable({ ...fork, canEdit: true })).toBe(false);
+  });
+  test("false on the agreed plan (not a fork)", () => {
+    const baseline = {
+      ...fork,
+      sample: { itinerary: { forked_from_id: null } },
+    } as unknown as ItineraryGraphState;
+    expect(selectTravelerEditable(baseline)).toBe(false);
+  });
+  test("false once approved, or without creds", () => {
+    expect(selectTravelerEditable({ ...fork, status: "approved" })).toBe(false);
+    expect(selectTravelerEditable({ ...fork, accessToken: null })).toBe(false);
   });
 });
