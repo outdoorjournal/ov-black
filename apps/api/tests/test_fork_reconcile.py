@@ -281,6 +281,67 @@ async def test_reconcile_applies_accepted_discards_rest(db_session: AsyncSession
 
 @integration
 @pytest.mark.asyncio
+async def test_reconcile_applies_a_parent_subgraph_move(db_session: AsyncSession) -> None:
+    """A move that re-parents a node (parent_subgraph_id) is folded into the
+    baseline — not just the follows-edge rewiring."""
+    baseline = await create_itinerary(db_session, _actor(), title="reparent")
+    fork_id: uuid.UUID | None = None
+    try:
+        dest = NodeType.destination
+        parent_a = await _node(
+            db_session, baseline.id, status=NodeStatus.proposed, title="A", type_=dest
+        )
+        parent_b = await _node(
+            db_session, baseline.id, status=NodeStatus.proposed, title="B", type_=dest
+        )
+        child = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="child")
+        # The child sits under A in the baseline.
+        await db_session.execute(
+            text("update public.nodes set parent_subgraph_id = :p where id = :n"),
+            {"p": parent_a.id, "n": child.id},
+        )
+        await db_session.commit()
+
+        fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
+        assert isinstance(fork, Itinerary)
+        fork_id = fork.id
+        fview = await get_itinerary_graph(db_session, fork.id)
+        assert not isinstance(fview, ItineraryError)
+        child_fork = _fork_node_for(fview, child.id)
+        b_fork = _fork_node_for(fview, parent_b.id)
+        # In the fork, re-parent the child under B.
+        await db_session.execute(
+            text("update public.nodes set parent_subgraph_id = :p where id = :n"),
+            {"p": b_fork.id, "n": child_fork.id},
+        )
+        await db_session.commit()
+
+        diff = await diff_fork(db_session, fork_id=fork.id)
+        assert isinstance(diff, ForkDiff)
+        moved = {c.baseline_node_id: c for c in diff.moved}
+        assert child.id in moved  # the re-parent is detected as a move
+
+        result = await reconcile_fork(
+            db_session,
+            _actor(ActorKind.ADVISOR),
+            fork_id=fork.id,
+            decisions=[ReconcileDecision(change_id=moved[child.id].change_id, accept=True)],
+        )
+        assert isinstance(result, ReconcileResult)
+        results = {o.change_id: o.result for o in result.outcomes}
+        assert results[moved[child.id].change_id] == "applied"
+
+        # The baseline child now sits under B.
+        live = await get_itinerary_graph(db_session, baseline.id)
+        assert not isinstance(live, ItineraryError)
+        moved_child = next(n for n in live.nodes if n.id == child.id)
+        assert moved_child.parent_subgraph_id == parent_b.id
+    finally:
+        await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
+
+
+@integration
+@pytest.mark.asyncio
 async def test_reconcile_refuses_booked_baseline_node(db_session: AsyncSession) -> None:
     baseline = await create_itinerary(db_session, _actor(), title="booked")
     fork_id: uuid.UUID | None = None

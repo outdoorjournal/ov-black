@@ -17,12 +17,14 @@ vi.mock("@ov-black/api-client", () => ({
   getItinerary: vi.fn(),
   getReconciliation: vi.fn(),
   bookNode: vi.fn(),
+  cancelBooking: vi.fn(),
   confirmNode: vi.fn(),
   refreshOffer: vi.fn(),
 }));
 
 import {
   bookNode,
+  cancelBooking,
   confirmNode,
   getItinerary,
   getReconciliation,
@@ -89,6 +91,7 @@ beforeEach(() => {
   } as never);
   vi.mocked(getReconciliation).mockResolvedValue({ ok: true, reconciliation: BALANCED });
   vi.mocked(bookNode).mockResolvedValue({ ok: true, booking: {} } as never);
+  vi.mocked(cancelBooking).mockResolvedValue({ ok: true, booking: {} } as never);
   vi.mocked(confirmNode).mockResolvedValue({ ok: true, booking: {} } as never);
   vi.mocked(refreshOffer).mockResolvedValue({ ok: true, offer: OFFER });
 });
@@ -156,6 +159,17 @@ test("Confirm posts the supplier ref on a booked node", async () => {
     expect(confirmNode).toHaveBeenCalledWith({}, "itin-1", "n-booked", {
       supplier_ref: "ABC123",
     }),
+  );
+});
+
+test("Cancel booking is two-step and calls cancelBooking on confirm", async () => {
+  renderPanel();
+  // First click reveals the confirm-refund step; nothing is sent yet.
+  fireEvent.click(await screen.findByTestId("cancel-n-booked"));
+  expect(cancelBooking).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByTestId("cancel-confirm-n-booked"));
+  await waitFor(() =>
+    expect(cancelBooking).toHaveBeenCalledWith({}, "itin-1", "n-booked", {}),
   );
 });
 

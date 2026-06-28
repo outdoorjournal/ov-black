@@ -41,6 +41,8 @@ from app.services.itineraries import (
 from app.services.node_cost import (
     NodeCost,
     cost_from_inventory_item,
+    effective_node_cost,
+    resolve_party_size,
     sum_node_costs,
 )
 from sqlalchemy import text
@@ -146,6 +148,25 @@ def test_currency_without_amount_yields_none() -> None:
         price=_price(None, None, "USD"),
     )
     assert cost_from_inventory_item(item) is None
+
+
+# ── Pure unit tests: effective_node_cost ───────────────────────────────────
+
+
+def test_effective_node_cost_per_person_multiplies_by_party_size() -> None:
+    assert effective_node_cost(Decimal("1200.00"), CostKind.per_person, 3) == Decimal("3600.00")
+
+
+def test_effective_node_cost_total_ignores_party_size() -> None:
+    assert effective_node_cost(Decimal("999.00"), CostKind.total, 4) == Decimal("999.00")
+
+
+def test_effective_node_cost_none_kind_bills_face_value() -> None:
+    assert effective_node_cost(Decimal("50.00"), None, 4) == Decimal("50.00")
+
+
+def test_effective_node_cost_floors_party_size_at_one() -> None:
+    assert effective_node_cost(Decimal("100.00"), CostKind.per_person, 0) == Decimal("100.00")
 
 
 # ── Pure unit tests: _check_cost guard ─────────────────────────────────────
@@ -401,5 +422,78 @@ async def test_sum_node_costs_groups_by_currency_and_filters(
         # Status filter narrows to the chosen lifecycle states only.
         booked_only = await sum_node_costs(db_session, itinerary.id, statuses=[NodeStatus.booked])
         assert booked_only == {}
+    finally:
+        await _cleanup(itinerary.id)
+
+
+async def _seed_party(session: AsyncSession, itinerary_id: uuid.UUID, traveler_names) -> uuid.UUID:
+    """Insert a party + travelers directly (the party model is a read/write surface)."""
+    party_id = uuid.uuid4()
+    await session.execute(
+        text("insert into public.parties (id, itinerary_id, label) values (:p, :i, 'all')"),
+        {"p": party_id, "i": itinerary_id},
+    )
+    for name in traveler_names:
+        await session.execute(
+            text("insert into public.travelers (party_id, name) values (:p, :n)"),
+            {"p": party_id, "n": name},
+        )
+    await session.commit()
+    return party_id
+
+
+@integration
+@pytest.mark.asyncio
+async def test_resolve_party_size_resolution_order(
+    db_session: AsyncSession,
+) -> None:
+    itinerary = await create_itinerary(db_session, _actor(), title="party size")
+    try:
+        # 1. No parties → 1 (per_person bills at face value, nothing regresses).
+        assert await resolve_party_size(db_session, itinerary.id) == 1
+
+        # 2. Travelers, no member_count → the de-facto live count.
+        party_id = await _seed_party(db_session, itinerary.id, ("a", "b", "c"))
+        assert await resolve_party_size(db_session, itinerary.id) == 3
+
+        # 3. An explicit advisor-set member_count wins over the traveler count.
+        await db_session.execute(
+            text("update public.parties set member_count = 5 where id = :p"),
+            {"p": party_id},
+        )
+        await db_session.commit()
+        assert await resolve_party_size(db_session, itinerary.id) == 5
+    finally:
+        await _cleanup(itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_sum_node_costs_expands_per_person_by_party_size(
+    db_session: AsyncSession,
+) -> None:
+    itinerary = await create_itinerary(db_session, _actor(), title="cost sum pp")
+    try:
+        await _seed_party(db_session, itinerary.id, ("a", "b", "c"))  # party of 3
+
+        async def _node(amount, kind):
+            node = await add_node(
+                db_session,
+                _actor(),
+                itinerary_id=itinerary.id,
+                type=NodeType.hotel,
+                status=NodeStatus.approved,
+                title="n",
+                cost_amount=Decimal(amount),
+                cost_currency="USD",
+                cost_kind=kind,
+            )
+            assert not isinstance(node, ItineraryError)
+
+        await _node("1200.00", CostKind.per_person)  # × 3 = 3600.00
+        await _node("999.00", CostKind.total)  # unchanged
+
+        totals = await sum_node_costs(db_session, itinerary.id)
+        assert totals == {"USD": Decimal("4599.00")}
     finally:
         await _cleanup(itinerary.id)

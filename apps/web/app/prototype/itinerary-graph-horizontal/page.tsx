@@ -10,15 +10,15 @@ export const metadata = {
 
 export default function ItineraryGraphHorizontalPrototypePage() {
   const timeline = getHorizontalTimeline();
-  // Sandbox: canEdit + startLocked so the drag/edit affordances are exercisable
-  // without an API to acquire a real lock against. No credentials → mutations
-  // are local-only (no network).
+  // Sandbox: advisor role + startLocked so the drag/edit affordances are
+  // exercisable without an API to acquire a real lock against. No credentials →
+  // mutations are local-only (no network).
   return (
     <ItineraryGraphView
       timeline={timeline}
       itineraryId={timeline.itinerary.id}
       status="draft"
-      canEdit
+      role="advisor"
       startLocked
     />
   );

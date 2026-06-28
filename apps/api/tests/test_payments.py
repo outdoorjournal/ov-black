@@ -338,6 +338,39 @@ async def test_fake_gateway_token() -> None:
     assert await generate_client_token(FakeGateway()) == "fake-client-token"
 
 
+# ── FakeGateway.refund dispatch (settled → refund, unsettled → void, decline) ──
+
+
+def test_fake_gateway_refund_settled_charge() -> None:
+    res = FakeGateway().refund(
+        processor_transaction_id="fake-abc", amount=Decimal("100.00"), reference="refund:1:aa"
+    )
+    assert res.ok is True
+    assert res.kind == "refund"
+    assert res.status == "refunded"
+
+
+def test_fake_gateway_voids_unsettled_charge() -> None:
+    res = FakeGateway().refund(
+        processor_transaction_id="fake-unsettled-abc",
+        amount=Decimal("100.00"),
+        reference="refund:1:bb",
+    )
+    assert res.ok is True
+    assert res.kind == "void"
+    assert res.status == "voided"
+
+
+def test_fake_gateway_refund_declines() -> None:
+    res = FakeGateway().refund(
+        processor_transaction_id="fake-declined-abc",
+        amount=Decimal("100.00"),
+        reference="refund:1:cc",
+    )
+    assert res.ok is False
+    assert res.status == "failed"
+
+
 # ── Router (service stubbed) ───────────────────────────────────────────────
 
 

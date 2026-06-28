@@ -37,7 +37,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 
+import anyio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,7 +60,13 @@ from app.models import (
     NodeOffer,
     NodeStatus,
     NodeType,
+    Payment,
+    PaymentStatus,
+    RefundStatus,
 )
+from app.observability import emit_metric, span
+from app.payments.base import PaymentGateway, PaymentGatewayError, new_refund_reference
+from app.services.invoices import build_reversal_line
 from app.services.itineraries import (
     ActorContext,
     ItineraryError,
@@ -66,7 +74,11 @@ from app.services.itineraries import (
     _snapshot_node,
     _write_node_history,
 )
-from app.services.node_cost import cost_from_inventory_item
+from app.services.node_cost import (
+    cost_from_inventory_item,
+    effective_node_cost,
+    resolve_party_size,
+)
 
 logger = logging.getLogger("ov_black.bookings")
 
@@ -164,8 +176,39 @@ async def _latest_offer(session: AsyncSession, node_id: uuid.UUID) -> NodeOffer 
 
 
 async def _booking_for(session: AsyncSession, node_id: uuid.UUID) -> Booking | None:
+    """The node's LIVE booking (cancelled rows are excluded — a cancelled node is
+    demoted to ``approved`` and re-bookable, so its old booking no longer counts)."""
     return (
-        await session.execute(select(Booking).where(Booking.node_id == node_id))
+        await session.execute(
+            select(Booking).where(
+                Booking.node_id == node_id,
+                Booking.cancelled_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _covering_invoice_id(session: AsyncSession, line_item_id: uuid.UUID) -> uuid.UUID | None:
+    return (
+        await session.execute(
+            select(InvoiceLineItem.invoice_id).where(InvoiceLineItem.id == line_item_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _latest_succeeded_payment(session: AsyncSession, invoice_id: uuid.UUID) -> Payment | None:
+    """The most recent settled gateway charge on an invoice — the refund target."""
+    return (
+        await session.execute(
+            select(Payment)
+            .where(
+                Payment.invoice_id == invoice_id,
+                Payment.status == PaymentStatus.succeeded,
+                Payment.processor_transaction_id.isnot(None),
+            )
+            .order_by(Payment.created_at.desc())
+            .limit(1)
+        )
     ).scalar_one_or_none()
 
 
@@ -379,7 +422,8 @@ async def book_node(
         return _conflict("node_not_approved")
 
     # 1. The booked amount: a flight re-prices off a fresh offer; everything else
-    #    books at its static B4 cost.
+    #    books at its static B4 cost, with per-person costs expanded by party size.
+    party_size = await resolve_party_size(session, itinerary_id)
     offer: NodeOffer | None = None
     if node.type is NodeType.flight:
         offer = await _latest_offer(session, node_id)
@@ -391,7 +435,8 @@ async def book_node(
     else:
         if node.cost_amount is None or node.cost_currency is None:
             return _err("node_has_no_cost")
-        amount, currency = node.cost_amount, node.cost_currency
+        amount = effective_node_cost(node.cost_amount, node.cost_kind, party_size)
+        currency = node.cost_currency
 
     # 2. The money gate: a covering paid line (or, on override, a covering issued one).
     used_override = False
@@ -461,7 +506,15 @@ async def book_node(
             "actor_kind": actor.kind.value,
         },
     )
-    reprice_delta = _reprice_delta(amount, node.cost_amount, node.cost_currency, currency)
+    # Compare the booked amount against the party-size-expanded B4 cost so an
+    # expanded per-person node doesn't read as a spurious re-price; a flight's
+    # cost_kind is ``total`` so its expanded base is unchanged.
+    cost_baseline = (
+        effective_node_cost(node.cost_amount, node.cost_kind, party_size)
+        if node.cost_amount is not None
+        else None
+    )
+    reprice_delta = _reprice_delta(amount, cost_baseline, node.cost_currency, currency)
     return BookingView(
         booking=booking,
         node_status=node.status,
@@ -538,6 +591,177 @@ async def get_booking(session: AsyncSession, node_id: uuid.UUID) -> Booking | No
     return await _booking_for(session, node_id)
 
 
+# ── Cancel + refund a booking ────────────────────────────────────────────────
+
+
+async def cancel_booking(
+    session: AsyncSession,
+    actor: ActorContext,
+    gateway: PaymentGateway | None,
+    *,
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    reason: str | None = None,
+) -> BookingView | ItineraryError:
+    """Cancel a booked/confirmed node: refund its covering payment, reverse the
+    charge line, and demote the node back to ``approved`` (advisor-only).
+
+    Money movement: a settled covering charge is **refunded**, an unsettled one
+    **voided**; an ``override_unpaid`` booking (no money collected) cancels with
+    ``refund_status=not_applicable`` and no gateway call. Fail-closed — if the
+    gateway is down (raises) or declines, the whole cancel rolls back so the
+    ledger never claims a refund that didn't happen. The node demotes through the
+    same firmed→approved transition the G1 status gate permits an advisor, so a
+    re-booking goes back through the money gate; reconcile stays balanced because
+    the demoted node leaves the booked-sum and the reversal nets its coverage.
+    """
+    node = await _load_node(session, itinerary_id, node_id)
+    if node is None:
+        return _not_found()
+    if node.status not in _BOOKED_STATUSES:
+        return _conflict("node_not_booked")
+    booking = await _booking_for(session, node_id)
+    if booking is None:
+        return _conflict("no_booking")
+
+    # Resolve the refund target: the settled gateway charge that covered this
+    # booking. An override (issued, unpaid) booking has none — nothing to return.
+    covering_invoice_id = (
+        await _covering_invoice_id(session, booking.invoice_line_item_id)
+        if booking.invoice_line_item_id is not None
+        else None
+    )
+    payment = (
+        await _latest_succeeded_payment(session, covering_invoice_id)
+        if covering_invoice_id is not None
+        else None
+    )
+
+    # Capture ids now: a rollback below would expire the ORM objects, and reading
+    # ``booking.id`` after that would trigger a sync lazy-load.
+    booking_id = booking.id
+    booking_amount = booking.amount
+    booking_currency = booking.currency
+
+    refund_status = RefundStatus.not_applicable
+    refund_ref: str | None = None
+    refund_payment: Payment | None = None
+
+    if not booking.override_unpaid and payment is not None and payment.processor_transaction_id:
+        if gateway is None:
+            return _conflict("payments_unconfigured")
+        refund_ref = new_refund_reference(booking_id)
+        try:
+            async with span("payment.gateway.refund", metric=True, gateway=gateway.name):
+                result = await anyio.to_thread.run_sync(
+                    partial(
+                        gateway.refund,
+                        processor_transaction_id=payment.processor_transaction_id,
+                        amount=booking_amount,
+                        reference=refund_ref,
+                    )
+                )
+        except PaymentGatewayError as exc:
+            # Outcome unknown (timeout/network) — undo nothing, let the advisor retry.
+            await session.rollback()
+            logger.warning(
+                "booking.cancel.gateway_error",
+                extra={
+                    "node_id": str(node_id),
+                    "booking_id": str(booking_id),
+                    "gateway": gateway.name,
+                    "reason": exc.reason,
+                    "actor_kind": actor.kind.value,
+                },
+            )
+            emit_metric("payment.gateway_error", 1, dimensions={"Gateway": gateway.name})
+            return _conflict("refund_gateway_unavailable")
+        if not result.ok:
+            # Fail-closed: never undo the booking if we couldn't return the money.
+            await session.rollback()
+            return _conflict("refund_declined")
+        refund_status = RefundStatus.refunded if result.kind == "refund" else RefundStatus.voided
+        refund_payment = Payment(
+            invoice_id=covering_invoice_id,
+            amount=booking_amount,
+            currency=booking_currency,
+            status=PaymentStatus.refunded,
+            gateway=gateway.name,
+            gateway_reference=refund_ref,
+            processor_transaction_id=result.processor_transaction_id,
+            processor_response=result.processor_response,
+            raw=result.raw,
+        )
+        session.add(refund_payment)
+        await session.flush()
+
+    # Reverse the covering charge line so the ledger reflects the undone booking.
+    if booking.invoice_line_item_id is not None:
+        original = (
+            await session.execute(
+                select(InvoiceLineItem).where(InvoiceLineItem.id == booking.invoice_line_item_id)
+            )
+        ).scalar_one_or_none()
+        if original is not None and original.kind is not InvoiceLineKind.reversal:
+            already_reversed = (
+                await session.execute(
+                    select(InvoiceLineItem.id).where(
+                        InvoiceLineItem.reverses_line_item_id == original.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if already_reversed is None:
+                session.add(
+                    build_reversal_line(
+                        actor,
+                        original=original,
+                        description=f"Refund of: {original.description}",
+                    )
+                )
+
+    # Demote the node — the firmed→approved transition the G1 gate permits an
+    # advisor (done inline like book_node, not bypassing the gate).
+    before = _snapshot_node(node)
+    node.status = _BOOKABLE_FROM
+    refunded = refund_status in (RefundStatus.refunded, RefundStatus.voided)
+    booking.cancelled_at = _now()
+    booking.cancelled_by = actor.user_id
+    booking.cancel_reason = reason
+    booking.refund_status = refund_status
+    booking.refund_amount = booking_amount if refunded else _ZERO
+    booking.refund_currency = booking_currency
+    booking.refund_gateway_ref = refund_ref
+    if refund_payment is not None:
+        booking.refund_payment_id = refund_payment.id
+    await session.flush()
+    await _write_node_history(
+        session,
+        node_id=node.id,
+        itinerary_id=itinerary_id,
+        op="update",
+        actor=actor,
+        before=before,
+        after=_snapshot_node(node),
+    )
+    await session.commit()
+    # Never log the refund cross-ref / processor id / raw payload.
+    logger.info(
+        "booking.cancel",
+        extra={
+            "node_id": str(node_id),
+            "booking_id": str(booking_id),
+            "refund_status": refund_status.value,
+            "actor_kind": actor.kind.value,
+        },
+    )
+    return BookingView(
+        booking=booking,
+        node_status=node.status,
+        offer=None,
+        reprice_delta=None,
+    )
+
+
 # ── The reconciliation invariant ─────────────────────────────────────────────
 
 
@@ -561,6 +785,7 @@ async def reconcile_itinerary(
                 .where(
                     Node.itinerary_id == itinerary_id,
                     Node.status.in_(list(_BOOKED_STATUSES)),
+                    Booking.cancelled_at.is_(None),
                 )
             )
         )

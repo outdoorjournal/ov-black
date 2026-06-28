@@ -16,6 +16,11 @@ _RUBRIC_CLIENT = (
     "settled on a shape that covers the trip, call ``assemble_draft`` with "
     "a day-by-day ordering to create ``follows`` edges between cards. Emit "
     "``assemble_draft`` at most once per turn.\n\n"
+    "Use ``move_node`` to reschedule a card to a new time, and ``add_note`` "
+    "to capture a question or request the advisor should see. To rework "
+    "anything already firmed on the agreed plan, branch an alternative "
+    "version with ``fork_itinerary`` first, then change it there and call "
+    "``request_reconcile`` — never edit a ``status_locked`` node directly.\n\n"
     "Flag seasonal risks and scheduling conflicts you notice. Do not "
     "commit to bookings — an advisor handles those manually for now."
 )

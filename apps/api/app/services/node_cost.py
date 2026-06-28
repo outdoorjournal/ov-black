@@ -31,11 +31,11 @@ from collections.abc import Collection
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import NamedTuple
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.inventory.schemas import FlightItem, HotelItem, InventoryItem
-from app.models import CostKind, Node, NodeStatus
+from app.models import CostKind, Node, NodeStatus, Party, Traveler
 
 # Whole-booking providers quote one total for the node (a Duffel offer covers
 # every passenger on the request; a Ratehawk rate is the whole stay). Anything
@@ -96,6 +96,54 @@ def cost_from_inventory_item(item: InventoryItem) -> NodeCost | None:
     return NodeCost(amount=amount, currency=currency, kind=kind)
 
 
+def effective_node_cost(amount: Decimal, kind: CostKind | None, party_size: int) -> Decimal:
+    """The billable amount for a node: ``per_person`` × party size, else face value.
+
+    A ``per_person`` quote (an OV experience's ``minPrice``) is multiplied by the
+    number of travelers; ``total`` (a flight offer, a whole-stay hotel rate) and an
+    unset ``kind`` bill as quoted. ``party_size`` is floored at 1 so a missing
+    party never zeroes a charge. This is the single source of truth shared by
+    invoice-line assembly, the booked amount, and the money-gate sums so they
+    cannot drift (a mismatch would permanently break the reconciliation invariant).
+    """
+    if kind is CostKind.per_person:
+        return amount * max(party_size, 1)
+    return amount
+
+
+async def resolve_party_size(session: AsyncSession, itinerary_id: uuid.UUID) -> int:
+    """The itinerary's effective traveler count (floored at 1).
+
+    Resolution order: (1) the sum of any advisor-set ``parties.member_count`` for
+    the itinerary; (2) else the de-facto count of ``travelers`` rows across the
+    itinerary's parties (``member_count`` is not yet populated anywhere, so this is
+    the live source today); (3) else 1, so a ``per_person`` cost on a party-less
+    itinerary bills at face value and nothing regresses. Per-node ``node_parties``
+    precision is deliberately deferred — a node bills for the whole trip party.
+    """
+    explicit_total, explicit_count = (
+        await session.execute(
+            select(func.sum(Party.member_count), func.count(Party.member_count)).where(
+                Party.itinerary_id == itinerary_id
+            )
+        )
+    ).one()
+    if explicit_count and explicit_total:
+        return max(int(explicit_total), 1)
+
+    traveler_count = (
+        await session.execute(
+            select(func.count(Traveler.id))
+            .join(Party, Party.id == Traveler.party_id)
+            .where(Party.itinerary_id == itinerary_id)
+        )
+    ).scalar_one()
+    if traveler_count:
+        return max(int(traveler_count), 1)
+
+    return 1
+
+
 async def sum_node_costs(
     session: AsyncSession,
     itinerary_id: uuid.UUID,
@@ -104,11 +152,13 @@ async def sum_node_costs(
 ) -> dict[str, Decimal]:
     """Sum an itinerary's node costs, grouped by currency.
 
-    Returns ``{currency: total}`` over the itinerary's priced nodes. Costs are
-    summed at face value in their native currency — cross-currency conversion
-    to one display currency is a read-side concern deferred per D-COST, and
-    ``per_person`` amounts are summed as quoted (party-size expansion is an
-    M005 money-gate concern). An itinerary with no priced nodes yields ``{}``.
+    Returns ``{currency: total}`` over the itinerary's priced nodes, summed in
+    each native currency — cross-currency conversion to one display currency is a
+    read-side concern deferred per D-COST. ``per_person`` amounts are expanded by
+    the itinerary's party size (see :func:`resolve_party_size`) so the money-gate
+    booked-sum matches the per-person charge lines billed for the same nodes; a
+    mismatch would permanently break the reconciliation invariant. An itinerary
+    with no priced nodes yields ``{}``.
 
     Only *selected* branches participate (``is_selected_alt`` is true) so a
     deselected alternative never double-counts. By default ``discarded`` nodes
@@ -126,8 +176,13 @@ async def sum_node_costs(
     else:
         conditions.append(Node.status != NodeStatus.discarded)
 
+    party_size = await resolve_party_size(session, itinerary_id)
+    amount_expr = case(
+        (Node.cost_kind == CostKind.per_person, Node.cost_amount * party_size),
+        else_=Node.cost_amount,
+    )
     stmt = (
-        select(Node.cost_currency, func.sum(Node.cost_amount))
+        select(Node.cost_currency, func.sum(amount_expr))
         .where(*conditions)
         .group_by(Node.cost_currency)
     )

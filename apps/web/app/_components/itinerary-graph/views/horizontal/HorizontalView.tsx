@@ -16,8 +16,9 @@
 // it stays anchored to the bottom of the viewport regardless of how the
 // canvas above scrolls.
 //
-// Below md: the canvas + axis are replaced with MobileDayList and the map
-// drops to the bottom of the page.
+// Below md this whole view is hidden by <ItineraryGraphView>, which renders a
+// dedicated swipe-driven mobile layout instead — so this file is purely the
+// md-and-up presentation.
 
 import {
   DndContext,
@@ -64,7 +65,6 @@ import { VaultPanel } from "./VaultPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
 import { NodeCard } from "./NodeCard";
 import { MapStrip } from "./MapStrip";
-import { MobileDayList } from "./MobileDayList";
 import { ScrollHint } from "./ScrollHint";
 import { TimeAxis } from "./TimeAxis";
 import { ZoomControls } from "./ZoomControls";
@@ -840,18 +840,6 @@ export function HorizontalView({
             aside. Anchored to the bottom of the body, doesn't scroll with
             anything above. */}
         <MapStrip focus={focusCoords} arc={focusArc} height={220} />
-      </div>
-
-      {/* Mobile fallback. */}
-      <div className="flex flex-1 flex-col overflow-hidden md:hidden">
-        <div className="flex-1 overflow-y-auto">
-          <MobileDayList
-            daysMeta={timeline.days}
-            tzOffsetHours={timeline.timezoneOffsetHours}
-            onCardClick={(id) => setExpandedId(id)}
-          />
-        </div>
-        <MapStrip focus={focusCoords} arc={focusArc} height={180} />
       </div>
 
       <AnimatePresence>

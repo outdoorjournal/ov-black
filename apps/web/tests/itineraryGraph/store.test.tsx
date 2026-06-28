@@ -61,7 +61,7 @@ function renderStore(init: Partial<ItineraryGraphInit> = {}) {
     timeline: timeline([NODE]),
     itineraryId: "it-1",
     status: "draft",
-    canEdit: false,
+    role: "client",
     apiBaseUrl: null,
     accessToken: null,
     ...init,
@@ -98,8 +98,8 @@ describe("selectEditable", () => {
 });
 
 describe("editing actions are inert for non-editable viewers", () => {
-  test("traveler (canEdit=false) cannot edit a field, add, or remove", () => {
-    const { result } = renderStore({ canEdit: false });
+  test("traveler (role=client) cannot edit a field, add, or remove", () => {
+    const { result } = renderStore({ role: "client" });
     act(() => {
       result.current.getState().editNodeField("n1", "title", "Hacked");
       result.current.getState().addNode({ type: "note", title: "Sneaky" });
@@ -111,8 +111,8 @@ describe("editing actions are inert for non-editable viewers", () => {
   });
 
   test("staff with the lock but no credentials cannot mutate (no token → no-op)", () => {
-    // Mirrors the prototype sandbox: canEdit + startLocked but null creds.
-    const { result } = renderStore({ canEdit: true, startLocked: true });
+    // Mirrors the prototype sandbox: advisor + startLocked but null creds.
+    const { result } = renderStore({ role: "advisor", startLocked: true });
     expect(selectEditable(result.current.getState())).toBe(true);
     act(() => {
       result.current.getState().editNodeField("n1", "title", "Hacked");
@@ -125,9 +125,9 @@ describe("editing actions are inert for non-editable viewers", () => {
   });
 
   test("startLocked seeds locked-by-me; default leaves it unlocked", () => {
-    const locked = renderStore({ canEdit: true, startLocked: true });
+    const locked = renderStore({ role: "advisor", startLocked: true });
     expect(locked.result.current.getState().lockStatus).toBe("locked-by-me");
-    const unlocked = renderStore({ canEdit: true });
+    const unlocked = renderStore({ role: "advisor" });
     expect(unlocked.result.current.getState().lockStatus).toBe("unlocked");
   });
 });

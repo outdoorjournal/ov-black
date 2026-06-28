@@ -148,6 +148,52 @@ async def _priced_node(
 
 @integration
 @pytest.mark.asyncio
+async def test_add_line_item_from_node_expands_per_person_by_party_size(
+    db_session: AsyncSession,
+) -> None:
+    """A per_person charge line bills the whole party so it matches what the money
+    gate later books for the same node."""
+    itin = await create_itinerary(db_session, _actor(), title="pp line")
+    try:
+        party_id = uuid.uuid4()
+        await db_session.execute(
+            text("insert into public.parties (id, itinerary_id, label) values (:p, :i, 'all')"),
+            {"p": party_id, "i": itin.id},
+        )
+        for name in ("a", "b"):
+            await db_session.execute(
+                text("insert into public.travelers (party_id, name) values (:p, :n)"),
+                {"p": party_id, "n": name},
+            )
+        await db_session.commit()
+
+        node = await add_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            type=NodeType.experience,
+            status=NodeStatus.approved,
+            title="Guide",
+            cost_amount=Decimal("750.00"),
+            cost_currency="USD",
+            cost_kind=CostKind.per_person,
+        )
+        assert isinstance(node, Node)
+        invoice = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="Dep", currency="USD"
+        )
+        assert isinstance(invoice, Invoice)
+        charge = await add_line_item_from_node(
+            db_session, _actor(), invoice_id=invoice.id, node_id=node.id
+        )
+        assert not isinstance(charge, ItineraryError)
+        assert charge.amount == Decimal("1500.00")  # 750 × 2 travelers
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_signed_ledger_totals_and_void(db_session: AsyncSession) -> None:
     itin = await create_itinerary(db_session, _actor(), title="inv")
     try:

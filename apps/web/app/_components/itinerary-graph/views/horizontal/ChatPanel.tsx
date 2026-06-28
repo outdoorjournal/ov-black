@@ -18,6 +18,9 @@ interface ChatPanelProps {
   onSubmit: (text: string) => void;
   onScrollToNode?: (id: string) => void;
   disabled?: boolean;
+  // Hide the panel's own "Concierge" header — used when a host (e.g. the mobile
+  // bottom sheet) already provides one in its drag handle.
+  hideHeader?: boolean;
 }
 
 export function ChatPanel({
@@ -28,6 +31,7 @@ export function ChatPanel({
   onSubmit,
   onScrollToNode,
   disabled = false,
+  hideHeader = false,
 }: ChatPanelProps) {
   const [text, setText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,12 +52,14 @@ export function ChatPanel({
 
   return (
     <div className="relative z-20 flex h-full flex-col border-l border-ink/15 bg-paper/80 backdrop-blur-md shadow-[-12px_0_32px_-20px_rgba(0,0,0,0.5)]">
-      <div className="border-b border-ink/10 px-4 py-2.5">
-        <div className="text-[10px] uppercase tracking-[0.24em] text-ink/55">
-          Concierge
+      {hideHeader ? null : (
+        <div className="border-b border-ink/10 px-4 py-2.5">
+          <div className="text-[10px] uppercase tracking-[0.24em] text-ink/55">
+            Concierge
+          </div>
+          <div className="font-serif text-lg text-ink">Conversation</div>
         </div>
-        <div className="font-serif text-lg text-ink">Conversation</div>
-      </div>
+      )}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
         <AnimatePresence initial={false}>
           {messages.map((m) => (

@@ -6,6 +6,7 @@ import {
   NOISE_BG,
   STATUS_TOKENS,
   TYPE_TOKENS,
+  lockCopy,
   type CardKind,
   type StatusKind,
 } from "./tokens";
@@ -24,6 +25,12 @@ interface CardShellProps {
   serial?: string;
   // Surfaced in the Approved / Confirmed footer band as a short date stamp.
   statusDate?: string;
+  // G1: the server-computed lock reason (e.g. "status_locked") for a firmed
+  // node. When set, the booked/confirmed footer reads as a lock badge with a
+  // crafted "an advisor would need to move it" tooltip + accessible label.
+  lockReason?: string | null;
+  // A friendly noun for the locked item (the node type), used in the copy.
+  lockLabel?: string;
 }
 
 interface SubstrateStyle {
@@ -80,6 +87,8 @@ export function CardShell({
   noteOverride,
   serial,
   statusDate,
+  lockReason,
+  lockLabel,
 }: CardShellProps) {
   const token = TYPE_TOKENS[kind];
   const isNote = noteOverride ?? kind === "note";
@@ -160,7 +169,13 @@ export function CardShell({
       </div>
 
       {isCompact ? null : (
-        <StatusFooter status={status} serial={serial} statusDate={statusDate} />
+        <StatusFooter
+          status={status}
+          serial={serial}
+          statusDate={statusDate}
+          lockReason={lockReason}
+          lockLabel={lockLabel}
+        />
       )}
     </div>
   );
@@ -170,11 +185,21 @@ function StatusFooter({
   status,
   serial,
   statusDate,
+  lockReason,
+  lockLabel,
 }: {
   status: StatusKind;
   serial: string | undefined;
   statusDate: string | undefined;
+  lockReason: string | null | undefined;
+  lockLabel: string | undefined;
 }) {
+  // A booked/confirmed node is status-locked: the crafted copy explains why an
+  // edit would be refused, surfaced as the footer's tooltip + accessible label.
+  const lockMsg =
+    lockReason && (status === "booked" || status === "confirmed")
+      ? lockCopy(status, lockLabel ?? "item")
+      : undefined;
   if (status === "approved") {
     return (
       <div
@@ -195,7 +220,9 @@ function StatusFooter({
       <div
         className="mt-3 flex items-center justify-between px-3 py-2"
         style={{ backgroundColor: "rgba(10,10,10,0.08)" }}
-        aria-label="Status: booked"
+        aria-label={lockMsg ?? "Status: booked"}
+        title={lockMsg}
+        data-lock-reason={lockReason ?? undefined}
       >
         <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-ink/85">
           <span aria-hidden>⚿</span> Booked
@@ -211,7 +238,9 @@ function StatusFooter({
       <div
         className="mt-3 flex flex-col px-3 py-2.5"
         style={{ backgroundColor: "#0a0a0a", color: "#f7f4ee" }}
-        aria-label="Status: confirmed"
+        aria-label={lockMsg ?? "Status: confirmed"}
+        title={lockMsg}
+        data-lock-reason={lockReason ?? undefined}
       >
         <div className="flex items-center justify-between">
           <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.32em]">

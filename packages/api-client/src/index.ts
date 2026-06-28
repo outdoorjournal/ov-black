@@ -50,6 +50,7 @@ import {
   refreshOfferEndpointItineraryItineraryIdNodesNodeIdOffersRefreshPost,
   listOffersEndpointItineraryItineraryIdNodesNodeIdOffersGet,
   bookNodeEndpointItineraryItineraryIdNodesNodeIdBookPost,
+  cancelNodeEndpointItineraryItineraryIdNodesNodeIdCancelPost,
   confirmNodeEndpointItineraryItineraryIdNodesNodeIdConfirmPost,
   reconciliationEndpointItineraryItineraryIdReconciliationGet,
   dismissOnboardingEndpointOnboardingDismissPost,
@@ -71,6 +72,7 @@ import {
   listItineraryDocumentsEndpointItinerariesItineraryIdDocumentsGet,
   listItineraryPartyEndpointItinerariesItineraryIdPartyGet,
   listMyDocumentsEndpointMeDocumentsGet,
+  listMyInvoicesEndpointMeInvoicesGet,
   listMyItinerariesEndpointMeItinerariesGet,
   listMyPartyMembersEndpointMePartyMembersGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
@@ -129,9 +131,12 @@ import type {
   PaymentTokenResponse,
   BookNodeRequest,
   BookingResponse,
+  CancelBookingRequest,
   OfferResponse,
   RecordConfirmationRequest,
   ReconciliationResponse,
+  MyInvoiceSummary,
+  MyInvoicesResponse,
   NodeChangeResponse,
   ReconcileOutcomeResponse,
   ReconcileRequest,
@@ -262,6 +267,7 @@ export type {
 export type {
   BookNodeRequest,
   BookingResponse,
+  CancelBookingRequest,
   OfferResponse,
   RecordConfirmationRequest,
   ReconciliationResponse,
@@ -364,6 +370,8 @@ export type {
 // hydrated decision and the itinerary grid; no advisor gate.
 export type {
   MyClientResponse,
+  MyInvoiceSummary,
+  MyInvoicesResponse,
   MyItinerariesResponse,
   MyItinerarySummary,
   MyOnboardingSessionResponse,
@@ -2125,6 +2133,32 @@ export async function listMyItineraries(
   }
 }
 
+export type ListMyInvoicesResult =
+  | { ok: true; invoices: MyInvoiceSummary[] }
+  | { ok: false; status: number; detail: "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for GET /me/invoices.
+ *
+ * The calling client's invoices across every itinerary, newest first. Powers
+ * the traveler /basecamp/invoices listing; each row links to /invoices/{id}.
+ * Empty list is a valid 200.
+ */
+export async function listMyInvoices(
+  client: Client,
+): Promise<ListMyInvoicesResult> {
+  try {
+    const { data, error, response } =
+      await listMyInvoicesEndpointMeInvoicesGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoices: data.invoices };
+    }
+    return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
 export type ListAdvisorItinerariesDetail =
   | "advisor_only"
   | "network_error"
@@ -3531,6 +3565,11 @@ export type BookingDetail =
   | "offer_expired"
   | "offer_unavailable"
   | "reprice_failed"
+  // 409 — cancel + refund
+  | "already_cancelled"
+  | "refund_declined"
+  | "refund_gateway_unavailable"
+  | "payments_unconfigured"
   // 400 — validation
   | "node_has_no_cost"
   | "offer_unpriced"
@@ -3552,6 +3591,10 @@ const _BOOKING_TOKENS = new Set<BookingDetail>([
   "offer_expired",
   "offer_unavailable",
   "reprice_failed",
+  "already_cancelled",
+  "refund_declined",
+  "refund_gateway_unavailable",
+  "payments_unconfigured",
   "node_has_no_cost",
   "offer_unpriced",
   "supplier_ref_required",
@@ -3657,6 +3700,33 @@ export async function confirmNode(
   try {
     const { data, error, response } =
       await confirmNodeEndpointItineraryItineraryIdNodesNodeIdConfirmPost({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, booking: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type CancelBookingResult =
+  | { ok: true; booking: BookingResponse }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** POST /itinerary/{id}/nodes/{nodeId}/cancel — cancel + refund a booked node (advisor). */
+export async function cancelBooking(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+  body: CancelBookingRequest = {},
+): Promise<CancelBookingResult> {
+  try {
+    const { data, error, response } =
+      await cancelNodeEndpointItineraryItineraryIdNodesNodeIdCancelPost({
         client,
         path: { itinerary_id: itineraryId, node_id: nodeId },
         body,

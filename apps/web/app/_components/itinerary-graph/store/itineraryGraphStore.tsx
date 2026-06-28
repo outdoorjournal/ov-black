@@ -8,12 +8,15 @@
 // lifecycle (lock / release / approve, field edits, drag-reorder persistence,
 // add / remove) — and is deliberately ignorant of how any view draws it.
 //
-// `canEdit` is resolved on the server (advisor vs. traveler) and threaded in
-// at construction; for travelers it is false and `accessToken`/`apiBaseUrl`
-// are null, so the editing actions are inert and no client-side credential is
-// ever handed to a traveler. The backend's advisor guards remain the real
-// authority — `canEdit` only governs whether we render and attempt the
-// mutations at all.
+// The viewer's `role` is resolved on the server and threaded in at
+// construction; `canEdit` is DERIVED from it (`role === "advisor"`) rather
+// than passed as its own boolean — role is the single source of truth both
+// the server and client already hold. Each viewer is handed their OWN Supabase
+// token (already present in their browser session), so the credentials are
+// non-null for travelers too — that is what lets the traveler-facing concierge
+// run. Editing actions still gate on `canEdit`/`selectEditable`, and the
+// backend's advisor guards remain the real authority; `canEdit` only governs
+// whether we render and attempt the mutations at all.
 //
 // NOTE: the zoom fields (`pxPerMinute` + zoom actions) are horizontal-view UI
 // state that currently lives here for convenience. When a second view lands,
@@ -42,6 +45,7 @@ import {
 } from "@ov-black/api-client";
 
 import { createStoreContext } from "@/lib/store/createStoreContext";
+import type { UserRole } from "@/lib/role";
 
 import { offsetHoursOr } from "../model/horizontalTime";
 import type {
@@ -101,6 +105,9 @@ export function clampZoom(value: number): number {
 export type ItineraryGraphState = {
   // ── identity / config ──
   itineraryId: string;
+  /** The viewer's resolved role — the source of truth for capability. */
+  role: UserRole;
+  /** Derived from `role` (advisor) at construction; not threaded as a prop. */
   canEdit: boolean;
   apiBaseUrl: string | null;
   accessToken: string | null;
@@ -200,7 +207,8 @@ export type ItineraryGraphInit = {
   timeline: ItineraryTimeline;
   itineraryId: string;
   status: ItineraryStatus;
-  canEdit: boolean;
+  /** The viewer's resolved role; `canEdit` is derived from it in the store. */
+  role: UserRole;
   apiBaseUrl: string | null;
   accessToken: string | null;
   // Demo/sandbox escape hatch: start already locked-by-me so the prototype
@@ -280,14 +288,19 @@ export const itineraryGraphStore = createStoreContext<
     timeline,
     itineraryId,
     status,
-    canEdit,
+    role,
     apiBaseUrl,
     accessToken,
     startLocked = false,
   }) =>
     (set, get) => {
-      // Lazily build an authenticated client for a mutation. Returns null for
-      // travelers (no credentials) so callers degrade to a no-op.
+      // `canEdit` is derived from the viewer's role — role is the threaded
+      // fact, this is just the capability it implies.
+      const canEdit = role === "advisor";
+
+      // Lazily build an authenticated client for a mutation. Returns null when
+      // no credentials were provided (e.g. the API-less sandbox) so callers
+      // degrade to a no-op.
       const client = () => {
         if (!apiBaseUrl || !accessToken) return null;
         return createApiClient({ baseUrl: apiBaseUrl, accessToken });
@@ -301,6 +314,7 @@ export const itineraryGraphStore = createStoreContext<
 
       return {
         itineraryId,
+        role,
         canEdit,
         apiBaseUrl,
         accessToken,

@@ -72,6 +72,19 @@ def confirm(
     render.emit(state.json_mode, res, lambda: render.kv_panel("confirmed", res))
 
 
+@app.command("cancel")
+def cancel(
+    ctx: typer.Context,
+    itinerary_id: str = typer.Argument(..., help="Itinerary UUID."),
+    node_id: str = typer.Argument(..., help="Node UUID."),
+    reason: str | None = typer.Option(None, "--reason", help="Why the booking is cancelled."),
+) -> None:
+    """Cancel a booked/confirmed node + refund its covering payment (advisor)."""
+    state = state_of(ctx)
+    res = run_op(ctx, lambda ovb: ovb.cancel_booking(itinerary_id, node_id, reason=reason))
+    render.emit(state.json_mode, res, lambda: render.kv_panel("cancelled", res))
+
+
 @app.command("reconcile")
 def reconcile(
     ctx: typer.Context,

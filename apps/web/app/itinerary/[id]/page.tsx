@@ -1,13 +1,17 @@
 // Unified itinerary graph route (traveler + staff).
 //
 // Both the traveler and an advisor land here on the SAME view. The server
-// resolves the viewer's role and decides whether editing is unlocked:
-//   - traveler  → canEdit=false, NO credentials passed to the client (the
-//                 view is read-only; nothing to mutate, no token to leak).
-//   - advisor   → canEdit=true, apiBaseUrl + accessToken passed so the view's
-//                 client-side mutations (lock/approve/edit/add/remove/reorder)
-//                 can call the API. The backend's advisor guards remain the
-//                 real authority — canEdit only governs the UI.
+// resolves the viewer's `role` and passes it straight through — the store
+// derives editability from it (advisor → editable). Each viewer is handed
+// their OWN Supabase session token (already in their browser), so:
+//   - traveler → role=client: the editing UI stays locked, but the token
+//                powers the traveler-facing concierge (chat) and the read-only
+//                graph.
+//   - advisor  → role=advisor: the lock/approve/edit/add/remove mutations call
+//                the API. The backend's advisor guards remain the real
+//                authority over every mutation regardless of the UI.
+// Passing the viewer their own token leaks nothing — it is the same JWT they
+// already hold; what we never do is hand one viewer another's credentials.
 //
 // The S08 API gate (approved || advisor || owning client) on GET /itinerary
 // is the source of truth for *visibility*; a non-entitled viewer collapses to
@@ -57,7 +61,6 @@ export default async function ItineraryPage({ params }: PageProps) {
   }
 
   const role = await resolveUserRole(supabase);
-  const canEdit = role === "advisor";
   const status = result.itinerary.status ?? "draft";
   const timeline = toItineraryTimeline(
     result.itinerary,
@@ -78,10 +81,13 @@ export default async function ItineraryPage({ params }: PageProps) {
       timeline={timeline}
       itineraryId={itineraryId}
       status={status}
-      canEdit={canEdit}
+      role={role}
       baselineTitle={baselineTitle}
-      // Credentials only for staff — travelers never receive a token.
-      {...(canEdit ? { apiBaseUrl, accessToken } : {})}
+      // Each viewer gets their OWN session token: advisors use it to mutate,
+      // travelers use it to chat with the concierge. Capability is governed by
+      // `role` (UI) + the backend's advisor guards (authority).
+      apiBaseUrl={apiBaseUrl}
+      accessToken={accessToken}
     />
   );
 }

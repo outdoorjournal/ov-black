@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import Any, NamedTuple, TypedDict
 
 from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,6 +125,10 @@ class NodeOut(NamedTuple):
     # Fork lineage (G2): the baseline node this one was copied from, or None for a
     # hand-built / inventory-sourced node. Lets the G3 diff pair nodes by lineage.
     forked_from_node_id: uuid.UUID | None = None
+    # Note attachment (0014): the host node a `note` annotates, or None for a
+    # free-standing note / any non-note. Trailing-optional so existing NodeOut
+    # construction sites (and test stubs) don't need to pass it.
+    attached_to_node_id: uuid.UUID | None = None
 
 
 class EdgeOut(NamedTuple):
@@ -279,6 +284,83 @@ def _tz_offset_from_metadata(metadata: Any) -> int | None:
         return None
     offset = metadata.get("tz_offset_minutes")
     return offset if isinstance(offset, int) else None
+
+
+def _build_starts_at(iso_start: str, duration_minutes: int | None) -> Range[datetime] | None:
+    """Construct a ``tstzrange`` value from an ISO-8601 start + optional minutes.
+
+    The inverse of :func:`_serialize_starts_at`: parse the lower bound (the
+    offset it carries is preserved as a UTC instant by Postgres) and, when
+    ``duration_minutes`` is given, an upper bound ``start + duration``. Returns a
+    half-open ``[)`` :class:`Range` ready to assign to ``Node.starts_at``, or
+    ``None`` when the start can't be parsed. Free-standing notes need this at
+    INSERT time — the ``notes_anchored_or_attached`` CHECK is per-row, so the
+    column can't be back-filled after the insert.
+    """
+    lower = _parse_range_bound(iso_start)
+    if lower is None:
+        return None
+    upper = lower + timedelta(minutes=duration_minutes) if duration_minutes else None
+    return Range(lower, upper, bounds="[)")
+
+
+def _resolve_note_anchor(
+    *,
+    metadata: dict[str, Any],
+    attached_to_node_id: uuid.UUID | None,
+    starts_at: str | None,
+    duration_minutes: int | None,
+) -> tuple[ItineraryError | None, Range[datetime] | None, dict[str, Any]]:
+    """Validate a note's anchor and, for a free-standing note, build its range.
+
+    Returns ``(error, starts_at_range, metadata)``. An *attached* note returns
+    ``(None, None, metadata)`` — it rides its host and carries no range (the
+    caller validates that ``attached_to_node_id`` lives in the same itinerary).
+    A *free-standing* note takes its time from ``starts_at`` or, failing that,
+    ``metadata['start_time']``; the chosen start is mirrored back into the
+    returned metadata (with ``tz_offset_minutes`` / ``duration_minutes``) so the
+    web timeline, which reads ``metadata.start_time``, renders it.
+    """
+    if attached_to_node_id is not None:
+        if starts_at is not None:
+            return (
+                ItineraryError(
+                    outcome=ItineraryOutcome.VALIDATION_ERROR,
+                    detail="a note is either attached to a node or has its own time, not both",
+                ),
+                None,
+                metadata,
+            )
+        return (None, None, metadata)
+
+    iso = starts_at or metadata.get("start_time")
+    if not isinstance(iso, str) or not iso:
+        return (
+            ItineraryError(
+                outcome=ItineraryOutcome.VALIDATION_ERROR,
+                detail="a note needs a time (starts_at) or a node to attach to "
+                "(attached_to_node_id)",
+            ),
+            None,
+            metadata,
+        )
+    rng = _build_starts_at(iso, duration_minutes)
+    if rng is None or rng.lower is None:
+        return (
+            ItineraryError(
+                outcome=ItineraryOutcome.VALIDATION_ERROR,
+                detail="starts_at must be an ISO-8601 datetime",
+            ),
+            None,
+            metadata,
+        )
+    mirrored = {**metadata, "start_time": iso}
+    offset = rng.lower.utcoffset()
+    if offset is not None:
+        mirrored["tz_offset_minutes"] = int(offset.total_seconds() // 60)
+    if duration_minutes:
+        mirrored["duration_minutes"] = duration_minutes
+    return (None, rng, mirrored)
 
 
 async def _write_node_history(
@@ -526,12 +608,12 @@ async def get_itinerary_graph(
         with recursive subgraph(
             id, itinerary_id, parent_subgraph_id, type, status, title,
             source, source_id, metadata, cost_amount, cost_currency, cost_kind,
-            starts_at, forked_from_node_id, depth
+            starts_at, forked_from_node_id, attached_to_node_id, depth
         ) as (
             select n.id, n.itinerary_id, n.parent_subgraph_id, n.type, n.status,
                    n.title, n.source, n.source_id, n.metadata, n.cost_amount,
                    n.cost_currency, n.cost_kind, n.starts_at,
-                   n.forked_from_node_id, 0
+                   n.forked_from_node_id, n.attached_to_node_id, 0
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
@@ -539,14 +621,14 @@ async def get_itinerary_graph(
             select c.id, c.itinerary_id, c.parent_subgraph_id, c.type, c.status,
                    c.title, c.source, c.source_id, c.metadata, c.cost_amount,
                    c.cost_currency, c.cost_kind, c.starts_at,
-                   c.forked_from_node_id, s.depth + 1
+                   c.forked_from_node_id, c.attached_to_node_id, s.depth + 1
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
         )
         select id, itinerary_id, parent_subgraph_id, type, status, title,
                source, source_id, metadata, cost_amount, cost_currency,
-               cost_kind, starts_at, forked_from_node_id, depth
+               cost_kind, starts_at, forked_from_node_id, attached_to_node_id, depth
           from subgraph
          order by depth, id
         """
@@ -577,6 +659,7 @@ async def get_itinerary_graph(
                 depth=row.depth,
                 lock_reason=compute_lock_reason(NodeStatus(row.status)),
                 forked_from_node_id=row.forked_from_node_id,
+                attached_to_node_id=row.attached_to_node_id,
             )
         )
 
@@ -619,8 +702,19 @@ async def add_node(
     cost_amount: Decimal | None = None,
     cost_currency: str | None = None,
     cost_kind: CostKind | None = None,
+    attached_to_node_id: uuid.UUID | None = None,
+    starts_at: str | None = None,
+    duration_minutes: int | None = None,
 ) -> Node | ItineraryError:
-    """Insert a node + its history row in the same transaction."""
+    """Insert a node + its history row in the same transaction.
+
+    ``note`` nodes are dual-mode (0014 ``notes_anchored_or_attached``): exactly
+    one of ``attached_to_node_id`` (an annotation riding a host node) or a time
+    anchor (a free-standing item) must be set. The time anchor comes from
+    ``starts_at`` (ISO-8601, plus optional ``duration_minutes``) or falls back to
+    ``metadata['start_time']``; it's mirrored back into ``metadata`` so the web
+    timeline (which reads ``metadata.start_time``) renders it.
+    """
     prov_err = _check_provenance(source, source_id)
     if prov_err is not None:
         return prov_err
@@ -651,6 +745,40 @@ async def add_node(
                 detail="parent_subgraph_id does not belong to this itinerary",
             )
 
+    # Note anchoring (0014). Resolve the XOR — attached vs. free-standing — and
+    # build the starts_at range up front so the per-row CHECK is satisfied at
+    # INSERT. ``metadata`` may be replaced with a mirrored copy below.
+    node_metadata = dict(metadata or {})
+    note_starts_at: Range[datetime] | None = None
+    if type is NodeType.note:
+        anchor_err, note_starts_at, node_metadata = _resolve_note_anchor(
+            metadata=node_metadata,
+            attached_to_node_id=attached_to_node_id,
+            starts_at=starts_at,
+            duration_minutes=duration_minutes,
+        )
+        if anchor_err is not None:
+            return anchor_err
+        if attached_to_node_id is not None:
+            host = (
+                await session.execute(
+                    select(Node.id).where(
+                        Node.id == attached_to_node_id,
+                        Node.itinerary_id == itinerary_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if host is None:
+                return ItineraryError(
+                    outcome=ItineraryOutcome.INVALID_PARENT,
+                    detail="attached_to_node_id does not belong to this itinerary",
+                )
+    elif attached_to_node_id is not None:
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="attached_to_node_id is only valid for note nodes",
+        )
+
     node = Node(
         itinerary_id=itinerary_id,
         parent_subgraph_id=parent_subgraph_id,
@@ -659,10 +787,12 @@ async def add_node(
         title=title,
         source=source,
         source_id=source_id,
-        metadata_=metadata or {},
+        metadata_=node_metadata,
         cost_amount=cost_amount,
         cost_currency=cost_currency,
         cost_kind=cost_kind,
+        attached_to_node_id=attached_to_node_id,
+        starts_at=note_starts_at,
     )
     session.add(node)
     try:
@@ -784,6 +914,32 @@ async def update_node(
             node.metadata_ = value
         else:
             setattr(node, key, value)
+
+    # Keep a free-standing note's starts_at column in sync with its
+    # metadata.start_time so a move (a metadata patch — see the web `moveNode`
+    # and the agent `move_node` tool) doesn't strand the column and trip the
+    # notes_anchored_or_attached CHECK. Attached notes (no own time) are skipped.
+    if (
+        node.type is NodeType.note
+        and node.attached_to_node_id is None
+        and "metadata" in updates
+        and isinstance(node.metadata_, dict)
+    ):
+        iso = node.metadata_.get("start_time")
+        if isinstance(iso, str) and iso:
+            dur = node.metadata_.get("duration_minutes")
+            rng = _build_starts_at(iso, dur if isinstance(dur, int) else None)
+            if rng is not None:
+                node.starts_at = rng
+                # Refresh the mirrored offset so the read serializer reconstructs
+                # the wall-clock the caller sent, even on a partial metadata patch
+                # that dropped tz_offset_minutes.
+                offset = rng.lower.utcoffset() if rng.lower is not None else None
+                if offset is not None:
+                    node.metadata_ = {
+                        **node.metadata_,
+                        "tz_offset_minutes": int(offset.total_seconds() // 60),
+                    }
 
     try:
         await session.flush()

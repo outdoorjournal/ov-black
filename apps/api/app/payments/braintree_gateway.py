@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import braintree
 
-from app.payments.base import PaymentGateway, PaymentGatewayError, SaleResult
+from app.payments.base import PaymentGateway, PaymentGatewayError, RefundResult, SaleResult
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -37,6 +37,11 @@ DECLINED_NONCE = "fake-processor-declined-nonce"
 # processor — safe to retry. A *read* timeout is deliberately excluded: the
 # charge may already have settled, so a retried sale could double-charge.
 _RETRYABLE_ERROR_NAMES = frozenset({"ConnectTimeoutError", "ConnectionError"})
+
+# Braintree transaction statuses from which a charge can be REFUNDED (the money
+# already moved). Anything earlier (authorized / submitted_for_settlement) is
+# VOIDED instead — the authorization is cancelled before it ever settles.
+_SETTLED_STATUSES = frozenset({"settled", "settling"})
 
 
 def _as_gateway_error(exc: Exception) -> PaymentGatewayError:
@@ -91,6 +96,31 @@ class BraintreeGateway:
             raise _as_gateway_error(exc) from exc
         return _to_sale_result(result, metadata=metadata)
 
+    def refund(
+        self,
+        *,
+        processor_transaction_id: str,
+        amount: Decimal,
+        reference: str,
+    ) -> RefundResult:
+        # Refund a SETTLED charge; void an unsettled one. Read the txn's status
+        # first so we dispatch the right call (Braintree rejects a refund on an
+        # unsettled transaction, and a void on a settled one).
+        try:
+            txn = self._gateway.transaction.find(processor_transaction_id)
+            status = str(getattr(txn, "status", "") or "")
+            if status in _SETTLED_STATUSES:
+                result = self._gateway.transaction.refund(
+                    processor_transaction_id, {"amount": str(amount), "order_id": reference}
+                )
+                kind = "refund"
+            else:
+                result = self._gateway.transaction.void(processor_transaction_id)
+                kind = "void"
+        except Exception as exc:  # noqa: BLE001 — a raise is infra failure, not a refusal
+            raise _as_gateway_error(exc) from exc
+        return _to_refund_result(result, kind=kind)
+
     def __repr__(self) -> str:  # never leak the gateway's keyed config
         return "BraintreeGateway(braintree)"
 
@@ -113,6 +143,29 @@ def _to_sale_result(result: Any, *, metadata: dict[str, str]) -> SaleResult:
     return SaleResult(
         ok=False,
         status="failed",
+        processor_transaction_id=(str(getattr(txn, "id", "")) or None) if txn else None,
+        processor_response=message,
+        raw={"message": message},
+    )
+
+
+def _to_refund_result(result: Any, *, kind: str) -> RefundResult:
+    """Map a Braintree ``transaction.refund``/``void`` result to a RefundResult."""
+    txn = getattr(result, "transaction", None)
+    if getattr(result, "is_success", False) and txn is not None:
+        return RefundResult(
+            ok=True,
+            status=str(getattr(txn, "status", "") or ""),
+            kind=kind,
+            processor_transaction_id=str(getattr(txn, "id", "") or "") or None,
+            processor_response=getattr(txn, "processor_response_text", None),
+            raw=_txn_raw(txn),
+        )
+    message = str(getattr(result, "message", "") or "refund_failed")
+    return RefundResult(
+        ok=False,
+        status="failed",
+        kind=kind,
         processor_transaction_id=(str(getattr(txn, "id", "")) or None) if txn else None,
         processor_response=message,
         raw={"message": message},
@@ -184,6 +237,42 @@ class FakeGateway:
                 "currency": currency,
                 "metadata": metadata,
             },
+        )
+
+    def refund(
+        self,
+        *,
+        processor_transaction_id: str,
+        amount: Decimal,
+        reference: str,
+    ) -> RefundResult:
+        lowered = processor_transaction_id.lower()
+        if "declin" in lowered or "fail" in lowered:
+            return RefundResult(
+                ok=False,
+                status="failed",
+                kind="refund",
+                processor_response="2046 Declined refund (fake)",
+                raw={"fake": True, "reference": reference},
+            )
+        # A txn id we mark as unsettled is voided (no money had moved); anything
+        # else is refunded — mirrors Braintree's settled-vs-unsettled dispatch.
+        if processor_transaction_id.startswith("fake-unsettled-"):
+            return RefundResult(
+                ok=True,
+                status="voided",
+                kind="void",
+                processor_transaction_id=f"fake-void-{reference}",
+                processor_response="voided (fake)",
+                raw={"fake": True, "reference": reference},
+            )
+        return RefundResult(
+            ok=True,
+            status="refunded",
+            kind="refund",
+            processor_transaction_id=f"fake-refund-{reference}",
+            processor_response="refunded (fake)",
+            raw={"fake": True, "reference": reference, "amount": str(amount)},
         )
 
     def __repr__(self) -> str:

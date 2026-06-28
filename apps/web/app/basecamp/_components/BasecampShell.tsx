@@ -114,6 +114,12 @@ function AccountLinks() {
       >
         Your vault →
       </Link>
+      <Link
+        href="/basecamp/invoices"
+        className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+      >
+        Your invoices →
+      </Link>
     </div>
   );
 }

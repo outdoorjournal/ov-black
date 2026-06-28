@@ -51,6 +51,23 @@ class PaymentStatus(str, enum.Enum):
     refunded = "refunded"
 
 
+class RefundStatus(str, enum.Enum):
+    """Mirrors the public.refund_status Postgres enum (0028).
+
+    The outcome of a cancel's money movement: ``refunded`` (a settled charge was
+    returned), ``voided`` (an unsettled authorization was cancelled), or
+    ``not_applicable`` (an ``override_unpaid`` booking with no settled payment —
+    nothing to return). ``failed`` is reserved future-proofing: the service is
+    fail-closed, so a declined refund rolls the whole cancel back rather than
+    persisting a failed row.
+    """
+
+    refunded = "refunded"
+    voided = "voided"
+    failed = "failed"
+    not_applicable = "not_applicable"
+
+
 class InvoiceLineKind(str, enum.Enum):
     """Mirrors the public.invoice_line_kind Postgres enum (0023).
 
@@ -89,6 +106,14 @@ invoice_line_kind_enum: PGEnum = PGEnum(
 payment_status_enum: PGEnum = PGEnum(
     PaymentStatus,
     name="payment_status",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
+refund_status_enum: PGEnum = PGEnum(
+    RefundStatus,
+    name="refund_status",
     schema="public",
     create_type=False,
     values_callable=lambda e: [m.value for m in e],

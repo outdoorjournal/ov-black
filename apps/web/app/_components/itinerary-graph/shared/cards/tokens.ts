@@ -216,6 +216,14 @@ export const STATUS_TOKENS: Record<
   },
 };
 
+// Crafted refusal copy for a status-locked node (G1). A booked/confirmed node is
+// immutable to the traveler + agent; only an advisor can demote it. Surfaced as
+// the lock badge's tooltip + accessible label so a reader understands the cue.
+export function lockCopy(status: StatusKind, label: string): string {
+  const noun = label.trim() || "item";
+  return `This ${noun} is ${status} — an advisor would need to move it.`;
+}
+
 // Real Tokyo Metro line colors used in the subway zoom example.
 // Source: official Tokyo Metro brand guidelines (publicly published).
 export const METRO_LINE_COLORS: Record<string, string> = {

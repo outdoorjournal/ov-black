@@ -42,6 +42,7 @@ from app.models import (
     Node,
     Payment,
 )
+from app.services import node_cost
 from app.services.itineraries import ActorContext, ItineraryError, ItineraryOutcome
 
 logger = logging.getLogger("ov_black.invoices")
@@ -298,8 +299,9 @@ async def add_line_item_from_node(
     """Convenience: derive a ``charge`` line from a node's B4 cost.
 
     Amount/currency come from ``cost_amount``/``cost_currency``; the description
-    from the node title. Per-person amounts are billed at face value (party-size
-    expansion is the I3 money-gate concern).
+    from the node title. A ``per_person`` cost is expanded by the itinerary's
+    party size (:func:`node_cost.effective_node_cost`) so the charged line matches
+    the amount the money gate books and reconciles for the same node.
     """
     invoice = await _load_invoice(session, invoice_id)
     if invoice is None:
@@ -310,15 +312,42 @@ async def add_line_item_from_node(
     if node.cost_amount is None or node.cost_currency is None:
         return _err("node_has_no_cost")
 
+    party_size = await node_cost.resolve_party_size(session, invoice.itinerary_id)
+    amount = node_cost.effective_node_cost(node.cost_amount, node.cost_kind, party_size)
     return await add_line_item(
         session,
         actor,
         invoice_id=invoice_id,
         description=node.title or "",
-        amount=node.cost_amount,
+        amount=amount,
         currency=node.cost_currency,
         kind=InvoiceLineKind.charge,
         node_id=node_id,
+    )
+
+
+def build_reversal_line(
+    actor: ActorContext,
+    *,
+    original: InvoiceLineItem,
+    description: str | None = None,
+) -> InvoiceLineItem:
+    """Construct (without adding/committing) a ``reversal`` line negating ``original``.
+
+    Shared by :func:`void_line_item` (an advisor's append-only void on an open
+    invoice) and the booking-cancel refund path (which reverses a charge on an
+    already-*paid* invoice) so the journal-entry shape stays identical; only the
+    paid-invoice guard differs between the two callers.
+    """
+    return InvoiceLineItem(
+        invoice_id=original.invoice_id,
+        node_id=original.node_id,
+        kind=InvoiceLineKind.reversal,
+        description=(description or f"Reversal of: {original.description}").strip(),
+        amount=-original.amount,
+        currency=original.currency,
+        reverses_line_item_id=original.id,
+        created_by=actor.user_id,
     )
 
 
@@ -358,16 +387,7 @@ async def void_line_item(
     if existing_reversal is not None:
         return _err("already_reversed")
 
-    reversal = InvoiceLineItem(
-        invoice_id=invoice_id,
-        node_id=original.node_id,
-        kind=InvoiceLineKind.reversal,
-        description=f"Reversal of: {original.description}".strip(),
-        amount=-original.amount,
-        currency=original.currency,
-        reverses_line_item_id=original.id,
-        created_by=actor.user_id,
-    )
+    reversal = build_reversal_line(actor, original=original)
     session.add(reversal)
     await session.flush()
     await session.commit()
@@ -523,6 +543,45 @@ async def list_invoices(
             payments=payments_by_invoice.get(inv.id, []),
         )
         for inv in invoices
+    ]
+
+
+async def list_invoices_for_client(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+) -> list[tuple[InvoiceView, Itinerary]]:
+    """Every invoice across the client's itineraries, each paired with its itinerary.
+
+    Newest first. Batches the ledger + payments like :func:`list_invoices` so each
+    ``total`` is the real Σ(lines) without an N+1. Powers the traveler's
+    cross-trip ``GET /me/invoices`` listing.
+    """
+    rows = list(
+        (
+            await session.execute(
+                select(Invoice, Itinerary)
+                .join(Itinerary, Itinerary.id == Invoice.itinerary_id)
+                .where(Itinerary.client_id == client_id)
+                .order_by(Invoice.created_at.desc(), Invoice.id)
+            )
+        ).all()
+    )
+    if not rows:
+        return []
+    invoice_ids = [inv.id for inv, _ in rows]
+    lines_by_invoice = await _lines_for_many(session, invoice_ids)
+    payments_by_invoice = await _payments_for_many(session, invoice_ids)
+    return [
+        (
+            InvoiceView(
+                invoice=inv,
+                lines=lines_by_invoice.get(inv.id, []),
+                total=_total_of(lines_by_invoice.get(inv.id, [])),
+                payments=payments_by_invoice.get(inv.id, []),
+            ),
+            itin,
+        )
+        for inv, itin in rows
     ]
 
 

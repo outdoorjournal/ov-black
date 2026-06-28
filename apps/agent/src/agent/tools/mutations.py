@@ -1,12 +1,12 @@
-"""Mutation tools — update node status (advisor adjustments)."""
+"""Mutation tools — update node status, reschedule a node (move)."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from strands import tool
 
-from agent.backend import BackendError, patch_json, pin_ctx
+from agent.backend import BackendError, get_json, patch_json, pin_ctx
 
 
 @tool
@@ -42,4 +42,41 @@ async def update_node_status(
     return await patch_json(
         f"/itinerary/{itinerary_id}/nodes/{node_id}",
         json={"status": status},
+    )
+
+
+@tool
+async def move_node(node_id: str, starts_at: str) -> dict:
+    """Reschedule a node to a new start time — the timeline equivalent of a drag.
+
+    ``starts_at`` is an ISO-8601 datetime WITH offset (e.g.
+    ``"2025-07-02T20:00:00+09:00"``); keep the node's own timezone, and the day
+    is taken from the date you pass. Use this to reshape an alternative version
+    the traveler is working on, or to move a still-editable card on a draft.
+
+    On the agreed plan an already approved/booked node is locked — the API
+    refuses with ``status_locked``. Don't retry: branch an alternative version
+    (``fork_itinerary``) and move it there. Requires an itinerary pinned to the
+    session. Returns the updated node.
+    """
+    pin = pin_ctx.get() or {}
+    itinerary_id = pin.get("itinerary_id")
+    if not itinerary_id:
+        raise BackendError(status=None, reason="missing_itinerary_id")
+
+    # The PATCH replaces metadata wholesale, so read the node's current metadata
+    # and merge the new start_time in — otherwise we'd wipe its snapshot / cost /
+    # duration. The backend keeps a free-standing note's starts_at column in sync
+    # with metadata.start_time on its side.
+    graph = await get_json(f"/itinerary/{itinerary_id}")
+    nodes = (graph or {}).get("nodes", [])
+    current = next((n for n in nodes if str(n.get("id")) == str(node_id)), None)
+    if current is None:
+        raise BackendError(status=None, reason="not_found")
+    metadata: dict[str, Any] = dict(current.get("metadata") or {})
+    metadata["start_time"] = starts_at
+
+    return await patch_json(
+        f"/itinerary/{itinerary_id}/nodes/{node_id}",
+        json={"metadata": metadata},
     )

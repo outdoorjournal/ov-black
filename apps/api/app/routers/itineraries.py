@@ -132,6 +132,13 @@ class CreateNodeRequest(BaseModel):
     cost_amount: Decimal | None = None
     cost_currency: str | None = None
     cost_kind: CostKind | None = None
+    # Note anchoring (0014). A `note` is dual-mode: set `attached_to_node_id` to
+    # annotate a host node, OR `starts_at` (ISO-8601, + optional
+    # `duration_minutes`) for a free-standing note — exactly one. Ignored for
+    # non-note types (and `attached_to_node_id` is rejected on them).
+    attached_to_node_id: uuid.UUID | None = None
+    starts_at: str | None = None
+    duration_minutes: int | None = None
 
 
 class CreateNodeFromInventoryRequest(BaseModel):
@@ -204,6 +211,9 @@ class NodeResponse(BaseModel):
     lock_reason: str | None = None
     # Fork lineage (G2). The baseline node this one was copied from, or None.
     forked_from_node_id: uuid.UUID | None = None
+    # Note attachment (0014). For a `note` riding a host node, the host's id;
+    # None for a free-standing note (which carries `starts_at`) or any non-note.
+    attached_to_node_id: uuid.UUID | None = None
 
 
 class CreateEdgeRequest(BaseModel):
@@ -448,6 +458,33 @@ async def assert_itinerary_readable(
     raise HTTPException(status_code=403, detail="forbidden")
 
 
+async def _has_write_relationship(
+    session: AsyncSession,
+    user: AuthenticatedUser,
+    itinerary: Any,
+) -> bool:
+    """True iff the caller may mutate (or fork) this itinerary.
+
+    The write relationship is **owner** (the client's auth user, resolved via
+    ``clients.auth_user_id`` since ``clients.id`` and ``auth.users.id`` live in
+    different namespaces) **or creator** (``created_by`` — which is what
+    readmits the agent to a concierge-created draft whose ``client_id`` is still
+    null) **or advisor**. ``itinerary`` must expose ``client_id`` / ``created_by``.
+    """
+    actor = _actor_from_user(user)
+    if actor.user_id is not None and itinerary.client_id is not None:
+        owning_auth_user_id = await _resolve_client_auth_user_id(session, itinerary.client_id)
+        if owning_auth_user_id is not None and owning_auth_user_id == actor.user_id:
+            return True
+    if (
+        actor.user_id is not None
+        and itinerary.created_by is not None
+        and actor.user_id == itinerary.created_by
+    ):
+        return True
+    return await _is_requester_advisor(session, actor.user_id)
+
+
 async def assert_itinerary_forkable(
     session: AsyncSession,
     user: AuthenticatedUser,
@@ -461,20 +498,33 @@ async def assert_itinerary_forkable(
     agent acting for the client carries the client's JWT, so the owner branch
     admits it. 403 ``forbidden`` so the SDK discriminates deterministically.
     """
-    actor = _actor_from_user(user)
-    is_owner = False
-    if actor.user_id is not None and itinerary.client_id is not None:
-        owning_auth_user_id = await _resolve_client_auth_user_id(session, itinerary.client_id)
-        is_owner = owning_auth_user_id is not None and owning_auth_user_id == actor.user_id
-    is_creator = (
-        actor.user_id is not None
-        and itinerary.created_by is not None
-        and actor.user_id == itinerary.created_by
-    )
-    if is_owner or is_creator or await _is_requester_advisor(session, actor.user_id):
+    if await _has_write_relationship(session, user, itinerary):
         return
     logger.info(
         "itinerary.fork_denied",
+        extra={"sub_hint": (user.sub or "")[:8], "itinerary_id": str(itinerary.id)},
+    )
+    raise HTTPException(status_code=403, detail="forbidden")
+
+
+async def assert_itinerary_writable(
+    session: AsyncSession,
+    user: AuthenticatedUser,
+    itinerary: Any,
+) -> None:
+    """Gate node/edge writes: only the owner, creator, or an advisor may mutate.
+
+    Closes the gap where any authenticated user holding an itinerary id could
+    write to any unlocked, non-firmed graph. Shares the fork gate's relationship
+    test (:func:`_has_write_relationship`), so the agent — carrying the client's
+    JWT — is admitted as owner, or as creator on a concierge-created draft whose
+    ``client_id`` is still null. 403 ``forbidden`` so the SDK discriminates
+    deterministically.
+    """
+    if await _has_write_relationship(session, user, itinerary):
+        return
+    logger.info(
+        "itinerary.write_denied",
         extra={"sub_hint": (user.sub or "")[:8], "itinerary_id": str(itinerary.id)},
     )
     raise HTTPException(status_code=403, detail="forbidden")
@@ -550,6 +600,7 @@ def _node_response_from_out(n: Any) -> NodeResponse:
         depth=n.depth,
         lock_reason=n.lock_reason,
         forked_from_node_id=n.forked_from_node_id,
+        attached_to_node_id=n.attached_to_node_id,
     )
 
 
@@ -580,6 +631,7 @@ def _node_response_from_node(node: Any) -> NodeResponse:
         duration_minutes=duration_minutes,
         lock_reason=compute_lock_reason(node.status),
         forked_from_node_id=getattr(node, "forked_from_node_id", None),
+        attached_to_node_id=getattr(node, "attached_to_node_id", None),
     )
 
 
@@ -702,6 +754,10 @@ async def create_node_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> NodeResponse:
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
     actor = _actor_from_user(user)
     result = await add_node(
         session,
@@ -717,6 +773,9 @@ async def create_node_endpoint(
         cost_amount=payload.cost_amount,
         cost_currency=payload.cost_currency,
         cost_kind=payload.cost_kind,
+        attached_to_node_id=payload.attached_to_node_id,
+        starts_at=payload.starts_at,
+        duration_minutes=payload.duration_minutes,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
@@ -744,6 +803,10 @@ async def create_node_from_inventory_endpoint(
     through the same ``add_node`` write path as a hand-built node, so the
     lock/queue + history invariants are unchanged.
     """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
     actor = _actor_from_user(user)
     ctx = InventoryCtx(actor_kind="user", actor_id=user.sub)
     try:
@@ -802,6 +865,10 @@ async def update_node_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> NodeResponse:
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
     # Resolve actor kind so the status gate (G1) can tell an advisor (who may
     # demote/cancel a firmed node) from a traveler/agent (who cannot). The
     # agent carries the client's JWT, so it resolves to USER like a traveler.
@@ -828,6 +895,10 @@ async def delete_node_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
     # See update_node_endpoint: advisor resolution drives the G1 status gate.
     actor = _actor_from_user(user)
     if await _is_requester_advisor(session, actor.user_id):
@@ -1125,6 +1196,10 @@ async def create_edge_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> EdgeResponse:
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
     actor = _actor_from_user(user)
     result = await add_edge(
         session,
@@ -1159,6 +1234,10 @@ async def delete_edge_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
     actor = _actor_from_user(user)
     err = await delete_edge(session, actor, itinerary_id=itinerary_id, edge_id=edge_id)
     if err is not None:

@@ -29,10 +29,12 @@ def _names(mode: Mode) -> set[str]:
 def test_planning_bundle_has_fork_and_reconcile_tools() -> None:
     planning = _names(Mode.planning)
     assert {"fork_itinerary", "request_reconcile", "reconcile_alternative"} <= planning
-    # Read-only Q&A never reconciles or requests a merge.
+    # Q&A travelers may fork an alternative and *ask* staff to merge it
+    # (request_reconcile), but never perform the merge themselves
+    # (reconcile_alternative is advisor-only).
     qa = _names(Mode.qa)
+    assert {"fork_itinerary", "request_reconcile"} <= qa
     assert "reconcile_alternative" not in qa
-    assert "request_reconcile" not in qa
 
 
 async def test_fork_tool_repins_session_to_alternative(monkeypatch: pytest.MonkeyPatch) -> None:

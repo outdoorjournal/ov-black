@@ -397,11 +397,36 @@ class Ovb:
             json_body=body,
         )
 
+    async def cancel_booking(
+        self,
+        itinerary_id: str,
+        node_id: str,
+        *,
+        reason: str | None = None,
+    ) -> gm.BookingResponse:
+        """Cancel a booked/confirmed node + refund its covering payment (advisor).
+
+        Demotes the node to ``approved``; ``refund_status`` reports refunded /
+        voided / not_applicable."""
+        body: dict[str, Any] = {}
+        if reason is not None:
+            body["reason"] = reason
+        return await self._model(
+            gm.BookingResponse,
+            "POST",
+            f"/itinerary/{itinerary_id}/nodes/{node_id}/cancel",
+            json_body=body,
+        )
+
     async def get_reconciliation(self, itinerary_id: str) -> gm.ReconciliationResponse:
         """Reconcile Σ(paid invoice lines) ⇔ Σ(booked node costs) for an itinerary."""
         return await self._model(
             gm.ReconciliationResponse, "GET", f"/itinerary/{itinerary_id}/reconciliation"
         )
+
+    async def list_my_invoices(self) -> gm.MyInvoicesResponse:
+        """The calling client's invoices across all itineraries (traveler self-service)."""
+        return await self._model(gm.MyInvoicesResponse, "GET", "/me/invoices")
 
     # ── nodes ────────────────────────────────────────────────────────────
     async def add_node(
@@ -418,6 +443,9 @@ class Ovb:
         cost_currency: str | None = None,
         cost_kind: str | None = None,
         parent_subgraph_id: str | None = None,
+        attached_to_node_id: str | None = None,
+        starts_at: str | None = None,
+        duration_minutes: int | None = None,
     ) -> gm.NodeResponse:
         body: dict[str, Any] = {
             "type": type,
@@ -430,6 +458,11 @@ class Ovb:
             "cost_currency": cost_currency,
             "cost_kind": cost_kind,
             "parent_subgraph_id": parent_subgraph_id,
+            # Note anchoring (0014): attach to a host node, or a free-standing
+            # time anchor. Only meaningful for type="note".
+            "attached_to_node_id": attached_to_node_id,
+            "starts_at": starts_at,
+            "duration_minutes": duration_minutes,
         }
         body = {k: v for k, v in body.items() if v is not None}
         return await self._model(

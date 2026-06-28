@@ -51,6 +51,25 @@ class SaleResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class RefundResult:
+    """Normalized outcome of returning a settled charge, vendor-independent.
+
+    ``kind`` records how the funds were returned: ``"refund"`` for a settled
+    transaction (money already moved) or ``"void"`` for an unsettled one (the
+    authorization is cancelled before settlement). ``processor_transaction_id`` is
+    the gateway's id for the refund/void transaction. ``raw`` is the full processor
+    response (never logged); ``processor_response`` is the decline/response code.
+    """
+
+    ok: bool
+    status: str
+    kind: str = "refund"
+    processor_transaction_id: str | None = None
+    processor_response: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
 @runtime_checkable
 class PaymentGateway(Protocol):
     """A payment processor. Braintree today; Stripe-shaped tomorrow."""
@@ -80,6 +99,23 @@ class PaymentGateway(Protocol):
         """
         ...
 
+    def refund(
+        self,
+        *,
+        processor_transaction_id: str,
+        amount: Decimal,
+        reference: str,
+    ) -> RefundResult:
+        """Return a previously charged transaction's funds.
+
+        The gateway decides refund-vs-void from the transaction's own settlement
+        state (callers do not): a settled charge is refunded, an unsettled one is
+        voided. ``reference`` is OUR cross-ref key for the refund. Raises
+        :class:`PaymentGatewayError` when the outcome is unknown (network/timeout);
+        a clean processor refusal comes back as ``RefundResult(ok=False)``.
+        """
+        ...
+
 
 def new_gateway_reference(invoice_id: uuid.UUID) -> str:
     """A unique-per-attempt cross-reference key that embeds the invoice id.
@@ -89,3 +125,13 @@ def new_gateway_reference(invoice_id: uuid.UUID) -> str:
     retried payment on the same invoice gets a distinct reference.
     """
     return f"{invoice_id}:{uuid.uuid4().hex[:8]}"
+
+
+def new_refund_reference(booking_id: uuid.UUID) -> str:
+    """A unique cross-reference key for a refund that embeds the booking id.
+
+    Written to ``bookings.refund_gateway_ref`` and the refund ``Payment`` row's
+    ``gateway_reference``; the ``refund:`` prefix distinguishes it from a sale
+    reference in the processor dashboard.
+    """
+    return f"refund:{booking_id}:{uuid.uuid4().hex[:8]}"

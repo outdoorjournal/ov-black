@@ -78,6 +78,8 @@ def test_qa_prompt_general_vs_pinned() -> None:
     assert general != pinned
     assert "list_itineraries" in general
     assert "get_itinerary" in pinned
+    # Both QA variants teach the traveler feedback flow (note + alternative).
+    assert "add_note" in general and "add_note" in pinned
 
 
 def test_tool_bundles_are_mode_appropriate() -> None:
@@ -89,14 +91,20 @@ def test_tool_bundles_are_mode_appropriate() -> None:
     assert "propose_card" in onboarding_names
     assert "update_node_status" not in onboarding_names
 
-    # Planning has the full write surface.
+    # Planning has the full write surface, including note + move.
     assert "propose_card" in planning_names
     assert "assemble_draft" in planning_names
     assert "update_node_status" in planning_names
+    assert "move_node" in planning_names
+    assert "add_note" in planning_names
 
-    # Q&A is read-only.
+    # Q&A is read-mostly: a narrow traveler write surface (note / fork / move /
+    # request_reconcile) but never the full authoring toolkit.
+    assert {"add_note", "fork_itinerary", "move_node", "request_reconcile"} <= qa_names
     assert "propose_card" not in qa_names
+    assert "assemble_draft" not in qa_names
     assert "update_node_status" not in qa_names
+    assert "search_inventory" not in qa_names
     assert "list_itineraries" in qa_names
 
 

@@ -85,6 +85,18 @@ def captured_add_node(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(routers_itineraries, "add_node", _add_node)
 
+    # The endpoint pre-loads the itinerary and gates it with
+    # ``assert_itinerary_writable``; this DB-less unit stubs both (non-None load
+    # to skip the 404 branch, no-op writable = authorized).
+    async def _load(_session: Any, itinerary_id: uuid.UUID) -> Any:
+        return object()
+
+    async def _writable(_session: Any, _user: Any, _itinerary: Any) -> None:
+        return None
+
+    monkeypatch.setattr(routers_itineraries, "_load_itinerary", _load)
+    monkeypatch.setattr(routers_itineraries, "assert_itinerary_writable", _writable)
+
     async def _session_dep() -> Any:
         yield object()
 

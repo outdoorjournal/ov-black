@@ -16,6 +16,7 @@ Gated on ``_supabase_running()`` so a fresh checkout without Docker skips cleanl
 
 from __future__ import annotations
 
+import logging
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,14 +31,22 @@ from app.models import (
     Booking,
     CostKind,
     Invoice,
+    InvoiceLineItem,
+    InvoiceLineKind,
     NodeOffer,
     NodeStatus,
     NodeType,
+    Payment,
+    PaymentStatus,
+    RefundStatus,
 )
+from app.payments.base import PaymentGatewayError, RefundResult
+from app.payments.braintree_gateway import FakeGateway
 from app.services.bookings import (
     BookingView,
     ReconciliationReport,
     book_node,
+    cancel_booking,
     reconcile_itinerary,
     record_confirmation,
     refresh_offer,
@@ -56,7 +65,8 @@ from app.services.itineraries import (
     create_itinerary,
     update_node,
 )
-from sqlalchemy import text
+from app.services.payments import pay_invoice
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -177,6 +187,65 @@ async def _pay_node(
     return invoice
 
 
+async def _pay_node_via_gateway(
+    session: AsyncSession,
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    gateway: Any,
+) -> Invoice:
+    """Charge a node's invoice through the gateway so a settled Payment exists to
+    refund (unlike ``_pay_node``, which marks paid without a Payment row)."""
+    invoice = await create_invoice(
+        session, _actor(), itinerary_id=itinerary_id, label="Deposit", currency="USD"
+    )
+    assert isinstance(invoice, Invoice)
+    charge = await add_line_item_from_node(
+        session, _actor(), invoice_id=invoice.id, node_id=node_id
+    )
+    assert not isinstance(charge, ItineraryError)
+    issued = await issue_invoice(session, _actor(), invoice_id=invoice.id)
+    assert isinstance(issued, Invoice)
+    payment = await pay_invoice(
+        session,
+        _actor(),
+        gateway,
+        invoice_id=invoice.id,
+        payment_method_nonce="fake-valid-nonce",
+    )
+    assert isinstance(payment, Payment)
+    return invoice
+
+
+class _DeclineRefundGateway:
+    """A gateway whose refund cleanly declines (settled outcome, ok=False)."""
+
+    name = "fake"
+
+    def generate_client_token(self) -> str:
+        return "t"
+
+    def sale(self, **_kw: Any) -> Any:  # pragma: no cover — unused by cancel
+        raise NotImplementedError
+
+    def refund(self, *, processor_transaction_id: str, amount: Any, reference: str) -> RefundResult:
+        return RefundResult(ok=False, status="failed", kind="refund", processor_response="declined")
+
+
+class _ErrorRefundGateway:
+    """A gateway whose refund raises — the outcome-unknown (infra) path."""
+
+    name = "fake"
+
+    def generate_client_token(self) -> str:
+        return "t"
+
+    def sale(self, **_kw: Any) -> Any:  # pragma: no cover — unused by cancel
+        raise NotImplementedError
+
+    def refund(self, *, processor_transaction_id: str, amount: Any, reference: str) -> RefundResult:
+        raise PaymentGatewayError("boom")
+
+
 # ── A stand-in provider with the same get_detail re-price contract as Duffel ──
 
 
@@ -250,6 +319,284 @@ async def test_money_gate_blocks_unpaid_then_books_paid_and_confirms(
         assert any(
             r.currency == "USD" and r.booked_total == Decimal("1000.00") for r in report.rows
         )
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_per_person_node_books_and_reconciles_expanded_by_party_size(
+    db_session: AsyncSession,
+) -> None:
+    """A per_person cost expands consistently across the charge line, the booked
+    amount, and reconcile — so the invariant holds and the expansion doesn't read
+    as a re-price."""
+    itin = await create_itinerary(db_session, _actor(), title="per-person gate")
+    try:
+        # A party of two travelers.
+        party_id = uuid.uuid4()
+        await db_session.execute(
+            text("insert into public.parties (id, itinerary_id, label) values (:p, :i, 'all')"),
+            {"p": party_id, "i": itin.id},
+        )
+        for name in ("a", "b"):
+            await db_session.execute(
+                text("insert into public.travelers (party_id, name) values (:p, :n)"),
+                {"p": party_id, "n": name},
+            )
+        await db_session.commit()
+
+        # A per_person node at 1000 → 2000 for two travelers.
+        node = await add_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            type=NodeType.experience,
+            status=NodeStatus.approved,
+            title="Private guide",
+            cost_amount=Decimal("1000.00"),
+            cost_currency="USD",
+            cost_kind=CostKind.per_person,
+        )
+        assert not isinstance(node, ItineraryError)
+
+        # The charge line is assembled at the expanded amount, paid, then booked.
+        await _pay_node(db_session, itin.id, node.id, paid=True)
+        view = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(view, BookingView)
+        assert view.booking.amount == Decimal("2000.00")
+        assert view.reprice_delta is None  # the expansion must not read as a re-price
+
+        report = await reconcile_itinerary(db_session, itin.id)
+        assert isinstance(report, ReconciliationReport)
+        assert report.balanced is True
+        assert report.violations == []
+    finally:
+        await _cleanup(itin.id)
+
+
+# ── Cancel + refund ──────────────────────────────────────────────────────────
+
+
+async def _refunds_for_invoice(session: AsyncSession, invoice_id: uuid.UUID) -> list[Payment]:
+    return list(
+        (
+            await session.execute(
+                select(Payment).where(
+                    Payment.invoice_id == invoice_id,
+                    Payment.status == PaymentStatus.refunded,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _reversals_for_node(session: AsyncSession, node_id: uuid.UUID) -> list[InvoiceLineItem]:
+    return list(
+        (
+            await session.execute(
+                select(InvoiceLineItem).where(
+                    InvoiceLineItem.node_id == node_id,
+                    InvoiceLineItem.kind == InvoiceLineKind.reversal,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_refunds_demotes_reverses_and_reconciles(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="cancel")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
+        invoice = await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
+        booked = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(booked, BookingView)
+
+        view = await cancel_booking(
+            db_session, _actor(), FakeGateway(), itinerary_id=itin.id, node_id=node.id
+        )
+        assert isinstance(view, BookingView)
+        assert view.node_status is NodeStatus.approved
+        assert view.booking.refund_status is RefundStatus.refunded
+        assert view.booking.refund_amount == Decimal("1000.00")
+        assert view.booking.cancelled_at is not None
+
+        refunds = await _refunds_for_invoice(db_session, invoice.id)
+        assert len(refunds) == 1
+        assert refunds[0].amount == Decimal("1000.00")
+
+        reversals = await _reversals_for_node(db_session, node.id)
+        assert len(reversals) == 1
+        assert reversals[0].amount == Decimal("-1000.00")
+
+        report = await reconcile_itinerary(db_session, itin.id)
+        assert report.balanced is True
+        assert report.violations == []
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_override_unpaid_is_not_applicable(
+    db_session: AsyncSession,
+) -> None:
+    """A booking made against a merely *issued* line has no money to return."""
+    itin = await create_itinerary(db_session, _actor(), title="cancel override")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="500.00", title="Villa")
+        # Issue (not pay) a covering line, then book with override.
+        invoice = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="Dep", currency="USD"
+        )
+        assert isinstance(invoice, Invoice)
+        await add_line_item_from_node(db_session, _actor(), invoice_id=invoice.id, node_id=node.id)
+        await issue_invoice(db_session, _actor(), invoice_id=invoice.id)
+        booked = await book_node(
+            db_session, _actor(), itinerary_id=itin.id, node_id=node.id, override_unpaid=True
+        )
+        assert isinstance(booked, BookingView)
+
+        # No gateway should be needed; pass one that would explode if called.
+        view = await cancel_booking(
+            db_session, _actor(), _ErrorRefundGateway(), itinerary_id=itin.id, node_id=node.id
+        )
+        assert isinstance(view, BookingView)
+        assert view.node_status is NodeStatus.approved
+        assert view.booking.refund_status is RefundStatus.not_applicable
+        assert view.booking.refund_amount == Decimal("0.00")
+        assert await _refunds_for_invoice(db_session, invoice.id) == []
+        report = await reconcile_itinerary(db_session, itin.id)
+        assert report.balanced is True
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_fails_closed_on_declined_refund(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="cancel decline")
+    itin_id = itin.id  # captured before a rollback below expires the ORM objects
+    try:
+        node = await _priced_node(db_session, itin_id, amount="1000.00", title="Aman")
+        node_id = node.id
+        await _pay_node_via_gateway(db_session, itin_id, node_id, FakeGateway())
+        await book_node(db_session, _actor(), itinerary_id=itin_id, node_id=node_id)
+
+        declined = await cancel_booking(
+            db_session, _actor(), _DeclineRefundGateway(), itinerary_id=itin_id, node_id=node_id
+        )
+        assert isinstance(declined, ItineraryError)
+        assert declined.detail == "refund_declined"
+
+        # Nothing changed: the booking is intact and the node still booked.
+        refreshed = await book_node(db_session, _actor(), itinerary_id=itin_id, node_id=node_id)
+        assert isinstance(refreshed, ItineraryError)
+        assert refreshed.detail == "already_booked"
+    finally:
+        await _cleanup(itin_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_rolls_back_on_gateway_error(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="cancel error")
+    itin_id = itin.id  # captured before a rollback below expires the ORM objects
+    try:
+        node = await _priced_node(db_session, itin_id, amount="1000.00", title="Aman")
+        node_id = node.id
+        await _pay_node_via_gateway(db_session, itin_id, node_id, FakeGateway())
+        await book_node(db_session, _actor(), itinerary_id=itin_id, node_id=node_id)
+
+        errored = await cancel_booking(
+            db_session, _actor(), _ErrorRefundGateway(), itinerary_id=itin_id, node_id=node_id
+        )
+        assert isinstance(errored, ItineraryError)
+        assert errored.detail == "refund_gateway_unavailable"
+        # Node still booked; the booking row is not cancelled.
+        again = await book_node(db_session, _actor(), itinerary_id=itin_id, node_id=node_id)
+        assert isinstance(again, ItineraryError)
+        assert again.detail == "already_booked"
+    finally:
+        await _cleanup(itin_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_refuses_unbooked_node(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="cancel unbooked")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="100.00", title="Idea")
+        res = await cancel_booking(
+            db_session, _actor(), FakeGateway(), itinerary_id=itin.id, node_id=node.id
+        )
+        assert isinstance(res, ItineraryError)
+        assert res.detail == "node_not_booked"
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_node_can_be_rebooked_after_cancel(
+    db_session: AsyncSession,
+) -> None:
+    """The partial unique index allows a fresh booking once the prior is cancelled."""
+    itin = await create_itinerary(db_session, _actor(), title="rebook")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
+        await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
+        await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        await cancel_booking(
+            db_session, _actor(), FakeGateway(), itinerary_id=itin.id, node_id=node.id
+        )
+
+        # Re-pay (the first line was reversed) and re-book.
+        await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
+        rebooked = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(rebooked, BookingView)
+        assert rebooked.node_status is NodeStatus.booked
+        report = await reconcile_itinerary(db_session, itin.id)
+        assert report.balanced is True
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_does_not_leak_refund_refs_to_logs(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="cancel redact")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
+        await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
+        await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        with caplog.at_level(logging.INFO):
+            view = await cancel_booking(
+                db_session, _actor(), FakeGateway(), itinerary_id=itin.id, node_id=node.id
+            )
+        assert isinstance(view, BookingView)
+        messages = [r.getMessage() for r in caplog.records]
+        extras = [str(r.__dict__.get("refund_gateway_ref", "")) for r in caplog.records]
+        blob = "\n".join(messages + extras)
+        assert view.booking.refund_gateway_ref is not None
+        assert view.booking.refund_gateway_ref not in blob
+        assert "fake-refund-" not in blob  # the processor refund id never logged
     finally:
         await _cleanup(itin.id)
 
@@ -507,24 +854,36 @@ def booking_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
     from app.main import app as fastapi_app
     from app.routers import bookings as rb
 
-    returns: dict[str, Any] = {"is_advisor": True, "book_error": None}
+    returns: dict[str, Any] = {"is_advisor": True, "book_error": None, "cancel_error": None}
 
-    def _booking_view() -> BookingView:
-        booking = Booking(
-            id=uuid.uuid4(),
-            node_id=uuid.uuid4(),
-            amount=Decimal("1000.00"),
-            currency="USD",
-            override_unpaid=False,
-            booked_at=datetime.now(UTC),
-        )
+    def _booking_view(status: NodeStatus = NodeStatus.booked, **over: Any) -> BookingView:
+        fields: dict[str, Any] = {
+            "id": uuid.uuid4(),
+            "node_id": uuid.uuid4(),
+            "amount": Decimal("1000.00"),
+            "currency": "USD",
+            "override_unpaid": False,
+            "booked_at": datetime.now(UTC),
+        }
+        fields.update(over)
         return BookingView(
-            booking=booking, node_status=NodeStatus.booked, offer=None, reprice_delta=None
+            booking=Booking(**fields), node_status=status, offer=None, reprice_delta=None
         )
 
     async def _book(_s: Any, _a: Any, **_kw: Any) -> Any:
         err = returns.get("book_error")
         return err if err is not None else _booking_view()
+
+    async def _cancel(_s: Any, _a: Any, _g: Any, **_kw: Any) -> Any:
+        err = returns.get("cancel_error")
+        if err is not None:
+            return err
+        return _booking_view(
+            status=NodeStatus.approved,
+            cancelled_at=datetime.now(UTC),
+            refund_status=RefundStatus.refunded,
+            refund_amount=Decimal("1000.00"),
+        )
 
     async def _reconcile(_s: Any, _iid: uuid.UUID) -> ReconciliationReport:
         return ReconciliationReport(rows=[], violations=[], balanced=True)
@@ -536,6 +895,7 @@ def booking_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
             raise HTTPException(status_code=403, detail="forbidden")
 
     monkeypatch.setattr(rb.bookings_svc, "book_node", _book)
+    monkeypatch.setattr(rb.bookings_svc, "cancel_booking", _cancel)
     monkeypatch.setattr(rb.bookings_svc, "reconcile_itinerary", _reconcile)
     monkeypatch.setattr(rb, "_assert_itinerary_access", _assert_access)
 
@@ -553,13 +913,17 @@ def booking_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
             raise HTTPException(status_code=403, detail="advisor_only")
         return advisor_user
 
+    from app.routers.invoices import get_payment_gateway
+
     fastapi_app.dependency_overrides[get_session] = _dep
     fastapi_app.dependency_overrides[require_advisor] = _require_advisor
+    fastapi_app.dependency_overrides[get_payment_gateway] = lambda: FakeGateway()
     try:
         yield {"returns": returns}
     finally:
         fastapi_app.dependency_overrides.pop(get_session, None)
         fastapi_app.dependency_overrides.pop(require_advisor, None)
+        fastapi_app.dependency_overrides.pop(get_payment_gateway, None)
 
 
 def _headers(make_token: Any) -> dict[str, str]:
@@ -606,6 +970,51 @@ def test_book_endpoint_money_gate_409(client: Any, booking_routes: Any, make_tok
     )
     assert resp.status_code == 409
     assert resp.json()["detail"] == "node_not_paid"
+
+
+def test_cancel_endpoint_200(client: Any, booking_routes: Any, make_token: Any) -> None:
+    resp = client.post(
+        f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/cancel",
+        json={"reason": "client changed plans"},
+        headers=_headers(make_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["node_status"] == "approved"
+    assert body["refund_status"] == "refunded"
+    assert body["refund_amount"] == "1000.00"
+
+
+def test_cancel_endpoint_advisor_only_403(
+    client: Any, booking_routes: Any, make_token: Any
+) -> None:
+    booking_routes["returns"]["is_advisor"] = False
+    resp = client.post(
+        f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/cancel",
+        json={},
+        headers=_headers(make_token),
+    )
+    assert resp.status_code == 403
+
+
+def test_cancel_endpoint_requires_jwt(client: Any, booking_routes: Any) -> None:
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/cancel", json={})
+    assert resp.status_code == 401
+
+
+def test_cancel_endpoint_conflict_409(client: Any, booking_routes: Any, make_token: Any) -> None:
+    from app.services.itineraries import ItineraryError, ItineraryOutcome
+
+    booking_routes["returns"]["cancel_error"] = ItineraryError(
+        outcome=ItineraryOutcome.CONFLICT, detail="refund_declined"
+    )
+    resp = client.post(
+        f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/cancel",
+        json={},
+        headers=_headers(make_token),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "refund_declined"
 
 
 def test_reconciliation_endpoint_200_for_advisor(

@@ -1,0 +1,21 @@
+# mprocs.mock.yaml — AWS-free local stack: API (canned mock agent) + web.
+#
+# AGENT_LOCAL_URL is left unset, so the API serves its built-in
+# MockAgentRuntimeClient (a canned reply) instead of reaching out to a real
+# agent. There is no agent process and no AWS creds are required.
+#
+#   scripts/dev.sh --mock          # preferred
+#   mprocs --config mprocs.mock.yaml
+
+procs:
+  api:
+    shell: "uv run uvicorn app.main:app --reload --port 8000"
+    cwd: apps/api
+    autorestart: true
+    stop: SIGINT
+
+  web:
+    shell: "pnpm dev"
+    cwd: apps/web
+    autorestart: true
+    stop: SIGINT

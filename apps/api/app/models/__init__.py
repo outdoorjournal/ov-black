@@ -50,6 +50,7 @@ from app.models.invoice import (  # noqa: E402,F401  (re-exported)
     InvoiceStatus,
     Payment,
     PaymentStatus,
+    RefundStatus,
 )
 from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     CostKind,
@@ -139,6 +140,7 @@ __all__ = [
     "PaymentStatus",
     "Profile",
     "ProfileFact",
+    "RefundStatus",
     "ProfileFactKind",
     "TemplateEdge",
     "TemplateNode",

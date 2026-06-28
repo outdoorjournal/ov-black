@@ -6,22 +6,30 @@
 //
 // Responsibilities:
 //   1. Own the view-agnostic store Provider, seeded with the domain + the
-//      staff-editing config (canEdit + credentials). One store instance is
-//      shared by whichever view is active.
-//   2. Pick the active view. Today there is only "horizontal"; a "calendar"
-//      view would drop in as another case here with zero changes to the store,
-//      the adapter, or the route.
+//      viewer's role + their credentials. One store instance is shared by
+//      whichever layout is active.
+//   2. Decide the layout responsively, in-place (no route change, no reload):
+//        - md and up → the selected desktop view (horizontal today; a
+//          "vertical"/"calendar" view drops in here later with no store change).
+//        - below md → a swipe-driven mobile layout of the SAME store.
+//      Both are rendered under the one Provider and toggled with `display`
+//      utilities, so resizing the viewport flips between them seamlessly.
 //
-// Security: `canEdit` is resolved on the server (advisor vs. traveler).
-// Travelers get canEdit=false and null credentials, so no token reaches the
-// browser and the editing actions are inert; the backend's advisor guards are
-// the real authority.
+// Capability: the viewer's `role` is resolved on the server and passed straight
+// through; `canEdit` is derived from it inside the store. Each viewer is handed
+// their OWN Supabase token (already in their browser session), so the
+// credentials are non-null for travelers too — that is what powers the
+// traveler-facing concierge. The backend's advisor guards remain the real
+// authority over any mutation.
 
 import type { ItineraryStatus } from "@ov-black/api-client";
+
+import type { UserRole } from "@/lib/role";
 
 import type { ItineraryTimeline } from "./model/types";
 import { itineraryGraphStore } from "./store/itineraryGraphStore";
 import { HorizontalView } from "./views/horizontal/HorizontalView";
+import { MobileItineraryLayout } from "./views/mobile/MobileItineraryLayout";
 
 export type ItineraryGraphViewKind = "horizontal";
 
@@ -29,14 +37,14 @@ export type ItineraryGraphViewProps = {
   timeline: ItineraryTimeline;
   itineraryId: string;
   status: ItineraryStatus;
-  /** Server-resolved: advisor → true, traveler → false. */
-  canEdit: boolean;
-  /** Only passed for staff; null for travelers so no credential leaks. */
+  /** Server-resolved viewer role; the store derives `canEdit` from it. */
+  role: UserRole;
+  /** The viewer's own API credentials (their Supabase session token). */
   apiBaseUrl?: string | null;
   accessToken?: string | null;
   /** Demo-only: start already locked so the API-less sandbox can edit. */
   startLocked?: boolean;
-  /** Which view to render. Defaults to the horizontal timeline. */
+  /** Which desktop view to render at md+. Defaults to the horizontal timeline. */
   view?: ItineraryGraphViewKind;
   /** Title of the baseline this itinerary forked from (G3), for the banner. */
   baselineTitle?: string | null;
@@ -46,7 +54,7 @@ export function ItineraryGraphView({
   timeline,
   itineraryId,
   status,
-  canEdit,
+  role,
   apiBaseUrl = null,
   accessToken = null,
   startLocked = false,
@@ -59,15 +67,26 @@ export function ItineraryGraphView({
         timeline,
         itineraryId,
         status,
-        canEdit,
+        role,
         apiBaseUrl,
         accessToken,
         startLocked,
       }}
     >
-      {view === "horizontal" ? (
-        <HorizontalView timeline={timeline} baselineTitle={baselineTitle} />
-      ) : null}
+      {/* md+ : the selected desktop view. `display: contents` so the view's
+          own full-viewport root behaves as a direct child of the Provider. */}
+      <div className="hidden md:contents">
+        {view === "horizontal" ? (
+          <HorizontalView timeline={timeline} baselineTitle={baselineTitle} />
+        ) : null}
+      </div>
+      {/* below md : the swipe-driven mobile layout of the same graph. */}
+      <div className="contents md:hidden">
+        <MobileItineraryLayout
+          timeline={timeline}
+          baselineTitle={baselineTitle}
+        />
+      </div>
     </itineraryGraphStore.Provider>
   );
 }

@@ -7,6 +7,7 @@ import {
   type OfferResponse,
   type ReconciliationResponse,
   bookNode,
+  cancelBooking,
   confirmNode,
   createApiClient,
   getItinerary,
@@ -43,6 +44,10 @@ const ERROR_COPY: Record<string, string> = {
   reprice_failed: "Couldn't re-price with the supplier. Try again.",
   node_has_no_cost: "That item has no cost to book against.",
   supplier_ref_required: "Enter a supplier confirmation #.",
+  already_cancelled: "That booking is already cancelled.",
+  refund_declined: "The refund was declined — nothing was changed. Resolve it with the processor.",
+  refund_gateway_unavailable: "Couldn't reach the payment processor. Nothing changed — try again.",
+  payments_unconfigured: "Payments aren't configured, so the refund can't be processed.",
   network_error: "Could not reach the server. Try again in a moment.",
 };
 
@@ -224,6 +229,7 @@ function BookingRow({
   const [override, setOverride] = useState(false);
   const [offer, setOffer] = useState<OfferResponse | null>(null);
   const [ref, setRef] = useState("");
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   const canWrite = editable && api !== null;
   const isFlight = node.type === "flight";
@@ -352,6 +358,49 @@ function BookingRow({
           >
             Confirm
           </button>
+        </div>
+      ) : null}
+
+      {canWrite && (node.status === "booked" || node.status === "confirmed") ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {confirmingCancel ? (
+            <>
+              <span className="font-sans text-[11px] text-ink/70">
+                Refund {node.cost_amount ?? ""} {node.cost_currency ?? ""} and cancel this booking?
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  api && void run(() => cancelBooking(api, itineraryId, node.id, {}))
+                }
+                disabled={busy}
+                data-testid={`cancel-confirm-${node.id}`}
+                className="rounded-md border bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] transition-colors hover:bg-ink/5 disabled:opacity-40"
+                style={{ borderColor: ATTENTION, color: ATTENTION }}
+              >
+                Confirm refund
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingCancel(false)}
+                disabled={busy}
+                data-testid={`cancel-abort-${node.id}`}
+                className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/55 hover:text-ink"
+              >
+                Keep
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingCancel(true)}
+              disabled={busy}
+              data-testid={`cancel-${node.id}`}
+              className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              Cancel booking
+            </button>
+          )}
         </div>
       ) : null}
     </li>

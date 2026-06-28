@@ -26,9 +26,10 @@ from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
 from app.db import get_session
 from app.inventory.registry import InventoryProviderRegistry
-from app.models import NodeOffer, NodeStatus
+from app.models import NodeOffer, NodeStatus, RefundStatus
+from app.payments.base import PaymentGateway
 from app.routers.inventory import get_inventory_registry
-from app.routers.invoices import _assert_itinerary_access
+from app.routers.invoices import _assert_itinerary_access, get_payment_gateway
 from app.routers.itineraries import _advisor_actor_from_user
 from app.services import bookings as bookings_svc
 from app.services.bookings import BookingView, ReconciliationReport
@@ -59,6 +60,12 @@ class RecordConfirmationRequest(BaseModel):
     change_cancel_terms: str | None = Field(default=None, max_length=2048)
 
 
+class CancelBookingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=2048)
+
+
 class OfferResponse(BaseModel):
     id: uuid.UUID
     node_id: uuid.UUID
@@ -87,6 +94,10 @@ class BookingResponse(BaseModel):
     confirmed_at: datetime | None = None
     # Surfaced flight re-price: booked amount − the node's B4 cost (D024).
     reprice_delta: Decimal | None = None
+    # Cancel + refund (0028) — null until the booking is cancelled.
+    cancelled_at: datetime | None = None
+    refund_status: RefundStatus | None = None
+    refund_amount: Decimal | None = None
 
 
 class ReconciliationRowResponse(BaseModel):
@@ -144,6 +155,9 @@ def _booking_response(view: BookingView) -> BookingResponse:
         booked_at=b.booked_at,
         confirmed_at=b.confirmed_at,
         reprice_delta=view.reprice_delta,
+        cancelled_at=b.cancelled_at,
+        refund_status=b.refund_status,
+        refund_amount=b.refund_amount,
     )
 
 
@@ -272,6 +286,33 @@ async def confirm_node_endpoint(
         node_id=node_id,
         supplier_ref=payload.supplier_ref,
         change_cancel_terms=payload.change_cancel_terms,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _booking_response(result)
+
+
+@router.post(
+    "/itinerary/{itinerary_id}/nodes/{node_id}/cancel",
+    response_model=BookingResponse,
+    summary="Cancel a booked/confirmed node + refund its covering payment (advisor).",
+)
+async def cancel_node_endpoint(
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    payload: CancelBookingRequest,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+    gateway: PaymentGateway | None = Depends(get_payment_gateway),
+) -> BookingResponse:
+    actor = _advisor_actor_from_user(user)
+    result = await bookings_svc.cancel_booking(
+        session,
+        actor,
+        gateway,
+        itinerary_id=itinerary_id,
+        node_id=node_id,
+        reason=payload.reason,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)

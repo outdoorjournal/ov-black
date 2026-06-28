@@ -205,9 +205,13 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
    **reconciliation invariant** (Σ paid lines ⇔ Σ booked node costs) at `GET /itinerary/{id}/reconciliation`
    + `ovb.invariants.money_gate_reconciles`, asserted in `test_bookings.py`, the pillar-6 e2e, and
    `scripts/verify-sI3.sh`.
-2. **A G1 web surface for the lock badge** (render `lock_reason` + crafted refusal copy on the canvas) is
-   still a later web slice — G3 shipped the fork *diff/reconcile* UI, but the per-node booked-lock badge on
-   the main canvas isn't surfaced yet (the api-client already exposes `status_locked`).
+2. **Resume-hook cleanup landed (2026-06-28)** — the G1 canvas **lock badge**, **full cancel + refund**
+   (0028), **party-size cost expansion**, the **cross-trip `GET /me/invoices`** endpoint + a traveler
+   **`/basecamp/invoices`** surface, and **parent-subgraph moved-reconcile** all shipped behind tests; see §8.
+   Still open: **refund/cancel is advisor-only** (no traveler path, by design); a declined refund is
+   **fail-closed** (no advisor force-cancel-without-refund override yet); **per-node `NodeParty` cost
+   precision** is deferred (a node bills for the whole trip party); **S3 object deletion on vault archive**,
+   an **advisor cross-client invoice roster**, and **moved-reconcile neighbour-chain repair** remain deferred.
 3. **B8 — Templates: snapshot & reuse** stays **deferred (no scheduled date)** — parked until prioritized;
    the backing schema (0015) already landed, so it can resume cold. Deployment (F2/F3) stays deferred until
    you choose to cut a release.
@@ -219,6 +223,76 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-28 — Resume-hook cleanup — **party-size cost expansion, full cancel + refund (0028), cross-trip `GET /me/invoices` + a traveler invoice surface, the G1 lock badge, and parent-subgraph moved-reconcile — all behind tests. (Documents skipped — `/basecamp/vault` already covers them; S3-deletion stays deferred.)**
+
+**Decisions (founder, locked at plan time):** tackle the small resume hooks
+*except* S3-object-deletion-on-archive (stays deferred); **documents are already
+covered** by the V3 `/basecamp/vault` (no work); refund/cancel is **full
+cancel + refund** and **advisor-only** (never a traveler path). Settled at build:
+cancel **demotes the node to `approved`** (no new `NodeStatus`) and is
+**re-bookable** (the one-booking-per-node index becomes partial
+`WHERE cancelled_at IS NULL`); a settled charge is **refunded**, an unsettled one
+**voided**; a gateway **error** rolls back (retryable), a clean **decline** is
+**fail-closed** (rolls back, records nothing); per-person cost expansion uses the
+itinerary's party size (`Σ member_count`, else traveler count, else 1) — **not**
+per-node `NodeParty` precision (deferred).
+
+**What landed (six deliverables, full stack):**
+- **D3 — party-size cost expansion** (`apps/api`, no migration): a shared
+  `node_cost.effective_node_cost(amount, kind, party_size)` + `resolve_party_size`
+  applied at the **3 write sites** (`add_line_item_from_node`, `book_node`'s stored
+  `Booking.amount`, `sum_node_costs`) and **deliberately not** at `_node_paid_coverage`
+  / `reconcile_itinerary` (they read already-expanded values) — so a `per_person`
+  node bills × party size consistently across billing + the money gate + reconcile
+  and the invariant still holds. `_reprice_delta` compares against the expanded base.
+- **D2 — cancel + refund** (advisor-only, full stack): migration **`0028`**
+  (`refund_status` enum + 8 `bookings` cancel/refund columns + partial unique index);
+  `RefundStatus` model; a gateway **`refund`** on the `PaymentGateway` protocol +
+  `BraintreeGateway` (settled→refund / unsettled→void) + deterministic `FakeGateway`
+  + normalized `RefundResult`; `services/bookings.cancel_booking` (refund the covering
+  paid `Payment`, append a `reversal` line via the shared `invoices.build_reversal_line`,
+  demote through the G1 gate, stamp the booking; reconcile stays balanced because the
+  demoted node leaves the booked-sum); `POST /itinerary/{id}/nodes/{node_id}/cancel`
+  (`require_advisor`); both SDKs (`cancelBooking` wrapper, `ovb bookings cancel`); a
+  two-step **Cancel → Confirm refund** affordance in the advisor `BookingPanel`.
+  Redaction: refund cross-refs never logged.
+- **D4 — cross-trip invoices** (`apps/api`): `invoices.list_invoices_for_client`
+  (join invoices→itineraries by `client_id`, batched lines/payments) +
+  **`GET /me/invoices`** (owner-scoped self-service, mirrors `/me/itineraries`).
+- **D5 — traveler invoice surface** (`apps/web`): `listMyInvoices` api-client wrapper +
+  a **`/basecamp/invoices`** RSC + `InvoiceList` (status pills, each row links to the
+  existing `/invoices/{id}` pay page) + a "Your invoices →" basecamp link.
+- **D1 — G1 lock badge** (`apps/web`): `lock_reason` + a crafted "an advisor would
+  need to move it" tooltip/aria-label threaded `NodeCard → CardShell → StatusFooter`
+  on booked/confirmed cards (centralized `lockCopy` in `tokens.ts`).
+- **D6 — parent-subgraph moved-reconcile** (`apps/api`): `_apply_moved` now also
+  remaps `parent_subgraph_id` through lineage (raw `_set_parent_subgraph`, G1-guarded);
+  time-only moves were already applied via `_apply_changed`'s `starts_at` copy.
+
+**What's tested:** `apps/api` **747 passed** (+16; ruff + format + mypy `--strict`
+clean) — `test_node_cost.py` (effective-cost truth table, `resolve_party_size` order,
+`sum_node_costs` expands), `test_invoices.py` (expanded charge line), `test_bookings.py`
+(per-person book + reconcile balanced; cancel refunds/demotes/reverses/reconciles,
+override→`not_applicable`, declined fail-closed, gateway-error rollback, unbooked
+refusal, re-book after cancel, log-redaction sweep, router 200/403/401/409),
+`test_payments.py` (FakeGateway refund/void/decline dispatch), `test_me.py`
+(cross-trip listing + isolation + 401), `test_fork_reconcile.py` (parent-subgraph
+move applied). **api-client** rebuilt (tsc clean); **ovb** offline **53 passed**.
+`apps/web` **151 passed** (+7: `cardShellLock` ×3, `invoiceList` ×4, `bookingPanel`
+cancel) + typecheck + lint clean. **`scripts/verify-sR1.sh` 30/30**; **`verify-sI3.sh`
+34/34** (party-size kept the reconcile invariant green).
+
+**What remains (resume hooks):** (1) refund/cancel is **advisor-only** (no traveler
+path — by design); a declined refund is **fail-closed** with no advisor
+**force-cancel-without-refund** override (a noted fast-follow). (2) Per-node
+**`NodeParty` cost precision** is deferred — a `per_person` node bills for the whole
+trip party, not a sub-party. (3) **S3 object deletion on vault archive** stays deferred
+(soft-delete + bucket lifecycle). (4) An **advisor cross-client invoice roster**
+(`GET /clients/{id}/invoices`) wasn't built — the service is `client_id`-parameterized,
+so it's a small follow-up. (5) Moved-reconcile **neighbour-chain repair** (healing a
+pre-existing P→S edge when a node moves out from between them) is still a follow-on.
+(6) Live Braintree-sandbox refund verification needs real keys (build/CI use Fake).
 
 ### 2026-06-27 — M005/I3 Money gate + booking workflow — **full-stack: node_offers + bookings tables, the pay-before-book money gate, live Duffel re-price, advisor record-booking → confirmed, the reconciliation invariant, the update_node bypass closed. M005 COMPLETE (D024 finalized as D026).**
 

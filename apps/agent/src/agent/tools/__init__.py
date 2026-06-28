@@ -14,7 +14,8 @@ from agent.tools.fill import fill_gap
 from agent.tools.fork import fork_itinerary
 from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
-from agent.tools.mutations import update_node_status
+from agent.tools.mutations import move_node, update_node_status
+from agent.tools.notes import add_note
 from agent.tools.proposals import assemble_draft, propose_card, propose_flight
 from agent.tools.reconcile import reconcile_alternative
 from agent.tools.request_reconcile import request_reconcile
@@ -52,17 +53,26 @@ _TOOLS_PLANNING = [
     propose_flight,
     assemble_draft,
     update_node_status,
+    move_node,
+    add_note,
     fork_itinerary,
     request_reconcile,
     reconcile_alternative,
     set_mood,
 ]
 
-# Q&A is read-only — no fact recording, the traveler is asking, not telling.
+# Q&A is read-mostly: the traveler is asking, not building. They may still leave
+# a note (feedback for staff) or branch + reshape an alternative version — so the
+# write surface here is deliberately narrow (add_note / fork / move /
+# request_reconcile), never the full authoring toolkit.
 _TOOLS_QA = [
     get_traveler_context,
     list_itineraries,
     get_itinerary,
+    add_note,
+    fork_itinerary,
+    move_node,
+    request_reconcile,
 ]
 
 

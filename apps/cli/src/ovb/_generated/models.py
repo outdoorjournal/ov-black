@@ -109,6 +109,26 @@ class RepriceDelta(RootModel[str]):
     ]
 
 
+class RefundAmount(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Refund Amount')
+    ]
+
+
+class Reason(RootModel[str]):
+    root: Annotated[str, Field(max_length=2048, title='Reason')]
+
+
+class CancelBookingRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    reason: Annotated[Reason | None, Field(title='Reason')] = None
+
+
 class Value(RootModel[str]):
     root: Annotated[str, Field(max_length=256, min_length=1, title='Value')]
 
@@ -663,6 +683,34 @@ class MyClientResponse(BaseModel):
     client_id: Annotated[UUID, Field(title='Client Id')]
 
 
+class MyInvoiceSummary(BaseModel):
+    """
+    Row shape for ``GET /me/invoices`` — one invoice across any of the trips.
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    label: Annotated[str, Field(title='Label')]
+    status: InvoiceStatus
+    currency: Annotated[str, Field(title='Currency')]
+    total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Total')
+    ]
+    due_at: Annotated[AwareDatetime | None, Field(title='Due At')]
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    itinerary_title: Annotated[str, Field(title='Itinerary Title')]
+
+
+class MyInvoicesResponse(BaseModel):
+    """
+    Envelope for ``GET /me/invoices``.
+    """
+
+    invoices: Annotated[list[MyInvoiceSummary], Field(title='Invoices')]
+
+
 class MyItinerarySummary(BaseModel):
     """
     Row shape for ``GET /me/itineraries``.
@@ -1125,6 +1173,24 @@ class RedactRequest(BaseModel):
     reason: Annotated[str, Field(max_length=1000, min_length=1, title='Reason')]
 
 
+class RefundStatus(StrEnum):
+    """
+    Mirrors the public.refund_status Postgres enum (0028).
+
+    The outcome of a cancel's money movement: ``refunded`` (a settled charge was
+    returned), ``voided`` (an unsettled authorization was cancelled), or
+    ``not_applicable`` (an ``override_unpaid`` booking with no settled payment —
+    nothing to return). ``failed`` is reserved future-proofing: the service is
+    fail-closed, so a declined refund rolls the whole cancel back rather than
+    persisting a failed row.
+    """
+
+    refunded = 'refunded'
+    voided = 'voided'
+    failed = 'failed'
+    not_applicable = 'not_applicable'
+
+
 class Note(RootModel[str]):
     root: Annotated[str, Field(max_length=2000, title='Note')]
 
@@ -1379,6 +1445,9 @@ class BookingResponse(BaseModel):
     booked_at: Annotated[AwareDatetime, Field(title='Booked At')]
     confirmed_at: Annotated[AwareDatetime | None, Field(title='Confirmed At')] = None
     reprice_delta: Annotated[RepriceDelta | None, Field(title='Reprice Delta')] = None
+    cancelled_at: Annotated[AwareDatetime | None, Field(title='Cancelled At')] = None
+    refund_status: RefundStatus | None = None
+    refund_amount: Annotated[RefundAmount | None, Field(title='Refund Amount')] = None
 
 
 class ClientContactCreate(BaseModel):
@@ -1461,6 +1530,11 @@ class CreateNodeRequest(BaseModel):
     cost_amount: Annotated[float | CostAmount | None, Field(title='Cost Amount')] = None
     cost_currency: Annotated[str | None, Field(title='Cost Currency')] = None
     cost_kind: CostKind | None = None
+    attached_to_node_id: Annotated[UUID | None, Field(title='Attached To Node Id')] = (
+        None
+    )
+    starts_at: Annotated[str | None, Field(title='Starts At')] = None
+    duration_minutes: Annotated[int | None, Field(title='Duration Minutes')] = None
 
 
 class DestinationItem(BaseModel):
@@ -1811,6 +1885,9 @@ class NodeResponse(BaseModel):
     depth: Annotated[int | None, Field(title='Depth')] = None
     lock_reason: Annotated[str | None, Field(title='Lock Reason')] = None
     forked_from_node_id: Annotated[UUID | None, Field(title='Forked From Node Id')] = (
+        None
+    )
+    attached_to_node_id: Annotated[UUID | None, Field(title='Attached To Node Id')] = (
         None
     )
 

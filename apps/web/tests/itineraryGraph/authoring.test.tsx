@@ -149,7 +149,7 @@ function initFor(partial: Partial<ItineraryGraphInit> = {}): ItineraryGraphInit 
     timeline: timeline([NODE]),
     itineraryId: "it-1",
     status: "draft",
-    canEdit: true,
+    role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
     startLocked: true,
@@ -210,8 +210,8 @@ describe("authoring store actions", () => {
     expect(result.current.getState().inventoryResults[0]!.title).toBe("Sushi Saito");
   });
 
-  test("runInventorySearch is inert for a traveler (canEdit=false)", async () => {
-    const { result } = renderStore({ canEdit: false, startLocked: false });
+  test("runInventorySearch is inert for a traveler (role=client)", async () => {
+    const { result } = renderStore({ role: "client", startLocked: false });
     act(() => {
       result.current.getState().runInventorySearch({ keyword: "sushi" });
     });

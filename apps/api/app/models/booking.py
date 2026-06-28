@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
+from app.models.invoice import RefundStatus, refund_status_enum
 
 
 class NodeOffer(Base):
@@ -131,6 +132,22 @@ class Booking(Base):
         server_default=func.now(),
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Cancel + refund (0028) — null until an advisor cancels this booking ──
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(nullable=True)
+    refund_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    refund_currency: Mapped[str | None] = mapped_column(nullable=True)
+    refund_status: Mapped[RefundStatus | None] = mapped_column(refund_status_enum, nullable=True)
+    # OUR cross-ref key for the refund (= processor order id). Sensitive — never
+    # logged, mirroring payments.gateway_reference.
+    refund_gateway_ref: Mapped[str | None] = mapped_column(nullable=True)
+    # Two-way link to the refund Payment row (0024 payments, status='refunded').
+    refund_payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("payments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

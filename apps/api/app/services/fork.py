@@ -589,6 +589,18 @@ async def _copy_starts_at(session: AsyncSession, *, src: uuid.UUID, dst: uuid.UU
     await session.commit()
 
 
+async def _set_parent_subgraph(
+    session: AsyncSession, *, node_id: uuid.UUID, parent_id: uuid.UUID | None
+) -> None:
+    """Re-parent a node (``parent_subgraph_id`` is outside ``update_node``'s
+    whitelist, so reconcile applies a subgraph move with a direct write)."""
+    await session.execute(
+        text("update public.nodes set parent_subgraph_id = :p where id = :n"),
+        {"p": parent_id, "n": node_id},
+    )
+    await session.commit()
+
+
 def _ok(change: NodeChange, detail: str | None = None) -> ReconcileOutcome:
     return ReconcileOutcome(
         change_id=change.change_id, kind=change.kind, result="applied", detail=detail
@@ -731,13 +743,17 @@ async def _apply_moved(
     baseline_edges: list[Any],
     target_pred: uuid.UUID | None,
     target_succ: uuid.UUID | None,
+    target_parent: uuid.UUID | None,
     change: NodeChange,
 ) -> ReconcileOutcome:
-    """Re-wire the baseline ``follows`` edges incident to the moved node.
+    """Re-wire the baseline ``follows`` edges + subgraph parent of the moved node.
 
-    Best-effort (MVP, §8): rewires the moved node's own predecessor/successor to
-    match the fork's mapped position. Time/parent-only moves and neighbour-chain
-    repair are follow-ons — see the slice notes.
+    Rewires the moved node's own predecessor/successor to match the fork's mapped
+    position, and re-parents it when the move changed its ``parent_subgraph_id``
+    (a firmed baseline node is refused — never restructured via reconcile; an
+    unresolvable target parent is left as-is). Neighbour-chain repair (healing a
+    pre-existing P→S edge when a node moves out from between them) stays a
+    follow-on — see the slice notes.
     """
     assert change.baseline_node_id is not None
     b_id = change.baseline_node_id
@@ -770,6 +786,20 @@ async def _apply_moved(
         )
         if isinstance(res, ItineraryError):
             return _failed(change, res.detail)
+
+    # Re-parent if the move changed the node's subgraph parent (mapped through
+    # lineage). A firmed baseline node is refused (G1); a target parent that
+    # doesn't resolve to a baseline node (it's new in the fork) is left as-is.
+    baseline_node = baseline_by_id.get(b_id)
+    current_parent = baseline_node.parent_subgraph_id if baseline_node is not None else None
+    if target_parent != current_parent:
+        if baseline_node is not None and baseline_node.status in (
+            NodeStatus.booked,
+            NodeStatus.confirmed,
+        ):
+            return _refused(change)
+        if target_parent is None or target_parent in baseline_by_id:
+            await _set_parent_subgraph(session, node_id=b_id, parent_id=target_parent)
     return _ok(change)
 
 
@@ -822,6 +852,7 @@ async def reconcile_fork(
     if isinstance(fork_view, ItineraryError):
         return fork_view
     fork_to_origin = {n.id: n.forked_from_node_id for n in fork_view.nodes}
+    fork_by_id = {n.id: n for n in fork_view.nodes}
     f_pred, f_succ = _follows_neighbors(fork_view)
 
     outcomes: list[ReconcileOutcome] = []
@@ -873,6 +904,12 @@ async def reconcile_fork(
             assert change.fork_node_id is not None
             target_pred = fork_to_origin.get(f_pred.get(change.fork_node_id))  # type: ignore[arg-type]
             target_succ = fork_to_origin.get(f_succ.get(change.fork_node_id))  # type: ignore[arg-type]
+            fork_node = fork_by_id.get(change.fork_node_id)
+            target_parent = (
+                fork_to_origin.get(fork_node.parent_subgraph_id)
+                if fork_node is not None and fork_node.parent_subgraph_id is not None
+                else None
+            )
             outcome = await _apply_moved(
                 session,
                 actor,
@@ -881,6 +918,7 @@ async def reconcile_fork(
                 baseline_edges=baseline_edges,
                 target_pred=target_pred,
                 target_succ=target_succ,
+                target_parent=target_parent,
                 change=change,
             )
         outcomes.append(outcome)

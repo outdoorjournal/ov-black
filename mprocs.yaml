@@ -1,0 +1,50 @@
+# mprocs.yaml — coherent local dev stack for OV Black.
+#
+# Launches the API, the agent runtime, and the web app together, each in its
+# own mprocs pane. Run from the repo root:
+#
+#   mprocs                # auto-loads this file
+#   scripts/dev.sh        # same, plus preflight checks and a --mock mode
+#
+# Keys (mprocs shows a help bar along the bottom):
+#   j / k  or  ↑ / ↓   move between panes
+#   r                  restart the focused process
+#   s  /  x  /  X      start / stop / hard-kill the focused process
+#   q                  quit (stops every process)
+#
+# Every process sets `autorestart: true`: if one crashes, mprocs relaunches it
+# automatically while the other two keep running — that's the "react to
+# failures" behaviour. A process stuck in a crash loop can be paused with `x`.
+
+procs:
+  # FastAPI backend on :8000. AGENT_LOCAL_URL points it at the real agent on
+  # :8080 (LocalAgentRuntimeClient over HTTP) instead of the in-process mock,
+  # so no AWS creds are needed by the API itself. --reload handles its own
+  # code-change restarts; autorestart only fires if uvicorn truly dies.
+  api:
+    shell: "uv run uvicorn app.main:app --reload --port 8000"
+    cwd: apps/api
+    autorestart: true
+    stop: SIGINT
+    env:
+      AGENT_LOCAL_URL: "http://localhost:8080"
+
+  # Bedrock AgentCore runtime on :8080. Needs live Bedrock creds — runs under
+  # AWS_PROFILE=tov-sso. Its tools call back to the API at BACKEND_BASE_URL.
+  agent:
+    shell: "uv run python -m agent"
+    cwd: apps/agent
+    autorestart: true
+    stop: SIGINT
+    env:
+      AWS_PROFILE: "tov-sso"
+      AWS_REGION: "us-west-2"
+      BACKEND_BASE_URL: "http://localhost:8000"
+
+  # Next.js advisor/client UI on :3000. Talks to the API via the generated
+  # client; next dev manages its own hot reload.
+  web:
+    shell: "pnpm dev"
+    cwd: apps/web
+    autorestart: true
+    stop: SIGINT

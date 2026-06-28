@@ -120,7 +120,13 @@ export function NodeCard({
 
   return (
     <button type="button" onClick={onClick} className={wrapperClass}>
-      <CardShell kind={kind} status={status} width={width}>
+      <CardShell
+        kind={kind}
+        status={status}
+        width={width}
+        lockReason={node.lock_reason ?? null}
+        lockLabel={node.type}
+      >
         {compact ? (
           <CompactBody
             kind={kind}

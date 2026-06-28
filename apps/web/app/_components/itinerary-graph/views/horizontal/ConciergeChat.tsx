@@ -43,6 +43,8 @@ type ConciergeChatProps = {
   /** Opening system line shown before any turns. */
   intro?: string;
   onScrollToNode?: (id: string) => void;
+  /** Suppress ChatPanel's own header (a host provides one, e.g. the sheet). */
+  hideHeader?: boolean;
 };
 
 export function ConciergeChat({
@@ -54,6 +56,7 @@ export function ConciergeChat({
   hydrateHistory = false,
   intro,
   onScrollToNode,
+  hideHeader = false,
 }: ConciergeChatProps) {
   const pendingProposals = itineraryGraphStore.useStore(
     (s) => s.pendingProposals,
@@ -252,6 +255,7 @@ export function ConciergeChat({
       onSubmit={handleSubmit}
       {...(onScrollToNode ? { onScrollToNode } : {})}
       disabled={!canChat || streaming}
+      hideHeader={hideHeader}
     />
   );
 }

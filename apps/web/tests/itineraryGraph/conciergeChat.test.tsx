@@ -106,7 +106,7 @@ function storeInit(): ItineraryGraphInit {
     timeline: timeline(),
     itineraryId: "it-1",
     status: "draft",
-    canEdit: true,
+    role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
     startLocked: true,

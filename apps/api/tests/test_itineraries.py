@@ -290,6 +290,20 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(routers_itineraries, "delete_edge", _delete_edge)
     monkeypatch.setattr(routers_itineraries, "_is_requester_advisor", _is_advisor)
 
+    # The node/edge write endpoints pre-load the itinerary and gate it with
+    # ``assert_itinerary_writable`` (owner/advisor). These route-unit tests stub
+    # the DB, so short-circuit both: load returns a non-None placeholder (skip
+    # the 404 branch) and the writable gate is a no-op (authorized). Authz is
+    # exercised separately against a real session in test_itinerary_writable.py.
+    async def _load(_session: Any, itinerary_id: uuid.UUID) -> Any:
+        return object()
+
+    async def _writable(_session: Any, _user: Any, _itinerary: Any) -> None:
+        return None
+
+    monkeypatch.setattr(routers_itineraries, "_load_itinerary", _load)
+    monkeypatch.setattr(routers_itineraries, "assert_itinerary_writable", _writable)
+
     # Also override the session dependency so no DB is required.
     async def _dep() -> Iterator[object]:
         yield object()

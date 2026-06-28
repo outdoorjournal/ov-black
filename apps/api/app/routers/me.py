@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,7 +32,15 @@ from sqlalchemy import func, select
 
 from app.auth import AuthenticatedUser, require_user
 from app.db import get_session
-from app.models import AgentSession, AgentTurn, Itinerary, ItineraryStatus, TurnRole
+from app.models import (
+    AgentSession,
+    AgentTurn,
+    InvoiceStatus,
+    Itinerary,
+    ItineraryStatus,
+    TurnRole,
+)
+from app.services import invoices as invoices_svc
 from app.services.clients import resolve_client_for_auth_user
 
 if TYPE_CHECKING:
@@ -68,6 +77,25 @@ class MyItinerariesResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     itineraries: list[MyItinerarySummary]
+
+
+class MyInvoiceSummary(BaseModel):
+    """Row shape for ``GET /me/invoices`` — one invoice across any of the trips."""
+
+    id: uuid.UUID
+    label: str
+    status: InvoiceStatus
+    currency: str
+    total: Decimal
+    due_at: datetime | None
+    itinerary_id: uuid.UUID
+    itinerary_title: str
+
+
+class MyInvoicesResponse(BaseModel):
+    """Envelope for ``GET /me/invoices``."""
+
+    invoices: list[MyInvoiceSummary]
 
 
 class MyOnboardingSessionResponse(BaseModel):
@@ -155,6 +183,49 @@ async def list_my_itineraries_endpoint(
     )
     return MyItinerariesResponse(
         itineraries=[MyItinerarySummary.model_validate(row) for row in rows]
+    )
+
+
+@router.get(
+    "/invoices",
+    response_model=MyInvoicesResponse,
+    summary="List the calling client's invoices across all itineraries.",
+)
+async def list_my_invoices_endpoint(
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> MyInvoicesResponse:
+    """Every invoice across the caller's trips, newest first.
+
+    Owner-scoped via ``resolve_client_for_auth_user`` (the same self-scoping as
+    ``/me/itineraries``), so a traveler only ever sees their own client's
+    invoices. Empty list is valid. Each row links to the existing
+    ``/invoices/{id}`` pay page.
+    """
+    try:
+        user_id = uuid.UUID(user.sub)
+    except ValueError:  # pragma: no cover
+        return MyInvoicesResponse(invoices=[])
+
+    client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
+    if client is None:
+        return MyInvoicesResponse(invoices=[])
+
+    rows = await invoices_svc.list_invoices_for_client(session, client.id)
+    return MyInvoicesResponse(
+        invoices=[
+            MyInvoiceSummary(
+                id=view.invoice.id,
+                label=view.invoice.label,
+                status=view.invoice.status,
+                currency=view.invoice.currency,
+                total=view.total,
+                due_at=view.invoice.due_at,
+                itinerary_id=itin.id,
+                itinerary_title=itin.title,
+            )
+            for view, itin in rows
+        ]
     )
 
 
