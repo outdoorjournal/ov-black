@@ -1,4 +1,8 @@
 import type { Config } from "tailwindcss";
+// Import (not require) the plugin: this config is loaded as ESM under Node 24,
+// where a bare require() throws "require is not defined" and breaks the CSS
+// compile. See types/tailwindcss-animate.d.ts for the ambient declaration.
+import tailwindcssAnimate from "tailwindcss-animate";
 
 const config: Config = {
   darkMode: ["class"],
@@ -73,7 +77,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [tailwindcssAnimate],
 };
 
 export default config;

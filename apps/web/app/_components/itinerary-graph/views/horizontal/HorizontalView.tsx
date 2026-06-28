@@ -56,6 +56,7 @@ import {
 
 import { AuthoringPanel } from "./AuthoringPanel";
 import { ConciergeChat } from "./ConciergeChat";
+import { BookingPanel } from "./BookingPanel";
 import { DiffPanel } from "./DiffPanel";
 import { InvoicePanel } from "./InvoicePanel";
 import { PartyPanel } from "./PartyPanel";
@@ -137,7 +138,14 @@ export function HorizontalView({
   // the agent conversation ("concierge"). Advisors default to Build; travelers
   // never see the toggle (they only get ChatPanel).
   const [asidePanel, setAsidePanel] = useState<
-    "build" | "diff" | "concierge" | "client" | "party" | "vault" | "invoices"
+    | "build"
+    | "diff"
+    | "concierge"
+    | "client"
+    | "party"
+    | "vault"
+    | "invoices"
+    | "booking"
   >(canEdit ? "build" : "concierge");
   // This itinerary is an alternative version (a fork) when it has a baseline.
   const forkedFromId = timeline.itinerary.forked_from_id ?? null;
@@ -701,6 +709,7 @@ export function HorizontalView({
                       "party",
                       "vault",
                       "invoices",
+                      "booking",
                     ] as const
                   ).map((tab) => (
                     <button
@@ -727,7 +736,9 @@ export function HorizontalView({
                                 ? "Party"
                                 : tab === "vault"
                                   ? "Vault"
-                                  : "Invoices"}
+                                  : tab === "invoices"
+                                    ? "Invoices"
+                                    : "Booking"}
                     </button>
                   ))}
                 </div>
@@ -794,6 +805,16 @@ export function HorizontalView({
                     className={asidePanel === "invoices" ? "h-full" : "hidden"}
                   >
                     <InvoicePanel
+                      itineraryId={timeline.itinerary.id}
+                      apiBaseUrl={apiBaseUrl}
+                      accessToken={accessToken}
+                      editable={editable}
+                    />
+                  </div>
+                  <div
+                    className={asidePanel === "booking" ? "h-full" : "hidden"}
+                  >
+                    <BookingPanel
                       itineraryId={timeline.itinerary.id}
                       apiBaseUrl={apiBaseUrl}
                       accessToken={accessToken}

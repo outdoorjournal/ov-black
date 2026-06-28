@@ -26,6 +26,7 @@ from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
 from app.routers.analyze import router as analyze_router
 from app.routers.auth import router as auth_router
+from app.routers.bookings import router as bookings_router
 from app.routers.client_documents import router as client_documents_router
 from app.routers.clients import router as clients_router
 from app.routers.demos import router as demos_router
@@ -236,6 +237,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(itineraries_router)
 app.include_router(invoices_router)
+app.include_router(bookings_router)
 app.include_router(advisor_itineraries_router)
 app.include_router(analyze_router)
 app.include_router(fill_router)

@@ -23,5 +23,5 @@
     "**/*.ts",
     "**/*.tsx"
   ],
-  "exclude": ["node_modules", ".next"]
+  "exclude": ["node_modules", ".next", "e2e", "playwright.config.ts"]
 }

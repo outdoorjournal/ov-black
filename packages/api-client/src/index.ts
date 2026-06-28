@@ -48,6 +48,11 @@ import {
   voidInvoiceEndpointInvoicesInvoiceIdVoidPost,
   paymentTokenEndpointInvoicesInvoiceIdPaymentTokenPost,
   payInvoiceEndpointInvoicesInvoiceIdPayPost,
+  refreshOfferEndpointItineraryItineraryIdNodesNodeIdOffersRefreshPost,
+  listOffersEndpointItineraryItineraryIdNodesNodeIdOffersGet,
+  bookNodeEndpointItineraryItineraryIdNodesNodeIdBookPost,
+  confirmNodeEndpointItineraryItineraryIdNodesNodeIdConfirmPost,
+  reconciliationEndpointItineraryItineraryIdReconciliationGet,
   dismissOnboardingEndpointOnboardingDismissPost,
   downloadClientDocumentEndpointClientsClientIdDocumentsDocumentIdDownloadGet,
   downloadMyDocumentEndpointMeDocumentsDocumentIdDownloadGet,
@@ -124,6 +129,11 @@ import type {
   PayInvoiceRequest,
   PaymentResponse,
   PaymentTokenResponse,
+  BookNodeRequest,
+  BookingResponse,
+  OfferResponse,
+  RecordConfirmationRequest,
+  ReconciliationResponse,
   NodeChangeResponse,
   ReconcileOutcomeResponse,
   ReconcileRequest,
@@ -247,6 +257,19 @@ export type {
   PaymentResponse,
   PaymentTokenResponse,
   PaymentStatus,
+} from "./generated/types.gen.js";
+
+// Bookings + money gate (M005/I3). The committed BookingResponse, a repriceable
+// OfferResponse, the BookNode/RecordConfirmation requests, and the
+// ReconciliationResponse (Σ paid ⇔ Σ booked) the advisor BookingPanel reads.
+export type {
+  BookNodeRequest,
+  BookingResponse,
+  OfferResponse,
+  RecordConfirmationRequest,
+  ReconciliationResponse,
+  ReconciliationRowResponse,
+  ReconciliationViolationResponse,
 } from "./generated/types.gen.js";
 
 // Clients (S03): advisor-facing /clients surface — the request/response
@@ -3612,6 +3635,182 @@ export async function payInvoice(
       status: response.status,
       detail: _parsePaymentDetail(response.status, error),
     };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Bookings + money gate (M005/I3) ─────────────────────────────────────────
+
+export type BookingDetail =
+  // 409 — money gate / lifecycle preconditions
+  | "node_not_paid"
+  | "already_booked"
+  | "node_not_approved"
+  | "node_not_booked"
+  | "no_booking"
+  | "offer_required"
+  | "offer_expired"
+  | "offer_unavailable"
+  | "reprice_failed"
+  // 400 — validation
+  | "node_has_no_cost"
+  | "offer_unpriced"
+  | "supplier_ref_required"
+  | "not_found"
+  | "advisor_only"
+  | "forbidden"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+const _BOOKING_TOKENS = new Set<BookingDetail>([
+  "node_not_paid",
+  "already_booked",
+  "node_not_approved",
+  "node_not_booked",
+  "no_booking",
+  "offer_required",
+  "offer_expired",
+  "offer_unavailable",
+  "reprice_failed",
+  "node_has_no_cost",
+  "offer_unpriced",
+  "supplier_ref_required",
+]);
+
+function _parseBookingDetail(status: number, error?: unknown): BookingDetail {
+  const token = _detailToken(error);
+  if (_BOOKING_TOKENS.has(token as BookingDetail)) return token as BookingDetail;
+  if (status === 404) return "not_found";
+  if (status === 403) return token === "advisor_only" ? "advisor_only" : "forbidden";
+  if (status === 400 || status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type RefreshOfferResult =
+  | { ok: true; offer: OfferResponse }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** POST /itinerary/{id}/nodes/{nodeId}/offers/refresh — re-price a held offer (advisor). */
+export async function refreshOffer(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+): Promise<RefreshOfferResult> {
+  try {
+    const { data, error, response } =
+      await refreshOfferEndpointItineraryItineraryIdNodesNodeIdOffersRefreshPost({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, offer: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListOffersResult =
+  | { ok: true; offers: OfferResponse[] }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** GET /itinerary/{id}/nodes/{nodeId}/offers — a node's offer history (newest first). */
+export async function listOffers(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+): Promise<ListOffersResult> {
+  try {
+    const { data, error, response } =
+      await listOffersEndpointItineraryItineraryIdNodesNodeIdOffersGet({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, offers: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type BookNodeResult =
+  | { ok: true; booking: BookingResponse }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** POST /itinerary/{id}/nodes/{nodeId}/book — money gate: book an approved, paid node (advisor). */
+export async function bookNode(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+  body: BookNodeRequest = { override_unpaid: false },
+): Promise<BookNodeResult> {
+  try {
+    const { data, error, response } =
+      await bookNodeEndpointItineraryItineraryIdNodesNodeIdBookPost({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, booking: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ConfirmNodeResult =
+  | { ok: true; booking: BookingResponse }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** POST /itinerary/{id}/nodes/{nodeId}/confirm — record a supplier confirmation # (advisor). */
+export async function confirmNode(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+  body: RecordConfirmationRequest,
+): Promise<ConfirmNodeResult> {
+  try {
+    const { data, error, response } =
+      await confirmNodeEndpointItineraryItineraryIdNodesNodeIdConfirmPost({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, booking: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ReconciliationResult =
+  | { ok: true; reconciliation: ReconciliationResponse }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** GET /itinerary/{id}/reconciliation — Σ(paid lines) ⇔ Σ(booked node costs). */
+export async function getReconciliation(
+  client: Client,
+  itineraryId: string,
+): Promise<ReconciliationResult> {
+  try {
+    const { data, error, response } =
+      await reconciliationEndpointItineraryItineraryIdReconciliationGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, reconciliation: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

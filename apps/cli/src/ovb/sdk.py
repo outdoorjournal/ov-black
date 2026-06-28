@@ -359,6 +359,58 @@ class Ovb:
             json_body={"payment_method_nonce": payment_method_nonce},
         )
 
+    # ── bookings + money gate (M005/I3) ──────────────────────────────────
+    async def refresh_offer(self, itinerary_id: str, node_id: str) -> gm.OfferResponse:
+        """Re-price a node's held offer (advisor) — live provider or snapshot."""
+        return await self._model(
+            gm.OfferResponse,
+            "POST",
+            f"/itinerary/{itinerary_id}/nodes/{node_id}/offers/refresh",
+        )
+
+    async def list_offers(self, itinerary_id: str, node_id: str) -> list[gm.OfferResponse]:
+        """A node's offer history, newest first (advisor or owning client)."""
+        return await self._list(
+            gm.OfferResponse, "GET", f"/itinerary/{itinerary_id}/nodes/{node_id}/offers"
+        )
+
+    async def book_node(
+        self, itinerary_id: str, node_id: str, *, override_unpaid: bool = False
+    ) -> gm.BookingResponse:
+        """Book an approved node (advisor). The money gate requires a covering paid
+        invoice line; ``override_unpaid`` books on a merely issued line (logged)."""
+        return await self._model(
+            gm.BookingResponse,
+            "POST",
+            f"/itinerary/{itinerary_id}/nodes/{node_id}/book",
+            json_body={"override_unpaid": override_unpaid},
+        )
+
+    async def record_confirmation(
+        self,
+        itinerary_id: str,
+        node_id: str,
+        *,
+        supplier_ref: str,
+        change_cancel_terms: str | None = None,
+    ) -> gm.BookingResponse:
+        """Record a supplier confirmation # → booked becomes confirmed (advisor)."""
+        body: dict[str, Any] = {"supplier_ref": supplier_ref}
+        if change_cancel_terms is not None:
+            body["change_cancel_terms"] = change_cancel_terms
+        return await self._model(
+            gm.BookingResponse,
+            "POST",
+            f"/itinerary/{itinerary_id}/nodes/{node_id}/confirm",
+            json_body=body,
+        )
+
+    async def get_reconciliation(self, itinerary_id: str) -> gm.ReconciliationResponse:
+        """Reconcile Σ(paid invoice lines) ⇔ Σ(booked node costs) for an itinerary."""
+        return await self._model(
+            gm.ReconciliationResponse, "GET", f"/itinerary/{itinerary_id}/reconciliation"
+        )
+
     # ── nodes ────────────────────────────────────────────────────────────
     async def add_node(
         self,

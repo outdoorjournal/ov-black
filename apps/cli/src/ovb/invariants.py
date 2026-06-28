@@ -277,8 +277,33 @@ def reconcile_holds(
     return out
 
 
-def money_gate_reconciles(*_args: Any, **_kwargs: Any) -> list[Violation]:
-    """M005/I3 — Σ(paid invoice lines) ⇔ Σ(booked node costs), re-priced amount."""
-    raise NotImplementedError(
-        "money-gate reconciliation lands in M005/I3 (needs invoices + bookings)"
-    )
+def money_gate_reconciles(report: gm.ReconciliationResponse) -> list[Violation]:
+    """M005/I3 — Σ(paid invoice lines) ⇔ Σ(booked node costs), per currency.
+
+    Reads the backend's authoritative reconciliation report (``GET
+    /itinerary/{id}/reconciliation``) so the CLI/e2e assertion can't drift from
+    the server's own computation over the 0023 ledger + the 0025 bookings. Every
+    per-node violation (booked-but-unpaid, under/over-charge from a re-price) and
+    every unbalanced currency row becomes a :class:`Violation`; a balanced report
+    yields ``[]``.
+    """
+    out: list[Violation] = []
+    for v in report.violations or []:
+        out.append(
+            Violation(
+                f"money_gate_{v.code}",
+                f"node {v.node_id}: booked {v.currency} {v.booked_amount} vs paid {v.paid_amount}",
+            )
+        )
+    for row in report.rows or []:
+        if not row.balanced:
+            out.append(
+                Violation(
+                    "money_gate_imbalance",
+                    f"{row.currency}: Σ booked {row.booked_total} ≠ Σ paid {row.paid_total}",
+                )
+            )
+    # Defensive: the server's own `balanced` flag must agree with what we surfaced.
+    if not report.balanced and not out:
+        out.append(Violation("money_gate_unbalanced", "reconciliation reports unbalanced"))
+    return out

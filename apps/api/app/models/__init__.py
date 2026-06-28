@@ -26,6 +26,7 @@ from app.models.analysis import (  # noqa: E402,F401  (re-exported)
     AnalysisStatus,
     FindingSeverity,
 )
+from app.models.booking import Booking, NodeOffer  # noqa: E402,F401  (re-exported)
 from app.models.client import Client, ContactChannel  # noqa: E402,F401
 from app.models.client_contact import (  # noqa: E402,F401  (re-exported)
     ClientContact,
@@ -97,6 +98,7 @@ __all__ = [
     "AnalysisFinding",
     "AnalysisStatus",
     "Base",
+    "Booking",
     "CardTemplate",
     "Client",
     "ClientContact",
@@ -124,6 +126,7 @@ __all__ = [
     "ItineraryStatus",
     "Node",
     "NodeHistory",
+    "NodeOffer",
     "NodeParty",
     "NodeRole",
     "NodeStatus",

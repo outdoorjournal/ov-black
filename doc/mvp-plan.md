@@ -193,15 +193,18 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 
 > B1–B7 landed behind tests, **M003 (V1–V3) complete**, and **M004 complete (G1 + G2 + G3 landed**;
 > see §8 — D-FORK locked as versioned-clone). D-COST + D-ANALYZE are locked (B4/B5); F1 landed the work onto
-> the `dev` trunk. **D-PAY locked as D025** (Braintree); **M005/I1 (invoices) + I2 (payment) landed** — see §8.
+> the `dev` trunk. **D-PAY locked as D025** (Braintree); **M005 COMPLETE — I1 (invoices) + I2 (payment) +
+> I3 (money gate + booking) all landed** (D024 finalized, D026); see §8.
 
-1. **M005 — Invoicing & booking**: **I1 (invoices + signed ledger) and I2 (Braintree payment) are done**
-   (D-PAY locked as D025). **Next is I3 — the money gate + booking workflow**: gate `approved → booked` on a
-   covering **paid** invoice line (advisor override to *issued*, logged), the advisor "record booking" flow
-   (supplier confirmation # → `booked` → `confirmed`), the `node_offers` + `bookings` tables (D024 draft in
-   §8), flight re-price-before-book, and the **reconciliation invariant** (Σ paid lines ⇔ Σ booked node
-   costs) asserted in tests + a verify script. `mark_invoice_paid` + `sum_node_costs(statuses=…)` already
-   exist for it to build on.
+1. **M005 — Invoicing & booking: COMPLETE.** I1 (invoices + signed ledger), I2 (Braintree payment), and
+   **I3 — the money gate + booking workflow** all landed full-stack. I3: `node_offers` + `bookings` tables
+   (0025, finalizing D024 → **D026**); the money gate (`approved → booked` needs a covering **paid** line;
+   advisor override to *issued*, logged); the advisor record-booking flow (supplier confirmation # →
+   `booked` → `confirmed`); **live Duffel re-price-before-book** via the provider `get_detail` (+ a snapshot
+   fallback offline) with the price delta surfaced; the `update_node` bypass closed; and the
+   **reconciliation invariant** (Σ paid lines ⇔ Σ booked node costs) at `GET /itinerary/{id}/reconciliation`
+   + `ovb.invariants.money_gate_reconciles`, asserted in `test_bookings.py`, the pillar-6 e2e, and
+   `scripts/verify-sI3.sh`.
 2. **A G1 web surface for the lock badge** (render `lock_reason` + crafted refusal copy on the canvas) is
    still a later web slice — G3 shipped the fork *diff/reconcile* UI, but the per-node booked-lock badge on
    the main canvas isn't surfaced yet (the api-client already exposes `status_locked`).
@@ -216,6 +219,19 @@ Carried from [mvp.md](./mvp.md) §6 — confirm these as they come up (recommend
 > Running ledger of what's actually landed against the slices above, so any
 > session can resume mid-slice without re-deriving state. Each entry: date ·
 > slice · what landed · what's tested · what remains · resume hook.
+
+### 2026-06-27 — M005/I3 Money gate + booking workflow — **full-stack: node_offers + bookings tables, the pay-before-book money gate, live Duffel re-price, advisor record-booking → confirmed, the reconciliation invariant, the update_node bypass closed. M005 COMPLETE (D024 finalized as D026).**
+
+**Decisions (settled at build time — recorded as D026, finalizing D024's draft schema within the D025 envelope):** the concrete money-gate coverage rule (Σ paid lines for the node ≥ booked amount, same currency; override covers from an *issued* invoice, WARN-logged), **live re-price reuses the existing provider `get_detail`** (no new provider method — Duffel `GET /air/offers/{id}` returns current amount + `expires_at`, 404 on lapse) with a `snapshot` fallback so the flow runs offline, and the `update_node` bypass closed via a new `CONFLICT`→409 outcome (`use_booking_flow`) so the gate is the only path into `booked`/`confirmed`.
+
+**What landed (full stack):**
+- **Migration `0025_bookings.sql`** (applied): `node_offers` (time-boxed repriceable quotes — source/amount/currency/`priced_at`/`expires_at`/`refreshed_from_offer_id` lineage/raw) + `bookings` (amount charged, FK→offer, FK→covering `invoice_line_item`, `supplier_ref`, `override_unpaid`, `booked_by/at`, `confirmed_at`; `bookings_one_per_node` UNIQUE); defense-in-depth SELECT RLS via node→itinerary→client (mirrors 0023).
+- **`models/booking.py`** (`NodeOffer`/`Booking`) + re-export; **`services/bookings.py`** — `refresh_offer` (provider re-price / snapshot), `book_node` (the money gate; flight needs a fresh offer; surfaces the re-price delta), `record_confirmation` (booked → confirmed), `reconcile_itinerary` (per-currency Σ paid ⇔ Σ booked + per-node `booked_unpaid`/`undercharged`/`overcharged`). **Bypass closed** in `services/itineraries.update_node` (+ `ItineraryOutcome.CONFLICT`).
+- **`routers/bookings.py`** (registered in `main.py`) — advisor-only `POST .../offers/refresh`, `.../book`, `.../confirm`; owner/advisor `GET .../offers` + `GET /itinerary/{id}/reconciliation`. Both SDKs regenerated; api-client `bookNode`/`confirmNode`/`refreshOffer`/`getReconciliation` discriminated wrappers; `ovb bookings` CLI group; `ovb.invariants.money_gate_reconciles` implemented (reads the server report — no client-side drift); a web **`BookingPanel`** advisor "Booking" tab (book + override + flight re-price + confirm + reconciliation banner) wired into the canvas.
+
+**What's tested:** `apps/api` **717 passed** (+14: `test_bookings.py` — gate blocks unpaid → books paid → confirms → reconciles, override-on-issued + reconcile flags it, flight fresh-offer requirement, live-provider re-price + delta, gone/expired offer refusals, bypass refusal, no-cost refusal; router 200/403/401/409 + reconciliation read gate), ruff + mypy clean. **api-client** rebuilt (tsc clean); **ovb** offline **53 passed**. `apps/web` **133 passed** (+7: `bookingPanel.test.tsx` — render + reconciliation banner, book, override, flight re-price, confirm, unbalanced banner, read-only gate) + typecheck + lint. **Live local stack:** `scripts/verify-sI3.sh` **34/34**; pillar-6 e2e (`test_pillar6_invoice_book_e2e.py`) **3/3 lit up** (I1 assemble, I2 pay, I3 money gate + reconciliation invariant) + `test_m005_invoicing_e2e.py` green.
+
+**What remains (resume hooks):** (1) **party-size expansion** of per-person costs into coverage is still summed at face value (deferred from B4/I3). (2) **refund / cancel-booking** flow isn't built (override-to-issued is the only relaxation today). (3) The **G1 canvas lock-badge** web surface is still a later slice (unchanged). **With I3, M005 (Pillar 6) is complete — the full invoice → pay → money gate → book → confirm → reconcile loop runs end-to-end.**
 
 ### 2026-06-27 — M005/I1 + I2 Invoicing & Braintree payment — **full-stack: signed-ledger invoices, gateway-agnostic Braintree payment, advisor assemble + traveler pay surfaces; D-PAY locked as D025. M005 I1 + I2 complete (I3 money gate next).**
 

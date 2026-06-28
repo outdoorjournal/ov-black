@@ -147,10 +147,45 @@ def test_analysis_finding_helpers() -> None:
         require_finding(analysis, category="weather")
 
 
-def test_money_gate_remains_an_honest_stub() -> None:
-    """M005/I3 hasn't landed — its invariant must still refuse to false-green."""
-    with pytest.raises(NotImplementedError):
-        money_gate_reconciles()
+def test_money_gate_reconciles_reads_the_backend_report() -> None:
+    """M005/I3 landed: a balanced report yields no violations; an imbalance + a
+    per-node discrepancy each surface as a Violation."""
+    from ovb.invariants import assert_no_violations
+
+    balanced = gm.ReconciliationResponse(
+        balanced=True,
+        rows=[
+            gm.ReconciliationRowResponse(
+                currency="USD", paid_total="1000.00", booked_total="1000.00", balanced=True
+            )
+        ],
+        violations=[],
+    )
+    assert money_gate_reconciles(balanced) == []
+
+    unbalanced = gm.ReconciliationResponse(
+        balanced=False,
+        rows=[
+            gm.ReconciliationRowResponse(
+                currency="USD", paid_total="0.00", booked_total="500.00", balanced=False
+            )
+        ],
+        violations=[
+            gm.ReconciliationViolationResponse(
+                node_id="22222222-2222-2222-2222-222222222222",
+                code="booked_unpaid",
+                currency="USD",
+                booked_amount="500.00",
+                paid_amount="0.00",
+            )
+        ],
+    )
+    out = money_gate_reconciles(unbalanced)
+    codes = {v.code for v in out}
+    assert "money_gate_booked_unpaid" in codes
+    assert "money_gate_imbalance" in codes
+    with pytest.raises(AssertionError):
+        assert_no_violations(out)
 
 
 def test_status_actor_gate_holds_checks_lock_reason() -> None:

@@ -14,6 +14,7 @@ from ovb.cli._run import CliState
 from ovb.cli.commands import (
     admin,
     analyze,
+    bookings,
     chat,
     clients,
     graph,
@@ -60,6 +61,7 @@ def _root(
 
 app.add_typer(itinerary.app, name="itinerary")
 app.add_typer(invoices.app, name="invoices")
+app.add_typer(bookings.app, name="bookings")
 app.add_typer(graph.node_app, name="node")
 app.add_typer(graph.edge_app, name="edge")
 app.add_typer(inventory.app, name="inventory")

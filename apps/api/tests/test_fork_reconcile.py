@@ -295,15 +295,13 @@ async def test_reconcile_refuses_booked_baseline_node(db_session: AsyncSession) 
         await update_node(
             db_session, _actor(), itinerary_id=fork.id, node_id=bk_fork.id, title="bk-reworked"
         )
-        # Meanwhile the baseline node gets booked (approved→booked, an advisor promotion).
-        booked = await update_node(
-            db_session,
-            _actor(ActorKind.ADVISOR),
-            itinerary_id=baseline.id,
-            node_id=bk.id,
-            status=NodeStatus.booked,
-        )
-        assert isinstance(booked, Node)
+        # Meanwhile the baseline node gets booked. update_node now refuses a direct
+        # →booked flip (M005/I3: the money gate is the only path; see test_bookings.py),
+        # so seed the booked status straight on the row for this reconcile setup.
+        bk_row = await db_session.get(Node, bk.id)
+        assert bk_row is not None
+        bk_row.status = NodeStatus.booked
+        await db_session.commit()
 
         diff = await diff_fork(db_session, fork_id=fork.id)
         assert isinstance(diff, ForkDiff)

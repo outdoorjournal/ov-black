@@ -93,6 +93,22 @@ class AuthedHealthResponse(BaseModel):
     role: Annotated[str | None, Field(title='Role')] = None
 
 
+class BookNodeRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    override_unpaid: Annotated[bool | None, Field(title='Override Unpaid')] = False
+
+
+class RepriceDelta(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Reprice Delta')
+    ]
+
+
 class Value(RootModel[str]):
     root: Annotated[str, Field(max_length=256, min_length=1, title='Value')]
 
@@ -771,6 +787,26 @@ class NodeType(StrEnum):
     waiting = 'waiting'
 
 
+class OfferResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    source: Annotated[str, Field(title='Source')]
+    source_offer_id: Annotated[str | None, Field(title='Source Offer Id')] = None
+    amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
+    ]
+    currency: Annotated[str, Field(title='Currency')]
+    priced_at: Annotated[AwareDatetime, Field(title='Priced At')]
+    expires_at: Annotated[AwareDatetime | None, Field(title='Expires At')] = None
+    refreshed_from_offer_id: Annotated[
+        UUID | None, Field(title='Refreshed From Offer Id')
+    ] = None
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+
 class OnboardingOpenerResponse(BaseModel):
     """
     One randomly-chosen opening question for a brand-new client.
@@ -1064,6 +1100,51 @@ class ReconcileRequest(BaseModel):
     override_block: Annotated[bool | None, Field(title='Override Block')] = False
 
 
+class ReconciliationRowResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    currency: Annotated[str, Field(title='Currency')]
+    paid_total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid Total')
+    ]
+    booked_total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Booked Total')
+    ]
+    balanced: Annotated[bool, Field(title='Balanced')]
+
+
+class ReconciliationViolationResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    code: Annotated[str, Field(title='Code')]
+    currency: Annotated[str, Field(title='Currency')]
+    booked_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Booked Amount')
+    ]
+    paid_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid Amount')
+    ]
+
+
+class ChangeCancelTerms(RootModel[str]):
+    root: Annotated[str, Field(max_length=2048, title='Change Cancel Terms')]
+
+
+class RecordConfirmationRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    supplier_ref: Annotated[
+        str, Field(max_length=256, min_length=1, title='Supplier Ref')
+    ]
+    change_cancel_terms: Annotated[
+        ChangeCancelTerms | None, Field(title='Change Cancel Terms')
+    ] = None
+
+
 class RedactRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1311,6 +1392,31 @@ class AssembleDraftRequest(BaseModel):
         extra='forbid',
     )
     day_plan: Annotated[list[DaySlotPayload] | None, Field(title='Day Plan')] = None
+
+
+class BookingResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    node_status: NodeStatus
+    amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
+    ]
+    currency: Annotated[str, Field(title='Currency')]
+    offer_id: Annotated[UUID | None, Field(title='Offer Id')] = None
+    invoice_line_item_id: Annotated[
+        UUID | None, Field(title='Invoice Line Item Id')
+    ] = None
+    supplier_ref: Annotated[str | None, Field(title='Supplier Ref')] = None
+    change_cancel_terms: Annotated[str | None, Field(title='Change Cancel Terms')] = (
+        None
+    )
+    override_unpaid: Annotated[bool, Field(title='Override Unpaid')]
+    booked_at: Annotated[AwareDatetime, Field(title='Booked At')]
+    confirmed_at: Annotated[AwareDatetime | None, Field(title='Confirmed At')] = None
+    reprice_delta: Annotated[RepriceDelta | None, Field(title='Reprice Delta')] = None
 
 
 class ClientContactCreate(BaseModel):
@@ -1904,6 +2010,14 @@ class ProfileFactDetail(BaseModel):
     redacted_reason: Annotated[str | None, Field(title='Redacted Reason')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class ReconciliationResponse(BaseModel):
+    balanced: Annotated[bool, Field(title='Balanced')]
+    rows: Annotated[list[ReconciliationRowResponse] | None, Field(title='Rows')] = None
+    violations: Annotated[
+        list[ReconciliationViolationResponse] | None, Field(title='Violations')
+    ] = None
 
 
 class ReleaseLockResponse(BaseModel):

@@ -55,6 +55,10 @@ class ItineraryOutcome(str, enum.Enum):
     FORBIDDEN = "forbidden"
     LOCKED = "locked"
     STATUS_LOCKED = "status_locked"
+    # A precondition on related state failed (e.g. M005's money gate: a node
+    # can't go approved → booked without a covering paid invoice line). Maps to
+    # HTTP 409 so the caller can tell "not allowed yet" from a 400 bad request.
+    CONFLICT = "conflict"
 
 
 class ActorKind(str, enum.Enum):
@@ -403,6 +407,12 @@ _FIRMED_STATUSES: frozenset[NodeStatus] = frozenset(
     {NodeStatus.approved, NodeStatus.booked, NodeStatus.confirmed}
 )
 
+# Statuses a node may enter ONLY through the M005/I3 money gate
+# (``services.bookings``), never via a direct ``update_node`` status flip.
+_GATED_PROMOTION_STATUSES: frozenset[NodeStatus] = frozenset(
+    {NodeStatus.booked, NodeStatus.confirmed}
+)
+
 
 def compute_lock_reason(status: NodeStatus) -> str | None:
     """The agent-readable reason a node is mutation-locked, or None.
@@ -742,6 +752,19 @@ async def update_node(
     )
     if status_err is not None:
         return status_err
+
+    # Money gate (M005/I3): promotion INTO booked/confirmed is not a free graph
+    # edit — it must go through ``services.bookings`` (a covering paid invoice
+    # line, a fresh flight offer, a recorded booking). Refuse a direct flip here
+    # so the gate can't be bypassed via update_node. Demotions OUT of those
+    # statuses stay on this path (the advisor cancellation escape hatch).
+    if "status" in updates:
+        target = NodeStatus(updates["status"])
+        if target in _GATED_PROMOTION_STATUSES and node.status != target:
+            return ItineraryError(
+                outcome=ItineraryOutcome.CONFLICT,
+                detail="use_booking_flow",
+            )
 
     new_source = updates.get("source", node.source)
     new_source_id = updates.get("source_id", node.source_id)
