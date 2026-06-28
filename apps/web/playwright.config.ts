@@ -28,8 +28,16 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    // Logs a member in once and writes the session to e2e/.auth/advisor.json.
-    { name: "setup", testMatch: /auth\.setup\.ts$/ },
+    // Each setup logs one persona in and saves its session under e2e/.auth/.
+    // setup:traveler reuses the advisor (to create the linked client), so it
+    // must run after setup:advisor — otherwise both mint magic links for the
+    // same advisor user concurrently and invalidate each other's token.
+    { name: "setup:advisor", testMatch: /advisor\.setup\.ts$/ },
+    {
+      name: "setup:traveler",
+      testMatch: /traveler\.setup\.ts$/,
+      dependencies: ["setup:advisor"],
+    },
 
     // Unauthenticated surface — the sign-in / invite landing page.
     {
@@ -38,14 +46,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
 
-    // Authenticated surface — reuses the session captured by `setup`.
+    // Advisor surface — reuses the session captured by setup:advisor.
     {
-      name: "authenticated",
-      testDir: "./e2e/authenticated",
-      dependencies: ["setup"],
+      name: "advisor",
+      testDir: "./e2e/advisor",
+      dependencies: ["setup:advisor"],
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/advisor.json",
+      },
+    },
+
+    // Traveler (client) surface — reuses the session captured by setup:traveler.
+    {
+      name: "traveler",
+      testDir: "./e2e/traveler",
+      dependencies: ["setup:traveler"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "e2e/.auth/traveler.json",
       },
     },
   ],

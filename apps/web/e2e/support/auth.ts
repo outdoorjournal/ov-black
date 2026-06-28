@@ -1,25 +1,61 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// A stable, throwaway identity for the advisor session. Override per-machine
-// or for staging with E2E_ADVISOR_EMAIL. Locally the user + profiles row are
-// created on demand by bootstrap-login.sh; on staging it must be provisioned
-// ahead of time (see scripts/provision-staging-users.sh).
+// Stable, throwaway identities. Override per-machine / for staging via env.
+// Locally the auth users + linkage are created on demand; on staging they must
+// be provisioned ahead of time (see scripts/provision-staging-users.sh).
+// NB: example.com is RFC 2606 reserved — it passes the API's strict EmailStr
+// validation (POST /clients, /auth/login) where a .test TLD is rejected, and
+// it can never deliver real mail.
 export const E2E_ADVISOR_EMAIL =
-  process.env["E2E_ADVISOR_EMAIL"] ?? "e2e-advisor@ovblack.test";
+  process.env["E2E_ADVISOR_EMAIL"] ?? "e2e-advisor@example.com";
+export const E2E_TRAVELER_EMAIL =
+  process.env["E2E_TRAVELER_EMAIL"] ?? "e2e-traveler@example.com";
 
-// Where the captured cookie session is written by e2e/auth.setup.ts and read
-// by the `authenticated` project. Relative to the apps/web working directory.
+// Captured cookie sessions, relative to the apps/web working directory.
 export const ADVISOR_STORAGE_STATE = "e2e/.auth/advisor.json";
+export const TRAVELER_STORAGE_STATE = "e2e/.auth/traveler.json";
 
 // Playwright runs with cwd = the config dir (apps/web), so the repo root is
-// two levels up. Used to locate scripts/bootstrap-login.sh.
+// two levels up. Used to locate scripts/ and apps/api/.env.
 function repoRoot(): string {
   return path.resolve(process.cwd(), "..", "..");
 }
 
+function getSupabaseUrl(): string {
+  return process.env["SUPABASE_URL"] ?? "http://127.0.0.1:54321";
+}
+
+function getApiBaseUrl(): string {
+  return process.env["E2E_API_BASE_URL"] ?? "http://localhost:8000";
+}
+
 function isLocalSupabase(url: string): boolean {
   return url.includes("127.0.0.1") || url.includes("localhost");
+}
+
+// Service-role key: explicit env wins (required for staging); locally we fall
+// back to apps/api/.env, the same source every other local helper reads.
+function getServiceRoleKey(supabaseUrl: string): string {
+  const fromEnv = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+  if (fromEnv) {
+    return fromEnv;
+  }
+  if (isLocalSupabase(supabaseUrl)) {
+    const envFile = path.join(repoRoot(), "apps", "api", ".env");
+    const prefix = "supabase_service_role_key=";
+    const line = readFileSync(envFile, "utf8")
+      .split("\n")
+      .find((l) => l.startsWith(prefix));
+    const key = line?.slice(prefix.length).trim();
+    if (key) {
+      return key;
+    }
+  }
+  throw new Error(
+    "SUPABASE_SERVICE_ROLE_KEY is unset and could not be read from apps/api/.env.",
+  );
 }
 
 interface GenerateLinkResponse {
@@ -27,9 +63,9 @@ interface GenerateLinkResponse {
   hashed_token?: string;
 }
 
-// Remote (staging) path: the advisor user already exists, so we just ask the
-// Supabase admin API for a fresh magic-link token and build the callback URL.
-async function mintHashedTokenViaAdmin(
+// Mints a fresh magic-link token via the Supabase admin API. The user must
+// already exist (local helpers create it first; staging users are provisioned).
+async function mintHashedToken(
   supabaseUrl: string,
   serviceRoleKey: string,
   email: string,
@@ -56,15 +92,22 @@ async function mintHashedTokenViaAdmin(
   return hashed;
 }
 
-// Local path: reuse the existing bootstrap helper, which idempotently creates
-// the auth user, ensures the profiles row, and prints a ready-built callback
-// URL. We point its WEB_ORIGIN at our target so the URL host matches baseURL.
-function callbackUrlFromBootstrap(baseURL: string, email: string): string {
+function callbackUrl(baseURL: string, hashedToken: string): string {
+  return `${baseURL}/auth/callback?token_hash=${hashedToken}&type=magiclink`;
+}
+
+// ── Advisor ────────────────────────────────────────────────────────────────
+
+// Local path: reuse bootstrap-login.sh, which idempotently creates the auth
+// user + profiles row and prints a ready-built callback URL. We point its
+// WEB_ORIGIN at our target so the URL host matches baseURL.
+function advisorCallbackViaBootstrap(baseURL: string): string {
   const script = path.join(repoRoot(), "scripts", "bootstrap-login.sh");
-  const out = execFileSync(script, ["--email", email, "--role", "advisor"], {
-    encoding: "utf8",
-    env: { ...process.env, WEB_ORIGIN: baseURL },
-  });
+  const out = execFileSync(
+    script,
+    ["--email", E2E_ADVISOR_EMAIL, "--role", "advisor"],
+    { encoding: "utf8", env: { ...process.env, WEB_ORIGIN: baseURL } },
+  );
   const line = out
     .split("\n")
     .map((l) => l.trim())
@@ -78,34 +121,119 @@ function callbackUrlFromBootstrap(baseURL: string, email: string): string {
 }
 
 /**
- * Returns a single-use `/auth/callback` URL that, when visited in a browser,
- * verifies a magic-link OTP and establishes an advisor cookie session — the
- * same loop a real user completes by clicking the email link.
- *
- * - Local  (Supabase on 127.0.0.1) → scripts/bootstrap-login.sh provisions the
- *   user/profile and mints the link; the service-role key is read from
- *   apps/api/.env exactly like the other local helpers.
- * - Remote (any other SUPABASE_URL) → mints the link via the admin API using
- *   SUPABASE_SERVICE_ROLE_KEY; the advisor user must already be provisioned.
+ * A single-use `/auth/callback` URL that establishes an **advisor** session.
+ * Local → bootstrap-login.sh provisions the user/profile; remote → mints via
+ * the admin API (the advisor user must already be provisioned).
  */
 export async function advisorCallbackUrl(baseURL: string): Promise<string> {
-  const supabaseUrl = process.env["SUPABASE_URL"] ?? "http://127.0.0.1:54321";
-
+  const supabaseUrl = getSupabaseUrl();
   if (isLocalSupabase(supabaseUrl)) {
-    return callbackUrlFromBootstrap(baseURL, E2E_ADVISOR_EMAIL);
+    return advisorCallbackViaBootstrap(baseURL);
+  }
+  const key = getServiceRoleKey(supabaseUrl);
+  return callbackUrl(baseURL, await mintHashedToken(supabaseUrl, key, E2E_ADVISOR_EMAIL));
+}
+
+// ── Traveler (client) ────────────────────────────────────────────────────────
+
+// mint-jwt.sh prints ONLY the advisor's access_token on stdout (logs → stderr),
+// ensuring the advisor user/profile exist as a side effect.
+function mintAdvisorAccessToken(): string {
+  const script = path.join(repoRoot(), "scripts", "mint-jwt.sh");
+  const token = execFileSync(
+    script,
+    ["--email", E2E_ADVISOR_EMAIL, "--role", "advisor"],
+    { encoding: "utf8" },
+  ).trim();
+  if (!token) {
+    throw new Error("mint-jwt.sh returned no token");
+  }
+  return token;
+}
+
+// Ensure a clients row whose email is the traveler's exists, owned by the
+// advisor. This is the link key /me/client backfills against. It MUST run
+// before the traveler auth user exists: POST /clients issues an invite, which
+// Supabase refuses (502) for an already-existing user. The invite itself
+// creates the traveler auth user, so order matters (mirrors
+// scripts/provision-local-users.sh).
+async function ensureTravelerLinkedClient(
+  apiBaseUrl: string,
+  advisorToken: string,
+): Promise<void> {
+  const auth = { Authorization: `Bearer ${advisorToken}` };
+
+  const listResp = await fetch(`${apiBaseUrl}/clients`, { headers: auth });
+  if (!listResp.ok) {
+    throw new Error(`GET /clients failed (${listResp.status})`);
+  }
+  const clients = (await listResp.json()) as Array<{ email?: string | null }>;
+  const linked = clients.some(
+    (c) => (c.email ?? "").toLowerCase() === E2E_TRAVELER_EMAIL.toLowerCase(),
+  );
+  if (linked) {
+    return;
   }
 
-  const serviceRoleKey = process.env["SUPABASE_SERVICE_ROLE_KEY"];
-  if (!serviceRoleKey) {
+  const body = {
+    full_name: "E2E Linked Traveler",
+    email: E2E_TRAVELER_EMAIL,
+    dossier: { typed: { contact_preference: "email", travel_party_notes: "" } },
+  };
+  const createResp = await fetch(`${apiBaseUrl}/clients`, {
+    method: "POST",
+    headers: { ...auth, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!createResp.ok) {
     throw new Error(
-      "Targeting a remote Supabase but SUPABASE_SERVICE_ROLE_KEY is unset. " +
-        "Export the staging service-role key and ensure the advisor user is provisioned.",
+      `POST /clients failed (${createResp.status}): ${await createResp.text()}`,
     );
   }
-  const hashed = await mintHashedTokenViaAdmin(
-    supabaseUrl,
-    serviceRoleKey,
-    E2E_ADVISOR_EMAIL,
+}
+
+// The invited traveler user starts unconfirmed; confirm it so a magic-link OTP
+// verifies cleanly.
+async function confirmUser(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  email: string,
+): Promise<void> {
+  const headers = { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` };
+  const listResp = await fetch(
+    `${supabaseUrl}/auth/v1/admin/users?filter=${encodeURIComponent(email)}`,
+    { headers },
   );
-  return `${baseURL}/auth/callback?token_hash=${hashed}&type=magiclink`;
+  const data = (await listResp.json()) as {
+    users?: Array<{ id: string; email?: string }>;
+  };
+  const user = (data.users ?? []).find(
+    (u) => (u.email ?? "").toLowerCase() === email.toLowerCase(),
+  );
+  if (!user) {
+    return;
+  }
+  await fetch(`${supabaseUrl}/auth/v1/admin/users/${user.id}`, {
+    method: "PUT",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ email_confirm: true }),
+  });
+}
+
+/**
+ * A single-use `/auth/callback` URL that establishes a **traveler/client**
+ * session landing on /basecamp. Locally it provisions a client row linked by
+ * email (so /me/client resolves) and the confirmed auth user; remotely it
+ * assumes the traveler is already provisioned and just mints the link.
+ */
+export async function travelerCallbackUrl(baseURL: string): Promise<string> {
+  const supabaseUrl = getSupabaseUrl();
+  const key = getServiceRoleKey(supabaseUrl);
+
+  if (isLocalSupabase(supabaseUrl)) {
+    await ensureTravelerLinkedClient(getApiBaseUrl(), mintAdvisorAccessToken());
+    await confirmUser(supabaseUrl, key, E2E_TRAVELER_EMAIL);
+  }
+
+  return callbackUrl(baseURL, await mintHashedToken(supabaseUrl, key, E2E_TRAVELER_EMAIL));
 }
