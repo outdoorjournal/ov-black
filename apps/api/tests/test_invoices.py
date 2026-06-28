@@ -383,6 +383,52 @@ async def test_draft_delete_and_list(db_session: AsyncSession) -> None:
         await _cleanup(itin.id)
 
 
+@integration
+@pytest.mark.asyncio
+async def test_list_invoices_groups_lines_and_totals_per_invoice(db_session: AsyncSession) -> None:
+    # Guards the batched list_invoices (one query for all lines / payments,
+    # grouped in Python): distinct non-zero totals must land on the right view.
+    itin = await create_itinerary(db_session, _actor(), title="grouplist")
+    try:
+        inv_a = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="A", currency="USD"
+        )
+        inv_b = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="B", currency="USD"
+        )
+        assert isinstance(inv_a, Invoice)
+        assert isinstance(inv_b, Invoice)
+        for amt in ("100.00", "25.00"):  # A: two lines totalling 125.00
+            ln = await add_line_item(
+                db_session,
+                _actor(),
+                invoice_id=inv_a.id,
+                description="a",
+                amount=Decimal(amt),
+                currency="USD",
+            )
+            assert isinstance(ln, InvoiceLineItem)
+        ln_b = await add_line_item(  # B: one line of 40.00
+            db_session,
+            _actor(),
+            invoice_id=inv_b.id,
+            description="b",
+            amount=Decimal("40.00"),
+            currency="USD",
+        )
+        assert isinstance(ln_b, InvoiceLineItem)
+
+        views = {v.invoice.label: v for v in await list_invoices(db_session, itin.id)}
+        assert views["A"].total == Decimal("125.00")
+        assert len(views["A"].lines) == 2
+        assert all(line.invoice_id == inv_a.id for line in views["A"].lines)
+        assert views["B"].total == Decimal("40.00")
+        assert len(views["B"].lines) == 1
+        assert all(line.invoice_id == inv_b.id for line in views["B"].lines)
+    finally:
+        await _cleanup(itin.id)
+
+
 # ── Router (service stubbed) ───────────────────────────────────────────────
 
 

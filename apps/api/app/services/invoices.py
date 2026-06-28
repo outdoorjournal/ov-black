@@ -87,7 +87,12 @@ async def _load_invoice(session: AsyncSession, invoice_id: uuid.UUID) -> Invoice
 
 
 async def _invoice_total(session: AsyncSession, invoice_id: uuid.UUID) -> Decimal:
-    """Σ of every line's signed ``amount`` (reversal pairs net to zero)."""
+    """Σ of every line's signed ``amount`` (reversal pairs net to zero).
+
+    Standalone SUM for callers that haven't already fetched the lines (e.g. the
+    pay path totals an invoice without materializing the ledger). When the lines
+    are already in hand, use :func:`_total_of` instead of a second round-trip.
+    """
     total = (
         await session.execute(
             select(func.coalesce(func.sum(InvoiceLineItem.amount), _ZERO)).where(
@@ -96,6 +101,14 @@ async def _invoice_total(session: AsyncSession, invoice_id: uuid.UUID) -> Decima
         )
     ).scalar_one()
     return Decimal(total)
+
+
+def _total_of(lines: list[InvoiceLineItem]) -> Decimal:
+    """Σ of signed line amounts, computed in Python from already-fetched rows."""
+    total = _ZERO
+    for line in lines:
+        total += line.amount
+    return total
 
 
 async def _lines_for(session: AsyncSession, invoice_id: uuid.UUID) -> list[InvoiceLineItem]:
@@ -126,11 +139,54 @@ async def _payments_for(session: AsyncSession, invoice_id: uuid.UUID) -> list[Pa
     )
 
 
+async def _lines_for_many(
+    session: AsyncSession, invoice_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[InvoiceLineItem]]:
+    """All line items for several invoices in ONE query, grouped by invoice id."""
+    rows = (
+        (
+            await session.execute(
+                select(InvoiceLineItem)
+                .where(InvoiceLineItem.invoice_id.in_(invoice_ids))
+                .order_by(InvoiceLineItem.created_at, InvoiceLineItem.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[uuid.UUID, list[InvoiceLineItem]] = {}
+    for row in rows:
+        grouped.setdefault(row.invoice_id, []).append(row)
+    return grouped
+
+
+async def _payments_for_many(
+    session: AsyncSession, invoice_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[Payment]]:
+    """All payments for several invoices in ONE query, grouped by invoice id."""
+    rows = (
+        (
+            await session.execute(
+                select(Payment)
+                .where(Payment.invoice_id.in_(invoice_ids))
+                .order_by(Payment.created_at, Payment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[uuid.UUID, list[Payment]] = {}
+    for row in rows:
+        grouped.setdefault(row.invoice_id, []).append(row)
+    return grouped
+
+
 async def _view(session: AsyncSession, invoice: Invoice) -> InvoiceView:
+    # Two round-trips, not three: the total is Σ(lines) we already fetched, so a
+    # separate SUM query would re-read the same rows.
     lines = await _lines_for(session, invoice.id)
-    total = await _invoice_total(session, invoice.id)
     payments = await _payments_for(session, invoice.id)
-    return InvoiceView(invoice=invoice, lines=lines, total=total, payments=payments)
+    return InvoiceView(invoice=invoice, lines=lines, total=_total_of(lines), payments=payments)
 
 
 async def create_invoice(
@@ -452,7 +508,22 @@ async def list_invoices(
         .scalars()
         .all()
     )
-    return [await _view(session, inv) for inv in invoices]
+    if not invoices:
+        return []
+    # Batch the ledger + payments for ALL invoices in two queries instead of the
+    # 3·N a per-invoice _view() would issue (the old N+1).
+    invoice_ids = [inv.id for inv in invoices]
+    lines_by_invoice = await _lines_for_many(session, invoice_ids)
+    payments_by_invoice = await _payments_for_many(session, invoice_ids)
+    return [
+        InvoiceView(
+            invoice=inv,
+            lines=lines_by_invoice.get(inv.id, []),
+            total=_total_of(lines_by_invoice.get(inv.id, [])),
+            payments=payments_by_invoice.get(inv.id, []),
+        )
+        for inv in invoices
+    ]
 
 
 def _gate_line_write(status: InvoiceStatus, kind: InvoiceLineKind) -> ItineraryError | None:

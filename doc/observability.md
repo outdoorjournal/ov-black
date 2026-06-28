@@ -128,3 +128,46 @@ risks in the active payment path:
   the header.
 - No async settlement **webhook** yet — if the process dies after Braintree
   settles but before our commit, reconciliation needs a pull (I3 money-gate).
+
+## Performance sweep (non-payment hot paths)
+
+A read-only audit of N+1 patterns, the itinerary-graph read path, and index
+coverage. The new instrumentation above is what makes the remaining items
+*measurable* — watch `db.slow_query` and `span`/`http.request.latency` while
+driving the app and the real hot spots will name themselves.
+
+**Fixed**
+- `services/invoices.py` — `list_invoices` was an N+1 (`_view` per invoice ×
+  3 queries each). Now batches all lines + payments in two `WHERE invoice_id IN
+  (…)` queries → **3 queries regardless of invoice count**. And `_view` computed
+  the total with a separate `SUM` over rows it had *already fetched*; the total
+  is now summed in Python → **every invoice read drops from 3 queries to 2**
+  (this is on the pay path too). `_invoice_total` stays for callers that haven't
+  materialized the ledger.
+
+**Verified NOT a problem (no change)**
+- Index coverage is adequate. The audit's "critical missing `agent_sessions
+  (client_id)` index" is a false positive — `client_id` is the **leading column**
+  of the composite `UNIQUE(client_id, agentcore_session_id)` and the
+  `(client_id, audience)` partial index, so prefix lookups already use them. All
+  hot FK filters (`nodes/edges.itinerary_id`, `invoice_line_items.invoice_id`,
+  `payments.invoice_id`, fact tables `(client_id, observed_at)`) are indexed.
+  Only small **in-memory sorts** (e.g. invoices `ORDER BY created_at` over a
+  handful of rows per itinerary) are unindexed — not worth a composite index.
+
+**Reported, deliberately not fixed**
+- `services/bookings.py` — `reconcile_itinerary` and `book_node` issue a
+  per-booked-node coverage query (an N+1 / sequential pair). **Left alone: this
+  is the active M005 I3 payment/booking area.** Fold the fix into that work
+  (batch the coverage query, or `asyncio.gather` across *separate* sessions).
+- `services/facts.py::load_agent_context` + `services/agent.py` stream-turn
+  prerequisites run several **sequential** queries per agent turn. Two caveats
+  keep this low-priority: (1) you **cannot** naively `asyncio.gather` them — a
+  single `AsyncSession` is one asyncpg connection and concurrent ops on it raise;
+  a real parallelization needs separate sessions (which costs pool connections),
+  so the cheaper win is *fewer* queries (combine tiers), not concurrency; and
+  (2) turn latency is **LLM-bound (seconds)**, so shaving ~5 ms of sequential DB
+  time before the model call is immaterial to the R015 first-token target.
+- `services/itineraries.py::get_itinerary_graph` fetches edges in a separate
+  query after the node recursive-CTE — one extra round-trip, **not** an N+1; same
+  single-session constraint rules out a trivial gather. Low value; skipped.
