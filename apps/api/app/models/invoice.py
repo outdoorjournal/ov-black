@@ -213,6 +213,10 @@ class Payment(Base):
     status: Mapped[PaymentStatus] = mapped_column(payment_status_enum, nullable=False)
     gateway: Mapped[str] = mapped_column(nullable=False)
     gateway_reference: Mapped[str] = mapped_column(nullable=False)
+    # Optional client-supplied retry token (0025). When set, a retried pay with
+    # the same key replays this row's outcome instead of charging again; the
+    # partial unique index (invoice_id, idempotency_key) enforces one per key.
+    idempotency_key: Mapped[str | None] = mapped_column(nullable=True)
     processor_transaction_id: Mapped[str | None] = mapped_column(nullable=True)
     instrument_type: Mapped[str | None] = mapped_column(nullable=True)
     last_four: Mapped[str | None] = mapped_column(nullable=True)

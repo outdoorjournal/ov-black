@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import braintree
 
-from app.payments.base import PaymentGateway, SaleResult
+from app.payments.base import PaymentGateway, PaymentGatewayError, SaleResult
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -32,6 +32,22 @@ logger = logging.getLogger("ov_black.payments")
 # Braintree test nonces — usable only against the sandbox / FakeGateway.
 VALID_NONCE = "fake-valid-nonce"
 DECLINED_NONCE = "fake-processor-declined-nonce"
+
+# Braintree exception class names that mean the request never reached the
+# processor — safe to retry. A *read* timeout is deliberately excluded: the
+# charge may already have settled, so a retried sale could double-charge.
+_RETRYABLE_ERROR_NAMES = frozenset({"ConnectTimeoutError", "ConnectionError"})
+
+
+def _as_gateway_error(exc: Exception) -> PaymentGatewayError:
+    """Normalize any Braintree SDK / transport exception to a typed error.
+
+    Braintree returns *declines* as a result object (no raise); an actual raise
+    here is an infra failure (timeout, network, auth/config). We never let the
+    raw vendor exception escape the gateway seam.
+    """
+    name = exc.__class__.__name__
+    return PaymentGatewayError(name, retryable=name in _RETRYABLE_ERROR_NAMES)
 
 
 class BraintreeGateway:
@@ -43,7 +59,10 @@ class BraintreeGateway:
         self._gateway = gateway
 
     def generate_client_token(self) -> str:
-        token = self._gateway.client_token.generate({})
+        try:
+            token = self._gateway.client_token.generate({})
+        except Exception as exc:  # noqa: BLE001 — normalize any SDK/transport error
+            raise _as_gateway_error(exc) from exc
         return str(token)
 
     def sale(
@@ -59,14 +78,17 @@ class BraintreeGateway:
         # a dashboard row maps back to our invoice. (Custom fields would add
         # invoice/itinerary ids too but must be pre-registered in the control
         # panel; order_id always works — see D025 / mvp-plan §8.)
-        result = self._gateway.transaction.sale(
-            {
-                "amount": str(amount),
-                "payment_method_nonce": payment_method_nonce,
-                "order_id": reference,
-                "options": {"submit_for_settlement": True},
-            }
-        )
+        try:
+            result = self._gateway.transaction.sale(
+                {
+                    "amount": str(amount),
+                    "payment_method_nonce": payment_method_nonce,
+                    "order_id": reference,
+                    "options": {"submit_for_settlement": True},
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — a raise is infra failure, not a decline
+            raise _as_gateway_error(exc) from exc
         return _to_sale_result(result, metadata=metadata)
 
     def __repr__(self) -> str:  # never leak the gateway's keyed config
@@ -192,6 +214,10 @@ def build_gateway(settings: Settings) -> PaymentGateway | None:
                 merchant_id=settings.braintree_merchant_id,
                 public_key=settings.braintree_public_key,
                 private_key=settings.braintree_private_key,
+                # Cap how long a charge can hang. The SDK is synchronous and the
+                # service offloads it to a worker thread; without this a stalled
+                # Braintree connection would pin that thread indefinitely.
+                timeout=settings.braintree_timeout_seconds,
             )
         )
         return BraintreeGateway(gateway)

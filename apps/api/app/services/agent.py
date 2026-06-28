@@ -495,9 +495,7 @@ async def list_turns(
 # ── stream_turn ────────────────────────────────────────────────────────────
 
 
-async def _fork_baseline_title(
-    session: AsyncSession, itinerary_id: uuid.UUID | None
-) -> str | None:
+async def _fork_baseline_title(session: AsyncSession, itinerary_id: uuid.UUID | None) -> str | None:
     """The baseline title when ``itinerary_id`` is a fork, else None (G3).
 
     A non-None return (even an empty string) means the pinned itinerary is an
@@ -507,9 +505,7 @@ async def _fork_baseline_title(
     if itinerary_id is None:
         return None
     forked_from_id = (
-        await session.execute(
-            select(Itinerary.forked_from_id).where(Itinerary.id == itinerary_id)
-        )
+        await session.execute(select(Itinerary.forked_from_id).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()
     if forked_from_id is None:
         return None
@@ -1417,8 +1413,12 @@ async def stream_turn(
     # lets a dashboard split healthy turns from fallbacks; first-token is the
     # number to alert on. No content — ids/latency only.
     outcome = "fallback" if fallback_fired else "ok"
-    emit_metric("agent.turn.latency", latency_ms, unit="Milliseconds", dimensions={"Outcome": outcome})
-    emit_metric("agent.turn.count", 1, dimensions={"Outcome": outcome, "Retried": str(attempt_count)})
+    emit_metric(
+        "agent.turn.latency", latency_ms, unit="Milliseconds", dimensions={"Outcome": outcome}
+    )
+    emit_metric(
+        "agent.turn.count", 1, dimensions={"Outcome": outcome, "Retried": str(attempt_count)}
+    )
     if first_token_ms is not None:
         emit_metric(
             "agent.turn.first_token",

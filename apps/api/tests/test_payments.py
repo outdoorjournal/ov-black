@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from app.models import Invoice, InvoiceStatus, Payment, PaymentStatus
-from app.payments.base import SaleResult
+from app.payments.base import PaymentGatewayError, SaleResult
 from app.payments.braintree_gateway import DECLINED_NONCE, VALID_NONCE, FakeGateway
 from app.services.invoices import add_line_item, create_invoice, get_invoice, issue_invoice
 from app.services.itineraries import ActorContext, ActorKind, ItineraryError, create_itinerary
@@ -187,13 +187,90 @@ async def test_declined_records_failed_and_keeps_issued(db_session: AsyncSession
         await _cleanup(invoice.itinerary_id)
 
 
+class _ErroringGateway(FakeGateway):
+    """Gateway whose charge raises an infra error (timeout) — outcome unknown."""
+
+    def sale(self, **kwargs: Any) -> SaleResult:
+        raise PaymentGatewayError("ReadTimeoutError", retryable=False)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_gateway_error_records_nothing_and_keeps_issued(db_session: AsyncSession) -> None:
+    invoice = await _issued_invoice(db_session, amount="250.00")
+    # Capture ids: the gateway-error path rolls back (releasing the lock), which
+    # expires the shared-session ORM objects.
+    invoice_id = invoice.id
+    itinerary_id = invoice.itinerary_id
+    try:
+        result = await pay_invoice(
+            db_session,
+            _actor(),
+            _ErroringGateway(),
+            invoice_id=invoice_id,
+            payment_method_nonce=VALID_NONCE,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "payment_gateway_unavailable"
+
+        view = await get_invoice(db_session, invoice_id)
+        assert not isinstance(view, ItineraryError)
+        # Outcome unknown → record NOTHING, leave the invoice payable for retry.
+        assert view.invoice.status is InvoiceStatus.issued
+        assert len(view.payments) == 0
+    finally:
+        await _cleanup(itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_idempotency_key_replays_and_does_not_double_charge(
+    db_session: AsyncSession,
+) -> None:
+    invoice = await _issued_invoice(db_session, amount="999.00")
+    gateway = _SpyGateway()
+    try:
+        first = await pay_invoice(
+            db_session,
+            _actor(),
+            gateway,
+            invoice_id=invoice.id,
+            payment_method_nonce=VALID_NONCE,
+            idempotency_key="idem-1",
+        )
+        assert isinstance(first, Payment)
+
+        # Same key again: replays the recorded outcome, charges nothing more.
+        second = await pay_invoice(
+            db_session,
+            _actor(),
+            gateway,
+            invoice_id=invoice.id,
+            payment_method_nonce=VALID_NONCE,
+            idempotency_key="idem-1",
+        )
+        assert isinstance(second, Payment)
+        assert second.id == first.id
+        assert len(gateway.calls) == 1  # the gateway was hit exactly once
+
+        view = await get_invoice(db_session, invoice.id)
+        assert not isinstance(view, ItineraryError)
+        assert view.invoice.status is InvoiceStatus.paid
+        assert len(view.payments) == 1
+    finally:
+        await _cleanup(invoice.itinerary_id)
+
+
 @integration
 @pytest.mark.asyncio
 async def test_pay_requires_issued(db_session: AsyncSession) -> None:
     itin = await create_itinerary(db_session, _actor(ActorKind.ADVISOR), title="draftpay")
+    # Capture ids as plain values: pay_invoice rolls back (releasing the row
+    # lock) on the not-issued path, which expires shared-session ORM objects.
+    itin_id = itin.id
     try:
         invoice = await create_invoice(
-            db_session, _actor(ActorKind.ADVISOR), itinerary_id=itin.id, label="x", currency="USD"
+            db_session, _actor(ActorKind.ADVISOR), itinerary_id=itin_id, label="x", currency="USD"
         )
         assert isinstance(invoice, Invoice)
         result = await pay_invoice(
@@ -206,7 +283,7 @@ async def test_pay_requires_issued(db_session: AsyncSession) -> None:
         assert isinstance(result, ItineraryError)
         assert result.detail == "invoice_not_issued"
     finally:
-        await _cleanup(itin.id)
+        await _cleanup(itin_id)
 
 
 @integration
@@ -251,14 +328,14 @@ async def test_pay_does_not_leak_secrets_to_logs(
         await _cleanup(invoice.itinerary_id)
 
 
-def test_generate_client_token_unconfigured() -> None:
-    result = generate_client_token(None)
+async def test_generate_client_token_unconfigured() -> None:
+    result = await generate_client_token(None)
     assert isinstance(result, ItineraryError)
     assert result.detail == "payments_unconfigured"
 
 
-def test_fake_gateway_token() -> None:
-    assert generate_client_token(FakeGateway()) == "fake-client-token"
+async def test_fake_gateway_token() -> None:
+    assert await generate_client_token(FakeGateway()) == "fake-client-token"
 
 
 # ── Router (service stubbed) ───────────────────────────────────────────────

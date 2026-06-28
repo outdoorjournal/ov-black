@@ -16,6 +16,23 @@ from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 
+class PaymentGatewayError(Exception):
+    """A gateway call failed *before a charge outcome was determined* — a network
+    error, timeout, or misconfiguration. Distinct from a **decline**, which is a
+    settled outcome carried as ``SaleResult(ok=False)``.
+
+    ``retryable`` marks errors where the request provably never reached the
+    processor (e.g. a connect timeout) so it is safe to retry; a read timeout on
+    a ``sale`` is NOT retryable (the charge may have landed) — safe retries of a
+    charge go through the idempotency key instead.
+    """
+
+    def __init__(self, reason: str, *, retryable: bool = False) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.retryable = retryable
+
+
 @dataclass(frozen=True, slots=True)
 class SaleResult:
     """Normalized outcome of a charge, vendor-independent.

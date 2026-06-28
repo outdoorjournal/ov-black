@@ -18,7 +18,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import AuthenticatedUser, require_user
@@ -427,7 +427,7 @@ async def payment_token_endpoint(
     if isinstance(view, ItineraryError):
         _raise_for_error(view)
     await _assert_itinerary_access(session, user, view.invoice.itinerary_id)
-    token = payments_svc.generate_client_token(gateway)
+    token = await payments_svc.generate_client_token(gateway)
     if isinstance(token, ItineraryError):
         _raise_for_error(token)
     return PaymentTokenResponse(client_token=token)
@@ -444,6 +444,7 @@ async def pay_invoice_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
     gateway: PaymentGateway | None = Depends(get_payment_gateway),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> InvoiceResponse:
     view = await invoices_svc.get_invoice(session, invoice_id)
     if isinstance(view, ItineraryError):
@@ -459,6 +460,7 @@ async def pay_invoice_endpoint(
         invoice_id=invoice_id,
         payment_method_nonce=payload.payment_method_nonce,
         client_id=client_id,
+        idempotency_key=idempotency_key,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)

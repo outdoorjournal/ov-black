@@ -130,9 +130,7 @@ class InventoryProviderRegistry:
             # attributable in a single search request instead of hiding in the
             # gather's wall-clock.
             async with span("inventory.provider.search", metric=True, source=provider.source):
-                return await provider.search(
-                    kinds=kinds, keyword=keyword, filters=filters, ctx=ctx
-                )
+                return await provider.search(kinds=kinds, keyword=keyword, filters=filters, ctx=ctx)
 
         results = await asyncio.gather(*(_timed_search(provider) for provider in selected))
         flattened: list[InventoryItem] = [item for batch in results for item in batch]
