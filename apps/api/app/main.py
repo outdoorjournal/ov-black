@@ -20,6 +20,12 @@ from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.providers.ratehawk import RatehawkProvider
 from app.inventory.registry import get_registry
+from app.observability import (
+    RequestContextMiddleware,
+    configure_logging,
+    install_exception_handlers,
+    instrument_engine,
+)
 from app.payments import build_gateway
 from app.routers.advisor_itineraries import router as advisor_itineraries_router
 from app.routers.agent import router as agent_router
@@ -63,8 +69,13 @@ class AuthedHealthResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
+    configure_logging(settings)
     logger.info("api.startup", extra={"env": settings.env})
+
+    # Slow-query timing on the shared engine (singleton); idempotent.
+    from app.db import get_engine
+
+    instrument_engine(get_engine())
 
     registry = get_registry()
     enabled = [
@@ -226,6 +237,18 @@ if "://localhost:" in _settings.web_origin:
     _cors_origins.add(_settings.web_origin.replace("://localhost:", "://127.0.0.1:"))
 elif "://127.0.0.1:" in _settings.web_origin:
     _cors_origins.add(_settings.web_origin.replace("://127.0.0.1:", "://localhost:"))
+
+# Added between JWT (innermost) and CORS (outermost): mint/echo the request-id,
+# bind the logging context, emit the access log + latency metrics, and log any
+# unhandled exception with a traceback while the context is still bound. It
+# wraps JWTAuthMiddleware (added before it) so auth rejections are correlated
+# too, while CORS (added after it) stays outermost — preflight + error responses
+# keep their CORS headers.
+app.add_middleware(
+    RequestContextMiddleware,
+    log_requests=_settings.request_log_enabled,
+    metrics=_settings.metrics_enabled,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(_cors_origins),
@@ -233,6 +256,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Shape unhandled exceptions into a JSON 500 that carries the request_id.
+install_exception_handlers(app)
 
 app.include_router(auth_router)
 app.include_router(itineraries_router)

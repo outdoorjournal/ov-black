@@ -28,6 +28,39 @@ class Settings(BaseSettings):
         default="INFO",
         description="Root log level for the app.",
     )
+    # ── Observability (M005 / obs) ─────────────────────────────────────────
+    service_name: str = Field(
+        default="ov-black-api",
+        description="Logical service name stamped on every log line + metric dimension.",
+    )
+    log_format: Literal["auto", "json", "text"] = Field(
+        default="auto",
+        description=(
+            "Log line format. 'json' (one structured object per line, for "
+            "CloudWatch Logs Insights), 'text' (human console format for local "
+            "dev), or 'auto' — text when env=='local', json otherwise."
+        ),
+    )
+    request_log_enabled: bool = Field(
+        default=True,
+        description="Emit one access-log line per HTTP request (method/route/status/duration).",
+    )
+    metrics_enabled: bool = Field(
+        default=True,
+        description=(
+            "Emit CloudWatch EMF metric lines (request latency/count, span "
+            "durations, payment outcomes). Harmless JSON locally; set false to mute."
+        ),
+    )
+    metrics_namespace: str = Field(
+        default="OVBlack/API",
+        description="CloudWatch metrics namespace for EMF emissions.",
+    )
+    db_slow_query_ms: int = Field(
+        default=500,
+        ge=1,
+        description="Log a 'db.slow_query' warning + metric for any query slower than this (ms).",
+    )
 
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:54322/postgres",
@@ -161,6 +194,26 @@ class Settings(BaseSettings):
         default="",
         description="Braintree private key. NEVER log this value.",
         repr=False,
+    )
+    braintree_timeout_seconds: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=60.0,
+        description=(
+            "HTTP timeout for Braintree SDK calls (client-token + sale). The "
+            "SDK is synchronous; the service offloads it to a worker thread and "
+            "this caps how long a charge can hang before raising a timeout."
+        ),
+    )
+    payment_token_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description=(
+            "Bounded retry budget for the READ-ONLY client-token call only. The "
+            "charge (sale) is NEVER auto-retried — a retried sale risks a double "
+            "charge; safe client retries go through the idempotency key instead."
+        ),
     )
 
     inventory_providers_enabled: str = Field(
