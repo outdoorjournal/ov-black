@@ -1,27 +1,26 @@
 <!--
-  Invite email template override.
+  Welcome email template override (Supabase "invite" type).
+
+  Sent when an advisor adds a client (POST /clients → Supabase
+  inviteUserByEmail). It provisions the client's auth row and emails this
+  code-free welcome sign-in link.
 
   Default GoTrue invite template links to /auth/v1/verify which 302s into
   the implicit flow (tokens in the URL fragment) — the SSR /auth/callback
   route can't read fragments, so the recipient lands "signed-out" the
   first time. Pointing the link at /auth/callback?token_hash=&type=invite
-  drives verifyOtp server-side, which does sign them in on the first
-  click.
-
-  We also surface the OV-side invite_code (passed in via raw_user_meta_data
-  on inviteUserByEmail) so the recipient can fall back to typing it on
-  the home page if the link is mangled by their email client.
+  drives verifyOtp server-side, which signs them in on the first click.
+  After this first sign-in they use the email magic-link flow on the home
+  page (POST /auth/login).
 -->
-<h2>You're invited to Outdoor Voyage Black</h2>
+<h2>Welcome to Outdoor Voyage Black</h2>
 
-<p>An advisor has invited you to join Outdoor Voyage Black. Click the link below to sign in for the first time.</p>
+<p>Your advisor has set up your Outdoor Voyage Black account. Click below to sign in for the first time.</p>
 
 <p>
-  <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite">Accept invitation</a>
+  <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite">Sign in</a>
 </p>
 
-<p>If the link doesn't work, you can claim your invitation by hand on the home page using this code:</p>
+<p>From then on, you can sign in any time from the home page — just enter your email and we'll send you a fresh sign-in link.</p>
 
-<p style="font-family: monospace; font-size: 18px; letter-spacing: 0.1em;"><strong>{{ .Data.invite_code }}</strong></p>
-
-<p>This invitation is single-use and expires shortly.</p>
+<p>This link is single-use and expires shortly. If you didn't expect this, you can safely ignore it.</p>

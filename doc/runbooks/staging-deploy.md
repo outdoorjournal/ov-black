@@ -177,17 +177,29 @@ If you provision in a region other than us-west-2, set `ov-black:envs.staging.ag
 
 ---
 
-## 6. Configure Supabase SMTP (so magic-link emails actually deliver)
+## 6. Configure Supabase SMTP — Resend (so magic-link emails actually deliver)
 
-Magic-link email is sent by **Supabase Auth**, not apps/api — there are no SMTP settings in the API.
-Supabase's built-in mailer is rate-limited and only sends to project members, so for real UAT:
+All auth email — the **welcome** link sent when an advisor adds a client (`POST /clients` →
+Supabase `inviteUserByEmail`) and the **sign-in** magic link (`POST /auth/login`) — is sent by
+**Supabase Auth**, not apps/api. There are no SMTP settings in the API and apps/api never needs a
+Resend key. Supabase's built-in mailer is rate-limited and only sends to project members, so staging
+relays through **Resend**:
 
-- Dashboard → **Authentication → Emails → SMTP Settings** → enable custom SMTP (SES/Postmark/etc.).
-- Set the sender, then under **URL Configuration** set the Site URL and add the web origin
+- Resend → verify the sending domain (e.g. `outdoorvoyage.black`) and create an API key.
+- Supabase Dashboard → **Authentication → Emails → SMTP Settings** → enable custom SMTP:
+  host `smtp.resend.com`, port `465`, user `resend`, password = the Resend API key, sender on the
+  verified domain. *(Already configured on the staging project.)*
+- Under **URL Configuration** set the Site URL and add the web origin
   `https://black.dev.outdoorvoyage.com` (and `https://black.dev.outdoorvoyage.com/auth/callback`) to
-  **Redirect URLs** — the invite `redirect_to` must be allow-listed or the magic link 400s.
+  **Redirect URLs** — the `redirect_to` must be allow-listed or the link 400s.
 
-`WEB_ORIGIN` is now wired automatically: the CDK derives it from `webHost`
+There is **no invite code** — adding a client provisions their auth row and emails a code-free
+welcome sign-in link; everything after is the email magic-link flow. The same Resend SMTP block is
+mirrored (commented) in `supabase/config.toml` so the local/CLI stack can opt into real mail with
+`RESEND_API_KEY`; left commented, local dev uses inbucket. Templates:
+`supabase/templates/invite.html` (welcome) and `magic_link.html` (returning sign-in).
+
+`WEB_ORIGIN` is wired automatically: the CDK derives it from `webHost`
 (`https://black.dev.outdoorvoyage.com`) and injects it into apps/api for CORS + magic-link redirects.
 
 ---

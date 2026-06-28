@@ -231,24 +231,28 @@ otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
 
-# Use a production-ready SMTP server
+# Production email goes through Resend (SMTP relay). Staging/prod set this on
+# the remote Supabase project (Auth → SMTP); the block below keeps the local /
+# CLI stack in parity. Uncomment + set RESEND_API_KEY in the environment to
+# send real mail locally; left commented, local dev keeps using inbucket.
+# A verified sending domain in Resend is required (the `pass` is the API key).
 # [auth.email.smtp]
 # enabled = true
-# host = "smtp.sendgrid.net"
-# port = 587
-# user = "apikey"
-# pass = "env(SENDGRID_API_KEY)"
-# admin_email = "admin@email.com"
-# sender_name = "Admin"
+# host = "smtp.resend.com"
+# port = 465
+# user = "resend"
+# pass = "env(RESEND_API_KEY)"
+# admin_email = "concierge@outdoorvoyage.black"
+# sender_name = "Outdoor Voyage Black"
 
-# Override the invite template so the link points at the SSR
-# /auth/callback?token_hash=...&type=invite — auto-signs the recipient in
-# on the first click instead of dropping them on /auth/v1/verify (implicit
-# flow, fragment-only, callback can't read it). The template also surfaces
-# {{ .Data.invite_code }} so the recipient can fall back to typing the OV
-# code on the home page if the link is mangled in transit.
+# Override the welcome template (Supabase "invite" type — sent when an advisor
+# adds a client) so the link points at the SSR
+# /auth/callback?token_hash=...&type=invite — auto-signs the recipient in on
+# the first click instead of dropping them on /auth/v1/verify (implicit flow,
+# fragment-only, callback can't read it). No invite code: after first sign-in
+# the client uses the email magic-link flow on the home page.
 [auth.email.template.invite]
-subject = "You're invited to Outdoor Voyage Black"
+subject = "Welcome to Outdoor Voyage Black"
 content_path = "./supabase/templates/invite.html"
 
 # Override the magic-link template so it points straight at the web app's

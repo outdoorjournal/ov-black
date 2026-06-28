@@ -119,14 +119,14 @@ async def linked_traveler_client_id(traveler: Ovb) -> str:
 
 
 # ── advisor-owned subjects ───────────────────────────────────────────────────
-# A fresh client (unique invite email, so `create` always succeeds) and a built
+# A fresh client (unique email, so `create` always succeeds) and a built
 # itinerary over it — the subjects advisor-side flows (build, analyze, fill,
 # cost) operate on without depending on a live agent or a linked traveler.
 
 
 @pytest.fixture
 async def client_under_test(advisor: Ovb) -> tuple[str, str]:
-    """(client_id, invite_email) for a freshly created advisor-owned client."""
+    """(client_id, email) for a freshly created advisor-owned client."""
     try:
         return await flows.ensure_client(advisor, full_name="E2E Subject")
     except ApiError as exc:
