@@ -20,7 +20,7 @@ export type CreateClientActionResult = { error: string } | { ok: true };
 const ERROR_COPY = {
   advisor_only: "Only advisors can create clients in this workspace.",
   client_email_already_invited:
-    "A client with this email has already been invited.",
+    "A client with this email already exists.",
   auth_upstream_unavailable:
     "The auth service is unreachable right now. Try again in a moment.",
   validation_error:
@@ -60,7 +60,7 @@ export async function createClientAction(
   // New client row shows up on the /clients list and shifts the
   // dashboard's "Recent" and "Needs attention" panes. Bust both paths,
   // then push the advisor back to the list where the fresh row renders
-  // alongside its invite state.
+  // alongside its sign-in (pending/active) state.
   revalidatePath("/command-center");
   revalidatePath("/command-center/clients");
   redirect("/command-center/clients");

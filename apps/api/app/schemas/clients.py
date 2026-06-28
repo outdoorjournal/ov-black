@@ -63,28 +63,12 @@ class ClientCreateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_id: uuid.UUID
-    invite_email: EmailStr
+    email: EmailStr
 
 
-InviteStatus = Literal["pending", "consumed", "cancelled", "none"]
-InviteEventStatus = Literal["active", "consumed", "cancelled", "superseded"]
-
-
-class InviteEvent(BaseModel):
-    """A single invite send — one row in the invite history for a client.
-
-    The raw ``code`` is deliberately omitted. Codes are bearer credentials;
-    the advisor UI needs timestamps + lifecycle state to render the history,
-    not the codes themselves.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    created_at: datetime
-    consumed_at: datetime | None
-    cancelled_at: datetime | None
-    superseded_at: datetime | None
-    status: InviteEventStatus
+# Whether the client has signed in yet. Derived from ``clients.auth_user_id``:
+# ``pending`` until first magic-link login backfills the id, ``active`` after.
+AccessStatus = Literal["pending", "active"]
 
 
 class ClientSummary(BaseModel):
@@ -96,16 +80,15 @@ class ClientSummary(BaseModel):
     full_name: str
     email: EmailStr
     has_dossier: bool
-    invite_status: InviteStatus
+    access_status: AccessStatus
+    # When the client first signed in (None while pending). `created_at` is
+    # when they were invited, so the advisor sees both "invited" and "joined".
+    accepted_at: datetime | None
     created_at: datetime
 
 
 class ClientDetail(BaseModel):
     """Full client + dossier + per-tier fact lists for ``GET /clients/{id}``.
-
-    ``invite_history`` lists every send for this client, newest first.
-    ``invite_status`` is the derived current state and duplicates what
-    the top of ``invite_history`` implies — consumers can read either.
 
     Fact lists default to active rows only (``redacted_at IS NULL``);
     advisors who want to see redacted history can pass
@@ -117,8 +100,8 @@ class ClientDetail(BaseModel):
     id: uuid.UUID
     full_name: str
     email: EmailStr
-    invite_status: InviteStatus
-    invite_history: list[InviteEvent]
+    access_status: AccessStatus
+    accepted_at: datetime | None
     created_at: datetime
     updated_at: datetime
     dossier: DossierDetail | None

@@ -2,34 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 
-import {
-  cancelClientInvite,
-  createApiClient,
-  reissueClientInvite,
-} from "@ov-black/api-client";
+import { createApiClient, resendWelcomeEmail } from "@ov-black/api-client";
 
 import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 export type InviteActionResult = { ok: true } | { ok: false; error: string };
 
-const REISSUE_COPY = {
+const RESEND_COPY = {
   client_not_found:
     "That client is no longer available in this workspace.",
-  advisor_only: "Only advisors can manage invites in this workspace.",
-  invite_already_redeemed:
-    "This client has already accepted an invite — they can sign in directly.",
+  advisor_only: "Only advisors can manage clients in this workspace.",
+  client_already_accepted:
+    "This client has already signed in — they can sign in directly.",
   auth_upstream_unavailable:
     "The auth service is unreachable right now. Try again in a moment.",
-  network_error: "Could not reach the server. Try again in a moment.",
-  unknown: "Something went wrong. Try again in a moment.",
-} as const;
-
-const CANCEL_COPY = {
-  client_not_found:
-    "That client is no longer available in this workspace.",
-  advisor_only: "Only advisors can manage invites in this workspace.",
-  no_active_invite: "There is no active invite to cancel.",
   network_error: "Could not reach the server. Try again in a moment.",
   unknown: "Something went wrong. Try again in a moment.",
 } as const;
@@ -52,34 +39,17 @@ async function buildAuthedClient() {
   );
 }
 
-export async function reissueInviteAction(
+export async function resendWelcomeAction(
   clientId: string,
 ): Promise<InviteActionResult> {
   const api = await buildAuthedClient();
   if (api === null) {
-    return { ok: false, error: REISSUE_COPY["advisor_only"] };
+    return { ok: false, error: RESEND_COPY["advisor_only"] };
   }
-  const result = await reissueClientInvite(api, clientId);
+  const result = await resendWelcomeEmail(api, clientId);
   if (!result.ok) {
-    const detail = result.detail as keyof typeof REISSUE_COPY;
-    return { ok: false, error: REISSUE_COPY[detail] ?? REISSUE_COPY["unknown"] };
-  }
-  revalidatePath("/command-center");
-  revalidatePath("/command-center/clients");
-  return { ok: true };
-}
-
-export async function cancelInviteAction(
-  clientId: string,
-): Promise<InviteActionResult> {
-  const api = await buildAuthedClient();
-  if (api === null) {
-    return { ok: false, error: CANCEL_COPY["advisor_only"] };
-  }
-  const result = await cancelClientInvite(api, clientId);
-  if (!result.ok) {
-    const detail = result.detail as keyof typeof CANCEL_COPY;
-    return { ok: false, error: CANCEL_COPY[detail] ?? CANCEL_COPY["unknown"] };
+    const detail = result.detail as keyof typeof RESEND_COPY;
+    return { ok: false, error: RESEND_COPY[detail] ?? RESEND_COPY["unknown"] };
   }
   revalidatePath("/command-center");
   revalidatePath("/command-center/clients");

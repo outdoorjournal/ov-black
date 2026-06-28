@@ -1,9 +1,8 @@
 """Service-level coverage for ``create_client_with_dossier`` (T04).
 
-Mirrors the FakeSession + stubbed-admin pattern from ``test_invites.py``.
-No Postgres, no live Supabase — every outcome enum (OK / DUPLICATE_EMAIL
-/ UPSTREAM_UNAVAILABLE) is exercised deterministically against the
-service's control flow.
+FakeSession + stubbed-admin pattern. No Postgres, no live Supabase — every
+outcome enum (OK / DUPLICATE_EMAIL / UPSTREAM_UNAVAILABLE) is exercised
+deterministically against the service's control flow.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from app.models import Client, Dossier, DossierFact, DossierFactKind, FactSourceKind, Invite
+from app.models import Client, Dossier, DossierFact, DossierFactKind, FactSourceKind
 from app.schemas.clients import ClientCreatePayload
 from app.schemas.dossier import DossierPayload, DossierTyped
 from app.schemas.facts import DossierFactCreate
@@ -33,9 +32,9 @@ class FakeSession:
     """Minimal async-session stand-in for the clients service.
 
     Tracks everything ``session.add``-ed so each test can inspect the
-    rows the service tried to persist (client, dossier, dossier_facts,
-    invite). Optional ``flush_raises`` lets a test simulate the
-    unique-index violation from ``clients_owner_email_idx``.
+    rows the service tried to persist (client, dossier, dossier_facts).
+    Optional ``flush_raises`` lets a test simulate the unique-index
+    violation from ``clients_owner_email_idx``.
     """
 
     added: list[Any] = field(default_factory=list)
@@ -124,7 +123,7 @@ def stub_admin_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ok_path_inserts_client_dossier_facts_and_invite_with_one_commit(
+async def test_ok_path_inserts_client_dossier_facts_with_one_commit(
     stub_admin_ok: list[tuple[str, str]],
 ) -> None:
     advisor_id = uuid.uuid4()
@@ -147,12 +146,10 @@ async def test_ok_path_inserts_client_dossier_facts_and_invite_with_one_commit(
     client_rows = [o for o in session.added if isinstance(o, Client)]
     dossier_rows = [o for o in session.added if isinstance(o, Dossier)]
     fact_rows = [o for o in session.added if isinstance(o, DossierFact)]
-    invite_rows = [o for o in session.added if isinstance(o, Invite)]
 
     assert len(client_rows) == 1
     assert len(dossier_rows) == 1
     assert len(fact_rows) == 2  # the two seeded dossier_facts
-    assert len(invite_rows) == 1
 
     assert client_rows[0].owner_id == advisor_id
     assert client_rows[0].email == "fresh@example.com"
@@ -163,10 +160,8 @@ async def test_ok_path_inserts_client_dossier_facts_and_invite_with_one_commit(
         assert fact.client_id == client_rows[0].id
         assert fact.recorded_by == advisor_id
         assert fact.source_kind is FactSourceKind.advisor
-    assert invite_rows[0].email == "fresh@example.com"
-    assert invite_rows[0].created_by == advisor_id
-    assert 20 <= len(invite_rows[0].code) <= 24
 
+    # The welcome email is sent code-free — no `data` kwarg.
     assert stub_admin_ok == [
         ("fresh@example.com", "http://localhost:3000/auth/callback?next=/basecamp"),
     ]
@@ -210,16 +205,6 @@ async def test_upstream_failure_rolls_back_and_returns_unavailable(
     assert result.client_id is None
     assert result.issued is None
     assert session.commits == 0
-    # Service MUST rollback so the client + dossier + facts + invite rows
-    # do not persist when the magic-link email could not be issued.
+    # Service MUST rollback so the client + dossier + facts rows do not
+    # persist when the welcome email could not be issued.
     assert session.rollbacks == 1
-
-
-def test_invite_code_generator_shape() -> None:
-    """``secrets.token_urlsafe(16)`` produces URL-safe ~22-char strings."""
-    codes = {clients_service._generate_invite_code() for _ in range(100)}
-    assert len(codes) == 100
-    url_safe = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
-    for code in codes:
-        assert 20 <= len(code) <= 24
-        assert set(code).issubset(url_safe)

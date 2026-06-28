@@ -285,7 +285,7 @@ export function DossierForm() {
       >
         <Section
           title="Client basics"
-          description="Name and contact channel. The invite email lands here."
+          description="Name and contact channel. The welcome email lands here."
         >
           <div className="grid gap-5 sm:grid-cols-2">
             <FormField
@@ -404,7 +404,7 @@ export function DossierForm() {
 
         <Section
           title="Contacts"
-          description="Phone numbers, messenger handles, social. Add as many as you have. The invite still flows to the email above."
+          description="Phone numbers, messenger handles, social. Add as many as you have. The welcome email still goes to the email above."
         >
           <div className="flex flex-col gap-3">
             {contacts.fields.length === 0 ? (
@@ -662,7 +662,7 @@ export function DossierForm() {
 
         <div className="flex items-center justify-end gap-4">
           <Button type="submit" disabled={isPending}>
-            {isPending ? "saving…" : "Issue invite"}
+            {isPending ? "saving…" : "Add client"}
           </Button>
         </div>
       </form>

@@ -129,18 +129,6 @@ def auth_mint(
         print(token)
 
 
-@auth_app.command("redeem-invite")
-def auth_redeem(
-    ctx: typer.Context,
-    code: str = typer.Option(..., "--code"),
-    email: str = typer.Option(..., "--email"),
-) -> None:
-    """Redeem an invite code and request a magic-link email (public route)."""
-    state = state_of(ctx)
-    run_op(ctx, lambda ovb: ovb.redeem_invite(code=code, email=email), authed=False)
-    render.emit(state.json_mode, {"ok": True}, lambda: "invite redeemed; magic link sent")
-
-
 @auth_app.command("login")
 def auth_login(
     ctx: typer.Context,

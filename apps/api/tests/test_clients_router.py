@@ -26,7 +26,7 @@ from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
 from app.main import app as fastapi_app
-from app.models import Client, Dossier, Invite, UserRole
+from app.models import Client, Dossier
 from app.models.client import ContactChannel
 from app.routers import clients as clients_router_module
 from app.services.clients import (
@@ -73,21 +73,20 @@ class FakeSession:
     """Async-session stand-in for the router's reads.
 
     Holds an advisor-scoped fixture: a dict of clients keyed by (owner_id,
-    client_id), plus dossiers and invites. ``execute`` introspects the
-    compiled SQL enough to dispatch to the right helper. The router only
-    ever calls ``execute`` — no commit/rollback is expected on the read path.
+    client_id), plus dossiers. ``execute`` introspects the compiled SQL
+    enough to dispatch to the right helper. The router only ever calls
+    ``execute`` — no commit/rollback is expected on the read path.
     """
 
     clients_by_id: dict[uuid.UUID, Client] = field(default_factory=dict)
     dossiers_by_client: dict[uuid.UUID, Dossier] = field(default_factory=dict)
-    invites: list[Invite] = field(default_factory=list)
 
     async def execute(self, stmt: Any) -> _ExecResult:
         compiled = stmt.compile()
         params = compiled.params
         sql = str(compiled).lower()
 
-        # ── LIST /clients — JOIN with dossiers only (invites fetched separately) ──
+        # ── LIST /clients — JOIN with dossiers (access_status comes off the row) ──
         if "from clients" in sql and "join" in sql:
             advisor_id = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             rows: list[tuple[Client, uuid.UUID | None]] = []
@@ -128,25 +127,6 @@ class FakeSession:
             or "from client_contacts" in sql
         ):
             return _ExecResult([])
-
-        # ── Invite lookup ──
-        # Two callers: the list endpoint fetches every advisor invite and
-        # groups in Python (no email param); the detail endpoint scopes to
-        # one client (email param present). We branch on the email param.
-        if "from invites" in sql:
-            email = next(
-                (v for v in params.values() if isinstance(v, str) and "@" in v),
-                None,
-            )
-            created_by = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
-            matches = [
-                i
-                for i in self.invites
-                if i.role is UserRole.client
-                and i.created_by == created_by
-                and (email is None or i.email == email)
-            ]
-            return _ExecResult(matches)
 
         # ── Party members (load_agent_context, M003/V1) ──
         # The GET-by-id detail path now also loads the active party roster.
@@ -280,6 +260,7 @@ def _client_row(
     full_name: str = "Jane Traveler",
     client_id: uuid.UUID | None = None,
     created_at: datetime | None = None,
+    accepted: bool = False,
 ) -> Client:
     row = Client(
         owner_id=owner_id,
@@ -289,7 +270,10 @@ def _client_row(
     row.id = client_id or uuid.uuid4()
     row.created_at = created_at or datetime.now(UTC)
     row.updated_at = row.created_at
-    row.auth_user_id = None
+    # auth_user_id set == the client has signed in at least once → "active",
+    # with accepted_at stamped at that first login.
+    row.auth_user_id = uuid.uuid4() if accepted else None
+    row.accepted_at = datetime.now(UTC) if accepted else None
     return row
 
 
@@ -306,31 +290,6 @@ def _dossier_for(client_id: uuid.UUID, authored_by: uuid.UUID) -> Dossier:
     dossier.created_at = datetime.now(UTC)
     dossier.updated_at = dossier.created_at
     return dossier
-
-
-def _invite_for(
-    email: str,
-    created_by: uuid.UUID,
-    *,
-    consumed: bool = False,
-    cancelled: bool = False,
-    superseded: bool = False,
-    created_at: datetime | None = None,
-) -> Invite:
-    inv = Invite(
-        code=f"INV-{uuid.uuid4().hex[:8]}",
-        role=UserRole.client,
-        email=email,
-        created_by=created_by,
-    )
-    inv.created_at = created_at or datetime.now(UTC)
-    if consumed:
-        inv.consumed_at = datetime.now(UTC)
-    if cancelled:
-        inv.cancelled_at = datetime.now(UTC)
-    if superseded:
-        inv.superseded_at = datetime.now(UTC)
-    return inv
 
 
 # ── POST /clients ──────────────────────────────────────────────────────────
@@ -352,7 +311,7 @@ def test_post_clients_advisor_returns_201_with_client_id(
     assert resp.status_code == 201
     body = resp.json()
     assert body["client_id"] == str(new_id)
-    assert body["invite_email"] == "client@example.com"
+    assert body["email"] == "client@example.com"
     # Service received the advisor UUID from user.sub.
     assert stub_service["calls"][0]["advisor_id"] == override_require_advisor
 
@@ -436,6 +395,7 @@ def test_get_clients_returns_only_own_clients(
         email="a@example.com",
         full_name="Alice A",
         created_at=datetime(2026, 4, 1, tzinfo=UTC),
+        accepted=True,  # has signed in → "active"
     )
     b_client = _client_row(
         owner_id=advisor_b,
@@ -454,10 +414,8 @@ def test_get_clients_returns_only_own_clients(
     fake_session.clients_by_id[b_client.id] = b_client
     fake_session.clients_by_id[a_client_2.id] = a_client_2
 
-    # advisor_a has a doll for a_client only, and a consumed invite for a_client
+    # advisor_a has a dossier for a_client only.
     fake_session.dossiers_by_client[a_client.id] = _dossier_for(a_client.id, advisor_a)
-    fake_session.invites.append(_invite_for(a_client.email, advisor_a, consumed=True))
-    fake_session.invites.append(_invite_for(a_client_2.email, advisor_a))
 
     resp = client.get("/clients", headers=auth_headers)
     assert resp.status_code == 200
@@ -472,12 +430,14 @@ def test_get_clients_returns_only_own_clients(
 
     a_row = next(r for r in body if r["email"] == "a@example.com")
     assert a_row["has_dossier"] is True
-    assert a_row["invite_status"] == "consumed"
+    assert a_row["access_status"] == "active"
+    assert a_row["accepted_at"] is not None  # signed in → timestamp present
     assert a_row["full_name"] == "Alice A"
 
     c_row = next(r for r in body if r["email"] == "c@example.com")
     assert c_row["has_dossier"] is False
-    assert c_row["invite_status"] == "pending"
+    assert c_row["access_status"] == "pending"
+    assert c_row["accepted_at"] is None  # pending → no first-login timestamp
 
 
 # ── GET /clients/{id} ───────────────────────────────────────────────────────
@@ -492,18 +452,16 @@ def test_get_client_by_id_returns_joined_payload_for_own_client(
     advisor_a = override_require_advisor
     own = _client_row(owner_id=advisor_a, email="own@example.com")
     dossier = _dossier_for(own.id, advisor_a)
-    invite = _invite_for(own.email, advisor_a)
 
     fake_session.clients_by_id[own.id] = own
     fake_session.dossiers_by_client[own.id] = dossier
-    fake_session.invites.append(invite)
 
     resp = client.get(f"/clients/{own.id}", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["id"] == str(own.id)
     assert body["email"] == "own@example.com"
-    assert body["invite_status"] == "pending"
+    assert body["access_status"] == "pending"
     assert body["dossier"] is not None
     assert body["dossier"]["id"] == str(dossier.id)
     assert body["dossier"]["contact_preference"] == "email"

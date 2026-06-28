@@ -9,7 +9,7 @@ already part of the repo.
 
 Skipped automatically (not failed) on a fresh checkout where Supabase is
 not running, mirroring the ``_supabase_running()`` pattern in
-``tests/test_invites.py``.
+``tests/test_models.py``.
 """
 
 from __future__ import annotations

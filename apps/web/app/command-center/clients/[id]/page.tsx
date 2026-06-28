@@ -2,10 +2,10 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import {
+  type AccessStatus,
   type AdvisorItinerarySummary,
   type ClientDetail,
   type ClientSessionSummary,
-  type InviteStatus,
   type DocumentDetail,
   type ItineraryStatus,
   type PartyMemberDetail,
@@ -118,7 +118,7 @@ export default async function ClientDetailPage({
           </h1>
           <p className="mt-2 font-sans text-sm text-paper/70">{client.email}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <InvitePill status={client.invite_status} />
+            <InvitePill status={client.access_status} acceptedAt={client.accepted_at} />
             {client.dossier ? (
               <Pill>Dossier on file</Pill>
             ) : (
@@ -374,21 +374,31 @@ function StatusPill({ status }: { status: ItineraryStatus }) {
   );
 }
 
-function InvitePill({ status }: { status: InviteStatus }) {
+function InvitePill({
+  status,
+  acceptedAt,
+}: {
+  status: AccessStatus;
+  acceptedAt: string | null;
+}) {
+  const signedInOn =
+    status === "active" && acceptedAt
+      ? new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(new Date(acceptedAt))
+      : null;
   const copy =
-    status === "consumed"
-      ? "Accepted"
-      : status === "pending"
-        ? "Invite pending"
-        : status === "cancelled"
-          ? "Invite cancelled"
-          : "No invite";
+    status === "active"
+      ? signedInOn
+        ? `Signed in · ${signedInOn}`
+        : "Signed in"
+      : "Invite pending";
   const tone =
-    status === "consumed"
+    status === "active"
       ? "border-paper/40 text-paper"
-      : status === "pending"
-        ? "border-amber-300/40 text-amber-200/90"
-        : "border-paper/15 text-paper/55";
+      : "border-amber-300/40 text-amber-200/90";
   return (
     <span
       className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}

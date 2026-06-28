@@ -19,7 +19,6 @@ import {
   assembleItineraryEndpointItineraryItineraryIdAssemblePost,
   attachItineraryPartyMemberEndpointItinerariesItineraryIdPartyMembersPost,
   cancelAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdCancelPost,
-  cancelClientInviteEndpointClientsClientIdInviteCancelPost,
   completeClientDocumentEndpointClientsClientIdDocumentsDocumentIdCompletePost,
   completeMyDocumentEndpointMeDocumentsDocumentIdCompletePost,
   createClientContactEndpointClientsClientIdContactsPost,
@@ -81,11 +80,10 @@ import {
   redactDossierFactEndpointClientsClientIdDossierFactsFactIdDelete,
   redactOsintFactEndpointClientsClientIdOsintFactsFactIdDelete,
   redactProfileFactEndpointClientsClientIdProfileFactsFactIdDelete,
-  redeemInviteEndpointAuthRedeemInvitePost,
   reconcileForkEndpointItineraryForkIdReconcilePost,
-  reissueClientInviteEndpointClientsClientIdInviteReissuePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
   requestReconcileEndpointItineraryForkIdRequestReconcilePost,
+  resendWelcomeEndpointClientsClientIdResendWelcomePost,
   searchInventoryEndpointSearchInventoryGet,
   startAnalysisEndpointItineraryItineraryIdAnalysesPost,
   updateClientContactEndpointClientsClientIdContactsContactIdPatch,
@@ -165,13 +163,12 @@ import type {
   ProfileFactDetail,
   ProfileFactUpdate,
   RedactRequest,
-  RedeemInviteRequest,
   SearchInventoryEndpointSearchInventoryGetData,
   SearchInventoryResponse,
   StartAnalysisRequest,
 } from "./generated/types.gen.js";
 
-export type { LoginRequest, RedeemInviteRequest } from "./generated/types.gen.js";
+export type { LoginRequest } from "./generated/types.gen.js";
 export type { Client } from "./generated/client/types.gen.js";
 
 // Itinerary graph (S02): create + read + node/edge mutation contracts and
@@ -280,7 +277,6 @@ export type {
   ClientCreateResponse,
   ClientSummary,
   ClientDetail,
-  InviteEvent,
   DossierPayload,
   DossierDetail,
   DossierTyped,
@@ -346,15 +342,11 @@ export type {
   ClientSessionsResponse,
 } from "./generated/types.gen.js";
 
-// Pydantic inlines these Literal unions into ClientSummary / InviteEvent
-// rather than emitting them as named types; expose them so apps/web can
-// match on string values without re-typing.
-export type InviteStatus = "pending" | "consumed" | "cancelled" | "none";
-export type InviteEventStatus =
-  | "active"
-  | "consumed"
-  | "cancelled"
-  | "superseded";
+// Pydantic inlines this Literal union into ClientSummary / ClientDetail
+// rather than emitting it as a named type; expose it so apps/web can match
+// on string values without re-typing. "pending" until the client signs in
+// for the first time (which stamps accepted_at), "active" after.
+export type AccessStatus = "pending" | "active";
 
 // Agent sessions (S04): POST /sessions request/response + the replay shape
 // for GET /sessions/{id}/turns. The SSE stream for /turn is consumed by a
@@ -409,62 +401,6 @@ export function createApiClient(config: ApiClientConfig): Client {
     });
   }
   return client;
-}
-
-export type RedeemInviteDetail =
-  | "invite_not_redeemable"
-  | "invite_already_consumed"
-  | "auth_upstream_unavailable"
-  | "internal_error"
-  | "network_error"
-  | "unknown";
-
-/**
- * Discriminated result for POST /auth/redeem-invite. Keeps the D015
- * error-collapse guarantee visible in the type: "invite_not_redeemable"
- * covers both unknown-code and wrong-email.
- */
-export type RedeemInviteResult =
-  | { ok: true }
-  | { ok: false; status: number; detail: RedeemInviteDetail };
-
-/**
- * Typed wrapper for POST /auth/redeem-invite.
- *
- * Returns a result rather than throwing so UI components can branch on
- * `result.ok` without wrapping every call in try/catch. Network failures
- * surface as { ok: false, status: 0, detail: "network_error" }.
- */
-export async function redeemInvite(
-  client: Client,
-  body: RedeemInviteRequest,
-): Promise<RedeemInviteResult> {
-  try {
-    const { error, response } = await redeemInviteEndpointAuthRedeemInvitePost({
-      client,
-      body,
-    });
-    if (error === undefined) {
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      status: response.status,
-      detail: parseRedeemDetail(error),
-    };
-  } catch {
-    return { ok: false, status: 0, detail: "network_error" };
-  }
-}
-
-function parseRedeemDetail(error: unknown): RedeemInviteDetail {
-  const body = error as { detail?: unknown } | undefined;
-  const raw = body && typeof body.detail === "string" ? body.detail : "";
-  if (raw === "invite_not_redeemable") return "invite_not_redeemable";
-  if (raw === "invite_already_consumed") return "invite_already_consumed";
-  if (raw === "auth_upstream_unavailable") return "auth_upstream_unavailable";
-  if (raw === "internal_error") return "internal_error";
-  return "unknown";
 }
 
 export type RequestLoginDetail =
@@ -542,11 +478,9 @@ export type CreateClientResult =
   | { ok: false; status: number; detail: CreateClientDetail };
 
 /**
- * Typed wrapper for POST /clients (create client + Dossier + invite).
- *
- * The 201 body carries `client_id` + `invite_email`; we re-shape to
- * `{ client_id, email }` so the result is keyed the same way apps/web
- * already reads S01 redemption data.
+ * Typed wrapper for POST /clients (create client + Dossier; emails a
+ * code-free welcome sign-in link). The 201 body carries `client_id` +
+ * `email`.
  */
 export async function createClientEndpoint(
   client: Client,
@@ -561,7 +495,7 @@ export async function createClientEndpoint(
       return {
         ok: true,
         client_id: data.client_id,
-        email: data.invite_email,
+        email: data.email,
       };
     }
     return {
@@ -1725,38 +1659,38 @@ function parseAssembleDraftDetail(
   return "unknown";
 }
 
-export type ReissueInviteDetail =
+export type ResendWelcomeDetail =
   | "client_not_found"
   | "advisor_only"
-  | "invite_already_redeemed"
+  | "client_already_accepted"
   | "auth_upstream_unavailable"
   | "network_error"
   | "unknown";
 
 /**
- * Discriminated result for POST /clients/{client_id}/invite/reissue. The
+ * Discriminated result for POST /clients/{client_id}/resend-welcome. The
  * server returns 204 on success; this wrapper turns that into `ok: true`
- * with no payload, mirroring the redeem-invite shape.
+ * with no payload.
  */
-export type ReissueInviteResult =
+export type ResendWelcomeResult =
   | { ok: true }
-  | { ok: false; status: number; detail: ReissueInviteDetail };
+  | { ok: false; status: number; detail: ResendWelcomeDetail };
 
 /**
- * Typed wrapper for POST /clients/{client_id}/invite/reissue.
+ * Typed wrapper for POST /clients/{client_id}/resend-welcome.
  *
- * Supersedes any active invite for the client and emails a fresh link.
- * The server refuses with 409 (`invite_already_redeemed`) if the client
- * has already accepted a prior invite — at that point the magic-link flow
- * is the right path, not another invite.
+ * Re-sends the welcome sign-in link to a client who hasn't signed in yet
+ * (the advisor "nudge"). The server refuses with 409
+ * (`client_already_accepted`) once the client has logged in — at that
+ * point they use the normal /auth/login magic-link flow.
  */
-export async function reissueClientInvite(
+export async function resendWelcomeEmail(
   client: Client,
   clientId: string,
-): Promise<ReissueInviteResult> {
+): Promise<ResendWelcomeResult> {
   try {
     const { error, response } =
-      await reissueClientInviteEndpointClientsClientIdInviteReissuePost({
+      await resendWelcomeEndpointClientsClientIdResendWelcomePost({
         client,
         path: { client_id: clientId },
       });
@@ -1766,83 +1700,27 @@ export async function reissueClientInvite(
     return {
       ok: false,
       status: response.status,
-      detail: parseReissueInviteDetail(response.status, error),
+      detail: parseResendWelcomeDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }
 }
 
-function parseReissueInviteDetail(
+function parseResendWelcomeDetail(
   status: number,
   error: unknown,
-): ReissueInviteDetail {
+): ResendWelcomeDetail {
   const body = error as { detail?: unknown } | undefined;
   const raw = body && typeof body.detail === "string" ? body.detail : "";
   if (raw === "client_not_found") return "client_not_found";
-  if (raw === "invite_already_redeemed") return "invite_already_redeemed";
+  if (raw === "client_already_accepted") return "client_already_accepted";
   if (raw === "auth_upstream_unavailable") return "auth_upstream_unavailable";
   if (raw === "advisor_only") return "advisor_only";
   if (status === 403) return "advisor_only";
   if (status === 404) return "client_not_found";
+  if (status === 409) return "client_already_accepted";
   if (status === 502) return "auth_upstream_unavailable";
-  return "unknown";
-}
-
-export type CancelInviteDetail =
-  | "client_not_found"
-  | "advisor_only"
-  | "no_active_invite"
-  | "network_error"
-  | "unknown";
-
-export type CancelInviteResult =
-  | { ok: true }
-  | { ok: false; status: number; detail: CancelInviteDetail };
-
-/**
- * Typed wrapper for POST /clients/{client_id}/invite/cancel.
- *
- * Marks the active invite cancelled with no email sent. Returns 409
- * (`no_active_invite`) when there's nothing to cancel — either the
- * client has already redeemed or the outstanding invite was already
- * cancelled / superseded.
- */
-export async function cancelClientInvite(
-  client: Client,
-  clientId: string,
-): Promise<CancelInviteResult> {
-  try {
-    const { error, response } =
-      await cancelClientInviteEndpointClientsClientIdInviteCancelPost({
-        client,
-        path: { client_id: clientId },
-      });
-    if (error === undefined) {
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      status: response.status,
-      detail: parseCancelInviteDetail(response.status, error),
-    };
-  } catch {
-    return { ok: false, status: 0, detail: "network_error" };
-  }
-}
-
-function parseCancelInviteDetail(
-  status: number,
-  error: unknown,
-): CancelInviteDetail {
-  const body = error as { detail?: unknown } | undefined;
-  const raw = body && typeof body.detail === "string" ? body.detail : "";
-  if (raw === "client_not_found") return "client_not_found";
-  if (raw === "no_active_invite") return "no_active_invite";
-  if (raw === "advisor_only") return "advisor_only";
-  if (status === 403) return "advisor_only";
-  if (status === 404) return "client_not_found";
-  if (status === 409) return "no_active_invite";
   return "unknown";
 }
 

@@ -1,25 +1,25 @@
-"""Pillar 1 — A traveler can be invited.
+"""Pillar 1 — A traveler can be added and signs in by email.
 
-Demo-script stage 1 (mvp.md §7): *"Advisor seeds a client + Dossier and sends
-an invite. Traveler redeems the magic link."*
+Demo-script stage 1 (mvp.md §7): *"Advisor seeds a client + Dossier; the client
+gets a welcome email and signs in with an email magic link."*
 
-Acceptance (mvp.md Pillar 1):
-  - Advisor creates client + Dossier in Command Center; invite is issued
-    (single-use, lifecycle-tracked).
-  - Traveler redeems magic link → role-aware redirect into /chat/[client_id].
-  - Invite cannot be redeemed twice; unknown code / wrong email collapse to one
-    indistinguishable response.
+There is no invite code anymore — adding a client provisions their Supabase auth
+row and emails a code-free welcome sign-in link. After that, sign-in is the plain
+``POST /auth/login`` magic-link flow. The advisor can see whether the client has
+signed in yet (``access_status`` pending → active, plus ``accepted_at``) and can
+"nudge" a pending client by re-sending the welcome link.
 
 What's exercisable from the API/CLI seam today and what isn't:
-  - ✅ Client + Dossier + invite issued atomically; lifecycle status readable.
-  - ✅ The enumeration guarantee (unknown code and wrong email both → identical
-    404) — a security invariant we assert directly.
-  - ✅ The *post*-redemption landing: a linked traveler resolves their client and
-    can open a chat session (the API-level shape of the /chat redirect).
-  - ⛔ The *positive* redemption (real code → magic link) cannot run purely over
-    HTTP: the invite code never crosses the HTTP boundary by design (auth.py),
-    and the magic link is emailed. That assertion needs the F2 SMTP/DB harness;
-    it is scaffolded here as a documented skip, not a false green.
+  - ✅ Client + Dossier created atomically; a welcome email is sent; status is
+    readable as "pending" with no accepted_at until first sign-in.
+  - ✅ Resending the welcome link to a pending client (the advisor nudge).
+  - ✅ The /auth/login enumeration guarantee — an unknown email collapses to the
+    same 204 as a real one, so it can't be used to probe who has an account.
+  - ✅ The *post*-login landing: a linked traveler resolves their client and can
+    open a chat session (the API-level shape of the /chat redirect).
+  - ⛔ The *positive* sign-in (clicking the emailed magic link) cannot run purely
+    over HTTP — the link is emailed and never returned by the API. That needs the
+    F2 SMTP/mailbox harness; it is scaffolded here as a documented skip.
 """
 
 from __future__ import annotations
@@ -28,16 +28,16 @@ import flows  # local tests/e2e/flows.py (prepend import mode), mirrors tests/_h
 import pytest
 
 from ovb.agent import Conversation
-from ovb.errors import ApiError
 from ovb.scenario import Harness
 from ovb.sdk import Ovb
 
 pytestmark = pytest.mark.e2e
 
 
-async def test_advisor_creates_client_and_invite_is_issued(advisor: Ovb) -> None:
-    """Advisor creates a client; an invite is issued and lifecycle-tracked as pending."""
-    # 1. Create client + Dossier + invite (atomic) — the Command Center "new client" action.
+async def test_advisor_adds_client_and_welcome_is_sent(advisor: Ovb) -> None:
+    """Advisor adds a client; status is pending (welcome sent, not yet signed in)."""
+    # 1. Create client + Dossier (atomic) — the Command Center "new client" action.
+    #    A code-free welcome sign-in link is emailed as part of this call.
     client_id, _email = await flows.ensure_client(
         advisor,
         full_name="Pillar1 Subject",
@@ -46,53 +46,49 @@ async def test_advisor_creates_client_and_invite_is_issued(advisor: Ovb) -> None
         children_ages=[9],
     )
 
-    # 2. The client detail surface shows the invite in a single, derived lifecycle state.
+    # 2. The detail surface shows the client hasn't signed in yet.
     detail = await advisor.get_client(client_id)
-    assert str(detail.invite_status) == "pending", detail.invite_status
-    assert detail.invite_history, "an issued invite must appear in the history"
-    assert str(detail.invite_history[0].status) in {"pending", "sent", "active"}
+    assert str(detail.access_status) == "pending", detail.access_status
+    assert detail.accepted_at is None, "a brand-new client has not signed in yet"
 
-    # 3. It also shows up in the advisor's client list with the same status.
+    # 3. It shows up in the advisor's client list with the same status.
     listed = {str(c.id): c for c in await advisor.list_clients()}
     assert client_id in listed
-    assert str(listed[client_id].invite_status) == "pending"
+    assert str(listed[client_id].access_status) == "pending"
 
 
-async def test_unknown_code_and_wrong_email_are_indistinguishable(harness: Harness) -> None:
-    """The redeem endpoint must not let an attacker enumerate valid codes (D015)."""
+async def test_advisor_can_resend_welcome_to_pending_client(advisor: Ovb) -> None:
+    """The advisor "nudge": re-send the welcome link while the client is pending."""
+    client_id, _email = await flows.ensure_client(advisor, full_name="Pillar1 Nudge")
+    # Resend is a no-op-safe 204 while the client hasn't signed in. (Once they
+    # have, the API refuses with 409 client_already_accepted — not exercisable
+    # here without the sign-in side channel.)
+    await advisor.resend_welcome(client_id)
+
+
+async def test_login_unknown_email_does_not_enumerate(harness: Harness) -> None:
+    """POST /auth/login collapses unknown email into the same 204 (D015)."""
     public = harness.public()
-
-    # Two different *bad* inputs must collapse to the identical failure shape:
-    # unknown code, and a (different) unknown code with an unrelated email.
-    # (Domains use a real gTLD so EmailStr accepts them — see flows.unique_email.)
-    with pytest.raises(ApiError) as first:
-        await public.redeem_invite(code="not-a-real-code-aaaa", email="who@nomatch.dev")
-    with pytest.raises(ApiError) as second:
-        await public.redeem_invite(code="not-a-real-code-bbbb", email="other@nomatch.dev")
-
-    assert first.value.status == second.value.status == 404
-    # Same machine-readable detail → no signal leaks about which part was wrong.
-    assert first.value.detail == second.value.detail == "invite_not_redeemable"
+    # No raise: an unknown email is treated exactly like a real one so the
+    # endpoint can't be used to probe which emails have accounts.
+    await public.login(email="who@nomatch.dev")
 
 
 @pytest.mark.skip(
-    reason="positive redemption needs the invite code, which never crosses the HTTP "
-    "boundary (auth.py) + an emailed magic link — F2 SMTP/DB harness. Scaffold below."
+    reason="positive sign-in needs the emailed magic link, which never crosses the "
+    "HTTP boundary — F2 SMTP/mailbox harness. Scaffold below."
 )
-async def test_traveler_redeems_invite_and_cannot_reuse_it() -> None:
-    """Full positive + single-use path. Lights up with the F2 staging/SMTP harness.
+async def test_traveler_signs_in_via_magic_link() -> None:
+    """Full positive sign-in path. Lights up with the F2 staging/SMTP harness.
 
-    Intended flow (needs a side channel to read the issued code — DB or a test
-    mailbox — because the API deliberately never returns it):
+    Intended flow (needs a test mailbox to read the emailed link):
 
         1. advisor.create_client(...) → client_id, email.
-        2. code = read_invite_code(client_id)          # DB/mailbox side channel (F2).
-        3. await public.redeem_invite(code=code, email=email)   # 204; magic link sent.
+        2. link = read_welcome_link(email)          # mailbox side channel (F2).
+        3. follow `link` → session established; clients.auth_user_id backfilled.
         4. detail = await advisor.get_client(client_id)
-           assert detail.invite_status == "consumed"
-        5. with pytest.raises(ApiError) as exc:
-               await public.redeem_invite(code=code, email=email)
-           assert exc.value.status == 409                # single-use: already consumed.
+           assert detail.access_status == "active"
+           assert detail.accepted_at is not None
     """
     ...
 
@@ -100,9 +96,9 @@ async def test_traveler_redeems_invite_and_cannot_reuse_it() -> None:
 async def test_linked_traveler_lands_in_their_chat(
     traveler: Ovb, linked_traveler_client_id: str
 ) -> None:
-    """Post-redemption landing (API shape of the role-aware /chat/[client_id] redirect).
+    """Post-sign-in landing (API shape of the role-aware /chat/[client_id] redirect).
 
-    A redeemed traveler is a `client`-role JWT linked to a `clients` row. The
+    A signed-in traveler is a `client`-role JWT linked to a `clients` row. The
     web redirect lands them in their chat; the API-level invariant is that the
     traveler resolves *their own* client and can open a session for it.
     """

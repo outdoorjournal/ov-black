@@ -43,7 +43,6 @@ from app.models.dossier_fact import (  # noqa: E402,F401  (re-exported)
     DossierFactKind,
     FactSourceKind,
 )
-from app.models.invite import Invite  # noqa: E402,F401  (re-exported)
 from app.models.invoice import (  # noqa: E402,F401  (re-exported)
     Invoice,
     InvoiceLineItem,
@@ -117,7 +116,6 @@ __all__ = [
     "FactSourceKind",
     "FindingSeverity",
     "ForkStatus",
-    "Invite",
     "Invoice",
     "InvoiceLineItem",
     "InvoiceLineKind",

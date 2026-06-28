@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
-import { InviteEntry } from "./_components/invite-entry";
 import { SignInEntry } from "./_components/sign-in-entry";
 
 export const dynamic = "force-dynamic";
@@ -71,26 +70,10 @@ export default async function HomePage() {
           <div className="rounded-sm bg-paper p-8 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] sm:p-10">
             <h2 className="font-serif text-3xl tracking-tight">Sign in</h2>
             <p className="mt-2 text-[11px] uppercase tracking-[0.3em] text-ink/55">
-              Returning members
+              Enter your email for a sign-in link
             </p>
             <div className="mt-8">
               <SignInEntry />
-            </div>
-
-            <div className="my-8 flex items-center gap-3 text-[10px] uppercase tracking-[0.3em] text-ink/40">
-              <span className="h-px flex-1 bg-ink/10" />
-              <span>New here</span>
-              <span className="h-px flex-1 bg-ink/10" />
-            </div>
-
-            <h3 className="font-serif text-2xl tracking-tight">
-              Claim your invitation
-            </h3>
-            <p className="mt-2 text-[11px] uppercase tracking-[0.3em] text-ink/55">
-              Enter the code you were given
-            </p>
-            <div className="mt-6">
-              <InviteEntry />
             </div>
           </div>
 

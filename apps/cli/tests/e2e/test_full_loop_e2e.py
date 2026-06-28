@@ -62,7 +62,7 @@ async def test_loop_invite_to_approved(advisor: Ovb, harness: Harness) -> None:
         profile=[("dream_signal", "Mentioned wanting to see autumn leaves in Japan.")],
     )
     detail = await advisor.get_client(client_id)
-    assert str(detail.invite_status) == "pending"
+    assert str(detail.access_status) == "pending"
     harness.client_id = client_id
     harness.record("invited", client_id=client_id)
 

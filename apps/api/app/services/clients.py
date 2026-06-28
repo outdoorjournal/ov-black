@@ -1,8 +1,7 @@
-"""Client creation service — atomic clients + dossier + facts + invite write.
+"""Client creation service — atomic clients + dossier + facts write.
 
 The single entry point :func:`create_client_with_dossier` wraps the
-following operations in one transaction (mirroring the S01 ``invites.py``
-pattern):
+following operations in one transaction:
 
 1. INSERT ``clients`` (owner_id = advisor_id).
 2. INSERT ``dossiers`` (client_id = above, authored_by = advisor_id) — the
@@ -10,27 +9,27 @@ pattern):
 3. INSERT 0..N ``dossier_facts`` rows from ``payload.dossier_facts``
    (passions, motivations, …) so the existing onboarding form keeps its
    long-tail UX in a single round-trip.
-4. INSERT ``invites`` (code, role=client, email, created_by=advisor_id).
-5. Call Supabase ``generate_invite_link`` for the client email.
+4. Call Supabase ``generate_invite_link`` for the client email — this
+   provisions the client's auth row and emails them a welcome sign-in
+   link (no invite code; after this they sign in by email at ``/auth/login``).
 
 Atomicity is non-negotiable. If the upstream invite-link call fails the
 whole transaction rolls back — there must never be a ``clients`` row
-without a companion email going out. If the client email is already
-tied to an existing client owned by the same advisor (case-insensitive
-via the ``(owner_id, lower(email))`` unique index), the insert returns
-``DUPLICATE_EMAIL`` without touching the invite table.
+without a companion welcome email going out. If the client email is
+already tied to an existing client owned by the same advisor
+(case-insensitive via the ``(owner_id, lower(email))`` unique index), the
+insert returns ``DUPLICATE_EMAIL``.
 
-Logging is redaction-safe per the slice plan: we log the client email
-(S01 precedent) and the new ``client_id`` UUID, but never the Supabase
-service-role key, the Authorization header, the ``estimated_net_worth_usd``,
-or the raw fact payloads.
+Logging is redaction-safe: we log the client email and the new
+``client_id`` UUID, but never the Supabase service-role key, the
+Authorization header, the ``estimated_net_worth_usd``, or the raw fact
+payloads.
 """
 
 from __future__ import annotations
 
 import enum
 import logging
-import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,10 +45,8 @@ from app.models import (
     ClientContact,
     Dossier,
     DossierFact,
-    Invite,
     OsintFact,
     ProfileFact,
-    UserRole,
 )
 from app.schemas.clients import ClientCreatePayload
 from app.services.supabase_admin import (
@@ -76,37 +73,19 @@ class ClientCreateResult:
     issued: MagicLinkIssued | None = None
 
 
-class InviteReissueOutcome(str, enum.Enum):
-    """Terminal states of a re-issue attempt."""
+class ResendWelcomeOutcome(str, enum.Enum):
+    """Terminal states of a resend-welcome attempt."""
 
     OK = "ok"
     CLIENT_NOT_FOUND = "client_not_found"
-    ALREADY_REDEEMED = "already_redeemed"
+    ALREADY_ACCEPTED = "already_accepted"
     UPSTREAM_UNAVAILABLE = "upstream_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
-class InviteReissueResult:
-    outcome: InviteReissueOutcome
+class ResendWelcomeResult:
+    outcome: ResendWelcomeOutcome
     issued: MagicLinkIssued | None = None
-
-
-class InviteCancelOutcome(str, enum.Enum):
-    """Terminal states of a cancel attempt."""
-
-    OK = "ok"
-    CLIENT_NOT_FOUND = "client_not_found"
-    NO_ACTIVE_INVITE = "no_active_invite"
-
-
-@dataclass(frozen=True, slots=True)
-class InviteCancelResult:
-    outcome: InviteCancelOutcome
-
-
-def _generate_invite_code() -> str:
-    """16 random bytes → ~22-char URL-safe string. Matches S01 convention."""
-    return secrets.token_urlsafe(16)
 
 
 async def create_client_with_dossier(
@@ -205,33 +184,9 @@ async def create_client_with_dossier(
             )
         )
 
-    invite = Invite(
-        code=_generate_invite_code(),
-        role=UserRole.client,
-        email=email,
-        created_by=advisor_id,
-    )
-    session.add(invite)
-
-    try:
-        await session.flush()
-    except IntegrityError:
-        # Extremely unlikely (token_urlsafe collision) but we still need to
-        # roll back before calling Supabase.
-        await session.rollback()
-        logger.warning(
-            "clients.create.invite_flush_conflict",
-            extra={"email": email, "advisor_id": str(advisor_id)},
-        )
-        return ClientCreateResult(ClientCreateOutcome.DUPLICATE_EMAIL)
-
     redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/basecamp"
     try:
-        issued = await generate_invite_link(
-            email,
-            redirect_to,
-            data={"invite_code": invite.code},
-        )
+        issued = await generate_invite_link(email, redirect_to)
     except SupabaseAdminError as exc:
         await session.rollback()
         logger.warning(
@@ -308,11 +263,12 @@ async def resolve_client_for_auth_user(
     if row is None:
         return None
 
+    accepted_at = datetime.now(UTC)
     try:
         await session.execute(
             update(Client)
             .where(Client.id == row.id, Client.auth_user_id.is_(None))
-            .values(auth_user_id=user_id)
+            .values(auth_user_id=user_id, accepted_at=accepted_at)
         )
         await session.execute(
             sql_text(
@@ -327,6 +283,7 @@ async def resolve_client_for_auth_user(
         return None
 
     row.auth_user_id = user_id
+    row.accepted_at = accepted_at
     logger.info(
         "clients.resolve.backfilled",
         extra={"client_id": str(row.id), "user_id": str(user_id)},
@@ -353,94 +310,41 @@ async def _load_client_owned_by(
     return result.scalar_one_or_none()
 
 
-async def reissue_client_invite(
+async def resend_welcome_email(
     session: AsyncSession,
     *,
     advisor_id: uuid.UUID,
     client_id: uuid.UUID,
     settings: Settings | None = None,
-) -> InviteReissueResult:
-    """Rotate the active invite for a client and email a fresh link.
+) -> ResendWelcomeResult:
+    """Re-send the welcome sign-in link to a client who hasn't logged in yet.
 
-    Supersedes any currently-active row for this (email, advisor), inserts
-    a new row with a fresh code, and calls Supabase to send a new invite
-    email. If a prior invite was already consumed, refuses with
-    ``ALREADY_REDEEMED`` — a redeemed client has an auth row and should
-    hit the normal magic-link flow, not a second invite.
-
-    Atomicity mirrors ``create_client_with_dossier``: an upstream
-    failure rolls back the supersede + insert so the advisor can retry
-    without double-superseding.
+    Pure email action — no DB writes. Loads the advisor-scoped client and,
+    while they are still ``pending`` (``auth_user_id IS NULL``), asks Supabase
+    to re-send the invite/welcome link via :func:`generate_invite_link`. Once
+    a client has accepted (``auth_user_id`` set on first login), there is
+    nothing to resend — they use the normal ``/auth/login`` magic-link flow —
+    so we refuse with ``ALREADY_ACCEPTED``.
     """
     settings = settings or get_settings()
 
     client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
     if client is None:
-        return InviteReissueResult(InviteReissueOutcome.CLIENT_NOT_FOUND)
+        return ResendWelcomeResult(ResendWelcomeOutcome.CLIENT_NOT_FOUND)
 
-    consumed_exists = await session.execute(
-        select(Invite.code)
-        .where(
-            Invite.email == client.email,
-            Invite.role == UserRole.client,
-            Invite.created_by == advisor_id,
-            Invite.consumed_at.is_not(None),
-        )
-        .limit(1)
-    )
-    if consumed_exists.scalar_one_or_none() is not None:
+    if client.auth_user_id is not None:
         logger.info(
-            "clients.reissue.already_redeemed",
+            "clients.resend_welcome.already_accepted",
             extra={"client_id": str(client_id), "advisor_id": str(advisor_id)},
         )
-        return InviteReissueResult(InviteReissueOutcome.ALREADY_REDEEMED)
-
-    now = datetime.now(UTC)
-    # Supersede every currently-active row for this (email, advisor). In
-    # practice there is at most one, but we stamp any strays defensively so
-    # the re-issue produces a single live code.
-    await session.execute(
-        update(Invite)
-        .where(
-            Invite.email == client.email,
-            Invite.role == UserRole.client,
-            Invite.created_by == advisor_id,
-            Invite.consumed_at.is_(None),
-            Invite.cancelled_at.is_(None),
-            Invite.superseded_at.is_(None),
-        )
-        .values(superseded_at=now)
-    )
-
-    new_invite = Invite(
-        code=_generate_invite_code(),
-        role=UserRole.client,
-        email=client.email,
-        created_by=advisor_id,
-    )
-    session.add(new_invite)
-
-    try:
-        await session.flush()
-    except IntegrityError:
-        await session.rollback()
-        logger.warning(
-            "clients.reissue.flush_conflict",
-            extra={"client_id": str(client_id), "advisor_id": str(advisor_id)},
-        )
-        return InviteReissueResult(InviteReissueOutcome.UPSTREAM_UNAVAILABLE)
+        return ResendWelcomeResult(ResendWelcomeOutcome.ALREADY_ACCEPTED)
 
     redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/basecamp"
     try:
-        issued = await generate_invite_link(
-            client.email,
-            redirect_to,
-            data={"invite_code": new_invite.code},
-        )
+        issued = await generate_invite_link(client.email, redirect_to)
     except SupabaseAdminError as exc:
-        await session.rollback()
         logger.warning(
-            "clients.reissue.admin_failure",
+            "clients.resend_welcome.admin_failure",
             extra={
                 "client_id": str(client_id),
                 "advisor_id": str(advisor_id),
@@ -448,58 +352,10 @@ async def reissue_client_invite(
                 "status": exc.status_code,
             },
         )
-        return InviteReissueResult(InviteReissueOutcome.UPSTREAM_UNAVAILABLE)
+        return ResendWelcomeResult(ResendWelcomeOutcome.UPSTREAM_UNAVAILABLE)
 
-    await session.commit()
     logger.info(
-        "clients.reissue.ok",
+        "clients.resend_welcome.ok",
         extra={"client_id": str(client_id), "advisor_id": str(advisor_id)},
     )
-    return InviteReissueResult(InviteReissueOutcome.OK, issued=issued)
-
-
-async def cancel_client_invite(
-    session: AsyncSession,
-    *,
-    advisor_id: uuid.UUID,
-    client_id: uuid.UUID,
-) -> InviteCancelResult:
-    """Cancel any active invite(s) for a client. No upstream call.
-
-    Returns ``NO_ACTIVE_INVITE`` when there's nothing to cancel — either
-    the client has no unredeemed rows (already consumed) or the advisor
-    has already cancelled/superseded the outstanding one. Reissue still
-    works in that case by inserting a fresh row.
-    """
-    client = await _load_client_owned_by(session, advisor_id=advisor_id, client_id=client_id)
-    if client is None:
-        return InviteCancelResult(InviteCancelOutcome.CLIENT_NOT_FOUND)
-
-    now = datetime.now(UTC)
-    result = await session.execute(
-        update(Invite)
-        .where(
-            Invite.email == client.email,
-            Invite.role == UserRole.client,
-            Invite.created_by == advisor_id,
-            Invite.consumed_at.is_(None),
-            Invite.cancelled_at.is_(None),
-            Invite.superseded_at.is_(None),
-        )
-        .values(cancelled_at=now)
-        .returning(Invite.code)
-    )
-    cancelled_codes = list(result.scalars())
-    if not cancelled_codes:
-        return InviteCancelResult(InviteCancelOutcome.NO_ACTIVE_INVITE)
-
-    await session.commit()
-    logger.info(
-        "clients.cancel_invite.ok",
-        extra={
-            "client_id": str(client_id),
-            "advisor_id": str(advisor_id),
-            "cancelled_count": len(cancelled_codes),
-        },
-    )
-    return InviteCancelResult(InviteCancelOutcome.OK)
+    return ResendWelcomeResult(ResendWelcomeOutcome.OK, issued=issued)

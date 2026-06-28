@@ -5,7 +5,7 @@
 // assert on DOM state without poking React internals. Agent turns use the
 // Cormorant serif; user turns and the D015 error row use Inter sans. The
 // error row renders the literal fallback copy from D015 — the copy string
-// is load-bearing and must match invite-entry's "auth_upstream_unavailable"
+// is load-bearing and must match the sign-in flow's "auth_upstream_unavailable"
 // message verbatim so the whole product speaks in one voice when things
 // break.
 

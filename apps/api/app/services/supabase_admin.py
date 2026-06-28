@@ -1,11 +1,12 @@
 """Thin client for the Supabase Auth admin API (server-side only).
 
-Two call sites so far:
+Two call sites:
 
-- :func:`generate_magic_link` — used by ``POST /auth/redeem-invite`` to
-  email a magic link to a freshly-redeemed invite (S01).
-- :func:`generate_invite_link` — used by ``POST /clients`` to email a
-  Supabase ``inviteUserByEmail`` magic link to a brand-new client (S03).
+- :func:`generate_magic_link` — used by ``POST /auth/login`` to email a
+  sign-in magic link to an existing account.
+- :func:`generate_invite_link` — used by ``POST /clients`` (and the
+  resend-welcome action) to email a Supabase ``inviteUserByEmail`` link to
+  a client, provisioning their auth row on first send.
 
 The service role key flows in from :class:`Settings` (Secrets Manager
 in staging/prod, ``.env`` in local dev) and MUST NEVER be logged or
@@ -59,10 +60,10 @@ async def generate_magic_link(
     """Ask Supabase Auth to email a magic link to ``email``.
 
     Wraps ``POST {supabase_url}/auth/v1/otp`` with ``type=magiclink`` (the
-    default). The invite-redemption path passes ``create_user=True`` so a
-    first-time redeemer gets an auth row created on their behalf; the
-    sign-in path (``POST /auth/login``) passes ``create_user=False`` so an
-    unknown email does not silently provision an account without an invite.
+    default). The sign-in path (``POST /auth/login``) passes
+    ``create_user=False`` so an unknown email does not silently provision an
+    account — clients get their auth row when an advisor adds them via
+    ``POST /clients`` (which uses ``generate_invite_link`` below).
 
     Unlike ``/admin/generate_link`` (which only *generates* a link and
     returns it), ``/otp`` *delivers* the link via the configured SMTP —
@@ -141,10 +142,9 @@ async def generate_invite_link(
     deployment's GoTrue returns one, but treat its absence as success
     — the email is what matters.
 
-    ``data`` lands on ``raw_user_meta_data`` for the new auth user and is
-    rendered into the email template as ``{{ .Data.<key> }}``. Used to
-    surface the OV-side ``invite_code`` so the recipient can fall back to
-    typing it manually if the magic link is broken in transit.
+    ``data`` (optional) lands on ``raw_user_meta_data`` for the new auth
+    user and is rendered into the email template as ``{{ .Data.<key> }}``.
+    Callers leave it empty today — the welcome email is just the magic link.
     """
     settings = settings or get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:

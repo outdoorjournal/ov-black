@@ -2,9 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
+  type AccessStatus,
   type ClientSummary,
   createApiClient,
-  type InviteStatus,
   listClients,
 } from "@ov-black/api-client";
 
@@ -65,8 +65,7 @@ export default async function ClientsPage() {
       <section className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/[0.05] p-5 sm:p-7">
         {clients.length === 0 ? (
           <p className="font-sans text-sm italic text-paper/55">
-            No clients yet — click <em>New Client</em> to issue the first
-            invite.
+            No clients yet — click <em>New Client</em> to add your first one.
           </p>
         ) : (
           <ClientList clients={clients} />
@@ -84,9 +83,10 @@ function ClientList({ clients }: { clients: ClientSummary[] }) {
           <tr>
             <Th className="pl-5 sm:pl-7">Name</Th>
             <Th className="hidden md:table-cell">Email</Th>
-            <Th>Invite</Th>
+            <Th>Status</Th>
             <Th>Dossier</Th>
-            <Th>Joined</Th>
+            <Th>Added</Th>
+            <Th>Signed in</Th>
             <Th className="pr-5 text-right sm:pr-7" />
           </tr>
         </thead>
@@ -105,7 +105,7 @@ function ClientList({ clients }: { clients: ClientSummary[] }) {
                 {c.email}
               </Td>
               <Td>
-                <InvitePill status={c.invite_status} />
+                <InvitePill status={c.access_status} />
               </Td>
               <Td className="text-paper/60">
                 {c.has_dossier ? "On file" : "—"}
@@ -113,10 +113,13 @@ function ClientList({ clients }: { clients: ClientSummary[] }) {
               <Td className="whitespace-nowrap text-paper/60">
                 {relativeDay(c.created_at)}
               </Td>
+              <Td className="whitespace-nowrap text-paper/60">
+                {c.accepted_at ? relativeDay(c.accepted_at) : "—"}
+              </Td>
               <Td className="pr-5 text-right sm:pr-7">
                 <InviteActions
                   clientId={c.id}
-                  inviteStatus={c.invite_status}
+                  accessStatus={c.access_status}
                 />
               </Td>
             </tr>
@@ -154,21 +157,12 @@ function Td({
   return <td className={`px-3 py-3 align-middle ${className}`}>{children}</td>;
 }
 
-function InvitePill({ status }: { status: InviteStatus }) {
-  const copy =
-    status === "consumed"
-      ? "Accepted"
-      : status === "pending"
-        ? "Pending"
-        : status === "cancelled"
-          ? "Cancelled"
-          : "—";
+function InvitePill({ status }: { status: AccessStatus }) {
+  const copy = status === "active" ? "Active" : "Pending";
   const tone =
-    status === "consumed"
+    status === "active"
       ? "border-paper/40 text-paper"
-      : status === "pending"
-        ? "border-amber-300/40 text-amber-200/90"
-        : "border-paper/15 text-paper/55";
+      : "border-amber-300/40 text-amber-200/90";
   return (
     <span
       className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}

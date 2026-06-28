@@ -85,7 +85,7 @@ def _cost(node: dict[str, Any]) -> str:
 # ── tables ───────────────────────────────────────────────────────────────────
 def clients_table(rows: list[Any]) -> Table:
     t = Table(title="clients", header_style="bold")
-    for col in ("id", "full_name", "email", "invite", "dossier"):
+    for col in ("id", "full_name", "email", "access", "dossier"):
         t.add_column(col)
     for r in rows:
         d = to_jsonable(r)
@@ -93,7 +93,7 @@ def clients_table(rows: list[Any]) -> Table:
             str(d["id"]),
             d.get("full_name", ""),
             d.get("email", ""),
-            str(d.get("invite_status", "")),
+            str(d.get("access_status", "")),
             "yes" if d.get("has_dossier") else "no",
         )
     return t

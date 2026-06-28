@@ -104,7 +104,8 @@ async def test_list_clients_parses_array() -> None:
                     "full_name": "Jane",
                     "email": "jane@x.com",
                     "has_dossier": True,
-                    "invite_status": "consumed",
+                    "access_status": "active",
+                    "accepted_at": "2026-06-21T00:00:00Z",
                     "created_at": "2026-06-21T00:00:00Z",
                 }
             ],

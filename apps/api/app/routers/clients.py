@@ -2,22 +2,25 @@
 
 Five routes, all gated by :func:`app.auth_guards.require_advisor`:
 
-- ``POST   /clients`` — create client + Dossier (+ optional dossier_facts) + invite (atomic)
+- ``POST   /clients`` — create client + Dossier (+ optional dossier_facts) and
+  email a welcome sign-in link (atomic)
 - ``GET    /clients`` — advisor's own clients, newest-first
 - ``GET    /clients/{id}`` — client + dossier + active facts (``?include_redacted=1`` opt-in)
-- ``POST   /clients/{id}/invite/reissue`` — supersede the live invite and email a fresh one
-- ``POST   /clients/{id}/invite/cancel`` — mark the live invite cancelled (no email)
+- ``POST   /clients/{id}/resend-welcome`` — re-send the welcome link to a pending client
 
 The POST path delegates to :func:`create_client_with_dossier` and maps
-``ClientCreateOutcome`` to HTTP status codes the same way ``routers/auth.py``
-maps ``RedeemOutcome`` — 201 / 409 / 502, with the 502 ``detail`` string
-(``auth_upstream_unavailable``) deliberately reused from S01 so ops
-dashboards can collapse both paths under one alert.
+``ClientCreateOutcome`` to HTTP status codes — 201 / 409 / 502, with the 502
+``detail`` string (``auth_upstream_unavailable``) shared with ``/auth/login``
+so ops dashboards can collapse both paths under one alert.
 
 GET paths scope by ``owner_id = advisor_id``. ``GET /{client_id}`` 404s
 whenever the row does not belong to the calling advisor (S01 D015
 collapsed-shape precedent — 403 would let one advisor probe for another
 advisor's client UUIDs).
+
+A client's ``access_status`` is derived from ``clients.auth_user_id``:
+``pending`` until they sign in for the first time (which backfills the id via
+``resolve_client_for_auth_user``), ``active`` after.
 """
 
 from __future__ import annotations
@@ -39,18 +42,14 @@ from app.models import (
     AgentTurn,
     Client,
     Dossier,
-    Invite,
     TurnRole,
-    UserRole,
 )
 from app.schemas.clients import (
+    AccessStatus,
     ClientCreatePayload,
     ClientCreateResponse,
     ClientDetail,
     ClientSummary,
-    InviteEvent,
-    InviteEventStatus,
-    InviteStatus,
 )
 from app.schemas.contacts import (
     ClientContactCreate,
@@ -65,11 +64,9 @@ from app.schemas.facts import (
 )
 from app.services.clients import (
     ClientCreateOutcome,
-    InviteCancelOutcome,
-    InviteReissueOutcome,
-    cancel_client_invite,
+    ResendWelcomeOutcome,
     create_client_with_dossier,
-    reissue_client_invite,
+    resend_welcome_email,
 )
 from app.services.contacts import (
     ContactOutcome,
@@ -125,77 +122,13 @@ def _advisor_id(user: AuthenticatedUser) -> uuid.UUID:
         raise HTTPException(status_code=500, detail="internal_error") from None
 
 
-def _event_status(invite: Invite) -> InviteEventStatus:
-    if invite.consumed_at is not None:
-        return "consumed"
-    if invite.cancelled_at is not None:
-        return "cancelled"
-    if invite.superseded_at is not None:
-        return "superseded"
-    return "active"
+def _access_status(client: Client) -> AccessStatus:
+    """Render a client's sign-in state from ``auth_user_id``.
 
-
-def _derive_invite_status(invites: list[Invite]) -> InviteStatus:
-    """Collapse a client's invite history to a single rendered status.
-
-    Precedence:
-
-    1. Any consumed row wins — the client has redeemed at some point.
-    2. An active row (all three lifecycle timestamps NULL) → ``pending``.
-    3. Otherwise, the most recent row is either cancelled or superseded;
-       advisor-facing UI shows that as ``cancelled`` (there is no live
-       invite out there, nothing to resend against).
-    4. No rows at all → ``none`` (edge case — ``POST /clients`` always
-       inserts one, but a data-recovery scenario could leave a client
-       without a row).
+    ``pending`` until the client signs in for the first time (which backfills
+    ``auth_user_id`` via ``resolve_client_for_auth_user``), ``active`` after.
     """
-    if not invites:
-        return "none"
-    if any(inv.consumed_at is not None for inv in invites):
-        return "consumed"
-    if any(
-        inv.consumed_at is None and inv.cancelled_at is None and inv.superseded_at is None
-        for inv in invites
-    ):
-        return "pending"
-    return "cancelled"
-
-
-def _build_invite_history(invites: list[Invite]) -> list[InviteEvent]:
-    """Newest-first history, one entry per ``invites`` row."""
-    ordered = sorted(invites, key=lambda inv: inv.created_at, reverse=True)
-    return [
-        InviteEvent(
-            created_at=inv.created_at,
-            consumed_at=inv.consumed_at,
-            cancelled_at=inv.cancelled_at,
-            superseded_at=inv.superseded_at,
-            status=_event_status(inv),
-        )
-        for inv in ordered
-    ]
-
-
-async def _load_invites_for_advisor(
-    session: AsyncSession,
-    advisor_id: uuid.UUID,
-) -> dict[str, list[Invite]]:
-    """Fetch every client-role invite this advisor issued, grouped by email.
-
-    One query instead of a per-client lookup.
-    """
-    result = await session.execute(
-        select(Invite).where(
-            Invite.role == UserRole.client,
-            Invite.created_by == advisor_id,
-            Invite.email.is_not(None),
-        )
-    )
-    by_email: dict[str, list[Invite]] = {}
-    for invite in result.scalars():
-        assert invite.email is not None  # guaranteed by WHERE clause
-        by_email.setdefault(invite.email, []).append(invite)
-    return by_email
+    return "active" if client.auth_user_id is not None else "pending"
 
 
 @router.post(
@@ -203,12 +136,12 @@ async def _load_invites_for_advisor(
     status_code=status.HTTP_201_CREATED,
     response_model=ClientCreateResponse,
     responses={
-        201: {"description": "Client + Dossier created, invite email sent."},
+        201: {"description": "Client + Dossier created, welcome email sent."},
         403: {"description": "Caller is not an advisor."},
         409: {"description": "Email is already tied to one of this advisor's clients."},
         502: {"description": "Supabase Auth admin API is unavailable."},
     },
-    summary="Create a new client + Dossier and email them an invite link.",
+    summary="Create a new client + Dossier and email them a welcome sign-in link.",
 )
 async def create_client_endpoint(
     payload: ClientCreatePayload,
@@ -222,7 +155,7 @@ async def create_client_endpoint(
         assert result.client_id is not None  # guaranteed by OK contract
         return ClientCreateResponse(
             client_id=result.client_id,
-            invite_email=payload.email,
+            email=payload.email,
         )
     if result.outcome is ClientCreateOutcome.DUPLICATE_EMAIL:
         raise HTTPException(status_code=409, detail="client_email_already_invited")
@@ -253,18 +186,16 @@ async def list_clients_endpoint(
     result = await session.execute(stmt)
     client_rows = result.all()
 
-    invites_by_email = await _load_invites_for_advisor(session, advisor_id)
-
     rows: list[ClientSummary] = []
     for client, dossier_id in client_rows:
-        invites = invites_by_email.get(client.email, [])
         rows.append(
             ClientSummary(
                 id=client.id,
                 full_name=client.full_name,
                 email=client.email,
                 has_dossier=dossier_id is not None,
-                invite_status=_derive_invite_status(invites),
+                access_status=_access_status(client),
+                accepted_at=client.accepted_at,
                 created_at=client.created_at,
             )
         )
@@ -322,23 +253,14 @@ async def get_client_endpoint(
     if ctx is None:
         raise HTTPException(status_code=404, detail="client_not_found")
 
-    invites_result = await session.execute(
-        select(Invite).where(
-            Invite.email == client.email,
-            Invite.role == UserRole.client,
-            Invite.created_by == advisor_id,
-        )
-    )
-    invites = list(invites_result.scalars())
-
     contact_rows = await list_client_contacts(session, client_id=client.id)
 
     return ClientDetail(
         id=client.id,
         full_name=client.full_name,
         email=client.email,
-        invite_status=_derive_invite_status(invites),
-        invite_history=_build_invite_history(invites),
+        access_status=_access_status(client),
+        accepted_at=client.accepted_at,
         created_at=client.created_at,
         updated_at=client.updated_at,
         dossier=_dossier_detail(ctx.dossier),
@@ -358,72 +280,35 @@ async def get_client_endpoint(
 
 
 @router.post(
-    "/{client_id}/invite/reissue",
+    "/{client_id}/resend-welcome",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
     responses={
-        204: {"description": "New invite issued and email sent."},
+        204: {"description": "Welcome sign-in link re-sent."},
         404: {"description": "No client with this id owned by the calling advisor."},
-        409: {"description": "Client already redeemed — reissue is not allowed."},
+        409: {"description": "Client has already signed in — nothing to resend."},
         502: {"description": "Supabase Auth admin API is unavailable."},
     },
-    summary="Supersede the live invite for a client and email a fresh one.",
+    summary="Re-send the welcome sign-in link to a pending client.",
 )
-async def reissue_client_invite_endpoint(
+async def resend_welcome_endpoint(
     client_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     advisor_id = _advisor_id(user)
-    result = await reissue_client_invite(session, advisor_id=advisor_id, client_id=client_id)
+    result = await resend_welcome_email(session, advisor_id=advisor_id, client_id=client_id)
 
-    if result.outcome is InviteReissueOutcome.OK:
+    if result.outcome is ResendWelcomeOutcome.OK:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    if result.outcome is InviteReissueOutcome.CLIENT_NOT_FOUND:
+    if result.outcome is ResendWelcomeOutcome.CLIENT_NOT_FOUND:
         raise HTTPException(status_code=404, detail="client_not_found")
-    if result.outcome is InviteReissueOutcome.ALREADY_REDEEMED:
-        raise HTTPException(status_code=409, detail="invite_already_redeemed")
-    if result.outcome is InviteReissueOutcome.UPSTREAM_UNAVAILABLE:
+    if result.outcome is ResendWelcomeOutcome.ALREADY_ACCEPTED:
+        raise HTTPException(status_code=409, detail="client_already_accepted")
+    if result.outcome is ResendWelcomeOutcome.UPSTREAM_UNAVAILABLE:
         raise HTTPException(status_code=502, detail="auth_upstream_unavailable")
     logger.error(
-        "clients.router.reissue_unhandled_outcome",
-        extra={"outcome": result.outcome.value},
-    )
-    raise HTTPException(status_code=500, detail="internal_error")
-
-
-@router.post(
-    "/{client_id}/invite/cancel",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-    responses={
-        204: {"description": "Active invite marked cancelled."},
-        404: {"description": "No client with this id owned by the calling advisor."},
-        409: {
-            "description": (
-                "No active invite to cancel — client is already redeemed or "
-                "the outstanding invite was already cancelled/superseded."
-            ),
-        },
-    },
-    summary="Cancel the active invite for a client (no email sent).",
-)
-async def cancel_client_invite_endpoint(
-    client_id: uuid.UUID,
-    user: AuthenticatedUser = Depends(require_advisor),
-    session: AsyncSession = Depends(get_session),
-) -> Response:
-    advisor_id = _advisor_id(user)
-    result = await cancel_client_invite(session, advisor_id=advisor_id, client_id=client_id)
-
-    if result.outcome is InviteCancelOutcome.OK:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    if result.outcome is InviteCancelOutcome.CLIENT_NOT_FOUND:
-        raise HTTPException(status_code=404, detail="client_not_found")
-    if result.outcome is InviteCancelOutcome.NO_ACTIVE_INVITE:
-        raise HTTPException(status_code=409, detail="no_active_invite")
-    logger.error(
-        "clients.router.cancel_unhandled_outcome",
+        "clients.router.resend_welcome_unhandled_outcome",
         extra={"outcome": result.outcome.value},
     )
     raise HTTPException(status_code=500, detail="internal_error")

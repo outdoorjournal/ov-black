@@ -199,19 +199,18 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
 app = FastAPI(
     title="OV Black API",
     version="0.1.0",
-    description="Backend API for OV Black — invite-gated advisor platform.",
+    description="Backend API for OV Black — advisor platform with email-link sign-in.",
     lifespan=lifespan,
 )
 
 # Enforce Supabase JWT validation on every route except the public whitelist
-# (health probe, OpenAPI surfaces, and the two auth front doors). R017.
-# Both /auth/redeem-invite and /auth/login are intentionally public — they
-# issue tokens rather than consume them, so there is no JWT yet to validate.
+# (health probe, OpenAPI surfaces, and the auth front door). R017.
+# /auth/login is intentionally public — it issues a token rather than
+# consuming one, so there is no JWT yet to validate.
 app.add_middleware(
     JWTAuthMiddleware,
     public_paths=PUBLIC_PATHS
     | {
-        "/auth/redeem-invite",
         "/auth/login",
         # Backend-only agent surfaces — they validate a per-session agent
         # token themselves; the Supabase JWT middleware would reject them

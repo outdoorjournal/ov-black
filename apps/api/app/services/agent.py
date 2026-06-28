@@ -146,7 +146,7 @@ async def _enforce_client_access(
 
     Enforcement rules mirror the S02/S03 posture:
       - advisor: must own the client (clients.owner_id == actor.user_id).
-      - user: must be the redeemed client (clients.auth_user_id == actor.user_id).
+      - user: must be the signed-in client (clients.auth_user_id == actor.user_id).
       - agent: inherits the session it's writing on behalf of — caller
         must have already verified it; here we just check the client row
         exists.
@@ -176,7 +176,7 @@ async def _jit_backfill_client_auth_user_id(
     """Best-effort JIT populate ``clients.auth_user_id`` on first POST /sessions.
 
     S03 creates clients with ``auth_user_id IS NULL``; after the client
-    redeems their magic-link invite they have an ``auth.users`` row but the
+    signs in via their magic link they have an ``auth.users`` row but the
     link back is not established anywhere. This helper closes that gap
     *only* when the caller is the client themself and the Supabase
     ``auth.users`` email for their JWT sub matches the clients row email
@@ -205,11 +205,12 @@ async def _jit_backfill_client_auth_user_id(
     if auth_email.strip().lower() != client.email.strip().lower():
         return False
 
+    accepted_at = datetime.now(UTC)
     try:
         await session.execute(
             update(Client)
             .where(Client.id == client.id, Client.auth_user_id.is_(None))
-            .values(auth_user_id=user_id)
+            .values(auth_user_id=user_id, accepted_at=accepted_at)
         )
         # Same-transaction profiles upsert: keep the auth grid self-consistent
         # by ensuring a profiles row with role='client' exists for this user.
@@ -231,6 +232,7 @@ async def _jit_backfill_client_auth_user_id(
 
     # Keep the in-memory row in sync so the subsequent access check sees it.
     client.auth_user_id = user_id
+    client.accepted_at = accepted_at
     return True
 
 

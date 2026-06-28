@@ -37,8 +37,10 @@ class Client(Base):
     """Advisor-owned client record.
 
     ``owner_id`` is the advisor's ``auth.users`` id (the advisor who created
-    the client). ``auth_user_id`` is the client's own ``auth.users`` id once
-    they redeem the invite — populated by a later slice.
+    the client). ``auth_user_id`` is the client's own ``auth.users`` id,
+    backfilled on their first magic-link login (see
+    ``resolve_client_for_auth_user``). NULL means the client hasn't signed in
+    yet — the advisor UI renders that as "pending" vs "active".
     """
 
     __tablename__ = "clients"
@@ -50,13 +52,19 @@ class Client(Base):
     )
     # FK to auth.users(id) is enforced DB-side (migration 0003). SQLAlchemy
     # does not model cross-schema FKs here — ``auth`` is not part of our
-    # declarative metadata, matching the Profile/Invite convention.
+    # declarative metadata, matching the Profile convention.
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         nullable=False,
     )
     auth_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
+        nullable=True,
+    )
+    # Stamped on first magic-link login (when auth_user_id is backfilled).
+    # NULL == hasn't signed in yet → the advisor UI renders "pending".
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
     full_name: Mapped[str] = mapped_column(nullable=False)

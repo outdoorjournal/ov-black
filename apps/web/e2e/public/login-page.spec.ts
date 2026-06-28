@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // Unauthenticated landing page. Needs only the web server running; the
 // submit-confirmation test additionally exercises the API's POST /auth/login.
 test.describe("sign-in landing page", () => {
-  test("renders the member sign-in and invite entry", async ({ page }) => {
+  test("renders the member email sign-in", async ({ page }) => {
     await page.goto("/");
 
     await expect(
@@ -14,10 +14,10 @@ test.describe("sign-in landing page", () => {
       page.getByRole("button", { name: "Send sign-in link" }),
     ).toBeVisible();
 
-    // The invitation-redemption entry shares the same screen.
+    // Email is the only front door now — no invite-code entry.
     await expect(
       page.getByRole("heading", { name: "Claim your invitation" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
   });
 
   test("submitting an email shows the inbox confirmation", async ({ page }) => {

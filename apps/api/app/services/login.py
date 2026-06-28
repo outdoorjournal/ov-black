@@ -1,10 +1,10 @@
 """Existing-user sign-in: email → Supabase magic link.
 
-Companion to :mod:`app.services.invites`. The invite path redeems a code
-AND creates the auth row (``create_user=True``). The sign-in path here
-assumes the auth row already exists and refuses to create one — a user
-without an account must go through an invite, not guess the sign-in
-form into provisioning themselves.
+The auth row is provisioned when an advisor adds the client (``POST
+/clients`` → ``generate_invite_link`` with ``create_user``). The sign-in
+path here assumes the auth row already exists and refuses to create one
+(``create_user=False``) — a stranger must be added by an advisor first,
+not guess the sign-in form into provisioning themselves.
 
 D015 enumeration guarantee applies: the public endpoint collapses
 "unknown email" and "link sent" into the same 204 response so an

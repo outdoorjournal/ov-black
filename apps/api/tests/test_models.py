@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import socket
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
-from app.models import Invite, Profile, UserRole
+from app.models import Profile, UserRole
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -75,11 +75,7 @@ async def _insert_auth_user(session: AsyncSession, user_id: uuid.UUID, email: st
     )
 
 
-async def _cleanup(session: AsyncSession, user_id: uuid.UUID, invite_code: str | None) -> None:
-    if invite_code is not None:
-        await session.execute(
-            text("delete from public.invites where code = :c"), {"c": invite_code}
-        )
+async def _cleanup(session: AsyncSession, user_id: uuid.UUID) -> None:
     await session.execute(text("delete from auth.users where id = :id"), {"id": user_id})
     await session.commit()
 
@@ -101,46 +97,11 @@ async def test_profile_round_trip(session: AsyncSession) -> None:
         assert fetched.created_at.tzinfo is not None  # timestamptz
     finally:
         await session.execute(text("delete from public.profiles where id = :id"), {"id": user_id})
-        await _cleanup(session, user_id, None)
+        await _cleanup(session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_invite_round_trip(session: AsyncSession) -> None:
-    user_id = uuid.uuid4()
-    email = f"inviter-{user_id.hex[:8]}@example.com"
-    code = f"INV-{uuid.uuid4().hex[:10].upper()}"
-    try:
-        await _insert_auth_user(session, user_id, email)
-        invite = Invite(
-            code=code,
-            role=UserRole.client,
-            email="guest@example.com",
-            created_by=user_id,
-        )
-        session.add(invite)
-        await session.commit()
-
-        fetched = (await session.execute(select(Invite).where(Invite.code == code))).scalar_one()
-        assert fetched.code == code
-        assert fetched.role is UserRole.client
-        assert fetched.email == "guest@example.com"
-        assert fetched.consumed_at is None
-        assert fetched.created_by == user_id
-        assert isinstance(fetched.created_at, datetime)
-
-        # Mark consumed — exercise the nullable → timestamptz transition.
-        now = datetime.now(UTC)
-        fetched.consumed_at = now
-        await session.commit()
-        await session.refresh(fetched)
-        assert fetched.consumed_at is not None
-        assert fetched.consumed_at.tzinfo is not None
-    finally:
-        await _cleanup(session, user_id, code)
-
-
-@pytest.mark.asyncio
-async def test_rls_enabled_on_profiles_and_invites(session: AsyncSession) -> None:
+async def test_rls_enabled_on_profiles(session: AsyncSession) -> None:
     rows = (
         await session.execute(
             text(
@@ -148,14 +109,14 @@ async def test_rls_enabled_on_profiles_and_invites(session: AsyncSession) -> Non
                 select tablename, rowsecurity
                   from pg_tables
                  where schemaname = 'public'
-                   and tablename in ('profiles', 'invites')
+                   and tablename in ('profiles')
                  order by tablename
                 """
             )
         )
     ).all()
     rls = dict(rows)
-    assert rls == {"invites": True, "profiles": True}
+    assert rls == {"profiles": True}
 
 
 @pytest.mark.asyncio
@@ -177,17 +138,3 @@ async def test_profiles_owner_select_policy_shape(session: AsyncSession) -> None
     assert policyname == "profiles_owner_select"
     assert cmd == "SELECT"
     assert "authenticated" in roles
-
-
-@pytest.mark.asyncio
-async def test_invites_has_no_policies_service_role_only(session: AsyncSession) -> None:
-    count = (
-        await session.execute(
-            text(
-                "select count(*) from pg_policies where schemaname='public' and tablename='invites'"
-            )
-        )
-    ).scalar_one()
-    # RLS enabled + zero policies = deny-by-default for anon/authenticated;
-    # service_role bypasses RLS. This is the contract T05 depends on.
-    assert count == 0

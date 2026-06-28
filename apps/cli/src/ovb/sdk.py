@@ -157,14 +157,6 @@ class Ovb:
         return resp.json()
 
     # ── auth (public) ────────────────────────────────────────────────────
-    async def redeem_invite(self, *, code: str, email: str) -> None:
-        await self._send(
-            "POST",
-            "/auth/redeem-invite",
-            json_body={"code": code, "email": email},
-            authed=False,
-        )
-
     async def login(self, *, email: str) -> None:
         await self._send("POST", "/auth/login", json_body={"email": email}, authed=False)
 
@@ -597,6 +589,10 @@ class Ovb:
 
     async def list_client_sessions(self, client_id: str) -> gm.ClientSessionsResponse:
         return await self._model(gm.ClientSessionsResponse, "GET", f"/clients/{client_id}/sessions")
+
+    async def resend_welcome(self, client_id: str) -> None:
+        """Re-send the welcome sign-in link to a pending client (advisor nudge)."""
+        await self._send("POST", f"/clients/{client_id}/resend-welcome")
 
     async def add_fact(
         self, client_id: str, *, tier: str, kind: str, text: str, source_kind: str | None = None

@@ -96,11 +96,12 @@ async def ensure_client(
     party_notes: str = "",
     children_ages: list[int] | None = None,
 ) -> tuple[str, str]:
-    """Advisor creates a client + Dossier + invite (atomic). Returns (client_id, email).
+    """Advisor creates a client + Dossier and emails a welcome link (atomic).
 
-    Mirrors ``POST /clients`` — the same call ``ovb clients create`` makes. On a
-    409 (email already invited) it resolves the existing client by email, so the
-    step is idempotent for a fixed email and creating for a unique one.
+    Returns (client_id, email). Mirrors ``POST /clients`` — the same call
+    ``ovb clients create`` makes. On a 409 (email already on one of the
+    advisor's clients) it resolves the existing client by email, so the step is
+    idempotent for a fixed email and creating for a unique one.
     """
     target = email or unique_email()
     # contact_preference is required on the typed Dossier core (DossierTyped); the

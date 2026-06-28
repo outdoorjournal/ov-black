@@ -1,11 +1,11 @@
-"""Coverage for ``app.services.supabase_admin.generate_invite_link`` (S03 T03).
+"""Coverage for ``app.services.supabase_admin`` (S03 T03).
 
-``generate_magic_link`` (S01) is exercised end-to-end by ``test_invites.py``
-via the redeem flow; this file isolates the new ``generate_invite_link``
-call and asserts the wire contract directly with an ``httpx.MockTransport``
-stub — no live Supabase.
+Both helpers are exercised here against an ``httpx.MockTransport`` stub —
+no live Supabase. ``generate_magic_link`` (``POST /auth/v1/otp``, used by
+``/auth/login``) and ``generate_invite_link`` (``POST /auth/v1/invite``,
+used by ``POST /clients`` + resend-welcome) share the same wire contract.
 
-We cover:
+We cover (for ``generate_invite_link``):
 
 - Happy path: request hits ``POST /auth/v1/invite`` with the correct
   ``apikey`` + ``Authorization`` + ``Content-Type`` headers and an
@@ -34,6 +34,7 @@ from app.services.supabase_admin import (
     MagicLinkIssued,
     SupabaseAdminError,
     generate_invite_link,
+    generate_magic_link,
 )
 
 # --- Helpers ----------------------------------------------------------------
@@ -274,6 +275,85 @@ async def test_generate_invite_link_network_error_log_omits_service_key(
 
     records = [r for r in caplog.records if r.name == "ov_black.supabase_admin"]
     assert any(r.message == "supabase_admin.network_error" for r in records)
+    for r in records:
+        combined = r.getMessage() + " " + str(r.__dict__)
+        assert _SERVICE_KEY not in combined
+
+
+# --- generate_magic_link ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_magic_link_posts_to_otp_endpoint_with_redirect_param() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = str(request.url).split("?", 1)[0]
+        captured["redirect_to"] = request.url.params.get("redirect_to")
+        captured["headers"] = dict(request.headers)
+        captured["body"] = json.loads(request.content.decode())
+        # /auth/v1/otp delivers the link via SMTP and returns an empty body.
+        return httpx.Response(200, json={})
+
+    settings = _settings()
+    async with _mock_client(handler) as client:
+        result = await generate_magic_link(
+            "client@example.com",
+            create_user=False,
+            settings=settings,
+            client=client,
+        )
+
+    assert isinstance(result, MagicLinkIssued)
+    assert result.email == "client@example.com"
+    # /otp delivers by email — no action_link crosses the wire.
+    assert result.action_link == ""
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == f"{_STAGING_URL}/auth/v1/otp"
+    # redirect_to rides the query string (GoTrue ignores a body field).
+    assert captured["redirect_to"] == f"{settings.web_origin.rstrip('/')}/auth/callback"
+    assert captured["headers"]["apikey"] == _SERVICE_KEY
+    assert captured["headers"]["authorization"] == f"Bearer {_SERVICE_KEY}"
+    assert captured["body"]["email"] == "client@example.com"
+    assert captured["body"]["create_user"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_magic_link_maps_4xx_to_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"msg": "user not found"})
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(SupabaseAdminError) as exc_info:
+            await generate_magic_link(
+                "nobody@example.com",
+                create_user=False,
+                settings=_settings(),
+                client=client,
+            )
+    assert exc_info.value.reason == "supabase_admin_rejected"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_generate_magic_link_never_logs_service_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    async with _mock_client(handler) as client:
+        with caplog.at_level(logging.DEBUG, logger="ov_black.supabase_admin"):
+            await generate_magic_link(
+                "a@b.com",
+                settings=_settings(),
+                client=client,
+            )
+
+    records = [r for r in caplog.records if r.name == "ov_black.supabase_admin"]
+    assert any(r.message == "supabase_admin.magic_link_issued" for r in records)
     for r in records:
         combined = r.getMessage() + " " + str(r.__dict__)
         assert _SERVICE_KEY not in combined

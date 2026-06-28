@@ -25,7 +25,7 @@ export default async function NewClientPage() {
       <header className="flex flex-col gap-6 border-b border-ink/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-ink/55">
-            Dossier &amp; invite
+            Dossier &amp; welcome
           </p>
           <h1 className="mt-4 font-serif text-5xl tracking-tight text-ink sm:text-6xl">
             New Client

@@ -1,6 +1,6 @@
 """Coverage for POST /auth/login and the login service.
 
-Two layers, mirroring ``test_invites.py``:
+Two layers:
 
 1. Router tests — exercise the HTTP contract with ``request_login_link``
    stubbed so we can drive each outcome without a live Supabase. We care
@@ -76,8 +76,8 @@ def test_login_is_publicly_reachable_without_jwt(
     client: TestClient,
     stub_login_ok: list[str],
 ) -> None:
-    # Like /auth/redeem-invite, this is the front door — it must not require
-    # a JWT (the user doesn't have one yet).
+    # This is the auth front door — it must not require a JWT (the user
+    # doesn't have one yet).
     resp = client.post("/auth/login", json={"email": "advisor@example.com"})
     assert resp.status_code == 204
     assert resp.content == b""

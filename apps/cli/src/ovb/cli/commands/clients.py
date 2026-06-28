@@ -23,13 +23,13 @@ def list_(ctx: typer.Context) -> None:
 def create(
     ctx: typer.Context,
     full_name: str = typer.Option(..., "--name", help="Client full name."),
-    email: str = typer.Option(..., "--email", help="Client email (invite target)."),
+    email: str = typer.Option(..., "--email", help="Client email (welcome link target)."),
     contact_preference: str = typer.Option("email", "--contact-pref"),
     party_notes: str = typer.Option("", "--party-notes"),
     children_ages: str | None = typer.Option(None, "--children-ages", help="Comma-separated ints."),
     net_worth: int | None = typer.Option(None, "--net-worth"),
 ) -> None:
-    """Create a client + dossier + invite (atomic)."""
+    """Create a client + dossier and email a code-free welcome sign-in link (atomic)."""
     state = state_of(ctx)
     typed: dict[str, Any] = {
         "contact_preference": contact_preference,
@@ -62,6 +62,14 @@ def sessions(ctx: typer.Context, client_id: str = typer.Argument(...)) -> None:
     state = state_of(ctx)
     res = run_op(ctx, lambda ovb: ovb.list_client_sessions(client_id))
     render.emit(state.json_mode, res, lambda: render.kv_panel("sessions", res))
+
+
+@app.command("resend-welcome")
+def resend_welcome(ctx: typer.Context, client_id: str = typer.Argument(...)) -> None:
+    """Re-send the welcome sign-in link to a pending client (nudge)."""
+    state = state_of(ctx)
+    run_op(ctx, lambda ovb: ovb.resend_welcome(client_id))
+    render.emit(state.json_mode, {"ok": True}, lambda: "welcome link re-sent")
 
 
 @facts_app.command("add")

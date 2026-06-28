@@ -129,14 +129,12 @@ class ClientCreateResponse(BaseModel):
         extra='forbid',
     )
     client_id: Annotated[UUID, Field(title='Client Id')]
-    invite_email: Annotated[EmailStr, Field(title='Invite Email')]
+    email: Annotated[EmailStr, Field(title='Email')]
 
 
-class InviteStatus(StrEnum):
+class AccessStatus(StrEnum):
     pending = 'pending'
-    consumed = 'consumed'
-    cancelled = 'cancelled'
-    none = 'none'
+    active = 'active'
 
 
 class ClientSessionSummary(BaseModel):
@@ -175,7 +173,8 @@ class ClientSummary(BaseModel):
     full_name: Annotated[str, Field(title='Full Name')]
     email: Annotated[EmailStr, Field(title='Email')]
     has_dossier: Annotated[bool, Field(title='Has Dossier')]
-    invite_status: Annotated[InviteStatus, Field(title='Invite Status')]
+    access_status: Annotated[AccessStatus, Field(title='Access Status')]
+    accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
 
@@ -563,32 +562,6 @@ class GeoPointResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Annotated[str, Field(title='Status')]
-
-
-class Status1(StrEnum):
-    active = 'active'
-    consumed = 'consumed'
-    cancelled = 'cancelled'
-    superseded = 'superseded'
-
-
-class InviteEvent(BaseModel):
-    """
-    A single invite send — one row in the invite history for a client.
-
-    The raw ``code`` is deliberately omitted. Codes are bearer credentials;
-    the advisor UI needs timestamps + lifecycle state to render the history,
-    not the codes themselves.
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    consumed_at: Annotated[AwareDatetime | None, Field(title='Consumed At')]
-    cancelled_at: Annotated[AwareDatetime | None, Field(title='Cancelled At')]
-    superseded_at: Annotated[AwareDatetime | None, Field(title='Superseded At')]
-    status: Annotated[Status1, Field(title='Status')]
 
 
 class InvoiceLineKind(StrEnum):
@@ -1150,17 +1123,6 @@ class RedactRequest(BaseModel):
         extra='forbid',
     )
     reason: Annotated[str, Field(max_length=1000, min_length=1, title='Reason')]
-
-
-class RedeemInviteRequest(BaseModel):
-    """
-    Payload for ``POST /auth/redeem-invite``.
-
-    Both fields are required; whitespace is trimmed at the service layer.
-    """
-
-    code: Annotated[str, Field(max_length=128, min_length=1, title='Code')]
-    email: Annotated[EmailStr, Field(title='Email')]
 
 
 class Note(RootModel[str]):
@@ -2130,10 +2092,6 @@ class ClientDetail(BaseModel):
     """
     Full client + dossier + per-tier fact lists for ``GET /clients/{id}``.
 
-    ``invite_history`` lists every send for this client, newest first.
-    ``invite_status`` is the derived current state and duplicates what
-    the top of ``invite_history`` implies — consumers can read either.
-
     Fact lists default to active rows only (``redacted_at IS NULL``);
     advisors who want to see redacted history can pass
     ``?include_redacted=1`` on the request.
@@ -2145,8 +2103,8 @@ class ClientDetail(BaseModel):
     id: Annotated[UUID, Field(title='Id')]
     full_name: Annotated[str, Field(title='Full Name')]
     email: Annotated[EmailStr, Field(title='Email')]
-    invite_status: Annotated[InviteStatus, Field(title='Invite Status')]
-    invite_history: Annotated[list[InviteEvent], Field(title='Invite History')]
+    access_status: Annotated[AccessStatus, Field(title='Access Status')]
+    accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
     dossier: DossierDetail | None

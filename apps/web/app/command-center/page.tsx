@@ -2,10 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
+  type AccessStatus,
   type AdvisorItinerarySummary,
   type ClientSummary,
   createApiClient,
-  type InviteStatus,
   listAdvisorItineraries,
   listClients,
 } from "@ov-black/api-client";
@@ -92,7 +92,7 @@ export default async function CommandCenterPage() {
         <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-paper/10 bg-paper/[0.06] sm:grid-cols-5">
           <Metric label="Clients" value={metrics.total} />
           <Metric label="Active" value={metrics.active} />
-          <Metric label="Invites pending" value={metrics.pending} />
+          <Metric label="Awaiting sign-in" value={metrics.pending} />
           <Metric label="Itineraries" value={metrics.itineraries_total} />
           <Metric label="In draft" value={metrics.itineraries_draft} />
         </dl>
@@ -119,7 +119,7 @@ export default async function CommandCenterPage() {
         />
         {clients.length === 0 ? (
           <EmptyNote>
-            The atelier is quiet. Invite the first client to begin.
+            The atelier is quiet. Add the first client to begin.
           </EmptyNote>
         ) : (
           <ClientsTable rows={clients} />
@@ -240,7 +240,7 @@ function ClientsTable({ rows }: { rows: ClientSummary[] }) {
           <tr>
             <Th className="pl-6 sm:pl-10">Name</Th>
             <Th className="hidden md:table-cell">Email</Th>
-            <Th>Invite</Th>
+            <Th>Status</Th>
             <Th>Dossier</Th>
             <Th>Joined</Th>
             <Th className="pr-5 text-right sm:pr-7" />
@@ -264,7 +264,7 @@ function ClientsTable({ rows }: { rows: ClientSummary[] }) {
                 {c.email}
               </Td>
               <Td>
-                <InvitePill status={c.invite_status} />
+                <InvitePill status={c.access_status} />
               </Td>
               <Td className="text-paper/60">{c.has_dossier ? "On file" : "—"}</Td>
               <Td className="whitespace-nowrap text-paper/60">
@@ -322,21 +322,12 @@ function StatusPill({ status }: { status: AdvisorItinerarySummary["status"] }) {
   );
 }
 
-function InvitePill({ status }: { status: InviteStatus }) {
-  const copy =
-    status === "consumed"
-      ? "Accepted"
-      : status === "pending"
-        ? "Pending"
-        : status === "cancelled"
-          ? "Cancelled"
-          : "—";
+function InvitePill({ status }: { status: AccessStatus }) {
+  const copy = status === "active" ? "Active" : "Pending";
   const tone =
-    status === "consumed"
+    status === "active"
       ? "border-paper/40 text-paper"
-      : status === "pending"
-        ? "border-amber-300/40 text-amber-200/90"
-        : "border-paper/15 text-paper/55";
+      : "border-amber-300/40 text-amber-200/90";
   return (
     <span
       className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}
@@ -373,8 +364,8 @@ function summarize(
   let active = 0;
   let pending = 0;
   for (const c of clients) {
-    if (c.invite_status === "consumed") active += 1;
-    if (c.invite_status === "pending") pending += 1;
+    if (c.access_status === "active") active += 1;
+    if (c.access_status === "pending") pending += 1;
   }
   let drafts = 0;
   for (const i of itineraries) {
