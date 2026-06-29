@@ -1,4 +1,4 @@
--- 0025_payment_idempotency.sql
+-- 0030_payment_idempotency.sql
 -- M005 Phase I2/I3 hardening — make a charge safely retryable.
 --
 -- A client that retries POST /invoices/{id}/pay (network blip, double click)
