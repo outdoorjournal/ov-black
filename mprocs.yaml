@@ -17,6 +17,16 @@
 # failures" behaviour. A process stuck in a crash loop can be paused with `x`.
 
 procs:
+  # Live dashboard: every service URL + up/down, refreshing every 5s. This is
+  # the landing pane — glance here to see what's running and where to go.
+  # Supabase (DB/Auth/Studio/Mailpit) is a Docker-managed stack and is NOT a
+  # process here; scripts/dev.sh brings it up as a preflight, and this pane
+  # reports its health.
+  status:
+    shell: "scripts/dev-status.sh"
+    autorestart: true
+    stop: SIGINT
+
   # FastAPI backend on :8000. AGENT_LOCAL_URL points it at the real agent on
   # :8080 (LocalAgentRuntimeClient over HTTP) instead of the in-process mock,
   # so no AWS creds are needed by the API itself. --reload handles its own

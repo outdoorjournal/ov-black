@@ -433,9 +433,10 @@ _CARD_ADAPTER: TypeAdapter[CardAttributes] = TypeAdapter(CardAttributes)
 # Node-level metadata keys that are NOT card attributes. These are stamped on
 # a node's jsonb metadata by the scheduling / templating layer (e.g.
 # ``tz_offset_minutes`` records the node's local UTC offset so the read side
-# can re-emit starts_at in wall-clock). The card-attrs models use
-# ``extra="forbid"``, so these must be stripped before validation.
-_NON_CARD_METADATA_KEYS = frozenset({"tz_offset_minutes"})
+# can re-emit starts_at in wall-clock; ``_seed_status`` carries a template
+# node's intended lifecycle status through instantiation). The card-attrs
+# models use ``extra="forbid"``, so these must be stripped before validation.
+_NON_CARD_METADATA_KEYS = frozenset({"tz_offset_minutes", "_seed_status"})
 
 
 def parse_card_attrs(node_type: str, raw: dict[str, Any] | None) -> CardAttributes:

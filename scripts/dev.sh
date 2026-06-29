@@ -36,6 +36,31 @@ if ! command -v mprocs >/dev/null 2>&1; then
   exit 127
 fi
 
+# ── Preflight: local Supabase (DB + Auth + Studio + Mailpit) ───────────────
+# The API needs Supabase in both modes (JWT validation, DB). It's a
+# Docker-managed stack started by the supabase CLI, so we bring it up here
+# rather than as an mprocs pane. Missing CLI / Docker is a warning, not a hard
+# stop — the app panes still launch and the status pane shows Supabase down.
+ensure_supabase() {
+  if ! command -v supabase >/dev/null 2>&1; then
+    echo "dev.sh: ⚠ supabase CLI not found — skipping local Supabase." >&2
+    echo "        Install: brew install supabase/tap/supabase" >&2
+    return 0
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "dev.sh: ⚠ Docker isn't running — local Supabase can't start." >&2
+    echo "        Start Docker Desktop and re-run (app panes still launch)." >&2
+    return 0
+  fi
+  if supabase status >/dev/null 2>&1; then
+    echo "dev.sh: Supabase already running (Studio :54323 · Mailpit :54324)."
+  else
+    echo "dev.sh: starting local Supabase (DB + Auth + Studio + Mailpit)…"
+    supabase start || echo "dev.sh: ⚠ supabase start failed — see output above." >&2
+  fi
+}
+ensure_supabase
+
 if [[ "$MODE" == "mock" ]]; then
   echo "dev.sh: starting API + web (mock agent, no AWS)…"
   exec mprocs --config mprocs.mock.yaml

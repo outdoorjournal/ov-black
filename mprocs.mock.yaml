@@ -8,6 +8,12 @@
 #   mprocs --config mprocs.mock.yaml
 
 procs:
+  # Live dashboard: service URLs + up/down (agent row omitted in mock mode).
+  status:
+    shell: "scripts/dev-status.sh --mock"
+    autorestart: true
+    stop: SIGINT
+
   api:
     shell: "uv run uvicorn app.main:app --reload --port 8000"
     cwd: apps/api

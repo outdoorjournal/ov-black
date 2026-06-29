@@ -28,7 +28,10 @@ from sqlalchemy import select
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
+from app.inventory.registry import InventoryProviderRegistry
 from app.models import Client
+from app.routers.inventory import get_inventory_registry
+from app.services.japan_live import build_live_japan_itinerary
 from app.services.japan_template import build_japan_template
 from app.services.templates import instantiate_template
 
@@ -65,6 +68,28 @@ class JapanInstantiateResponse(BaseModel):
     trip_start_at: datetime
     node_count: int
     edge_count: int
+
+
+class JapanLiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: uuid.UUID
+    trip_start_at: datetime | None = Field(
+        default=None,
+        description="Trip start anchor. Defaults to 30 days from now at midnight UTC.",
+    )
+    title: str | None = None
+
+
+class JapanLiveResponse(BaseModel):
+    itinerary_id: uuid.UUID
+    trip_start_at: datetime
+    node_count: int
+    edge_count: int
+    # What the providers actually returned this run vs. what was skipped — so
+    # the caller sees the live coverage, never a silent gap.
+    sourced: list[str]
+    skipped: list[str]
 
 
 def _default_trip_start() -> datetime:
@@ -153,4 +178,63 @@ async def instantiate_japan_demo(
         trip_start_at=trip_start_at,
         node_count=len(node_count),
         edge_count=len(edge_count),
+    )
+
+
+@router.post(
+    "/japan-live",
+    response_model=JapanLiveResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Build a Japan itinerary from LIVE inventory (Duffel + Google Places).",
+)
+async def instantiate_japan_live_demo(
+    payload: JapanLiveRequest,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+    registry: InventoryProviderRegistry = Depends(get_inventory_registry),
+) -> JapanLiveResponse:
+    """Assemble a fresh itinerary for ``client_id`` from live provider results.
+
+    Unlike ``/japan`` (a static hand-authored template), every card here is
+    sourced at call time — Duffel flights, Google-Places meals + experiences —
+    and cached for reuse. The advisor must own the client; the response carries
+    the new itinerary id plus what was sourced vs. skipped.
+    """
+    try:
+        advisor_uuid = uuid.UUID(user.sub)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid_user_sub") from exc
+
+    client = await _resolve_client_owned_by(
+        session, client_id=payload.client_id, advisor_user_id=advisor_uuid
+    )
+    trip_start_at = payload.trip_start_at or _default_trip_start()
+
+    report = await build_live_japan_itinerary(
+        session,
+        registry,
+        client_id=client.id,
+        trip_start_at=trip_start_at,
+        created_by=advisor_uuid,
+        title=payload.title,
+    )
+
+    logger.info(
+        "demos.japan_live.instantiated",
+        extra={
+            "advisor_id": str(advisor_uuid),
+            "client_id": str(client.id),
+            "itinerary_id": str(report.itinerary_id),
+            "node_count": report.node_count,
+            "edge_count": report.edge_count,
+            "skipped": len(report.skipped),
+        },
+    )
+    return JapanLiveResponse(
+        itinerary_id=report.itinerary_id,
+        trip_start_at=trip_start_at,
+        node_count=report.node_count,
+        edge_count=report.edge_count,
+        sourced=report.sourced,
+        skipped=report.skipped,
     )

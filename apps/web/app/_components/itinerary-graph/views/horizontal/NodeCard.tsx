@@ -63,6 +63,19 @@ export function inferCardKind(node: NodeResponse): CardKind {
       return "note";
     case "destination":
       return "destination";
+    // Granular Phase-1 transit modes carry their own card kind 1:1.
+    case "subway":
+      return "subway";
+    case "train":
+      return "train";
+    case "drive":
+      return "drive";
+    case "walk":
+      return "walk";
+    case "boat":
+      return "boat";
+    case "waiting":
+      return "waiting";
     case "transit": {
       const txt = `${node.title} ${meta.mode ?? ""}`.toLowerCase();
       if (/ferry|boat|water/.test(txt)) return "boat";

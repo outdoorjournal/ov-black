@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CardTemplate, EdgeType, NodeType
+from app.models import CardTemplate, EdgeType, NodeStatus, NodeType
 from app.seed_data.japan_itinerary import JAPAN_DAYS, FixtureItem
 from app.services.templates import (
     add_template_edge,
@@ -109,6 +109,12 @@ async def build_japan_template(session: AsyncSession) -> CardTemplate:
             utcoffset = item.starts_at.utcoffset()
             if utcoffset is not None:
                 metadata["tz_offset_minutes"] = int(utcoffset.total_seconds() // 60)
+            # Carry the fixture item's intended lifecycle status through the
+            # template so instantiation reproduces a realistic spread of
+            # confirmed / booked / approved / proposed cards instead of a wall
+            # of identical "proposed" nodes. Stripped from node metadata at
+            # instantiation (see services/templates.instantiate_template).
+            metadata["_seed_status"] = NodeStatus(item.status).value
             tnode = await add_template_node(
                 session,
                 template_id=template.id,

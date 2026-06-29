@@ -41,7 +41,7 @@ import {
 } from "react";
 
 import { AlternativeControls } from "../../shared/AlternativeControls";
-import { Card } from "../../shared/ExpandedCard";
+import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { NotesPanel } from "../../shared/NotesPanel";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
 import type { ItineraryTimeline, NodeResponse } from "../../model/horizontalTypes";
@@ -872,29 +872,41 @@ export function HorizontalView({
             onClick={() => setExpandedId(null)}
           >
             <motion.div
-              className="flex w-full max-w-xl flex-col gap-3"
+              className="flex max-h-[88vh] w-full max-w-4xl flex-col items-start gap-4 overflow-y-auto md:flex-row"
               onClick={(e) => e.stopPropagation()}
             >
-              <Card node={expandedNode} mood={timeline.mood} />
-              {expandedNode.type !== "note" ? (
-                <NotesPanel
-                  notes={attachedNotes.get(expandedNode.id) ?? []}
-                  canAdd={canLeaveNote}
-                  onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
-                />
-              ) : null}
-              {editable ? (
-                <NodeEditPanel
-                  key={expandedNode.id}
+              {/* Hero: the rich zoom card. */}
+              <div className="w-full min-w-0 md:flex-1">
+                <NodeZoomCard
                   node={expandedNode}
-                  onEditField={(field, value) =>
-                    storeApi.getState().editNodeField(expandedNode.id, field, value)
-                  }
-                  onRemove={() => {
-                    storeApi.getState().removeNode(expandedNode.id);
-                    setExpandedId(null);
-                  }}
+                  tzOffsetHours={timeline.timezoneOffsetHours}
                 />
+              </div>
+              {/* Companion rail: notes + (advisor) edit controls fold in here
+                  instead of stacking as full-width boxes under the card. */}
+              {expandedNode.type !== "note" || editable ? (
+                <aside className="flex w-full shrink-0 flex-col gap-3 md:w-[300px]">
+                  {expandedNode.type !== "note" ? (
+                    <NotesPanel
+                      notes={attachedNotes.get(expandedNode.id) ?? []}
+                      canAdd={canLeaveNote}
+                      onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
+                    />
+                  ) : null}
+                  {editable ? (
+                    <NodeEditPanel
+                      key={expandedNode.id}
+                      node={expandedNode}
+                      onEditField={(field, value) =>
+                        storeApi.getState().editNodeField(expandedNode.id, field, value)
+                      }
+                      onRemove={() => {
+                        storeApi.getState().removeNode(expandedNode.id);
+                        setExpandedId(null);
+                      }}
+                    />
+                  ) : null}
+                </aside>
               ) : null}
             </motion.div>
           </motion.div>

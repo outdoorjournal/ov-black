@@ -269,6 +269,15 @@ async def instantiate_template(
         new_id = uuid.uuid4()
         new_id_by_template_node[tn.id] = new_id
 
+        # A template node may carry an intended lifecycle status in its
+        # metadata (``_seed_status``) so a seeded demo shows real status
+        # variety — confirmed flights, booked hotels, proposed ideas — and
+        # exercises the substrate-weight card design. Strip the key before
+        # persisting so it never reaches the node's card-attrs metadata, and
+        # fall back to ``proposed`` for plain templates / unknown values.
+        node_metadata = {k: v for k, v in tn.metadata_.items() if k != "_seed_status"}
+        seed_status = _coerce_node_status(tn.metadata_.get("_seed_status"))
+
         await session.execute(
             text(
                 """
@@ -309,9 +318,9 @@ async def instantiate_template(
                     str(new_id_by_template_node[tn.parent_id]) if tn.parent_id is not None else None
                 ),
                 "type": tn.type.value,
-                "status": NodeStatus.proposed.value,
+                "status": seed_status,
                 "title": tn.title,
-                "meta": _to_json(tn.metadata_),
+                "meta": _to_json(node_metadata),
                 "role": tn.role.value if tn.role is not None else None,
                 "sel": tn.is_selected_alt,
                 "lo": lower,
@@ -360,6 +369,19 @@ async def instantiate_template(
     await session.refresh(itinerary)
     _ = by_id  # silence: kept for future debug paths
     return itinerary
+
+
+def _coerce_node_status(raw: Any) -> str:
+    """Validate a ``_seed_status`` metadata value against the node_status
+    enum, falling back to ``proposed`` for missing / unknown values so a
+    malformed template can never wedge instantiation.
+    """
+    if isinstance(raw, str):
+        try:
+            return NodeStatus(raw).value
+        except ValueError:
+            pass
+    return NodeStatus.proposed.value
 
 
 def _to_json(value: dict[str, Any]) -> str:

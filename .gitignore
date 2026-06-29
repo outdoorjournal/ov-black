@@ -48,3 +48,6 @@ next-env.d.ts
 
 # AWS-style ovb CLI config (apps/cli) — may hold secrets; never commit.
 .cli
+
+# Local inventory provider cache (Google Places / Duffel results)
+apps/api/.inventory_cache/

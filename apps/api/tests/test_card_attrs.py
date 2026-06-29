@@ -190,6 +190,7 @@ def test_japan_fixture_loads() -> None:
         "2024-06-20",
         "2024-06-21",
         "2024-06-24",
+        "2024-06-27",
         "2024-07-04",
     }
 
@@ -219,10 +220,24 @@ def test_japan_fixture_covers_phase2_card_kinds() -> None:
     be smoke-tested against real data.
     """
     kinds = {item.attrs.kind for item in all_items()}
-    # We don't need every kind — boat / waiting / drive don't appear in
-    # this trip. But the most-used kinds must be present so a failure on
-    # any of these surfaces in this single test.
-    for required in ("flight", "subway", "train", "hotel", "experience", "meal", "note"):
+    # The seeded demo doubles as the showcase for the full card taxonomy,
+    # so every non-legacy kind must appear at least once. A failure here
+    # means the seeded itinerary stopped exercising a card type the
+    # /prototype/cards design system renders.
+    for required in (
+        "flight",
+        "subway",
+        "train",
+        "drive",
+        "walk",
+        "boat",
+        "hotel",
+        "experience",
+        "meal",
+        "free_time",
+        "waiting",
+        "note",
+    ):
         assert required in kinds, f"missing {required!r} in Japan fixture"
 
 
