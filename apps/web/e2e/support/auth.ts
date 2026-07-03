@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // Stable, throwaway identities. Override per-machine / for staging via env.
@@ -28,7 +37,7 @@ function getSupabaseUrl(): string {
   return process.env["SUPABASE_URL"] ?? "http://127.0.0.1:54321";
 }
 
-function getApiBaseUrl(): string {
+export function getApiBaseUrl(): string {
   return process.env["E2E_API_BASE_URL"] ?? "http://localhost:8000";
 }
 
@@ -145,11 +154,38 @@ export async function advisorCallbackUrl(baseURL: string): Promise<string> {
 // worker that provisions several fresh travelers would otherwise mint the same
 // advisor link repeatedly and stomp on itself (and on setup:advisor). One
 // advisor access token is good for the whole worker's run.
-let cachedAdvisorToken: string | null = null;
-function mintAdvisorAccessToken(): string {
-  if (cachedAdvisorToken) {
-    return cachedAdvisorToken;
+// Cross-worker cache for the advisor access token. Playwright spreads spec
+// FILES across worker processes, and GoTrue invalidates concurrent magic-link
+// generation for one email — so if every worker minted its own advisor link at
+// startup they'd stomp on each other ("verify did not return access_token").
+// The in-process memo alone can't help: each worker is a separate process. So
+// we mint exactly once per run and share the token through a tmp file guarded by
+// an exclusive lock; late workers wait for the file rather than minting again.
+const ADVISOR_TOKEN_CACHE = path.join(
+  os.tmpdir(),
+  `ovb-e2e-advisor-token-${E2E_ADVISOR_EMAIL.replace(/[^a-z0-9]/gi, "_")}`,
+);
+const TOKEN_MAX_AGE_MS = 30 * 60 * 1000; // JWTs live ~1h; refresh well inside that.
+
+// Block the current worker without a busy-loop (this code path is sync).
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function readFreshCachedToken(): string | null {
+  try {
+    if (!existsSync(ADVISOR_TOKEN_CACHE)) return null;
+    if (Date.now() - statSync(ADVISOR_TOKEN_CACHE).mtimeMs > TOKEN_MAX_AGE_MS) {
+      return null;
+    }
+    const token = readFileSync(ADVISOR_TOKEN_CACHE, "utf8").trim();
+    return token || null;
+  } catch {
+    return null;
   }
+}
+
+function runMintJwt(): string {
   const script = path.join(repoRoot(), "scripts", "mint-jwt.sh");
   const token = execFileSync(
     script,
@@ -159,8 +195,58 @@ function mintAdvisorAccessToken(): string {
   if (!token) {
     throw new Error("mint-jwt.sh returned no token");
   }
-  cachedAdvisorToken = token;
   return token;
+}
+
+let cachedAdvisorToken: string | null = null;
+export function mintAdvisorAccessToken(): string {
+  if (cachedAdvisorToken) {
+    return cachedAdvisorToken;
+  }
+
+  const cached = readFreshCachedToken();
+  if (cached) {
+    cachedAdvisorToken = cached;
+    return cached;
+  }
+
+  // Exactly one worker wins the lock and mints; the others wait for its token.
+  const lockPath = `${ADVISOR_TOKEN_CACHE}.lock`;
+  let haveLock = false;
+  try {
+    closeSync(openSync(lockPath, "wx")); // atomic create-or-fail (O_EXCL)
+    haveLock = true;
+  } catch {
+    haveLock = false;
+  }
+
+  if (!haveLock) {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const token = readFreshCachedToken();
+      if (token) {
+        cachedAdvisorToken = token;
+        return token;
+      }
+      sleepSync(250);
+    }
+    // The lock holder never delivered (crashed?) — fall through and mint.
+  }
+
+  try {
+    const token = runMintJwt();
+    writeFileSync(ADVISOR_TOKEN_CACHE, token, "utf8");
+    cachedAdvisorToken = token;
+    return token;
+  } finally {
+    if (haveLock) {
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        /* best-effort unlock */
+      }
+    }
+  }
 }
 
 // Ensure a clients row whose email is the traveler's exists, owned by the
@@ -284,4 +370,25 @@ export async function freshTravelerCallbackUrl(
     email,
     callbackUrl: callbackUrl(baseURL, await mintHashedToken(supabaseUrl, key, email)),
   };
+}
+
+/**
+ * A single-use `/auth/callback` URL that signs in an **already-invited** email
+ * — the traveler auth user + linked client already exist (e.g. an advisor just
+ * created them through the Command Center UI). Unlike freshTravelerCallbackUrl
+ * this provisions NOTHING beyond confirming the user; it exists so a test can
+ * drive the *second half* of ONB-1 — the invited traveler clicking their link —
+ * against a client the browser flow already created. Local-only for the same
+ * reason (we don't mint throwaway sessions against a deployed Supabase).
+ */
+export async function travelerCallbackUrlForEmail(
+  baseURL: string,
+  email: string,
+): Promise<string> {
+  const supabaseUrl = getSupabaseUrl();
+  const key = getServiceRoleKey(supabaseUrl);
+  if (isLocalSupabase(supabaseUrl)) {
+    await confirmUser(supabaseUrl, key, email);
+  }
+  return callbackUrl(baseURL, await mintHashedToken(supabaseUrl, key, email));
 }

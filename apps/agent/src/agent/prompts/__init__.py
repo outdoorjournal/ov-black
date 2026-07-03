@@ -11,7 +11,7 @@ from __future__ import annotations
 from agent.prompts.onboarding import build_onboarding_prompt
 from agent.prompts.planning import build_planning_prompt
 from agent.prompts.qa import build_qa_prompt
-from agent.prompts.shared import VOICE_PREAMBLE
+from agent.prompts.shared import RENDERING_NOTE, VOICE_PREAMBLE
 from agent.schemas import Mode
 
 
@@ -41,7 +41,7 @@ def build_prompt(
     else:
         rubric = build_qa_prompt(itinerary_id_present=itinerary_id_present)
 
-    return f"{preamble}\n\n{rubric}"
+    return f"{preamble}\n\n{rubric}\n\n{RENDERING_NOTE}"
 
 
 __all__ = ["build_prompt", "VOICE_PREAMBLE"]

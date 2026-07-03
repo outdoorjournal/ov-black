@@ -12,6 +12,7 @@
 // the ambience. The mood applies only to the rail itself (which sits in
 // its own positioned container) — the basecamp chrome stays intact.
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
@@ -67,6 +68,9 @@ export type RightRailChatProps = {
   // Null indicates we need to lazily open one on first send (rare in
   // practice — variant (c)/(d) is reached only with prior turns).
   existingSessionId: string | null;
+  // The server's onboarding_complete verdict at last render. We watch it for a
+  // false→true flip (after a post-turn refresh) to fire the milestone card.
+  onboardingComplete: boolean;
 };
 
 export function RightRailChat(props: RightRailChatProps) {
@@ -82,15 +86,29 @@ function RightRailChatInner({
   accessToken,
   apiBaseUrl,
   existingSessionId,
+  onboardingComplete,
 }: RightRailChatProps) {
   const turns = basecampChatStore.useStore((s) => s.turns);
   const streaming = basecampChatStore.useStore((s) => s.streaming);
   const currentMood = basecampChatStore.useStore((s) => s.currentMood);
   const storeApi = basecampChatStore.useStoreApi();
 
+  const router = useRouter();
   const sessionIdRef = useRef<string | null>(existingSessionId);
   const abortRef = useRef<AbortController | null>(null);
   const moodPhaseRef = useRef(0);
+  // Prior onboarding_complete value, for false→true flip detection.
+  const prevOnboardingCompleteRef = useRef(onboardingComplete);
+
+  // Fire the milestone card once, the moment the server's verdict flips true
+  // (after a post-turn refresh re-reads it). commitMilestone is itself
+  // fire-once, so this is belt-and-braces.
+  useEffect(() => {
+    if (!prevOnboardingCompleteRef.current && onboardingComplete) {
+      storeApi.getState().commitMilestone();
+    }
+    prevOnboardingCompleteRef.current = onboardingComplete;
+  }, [onboardingComplete, storeApi]);
 
   const getAccessToken = useMemo<() => Promise<string | null>>(() => {
     let supabase: ReturnType<typeof createBrowserSupabase> | null = null;
@@ -120,9 +138,22 @@ function RightRailChatInner({
     },
     onDone: (frame: DoneFrame) => {
       storeApi.getState().finishStream(frame);
+      // Still onboarding? Re-read the server's verdict. A fact the agent
+      // recorded this turn may have satisfied the rule — the refresh both
+      // clears the reminder (server re-renders) and flips onboardingComplete,
+      // which the effect above turns into the milestone card. Soft refresh:
+      // the chat store and this component keep their state.
+      if (!onboardingComplete) {
+        router.refresh();
+      }
     },
     onError: (frame: ErrorFrame) => {
       storeApi.getState().errorStream(frame);
+    },
+    onItineraryUpdated: () => {
+      // Agent set the trip's dates. Basecamp renders trip timing server-side
+      // (the itinerary cards), so re-pull it; the chat store keeps its state.
+      router.refresh();
     },
     onMood: (frame: MoodFrame) => {
       const mood = asMoodId(frame.mood_id);

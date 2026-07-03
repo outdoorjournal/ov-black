@@ -14,12 +14,13 @@ from agent.tools.fill import fill_gap
 from agent.tools.fork import fork_itinerary
 from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
-from agent.tools.mutations import move_node, update_node_status
+from agent.tools.mutations import move_node, update_node_status, update_trip_timing
 from agent.tools.notes import add_note
 from agent.tools.proposals import assemble_draft, propose_card, propose_flight
 from agent.tools.reconcile import reconcile_alternative
 from agent.tools.request_reconcile import request_reconcile
 from agent.tools.set_mood import set_mood
+from agent.tools.timeline import propose_timeline
 from agent.tools.traveler import (
     get_traveler_context,
     record_dossier_inference,
@@ -36,6 +37,7 @@ _TOOLS_ONBOARDING = [
     search_inventory,
     get_inventory_detail,
     propose_card,
+    propose_timeline,
     set_mood,
 ]
 
@@ -51,8 +53,10 @@ _TOOLS_PLANNING = [
     fill_gap,
     propose_card,
     propose_flight,
+    propose_timeline,
     assemble_draft,
     update_node_status,
+    update_trip_timing,
     move_node,
     add_note,
     fork_itinerary,
@@ -69,6 +73,7 @@ _TOOLS_QA = [
     get_traveler_context,
     list_itineraries,
     get_itinerary,
+    propose_timeline,
     add_note,
     fork_itinerary,
     move_node,

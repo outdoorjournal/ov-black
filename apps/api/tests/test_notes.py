@@ -189,9 +189,11 @@ async def test_free_standing_note_falls_back_to_metadata_start_time(
 
 @integration
 @pytest.mark.asyncio
-async def test_note_without_any_anchor_is_validation_error(
+async def test_note_without_any_anchor_is_collection_note(
     db_session: AsyncSession,
 ) -> None:
+    # A timeless, unattached note is a valid Collection note (0035): it lives in
+    # the wish list unscheduled rather than being rejected.
     itinerary = await create_itinerary(db_session, _actor(), title="notes none")
     try:
         result = await add_node(
@@ -201,8 +203,9 @@ async def test_note_without_any_anchor_is_validation_error(
             type=NodeType.note,
             title="floating",
         )
-        assert isinstance(result, ItineraryError)
-        assert result.outcome is ItineraryOutcome.VALIDATION_ERROR
+        assert not isinstance(result, ItineraryError)
+        assert result.starts_at is None
+        assert result.attached_to_node_id is None
     finally:
         await _cleanup(itinerary.id)
 

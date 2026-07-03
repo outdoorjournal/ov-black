@@ -15,6 +15,7 @@
 // eagerly opens to replay history.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   createApiClient,
@@ -62,6 +63,7 @@ export function ConciergeChat({
     (s) => s.pendingProposals,
   );
   const storeApi = itineraryGraphStore.useStoreApi();
+  const router = useRouter();
 
   const [messages, setMessages] = useState<ChatMessage[]>(
     intro
@@ -156,6 +158,12 @@ export function ConciergeChat({
         source_id: node.source_id ?? null,
         metadata: node.metadata ?? {},
       });
+    },
+    onItineraryUpdated: () => {
+      // The trip's dates changed. Timing is server-rendered onto the timeline
+      // prop (not the client store), so re-run the route's RSC to pull the
+      // fresh window; the store's in-session graph state survives the refresh.
+      router.refresh();
     },
   });
 

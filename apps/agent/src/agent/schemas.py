@@ -91,6 +91,30 @@ class ProposeCardArgs(BaseModel):
     snapshot: dict = Field(default_factory=dict)
 
 
+class TimelineDay(BaseModel):
+    """One entry in a ``propose_timeline`` "shape of the trip" block."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=40, description="Rail label, e.g. 'Day 1' or 'Days 2–3'.")
+    title: str = Field(min_length=1, max_length=200, description="Anchor of the day — a place or move.")
+    detail: str = Field(default="", max_length=280, description="Optional supporting line.")
+
+
+class ProposeTimelineArgs(BaseModel):
+    """Args for the ``propose_timeline`` tool.
+
+    Unlike the other arg models here, this one is actually enforced inside
+    the tool: the result is materialised verbatim into the reply the traveler
+    reads, so a malformed shape must reject rather than render.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    days: list[TimelineDay] = Field(min_length=1, max_length=30)
+    caption: str = Field(default="", max_length=80)
+
+
 class AssembleDraftDay(BaseModel):
     """One day in ``assemble_draft``'s plan."""
 

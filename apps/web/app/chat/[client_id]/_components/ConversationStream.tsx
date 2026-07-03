@@ -11,6 +11,8 @@
 
 import { useEffect, useRef } from "react";
 
+import { OnboardingMilestoneCard } from "./OnboardingMilestoneCard";
+import { ProseMessage } from "./ProseMessage";
 import type { AgentTurnView, StreamState } from "./types";
 
 export const CRAFTED_FALLBACK_COPY =
@@ -67,7 +69,11 @@ export function ConversationStream({
             data-turn-index={streaming.turnIndex}
             className="font-serif text-[21px] leading-relaxed text-ink"
           >
-            {streaming.buffer || "\u00a0"}
+            {streaming.buffer.trim() ? (
+              <ProseMessage content={streaming.buffer} />
+            ) : (
+              "\u00a0"
+            )}
           </div>
         ) : null}
       </div>
@@ -76,6 +82,10 @@ export function ConversationStream({
 }
 
 function TurnRow({ turn }: { turn: AgentTurnView }) {
+  if (turn.role === "milestone") {
+    return <OnboardingMilestoneCard />;
+  }
+
   if (turn.role === "error") {
     return (
       <div
@@ -95,7 +105,7 @@ function TurnRow({ turn }: { turn: AgentTurnView }) {
         data-role="assistant"
         className="font-serif text-[21px] leading-relaxed text-ink"
       >
-        {turn.content}
+        <ProseMessage content={turn.content} />
       </div>
     );
   }

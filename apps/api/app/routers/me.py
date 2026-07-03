@@ -100,6 +100,21 @@ class MyInvoicesResponse(BaseModel):
     invoices: list[MyInvoiceSummary]
 
 
+def evaluate_onboarding(*, profile_fact_count: int) -> bool:
+    """The single, swappable "do we know enough about this traveler?" rule.
+
+    Today it's satisfied by one thing the traveler told us about themselves
+    (one non-redacted ``profile_facts`` row). This is deliberately the ONLY
+    place the criterion lives: the basecamp reminder and the in-chat milestone
+    card both key off its result (exposed as ``onboarding_complete``), so
+    raising the bar — e.g. two facts plus a known age — is a change to this
+    function alone, with no caller or UI edits. Keep the *inputs* explicit
+    (add parameters like ``age_known`` as the rule grows) rather than reaching
+    into globals, so the rule stays unit-testable in isolation.
+    """
+    return profile_fact_count >= 2
+
+
 class MyOnboardingSessionResponse(BaseModel):
     """Summary of the calling client's most-recent ACTIVE agent session.
 
@@ -111,13 +126,16 @@ class MyOnboardingSessionResponse(BaseModel):
     the first-prompt opener UI so a user who clicks Skip / Close is not
     re-shown the opener on the next page load.
 
-    ``has_profile_facts`` is true iff the client has at least one
-    non-redacted ``profile_facts`` row — i.e. the traveler has told us
-    something about themselves. Basecamp combines it with the variant to
+    ``onboarding_complete`` is the single "do we know enough about this
+    traveler yet?" verdict, computed by :func:`evaluate_onboarding` — the
+    ONE place that rule lives. Basecamp combines it with the variant to
     decide the onboarding nudge: a client in the ``post_first_touch``
-    state (a session exists, but no itinerary yet) with **no** profile
-    facts skipped onboarding before we learned anything, so basecamp
-    shows a gentle "finish your profile" reminder.
+    state (a session exists, but no itinerary yet) who is **not** yet
+    onboarding-complete skipped before we learned enough, so basecamp
+    shows a gentle reminder; the in-chat milestone card fires on the same
+    verdict flipping true. Because both surfaces read this one derived
+    field, evolving the rule (e.g. to require two facts plus a known age)
+    touches only ``evaluate_onboarding``.
 
     All session-scoped fields are null when no active session exists.
     """
@@ -129,7 +147,7 @@ class MyOnboardingSessionResponse(BaseModel):
     last_turn_at: datetime | None
     seeded_opener: str | None
     has_prior_session: bool
-    has_profile_facts: bool
+    onboarding_complete: bool
 
 
 @router.get(
@@ -273,7 +291,7 @@ async def get_my_onboarding_session_endpoint(
         last_turn_at=None,
         seeded_opener=None,
         has_prior_session=False,
-        has_profile_facts=False,
+        onboarding_complete=False,
     )
     try:
         user_id = uuid.UUID(user.sub)
@@ -284,11 +302,11 @@ async def get_my_onboarding_session_endpoint(
     if client is None:
         return empty
 
-    # Has any non-redacted profile fact been recorded for this client? Drives
-    # the onboarding nudge — a post_first_touch client with none skipped before
-    # telling us anything. Redacted (soft-deleted) facts don't count, matching
-    # the active-fact filter used everywhere else (services/facts.py).
-    has_profile_facts = bool(
+    # Count the client's non-redacted profile facts (soft-deleted rows excluded,
+    # matching the active-fact filter in services/facts.py) and feed it to the
+    # ONE onboarding rule. The bool it returns — never the raw count — drives
+    # both the nudge and the milestone card.
+    profile_fact_count = int(
         (
             await session.execute(
                 select(func.count(ProfileFact.id)).where(
@@ -298,6 +316,7 @@ async def get_my_onboarding_session_endpoint(
             )
         ).scalar_one()
     )
+    onboarding_complete = evaluate_onboarding(profile_fact_count=profile_fact_count)
 
     # Has-prior is independent of active/ended status — it gates the
     # first-prompt opener UI so a Skip / Close click is not re-prompted
@@ -332,7 +351,7 @@ async def get_my_onboarding_session_endpoint(
             last_turn_at=None,
             seeded_opener=None,
             has_prior_session=has_prior_session,
-            has_profile_facts=has_profile_facts,
+            onboarding_complete=onboarding_complete,
         )
 
     summary = (
@@ -355,5 +374,5 @@ async def get_my_onboarding_session_endpoint(
         last_turn_at=last_turn_at,
         seeded_opener=agent_session.seeded_opener,
         has_prior_session=has_prior_session,
-        has_profile_facts=has_profile_facts,
+        onboarding_complete=onboarding_complete,
     )

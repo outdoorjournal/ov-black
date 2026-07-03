@@ -21,6 +21,7 @@ import {
   createApiClient,
   createSessionEndpoint,
   dismissOnboarding,
+  getMyOnboardingSession,
   type OnboardingOpenerResponse,
 } from "@ov-black/api-client";
 
@@ -108,6 +109,11 @@ function SinglePromptInner({
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const moodPhaseRef = useRef(0);
+  // Fire-once guard for the milestone card. The first-touch card can't
+  // router.refresh() (it would flip the server variant and unmount this
+  // conversation mid-stream), so after each turn we poll the onboarding verdict
+  // directly and drop the card in place when it flips true.
+  const milestoneFiredRef = useRef(false);
 
   // Token provider (mirrors ChatShell). Pulled fresh on every send so an
   // expired SSR token gets replaced by the auto-refreshed one in the
@@ -145,6 +151,21 @@ function SinglePromptInner({
     },
     onDone: (frame: DoneFrame) => {
       storeApi.getState().finishStream(frame);
+      // After the turn settles, poll the server's onboarding verdict. If a fact
+      // the agent just recorded satisfied the rule, drop the milestone card in
+      // place. No router.refresh() here (it would unmount this first-touch view).
+      if (!milestoneFiredRef.current) {
+        void (async () => {
+          const token = await getAccessToken();
+          if (!token) return;
+          const api = createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
+          const result = await getMyOnboardingSession(api);
+          if (result.ok && result.session.onboarding_complete) {
+            milestoneFiredRef.current = true;
+            storeApi.getState().commitMilestone();
+          }
+        })();
+      }
     },
     onError: (frame: ErrorFrame) => {
       storeApi.getState().errorStream(frame);

@@ -24,6 +24,20 @@ _RUBRIC_BASE = (
     "aside renders it."
 )
 
+_GETTING_TO_KNOW_YOU = (
+    "\n\nWhen the traveler tells you something real about themselves — a "
+    "preference, a passion, a deal-breaker, a place that marked them — you MUST "
+    "call ``record_profile_fact`` for it in the same turn, one call per "
+    "distinct fact, BEFORE you reply. Save a named travelling companion with "
+    "``record_party_member`` instead; use ``record_dossier_inference`` only for "
+    "a private guess, never for something they said outright. Do NOT tell the "
+    "traveler you have noted, recorded, or will remember anything unless you "
+    "actually called the tool this turn — a claim without the tool call is a "
+    "lie to them. Once recorded, acknowledge the moment warmly in a few words "
+    "and carry the conversation forward — a light touch, not a recap of "
+    "everything you have learned."
+)
+
 _AMBIENCE_BLOCK = (
     "\n\nAmbience: when the client says something specific enough that a "
     "scene-shift would feel responsive (a destination, a season, a vibe), "
@@ -37,4 +51,4 @@ _AMBIENCE_BLOCK = (
 
 
 def build_onboarding_prompt() -> str:
-    return _RUBRIC_BASE + _AMBIENCE_BLOCK
+    return _RUBRIC_BASE + _GETTING_TO_KNOW_YOU + _AMBIENCE_BLOCK

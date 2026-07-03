@@ -43,10 +43,11 @@ export type BasecampShellProps = {
   // via createSessionEndpoint — open_or_reuse_session is idempotent.
   sessionId: string | null;
   priorTurns: AgentTurnSummary[];
-  // Whether the traveler has any recorded profile fact. When false on the
-  // post_first_touch variant, they skipped onboarding before we learned
-  // anything, so we show the "finish your introduction" reminder (ONB-2A).
-  hasProfileFacts: boolean;
+  // The server's one "do we know enough about this traveler?" verdict
+  // (evaluate_onboarding). When false on the post_first_touch variant we show
+  // the "finish your introduction" reminder; RightRailChat also watches it to
+  // fire the milestone card the moment it flips true (ONB-2A).
+  onboardingComplete: boolean;
 };
 
 export function BasecampShell({
@@ -58,7 +59,7 @@ export function BasecampShell({
   itineraries,
   sessionId,
   priorTurns,
-  hasProfileFacts,
+  onboardingComplete,
 }: BasecampShellProps) {
   return (
     <BasecampChrome>
@@ -75,7 +76,7 @@ export function BasecampShell({
         <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[1fr_minmax(0,480px)] lg:gap-10">
           <div className="flex flex-col gap-6">
             <AccountLinks />
-            {hasProfileFacts ? <EmptyItinerariesHint /> : <OnboardingReminder />}
+            {onboardingComplete ? <EmptyItinerariesHint /> : <OnboardingReminder />}
           </div>
           <RightRailChat
             clientId={clientId}
@@ -83,6 +84,7 @@ export function BasecampShell({
             apiBaseUrl={apiBaseUrl}
             initialTurns={priorTurns}
             existingSessionId={sessionId}
+            onboardingComplete={onboardingComplete}
           />
         </div>
       ) : null}
@@ -99,6 +101,7 @@ export function BasecampShell({
             apiBaseUrl={apiBaseUrl}
             initialTurns={priorTurns}
             existingSessionId={sessionId}
+            onboardingComplete={onboardingComplete}
           />
         </div>
       ) : null}

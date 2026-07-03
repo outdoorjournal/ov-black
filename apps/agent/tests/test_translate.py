@@ -115,6 +115,29 @@ def test_tool_result_update_node_status_maps_to_node_updated() -> None:
     }
 
 
+def test_tool_result_update_trip_timing_maps_to_itinerary_updated() -> None:
+    event = {
+        "tool_result": {
+            "name": "update_trip_timing",
+            "output": {
+                "id": "it-1",
+                "timing_kind": "exact",
+                "date_start": "2026-08-10",
+                "date_end": "2026-08-18",
+            },
+        }
+    }
+    assert _one(event) == {
+        "type": "itinerary_updated",
+        "itinerary": {
+            "id": "it-1",
+            "timing_kind": "exact",
+            "date_start": "2026-08-10",
+            "date_end": "2026-08-18",
+        },
+    }
+
+
 def test_tool_result_read_only_tool_has_no_ui_frame() -> None:
     # get_traveler_context is a read — no SSE frame for the browser.
     event = {"tool_result": {"name": "get_traveler_context", "output": {"profile_facts": []}}}
@@ -214,6 +237,71 @@ def test_update_node_status_paired_messages_emits_node_updated() -> None:
     assert frames == [
         {"type": "node_updated", "node": {"id": "node-2", "status": "approved"}}
     ]
+
+
+def test_update_trip_timing_paired_messages_emits_itinerary_updated() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-8", "update_trip_timing")))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event(
+                "tu-8",
+                {"id": "it-9", "timing_kind": "window", "duration_nights": 7},
+            )
+        )
+    )
+    assert frames == [
+        {
+            "type": "itinerary_updated",
+            "itinerary": {
+                "id": "it-9",
+                "timing_kind": "window",
+                "duration_nights": 7,
+            },
+        }
+    ]
+
+
+def test_propose_timeline_materializes_ov_timeline_delta() -> None:
+    # propose_timeline has no bespoke frame: it renders into the reply text as a
+    # fenced ov-timeline block, emitted as a plain delta so the API's text
+    # accumulation persists it with the turn.
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-tl", "propose_timeline")))
+    payload = {
+        "caption": "The shape of the week",
+        "days": [
+            {"label": "Day 1", "title": "Arrive Fiskardo", "detail": "embark, settle"},
+            {"label": "Days 2–3", "title": "North toward Lefkada"},
+        ],
+    }
+    frames = list(translator.translate(_tool_result_message_event("tu-tl", payload)))
+
+    assert len(frames) == 1
+    frame = frames[0]
+    assert frame["type"] == "delta"
+    text = frame["text"]
+    # Fenced as its own markdown block, arriving as one atomic delta.
+    assert text.startswith("\n\n```ov-timeline\n")
+    assert text.endswith("\n```\n\n")
+    body = text.split("```ov-timeline\n", 1)[1].rsplit("\n```", 1)[0]
+    parsed = json.loads(body)
+    assert parsed["caption"] == "The shape of the week"
+    assert [d["title"] for d in parsed["days"]] == [
+        "Arrive Fiskardo",
+        "North toward Lefkada",
+    ]
+
+
+def test_propose_timeline_error_payload_drops_block() -> None:
+    translator = EventTranslator()
+    list(translator.translate(_assistant_tool_use_event("tu-tlx", "propose_timeline")))
+    frames = list(
+        translator.translate(
+            _tool_result_message_event("tu-tlx", {"error": "invalid_timeline"})
+        )
+    )
+    assert frames == []
 
 
 def test_tool_result_without_prior_tool_use_is_dropped() -> None:

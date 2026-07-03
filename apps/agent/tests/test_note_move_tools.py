@@ -134,3 +134,99 @@ async def test_move_node_unknown_node_raises(monkeypatch: pytest.MonkeyPatch) ->
         assert exc.value.reason == "not_found"
     finally:
         pin_ctx.reset(token)
+
+
+def _capture_patch(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
+    calls: list[tuple[str, Any]] = []
+
+    async def _patch(path: str, *, json: dict | None = None) -> Any:
+        calls.append((path, json))
+        return {"id": "it-1", **(json or {})}
+
+    monkeypatch.setattr(mutations_mod, "patch_json", _patch)
+    return calls
+
+
+async def test_update_trip_timing_exact_patches_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _capture_patch(monkeypatch)
+    token = pin_ctx.set(_pin())
+    try:
+        await mutations_mod.update_trip_timing._tool_func(
+            "exact", date_start="2026-08-10", date_end="2026-08-18"
+        )
+        path, body = calls[-1]
+        assert path == "/itinerary/it-1"
+        assert body == {
+            "timing_kind": "exact",
+            "date_start": "2026-08-10",
+            "date_end": "2026-08-18",
+        }
+    finally:
+        pin_ctx.reset(token)
+
+
+async def test_update_trip_timing_window_includes_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _capture_patch(monkeypatch)
+    token = pin_ctx.set(_pin())
+    try:
+        await mutations_mod.update_trip_timing._tool_func(
+            "window",
+            date_start="2026-06-01",
+            date_end="2026-08-31",
+            duration_nights=7,
+            timing_note="not during school term",
+        )
+        _, body = calls[-1]
+        assert body == {
+            "timing_kind": "window",
+            "date_start": "2026-06-01",
+            "date_end": "2026-08-31",
+            "duration_nights": 7,
+            "timing_note": "not during school term",
+        }
+    finally:
+        pin_ctx.reset(token)
+
+
+async def test_update_trip_timing_flexible_clears_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _capture_patch(monkeypatch)
+    token = pin_ctx.set(_pin())
+    try:
+        await mutations_mod.update_trip_timing._tool_func("flexible")
+        _, body = calls[-1]
+        # Switching to flexible deliberately clears any stored window.
+        assert body == {
+            "timing_kind": "flexible",
+            "date_start": None,
+            "date_end": None,
+            "duration_nights": None,
+        }
+    finally:
+        pin_ctx.reset(token)
+
+
+async def test_update_trip_timing_exact_without_dates_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _capture_patch(monkeypatch)
+    token = pin_ctx.set(_pin())
+    try:
+        with pytest.raises(BackendError) as exc:
+            await mutations_mod.update_trip_timing._tool_func("exact")
+        assert exc.value.reason == "dates_required"
+        # Never PATCH — we refuse rather than silently clearing the stored dates.
+        assert calls == []
+    finally:
+        pin_ctx.reset(token)
+
+
+async def test_update_trip_timing_without_pin_raises() -> None:
+    token = pin_ctx.set(_pin(itinerary_id=None))
+    try:
+        with pytest.raises(BackendError) as exc:
+            await mutations_mod.update_trip_timing._tool_func(
+                "exact", date_start="2026-08-10", date_end="2026-08-18"
+            )
+        assert exc.value.reason == "missing_itinerary_id"
+    finally:
+        pin_ctx.reset(token)

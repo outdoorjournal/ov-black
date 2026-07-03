@@ -104,20 +104,27 @@ false-green is a lie the suite tells later.
 
 ## Choosing a surface / harness
 
-We have two complementary e2e harnesses. Pick per scenario (a scenario can use both):
+**These scenarios are written to be run the way a QA person runs them — in a browser.**
+So the default surface is the Web UI: every scenario that has a screen a human can drive
+gets a Playwright test that clicks through it as a person would. The API seam is a
+*backstop*, not the primary surface — it confirms state that isn't cleanly visible and
+covers pure-contract invariants that have no screen at all.
 
-- **Web UI → Playwright** (`apps/web/e2e/`). Use when the outcome is something a user
-  *sees or clicks* — the onboarding chat, basecamp reminders, Command Center views.
-  Personas (`advisor`, `traveler`, `public`) come with pre-captured sessions; a
-  scenario's **Personas** field usually names the Playwright project to run under.
-- **API seam → CLI/pytest** (`apps/cli/tests/e2e/`, driven by the `ovb` CLI/SDK). Use
-  when the outcome is a *state change or contract* — a client becomes `pending`/`active`,
-  a Dossier fact is written, an enumeration guarantee holds. Faster and less flaky than
-  a browser, so prefer it whenever the UI isn't the thing under test.
+- **Web UI → Playwright** (`apps/web/e2e/`) — the default. Drive the real flow a person
+  performs: invite a client, run the first-run intake, edit the travel party, talk to the
+  concierge. Personas (`advisor`, `traveler`, `traveler-flows`, `public`) come with
+  captured sessions or provision their own; a scenario's **Personas** field usually names
+  the Playwright project to run under.
+- **API seam → CLI/pytest** (`apps/cli/tests/e2e/`, driven by the `ovb` CLI/SDK) — the
+  backstop. Reach for it to confirm a state change the browser just produced
+  (`GET /clients/{id}` shows the party member; the itinerary persisted `timing_kind`), or
+  for a contract with **no** screen (enumeration guarantees, validation the form never
+  surfaces). Faster and less flaky — but it doesn't exercise the *experience*, so it
+  supplements the browser test rather than replacing it.
 
-Rule of thumb: assert **state** at the API seam, assert **experience** in the browser.
-Many scenarios are cleanest as an API test for the data outcome plus a thin Playwright
-test for the visible result.
+Rule of thumb: **drive the action in the browser, confirm the state at the API seam.**
+Bias toward the browser wherever a real screen exists — even where an API test already
+covers the outcome, the scenario's job is to prove the *experience* a person has.
 
 ## The pillar suite is the existing scenario spine
 
@@ -140,11 +147,16 @@ Concretely, when reconciling an area:
   - *The email/SMTP boundary* — the emailed magic-link click and any "resend / get a
     shareable link" recovery never cross the HTTP seam. Automatable only with the F2
     mailbox harness; until then they're 🔍.
-  - *Mock-limited assertions* — anything depending on the agent making real tool calls
-    (profile growth, grounded-not-generic replies) self-skips against the mock and is
-    only truly exercised against Bedrock (F3 UAT).
-- **Don't duplicate a green pillar test in Playwright** just to have a browser version.
-  Add a UI test only when the *visible experience* is the thing under test.
+  - *Agent-dependent assertions* — the chat **interaction** is browser-tested (drive a
+    turn from the composer, a reply streams back, no error row), against the local agent.
+    What stays out of the browser is the agent's **semantic** output — profile growth,
+    grounded-not-generic replies — which depends on real tool calls and is verified at the
+    API seam (Pillar 2) / against a real agent, never asserted on wording in a spec.
+- **A green pillar test isn't a reason to skip the browser.** These scenarios are
+  browser-first: if a real screen exists, drive it in Playwright even when a pillar already
+  covers the data outcome — the pillar becomes the API-seam backstop the browser test leans
+  on, not a substitute for it. (The reverse still holds: a pure-contract invariant with no
+  screen — an enumeration guarantee, a validation the form never shows — stays API-only.)
 
 ## Linking tests back to scenarios
 

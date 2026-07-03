@@ -83,6 +83,26 @@ export default defineConfig({
       },
     },
 
+    // Authenticated-traveler task flows that MUTATE traveler-scoped state —
+    // starting an itinerary, running the first-run intake, editing the travel
+    // party. Each test provisions its OWN throwaway traveler (freshTraveler…)
+    // and self-authenticates, exactly like the `onboarding` project, so a run
+    // never pollutes the shared `traveler` persona (creating an itinerary would
+    // flip its basecamp variant and break basecamp.spec). Some specs open a
+    // second advisor context to verify cross-actor visibility, so this depends
+    // on setup:advisor's captured session too.
+    //
+    // fullyParallel:false + depending on setup:traveler serialises us after all
+    // advisor-credential minting — concurrent magic-link generation for one
+    // email invalidates itself (see support/auth.ts). Local-only.
+    {
+      name: "traveler-flows",
+      testDir: "./e2e/traveler-flows",
+      fullyParallel: false,
+      dependencies: ["setup:traveler"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+
     // Traveler (client) surface — reuses the session captured by setup:traveler.
     {
       name: "traveler",

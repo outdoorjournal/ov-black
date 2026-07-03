@@ -7,7 +7,13 @@ The entrypoint feeds every dict that ``stream_async`` yields into
 - ``{"type": "card_proposed", "node": {...}}`` — a new node
 - ``{"type": "draft_assembled", "edges_created": int}`` — day-by-day ordering
 - ``{"type": "node_updated", "node": {...}}`` — advisor adjustment applied
+- ``{"type": "itinerary_updated", "itinerary": {...}}`` — trip-level edit (dates)
 - ``{"type": "mood", "mood_id": "..."}`` — basecamp ambience shift
+
+Not every tool maps to a bespoke frame: ``propose_timeline`` is materialised
+into the reply text as a fenced ``ov-timeline`` markdown block emitted as a
+plain ``delta`` (see ``_timeline_fence``), so it persists with the turn and
+renders through ordinary markdown rather than a dedicated frame type.
 
 Strands does NOT yield a single event with both the tool name and its
 output: ``ToolResultEvent`` is non-callback (so ``stream_async`` never
@@ -37,8 +43,35 @@ _TOOL_FRAME_TYPES = {
     "propose_card": "card_proposed",
     "assemble_draft": "draft_assembled",
     "update_node_status": "node_updated",
+    "update_trip_timing": "itinerary_updated",
     "set_mood": "mood",
+    # Materialised into the reply text as a fenced markdown block rather than a
+    # bespoke frame — see ``_timeline_fence``. The emitted frame is a plain
+    # ``delta`` so the API's existing text accumulation persists it with the
+    # turn and the client renders it via ordinary markdown.
+    "propose_timeline": "timeline",
 }
+
+
+def _timeline_fence(output: dict) -> str | None:
+    """Render a ``propose_timeline`` result as an ``ov-timeline`` markdown block.
+
+    The block is wrapped in blank lines so it always parses as its own markdown
+    block regardless of surrounding prose, and is JSON-serialised as a single
+    unit so it arrives in one delta — the client never sees a half-parsed fence.
+    Returns ``None`` for an error/empty result so no block is emitted.
+    """
+    if "error" in output:
+        return None
+    days = output.get("days")
+    if not isinstance(days, list) or not days:
+        return None
+    payload: dict[str, Any] = {"days": days}
+    caption = output.get("caption")
+    if isinstance(caption, str) and caption:
+        payload["caption"] = caption
+    body = json.dumps(payload, ensure_ascii=False)
+    return f"\n\n```ov-timeline\n{body}\n```\n\n"
 
 
 def _extract_delta_text(event: dict) -> str | None:
@@ -115,6 +148,8 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
         }
     if frame_type == "node_updated":
         return {"type": "node_updated", "node": output}
+    if frame_type == "itinerary_updated":
+        return {"type": "itinerary_updated", "itinerary": output}
     if frame_type == "mood":
         # An invalid mood_id payload (the tool returned `{"error": ...}`)
         # is dropped on the floor — the browser never sees a malformed
@@ -123,6 +158,11 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
         if isinstance(mood_id, str) and "error" not in output:
             return {"type": "mood", "mood_id": mood_id}
         return None
+    if frame_type == "timeline":
+        fence = _timeline_fence(output)
+        if fence is None:
+            return None
+        return {"type": "delta", "text": fence}
     return None
 
 

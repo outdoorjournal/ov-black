@@ -1,9 +1,11 @@
 // View-model types for the client chat shell.
 //
 // AgentTurnView is a superset of the API's AgentTurnSummary: we widen `role`
-// to include any TurnRole (assistant/user/system/tool/error) and keep id
-// locally stable so the in-flight streaming row can be promoted to a real row
-// on `done` without remounting.
+// to include any TurnRole (assistant/user/system/tool/error), plus the
+// client-only `milestone` signal (a celebratory card interleaved into the
+// stream when onboarding_complete flips true), and keep id locally stable so
+// the in-flight streaming row can be promoted to a real row on `done` without
+// remounting.
 
 import type {
   AgentTurnSummary,
@@ -14,10 +16,14 @@ import type {
 
 import type { ExperienceSnapshot } from "@/lib/agentStream.types";
 
+// `milestone` is a client-synthesized row, not a persisted turn role — it
+// renders as a celebratory card rather than a message bubble.
+export type AgentTurnRole = TurnRole | "milestone";
+
 export type AgentTurnView = {
   id: string;
   turn_index: number;
-  role: TurnRole;
+  role: AgentTurnRole;
   content: string;
 };
 

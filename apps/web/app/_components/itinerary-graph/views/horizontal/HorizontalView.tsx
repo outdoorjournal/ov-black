@@ -132,6 +132,15 @@ export function HorizontalView({
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
   const pxPerMinute = itineraryGraphStore.useStore((s) => s.pxPerMinute);
+  // Whether to draw the dated timeline scaffold at all. With nothing on the
+  // board AND only a vague window/flexible brief, a dated grid is meaningless —
+  // the adapter would synthesize a "today" day — so we show only the concierge
+  // empty-state, not a fabricated timeline. Exact dates (you know *when*), or
+  // anything already scheduled/proposed, bring the timeline back. (ITB-6/ITB-6A)
+  const timingKind =
+    (timeline.itinerary as { timing_kind?: string | null }).timing_kind ?? null;
+  const showTimeline =
+    nodes.length > 0 || pendingProposals.length > 0 || timingKind === "exact";
   // Staff editing state.
   const canEdit = itineraryGraphStore.useStore((s) => s.canEdit);
   const status = itineraryGraphStore.useStore((s) => s.status);
@@ -577,6 +586,7 @@ export function HorizontalView({
         data-itinerary-status={status}
         data-lock-status={lockStatus}
         data-can-edit={canEdit ? "true" : "false"}
+        data-timeline-visible={showTimeline ? "true" : "false"}
         className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm"
       >
         <div>
@@ -658,76 +668,83 @@ export function HorizontalView({
               DAY_HEADER_HEIGHT is a spacer that lines up with the canvas's
               sticky-top day-headers strip, so 09:00 in the axis sits at the
               same y as 09:00 in the cards. */}
-          <div
-            ref={axisScrollRef}
-            className="shrink-0 overflow-hidden border-r border-ink/10 bg-paper/85 backdrop-blur-sm"
-            style={{ width: TIME_GUTTER }}
-          >
+          {showTimeline ? (
             <div
-              style={{
-                height: layout.totalHeight + DAY_HEADER_HEIGHT,
-                paddingTop: DAY_HEADER_HEIGHT,
-                position: "relative",
-              }}
+              ref={axisScrollRef}
+              className="shrink-0 overflow-hidden border-r border-ink/10 bg-paper/85 backdrop-blur-sm"
+              style={{ width: TIME_GUTTER }}
             >
-              <TimeAxis
-                segments={layout.segments}
-                pxPerMinute={pxPerMinute}
-                totalHeight={layout.totalHeight}
-                timeMarkers={layout.timeMarkers}
-              />
+              <div
+                style={{
+                  height: layout.totalHeight + DAY_HEADER_HEIGHT,
+                  paddingTop: DAY_HEADER_HEIGHT,
+                  position: "relative",
+                }}
+              >
+                <TimeAxis
+                  segments={layout.segments}
+                  pxPerMinute={pxPerMinute}
+                  totalHeight={layout.totalHeight}
+                  timeMarkers={layout.timeMarkers}
+                />
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {/* Canvas: horizontally + vertically scrolling. Card x values from
               layout include the axis gutter, so the canvas subtracts it.
               Wrapped in a relative container so the scroll-hints can hover
               over the viewport's edges without scrolling along with the
-              cards. */}
+              cards. When the timeline is gated off (vague brief, empty board),
+              only the empty-state lives here — no dated grid behind it. */}
           <div className="relative flex min-w-0 flex-1">
-            <div
-              ref={canvasScrollRef}
-              onScroll={onCanvasScroll}
-              className="flex min-h-0 flex-1 overflow-x-auto overflow-y-auto"
-            >
-              <HorizontalCanvas
-                layout={layout}
-                pendingProposals={pendingProposals}
-                flashNodeId={flashNodeId}
-                focusedNodeId={focusedNodeId}
-                editable={draggable}
-                tzOffsetHours={timeline.timezoneOffsetHours}
-                axisWidth={TIME_GUTTER}
-                activeDragId={drag.activeId}
-                ghostId={ghostNode?.id ?? null}
-                bodyRef={bodyRef}
-                onCardHover={(id) => {
-                  if (id && id !== storeApi.getState().focusedNodeId) {
-                    storeApi.getState().focusNode(id);
-                  }
-                }}
-                onCardClick={(id) => setExpandedId(id)}
-                onAcceptProposal={(id) =>
-                  storeApi.getState().acceptProposal(id)
-                }
-                onDismissProposal={(id) =>
-                  storeApi.getState().dismissProposal(id)
-                }
-                onMeasureCard={handleMeasureCard}
-                onScrollToNode={scrollToNode}
-                attachedNotes={attachedNotes}
-              />
-            </div>
-            <ScrollHint
-              direction="left"
-              visible={scrollHints.left}
-              onClick={() => scrollHintBy(-SCROLL_HINT_STEP_PX)}
-            />
-            <ScrollHint
-              direction="right"
-              visible={scrollHints.right}
-              onClick={() => scrollHintBy(SCROLL_HINT_STEP_PX)}
-            />
+            {showTimeline ? (
+              <>
+                <div
+                  ref={canvasScrollRef}
+                  onScroll={onCanvasScroll}
+                  className="flex min-h-0 flex-1 overflow-x-auto overflow-y-auto"
+                >
+                  <HorizontalCanvas
+                    layout={layout}
+                    pendingProposals={pendingProposals}
+                    flashNodeId={flashNodeId}
+                    focusedNodeId={focusedNodeId}
+                    editable={draggable}
+                    tzOffsetHours={timeline.timezoneOffsetHours}
+                    axisWidth={TIME_GUTTER}
+                    activeDragId={drag.activeId}
+                    ghostId={ghostNode?.id ?? null}
+                    bodyRef={bodyRef}
+                    onCardHover={(id) => {
+                      if (id && id !== storeApi.getState().focusedNodeId) {
+                        storeApi.getState().focusNode(id);
+                      }
+                    }}
+                    onCardClick={(id) => setExpandedId(id)}
+                    onAcceptProposal={(id) =>
+                      storeApi.getState().acceptProposal(id)
+                    }
+                    onDismissProposal={(id) =>
+                      storeApi.getState().dismissProposal(id)
+                    }
+                    onMeasureCard={handleMeasureCard}
+                    onScrollToNode={scrollToNode}
+                    attachedNotes={attachedNotes}
+                  />
+                </div>
+                <ScrollHint
+                  direction="left"
+                  visible={scrollHints.left}
+                  onClick={() => scrollHintBy(-SCROLL_HINT_STEP_PX)}
+                />
+                <ScrollHint
+                  direction="right"
+                  visible={scrollHints.right}
+                  onClick={() => scrollHintBy(SCROLL_HINT_STEP_PX)}
+                />
+              </>
+            ) : null}
             {nodes.length === 0 && pendingProposals.length === 0 ? (
               <BuilderEmptyState hint="aside" />
             ) : null}

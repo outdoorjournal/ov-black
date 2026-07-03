@@ -8,7 +8,10 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { parseFrames, useAgentStream } from "@/lib/agentStream";
-import type { CardFrame } from "@/lib/agentStream.types";
+import type {
+  CardFrame,
+  ItineraryUpdatedFrame,
+} from "@/lib/agentStream.types";
 
 function encodeFrame(obj: unknown): string {
   return `data: ${JSON.stringify(obj)}\n\n`;
@@ -86,6 +89,25 @@ describe("parseFrames (card frames)", () => {
     const { frames } = parseFrames(buffer);
     expect(frames.map((f) => f.type)).toEqual(["first_token", "delta"]);
   });
+
+  test("accepts an itinerary_updated frame (new trip timing)", () => {
+    const frame: ItineraryUpdatedFrame = {
+      type: "itinerary_updated",
+      itinerary: {
+        id: "it-1",
+        timing_kind: "exact",
+        date_start: "2026-08-10",
+        date_end: "2026-08-18",
+      },
+    };
+
+    const { frames, remaining } = parseFrames(encodeFrame(frame));
+
+    expect(remaining).toBe("");
+    expect(frames).toEqual([frame]);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
 });
 
 describe("useAgentStream (onCard dispatch)", () => {
@@ -157,6 +179,52 @@ describe("useAgentStream (onCard dispatch)", () => {
 
     expect(onCard).toHaveBeenCalledTimes(1);
     expect(onCard).toHaveBeenCalledWith(card);
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  test("invokes onItineraryUpdated for itinerary_updated frames", async () => {
+    const frame: ItineraryUpdatedFrame = {
+      type: "itinerary_updated",
+      itinerary: {
+        id: "it-9",
+        timing_kind: "window",
+        date_start: "2026-06-01",
+        date_end: "2026-08-31",
+        duration_nights: 7,
+      },
+    };
+    const done = {
+      type: "done",
+      turn_id: "turn-2",
+      model: "claude-opus",
+      latency_ms: 100,
+      first_token_ms: 50,
+      retried: 0,
+    };
+
+    fetchMock.mockResolvedValue(
+      makeSseResponse([encodeFrame(frame), encodeFrame(done)]),
+    );
+
+    const onItineraryUpdated = vi.fn();
+    const onDone = vi.fn();
+
+    const { result } = renderHook(() =>
+      useAgentStream({
+        sessionId: "sess-2",
+        getAccessToken: async () => "tok",
+        apiBaseUrl: "http://api.test",
+        onItineraryUpdated,
+        onDone,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.sendTurn("we'll go Aug 10-18");
+    });
+
+    expect(onItineraryUpdated).toHaveBeenCalledTimes(1);
+    expect(onItineraryUpdated).toHaveBeenCalledWith(frame);
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 });

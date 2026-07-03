@@ -252,8 +252,22 @@ export function toItineraryTimeline(
   const anchorFromData = dated
     .map((n) => localDayKey(explicitStart(n) as string))
     .sort()[0];
+  // First-class trip window (0033): an `exact` itinerary owns real dates, so
+  // undated cards should land on the trip and — below — the day span should
+  // cover the whole window even before anything is scheduled. `window` /
+  // `flexible` stay node-driven; a loose or open-ended range must not fabricate
+  // a wall of empty days.
+  const exactStart =
+    itinerary.timing_kind === "exact" && typeof itinerary.date_start === "string"
+      ? itinerary.date_start
+      : null;
+  const exactEnd =
+    itinerary.timing_kind === "exact" && typeof itinerary.date_end === "string"
+      ? itinerary.date_end
+      : null;
+
   const synthAnchor =
-    opts.synthAnchorDate ?? anchorFromData ?? todayKey();
+    opts.synthAnchorDate ?? anchorFromData ?? exactStart ?? todayKey();
 
   const undated = followOrder(
     timed.filter((n) => explicitStart(n) === null),

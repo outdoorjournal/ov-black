@@ -93,13 +93,6 @@ class AuthedHealthResponse(BaseModel):
     role: Annotated[str | None, Field(title='Role')] = None
 
 
-class BookNodeRequest(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    override_unpaid: Annotated[bool | None, Field(title='Override Unpaid')] = False
-
-
 class RepriceDelta(RootModel[str]):
     model_config = ConfigDict(
         regex_engine="python-re",
@@ -252,9 +245,16 @@ class CreateInvoiceRequest(BaseModel):
     due_at: Annotated[AwareDatetime | None, Field(title='Due At')] = None
 
 
-class CreateItineraryRequest(BaseModel):
-    title: Annotated[str | None, Field(max_length=512, title='Title')] = ''
-    client_id: Annotated[UUID | None, Field(title='Client Id')] = None
+class Brief(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Brief')]
+
+
+class DurationNights(RootModel[int]):
+    root: Annotated[int, Field(ge=1, le=365, title='Duration Nights')]
+
+
+class TimingNote(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Timing Note')]
 
 
 class CostAmount(RootModel[str]):
@@ -625,6 +625,26 @@ class ItineraryStatus(StrEnum):
     approved = 'approved'
 
 
+class ItineraryTimingKind(StrEnum):
+    """
+    Mirrors the public.itinerary_timing_kind Postgres enum (0033).
+
+    How to read an itinerary's timing fields:
+    - ``exact``: ``date_start``/``date_end`` are the fixed trip.
+    - ``window``: ``date_start``/``date_end`` bound the acceptable window and
+      ``duration_nights`` is the target length somewhere inside it
+      ("~7 nights within Jun-Aug").
+    - ``flexible``: no dates chosen yet; ``timing_note`` carries the intent.
+
+    NULL on legacy rows and freshly auto-created "Concierge draft" itineraries
+    that haven't been through the builder's first-run intake.
+    """
+
+    exact = 'exact'
+    window = 'window'
+    flexible = 'flexible'
+
+
 class JapanInstantiateRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -647,6 +667,30 @@ class JapanInstantiateResponse(BaseModel):
     trip_start_at: Annotated[AwareDatetime, Field(title='Trip Start At')]
     node_count: Annotated[int, Field(title='Node Count')]
     edge_count: Annotated[int, Field(title='Edge Count')]
+
+
+class JapanLiveRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    trip_start_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description='Trip start anchor. Defaults to 30 days from now at midnight UTC.',
+            title='Trip Start At',
+        ),
+    ] = None
+    title: Annotated[str | None, Field(title='Title')] = None
+
+
+class JapanLiveResponse(BaseModel):
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    trip_start_at: Annotated[AwareDatetime, Field(title='Trip Start At')]
+    node_count: Annotated[int, Field(title='Node Count')]
+    edge_count: Annotated[int, Field(title='Edge Count')]
+    sourced: Annotated[list[str], Field(title='Sourced')]
+    skipped: Annotated[list[str], Field(title='Skipped')]
 
 
 class Location(BaseModel):
@@ -736,6 +780,17 @@ class MyOnboardingSessionResponse(BaseModel):
     the first-prompt opener UI so a user who clicks Skip / Close is not
     re-shown the opener on the next page load.
 
+    ``onboarding_complete`` is the single "do we know enough about this
+    traveler yet?" verdict, computed by :func:`evaluate_onboarding` — the
+    ONE place that rule lives. Basecamp combines it with the variant to
+    decide the onboarding nudge: a client in the ``post_first_touch``
+    state (a session exists, but no itinerary yet) who is **not** yet
+    onboarding-complete skipped before we learned enough, so basecamp
+    shows a gentle reminder; the in-chat milestone card fires on the same
+    verdict flipping true. Because both surfaces read this one derived
+    field, evolving the rule (e.g. to require two facts plus a known age)
+    touches only ``evaluate_onboarding``.
+
     All session-scoped fields are null when no active session exists.
     """
 
@@ -747,6 +802,7 @@ class MyOnboardingSessionResponse(BaseModel):
     last_turn_at: Annotated[AwareDatetime | None, Field(title='Last Turn At')]
     seeded_opener: Annotated[str | None, Field(title='Seeded Opener')]
     has_prior_session: Annotated[bool, Field(title='Has Prior Session')]
+    onboarding_complete: Annotated[bool, Field(title='Onboarding Complete')]
 
 
 class NodeChangeResponse(BaseModel):
@@ -1043,6 +1099,14 @@ class Price(BaseModel):
     currency: Annotated[str | None, Field(title='Currency')] = None
 
 
+class PricingCategoryRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    category_id: Annotated[str, Field(max_length=64, min_length=1, title='Category Id')]
+    count: Annotated[int, Field(ge=1, le=64, title='Count')]
+
+
 class SourceKind2(StrEnum):
     advisor = 'advisor'
     traveler_told = 'traveler_told'
@@ -1238,6 +1302,47 @@ class StartAnalysisRequest(BaseModel):
     force_rerun: Annotated[bool | None, Field(title='Force Rerun')] = False
 
 
+class SupplierCategoryPriceResponse(BaseModel):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    category_id: Annotated[str, Field(title='Category Id')]
+    amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
+    ]
+    currency: Annotated[str, Field(title='Currency')]
+
+
+class RateId(RootModel[str]):
+    root: Annotated[str, Field(max_length=64, title='Rate Id')]
+
+
+class StartTimeId(RootModel[str]):
+    root: Annotated[str, Field(max_length=64, title='Start Time Id')]
+
+
+class SupplierSelectionRequest(BaseModel):
+    """
+    The specific supplier slot to book, from a ``supplier-availability`` result.
+
+    The activity itself is the node's own ``source_id`` (bound server-side), so it
+    isn't repeated here — this is only the date / start-time / rate / participants.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    date: Annotated[date_aliased, Field(title='Date')]
+    rate_id: Annotated[RateId | None, Field(title='Rate Id')] = None
+    start_time_id: Annotated[StartTimeId | None, Field(title='Start Time Id')] = None
+    pricing_categories: Annotated[
+        list[PricingCategoryRequest] | None, Field(title='Pricing Categories')
+    ] = None
+    currency: Annotated[
+        str | None, Field(max_length=3, min_length=3, title='Currency')
+    ] = 'USD'
+
+
 class TransitItem(BaseModel):
     source: Annotated[str, Field(title='Source')]
     source_id: Annotated[str, Field(title='Source Id')]
@@ -1251,6 +1356,12 @@ class TransitItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['transit'], Field(title='Kind')] = 'transit'
     mode: Annotated[str | None, Field(title='Mode')] = None
@@ -1280,6 +1391,31 @@ class TurnRole(StrEnum):
     system = 'system'
     tool = 'tool'
     error = 'error'
+
+
+class UpdateItineraryRequest(BaseModel):
+    """
+    Partial update of an itinerary's title + brief + timing.
+
+    ``extra="forbid"`` so a misspelled field is a 422, not a silent no-op. Only
+    fields explicitly present in the payload are applied (``exclude_unset``), so
+    sending ``date_start: null`` clears the date while omitting it leaves the
+    stored value untouched — the semantics the first-run intake relies on when a
+    traveler switches from exact dates to a flexible window.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: Annotated[Title | None, Field(title='Title')] = None
+    brief: Annotated[Brief | None, Field(title='Brief')] = None
+    timing_kind: ItineraryTimingKind | None = None
+    date_start: Annotated[date_aliased | None, Field(title='Date Start')] = None
+    date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
+    duration_nights: Annotated[
+        DurationNights | None, Field(title='Duration Nights')
+    ] = None
+    timing_note: Annotated[TimingNote | None, Field(title='Timing Note')] = None
 
 
 class UpdateNodeRequest(BaseModel):
@@ -1422,6 +1558,14 @@ class AssembleDraftRequest(BaseModel):
     day_plan: Annotated[list[DaySlotPayload] | None, Field(title='Day Plan')] = None
 
 
+class BookNodeRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    override_unpaid: Annotated[bool | None, Field(title='Override Unpaid')] = False
+    supplier_selection: SupplierSelectionRequest | None = None
+
+
 class BookingResponse(BaseModel):
     model_config = ConfigDict(
         regex_engine="python-re",
@@ -1444,6 +1588,10 @@ class BookingResponse(BaseModel):
     override_unpaid: Annotated[bool, Field(title='Override Unpaid')]
     booked_at: Annotated[AwareDatetime, Field(title='Booked At')]
     confirmed_at: Annotated[AwareDatetime | None, Field(title='Confirmed At')] = None
+    supplier_source: Annotated[str | None, Field(title='Supplier Source')] = None
+    supplier_booking_id: Annotated[str | None, Field(title='Supplier Booking Id')] = (
+        None
+    )
     reprice_delta: Annotated[RepriceDelta | None, Field(title='Reprice Delta')] = None
     cancelled_at: Annotated[AwareDatetime | None, Field(title='Cancelled At')] = None
     refund_status: RefundStatus | None = None
@@ -1499,6 +1647,19 @@ class CreateEdgeRequest(BaseModel):
     metadata: Annotated[dict[str, Any] | None, Field(title='Metadata')] = None
 
 
+class CreateItineraryRequest(BaseModel):
+    title: Annotated[str | None, Field(max_length=512, title='Title')] = ''
+    client_id: Annotated[UUID | None, Field(title='Client Id')] = None
+    brief: Annotated[Brief | None, Field(title='Brief')] = None
+    timing_kind: ItineraryTimingKind | None = None
+    date_start: Annotated[date_aliased | None, Field(title='Date Start')] = None
+    date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
+    duration_nights: Annotated[
+        DurationNights | None, Field(title='Duration Nights')
+    ] = None
+    timing_note: Annotated[TimingNote | None, Field(title='Timing Note')] = None
+
+
 class CreateNodeFromInventoryRequest(BaseModel):
     """
     Create a graph node from a live inventory item by (source, source_id).
@@ -1550,6 +1711,12 @@ class DestinationItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['destination'], Field(title='Kind')] = 'destination'
 
@@ -1682,6 +1849,12 @@ class ExperienceItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['experience'], Field(title='Kind')] = 'experience'
     duration_days: Range | None = None
@@ -1747,6 +1920,12 @@ class FlightItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['flight'], Field(title='Kind')] = 'flight'
 
@@ -1777,6 +1956,12 @@ class HotelItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['hotel'], Field(title='Kind')] = 'hotel'
     stars: Annotated[int | None, Field(title='Stars')] = None
@@ -1840,6 +2025,12 @@ class ItineraryResponse(BaseModel):
     reconcile_request_note: Annotated[
         str | None, Field(title='Reconcile Request Note')
     ] = None
+    brief: Annotated[str | None, Field(title='Brief')] = None
+    timing_kind: ItineraryTimingKind | None = None
+    date_start: Annotated[date_aliased | None, Field(title='Date Start')] = None
+    date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
+    duration_nights: Annotated[int | None, Field(title='Duration Nights')] = None
+    timing_note: Annotated[str | None, Field(title='Timing Note')] = None
 
 
 class MealItem(BaseModel):
@@ -1855,6 +2046,12 @@ class MealItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['meal'], Field(title='Kind')] = 'meal'
 
@@ -1905,6 +2102,12 @@ class NoteItem(BaseModel):
         Field(title='Editorial Links', validate_default=True),
     ] = []
     tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
     raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
     kind: Annotated[Literal['note'], Field(title='Kind')] = 'note'
 
@@ -2083,6 +2286,18 @@ class SearchInventoryResponse(BaseModel):
     count: Annotated[int, Field(title='Count')]
 
 
+class SupplierAvailabilityResponse(BaseModel):
+    availability_id: Annotated[str, Field(title='Availability Id')]
+    date: Annotated[date_aliased, Field(title='Date')]
+    start_time: Annotated[str | None, Field(title='Start Time')] = None
+    start_time_id: Annotated[str | None, Field(title='Start Time Id')] = None
+    seats_available: Annotated[int | None, Field(title='Seats Available')] = None
+    rate_id: Annotated[str | None, Field(title='Rate Id')] = None
+    prices: Annotated[
+        list[SupplierCategoryPriceResponse] | None, Field(title='Prices')
+    ] = None
+
+
 class AdvisorItinerariesResponse(BaseModel):
     """
     Envelope for ``GET /itineraries`` (advisor).
@@ -2203,6 +2418,9 @@ class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
     edges: Annotated[list[EdgeResponse], Field(title='Edges')]
+    viewer_open_fork_id: Annotated[UUID | None, Field(title='Viewer Open Fork Id')] = (
+        None
+    )
 
 
 class InvoiceResponse(BaseModel):

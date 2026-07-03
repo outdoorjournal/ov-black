@@ -83,6 +83,7 @@ from app.services.itineraries import (
     update_itinerary_details,
     update_node,
 )
+from app.services.link_preview import fetch_link_preview
 from app.services.node_cost import cost_from_inventory_item
 
 if TYPE_CHECKING:
@@ -207,6 +208,27 @@ class CreateNodeFromInventoryRequest(BaseModel):
     parent_subgraph_id: uuid.UUID | None = None
 
 
+class CreateNodeFromLinkRequest(BaseModel):
+    """Save a pasted web link into the Collection as an OpenGraph card.
+
+    The server fetches ``url`` and derives a snapshot (title / image /
+    description) so the saved card looks intentional rather than a bare link;
+    the fetch degrades gracefully to just the URL. ``kind`` files the link under
+    a Collection category (a restaurant → ``meal``, a hotel → ``hotel``) and
+    defaults to ``note`` — an unfiled idea. ``status`` defaults to ``proposed``
+    (a candidate on the board). There is no ``starts_at``: a saved link lands in
+    the Collection, unscheduled, until it's dragged onto the timeline.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2048)
+    kind: NodeType = NodeType.note
+    status: NodeStatus = NodeStatus.proposed
+    note: str | None = Field(default=None, max_length=_NOTE_MAX)
+    parent_subgraph_id: uuid.UUID | None = None
+
+
 class UpdateNodeRequest(BaseModel):
     """Partial update. Any field omitted is left unchanged.
 
@@ -290,6 +312,20 @@ class GraphResponse(BaseModel):
     # an existing fork instead of spawning a duplicate. Null on a fork itself, or
     # when the viewer has no open fork.
     viewer_open_fork_id: uuid.UUID | None = None
+
+
+class CollectionResponse(BaseModel):
+    """The itinerary's Collection (wish list): unscheduled, non-discarded nodes.
+
+    A Collection item is just a node with no ``starts_at`` — a maybe the
+    traveler/concierge has accumulated but not yet placed on the timeline.
+    Discarded items are excluded. The web derives the same set from the graph it
+    already loads; this endpoint keeps the agent's read cheap (it doesn't need
+    the whole graph to shop the wish list before proposing something new).
+    """
+
+    itinerary_id: uuid.UUID
+    items: list[NodeResponse]
 
 
 class ReleaseLockResponse(BaseModel):
@@ -836,6 +872,34 @@ async def get_itinerary_endpoint(
     return response
 
 
+@router.get(
+    "/{itinerary_id}/collection",
+    response_model=CollectionResponse,
+    summary="Get the itinerary's Collection (unscheduled, non-discarded nodes).",
+)
+async def get_collection_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> CollectionResponse:
+    """The wish list: nodes with no ``starts_at`` that aren't discarded.
+
+    Reuses the same assembled graph read (and its draft-read gate) as
+    ``GET /itinerary/{id}`` and filters, so the Collection can never drift from
+    the graph it's a view of.
+    """
+    result = await get_itinerary_graph(session, itinerary_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    await assert_itinerary_readable(session, user, result.itinerary)
+    items = [
+        _node_response_from_out(n)
+        for n in result.nodes
+        if n.starts_at is None and n.status is not NodeStatus.discarded
+    ]
+    return CollectionResponse(itinerary_id=itinerary_id, items=items)
+
+
 @router.patch(
     "/{itinerary_id}",
     response_model=ItineraryResponse,
@@ -972,6 +1036,54 @@ async def create_node_from_inventory_endpoint(
         cost_amount=cost.amount if cost else None,
         cost_currency=cost.currency if cost else None,
         cost_kind=cost.kind if cost else None,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _node_response_from_node(result)
+
+
+@router.post(
+    "/{itinerary_id}/nodes/from-link",
+    status_code=status.HTTP_201_CREATED,
+    response_model=NodeResponse,
+    summary="Save a pasted web link into the Collection (OpenGraph card).",
+)
+async def create_node_from_link_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: CreateNodeFromLinkRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> NodeResponse:
+    """Fetch the link's OpenGraph preview and add it as an unscheduled node.
+
+    Goes through the same ``add_node`` write path (lock/queue + history
+    invariants unchanged) as any other node. ``source="web"`` / ``source_id=url``
+    satisfies the provenance CHECK and marks the card as a pasted link; the
+    preview lands in ``metadata.snapshot`` so the existing snapshot-reading cards
+    render it. The user's optional ``note`` is kept alongside the snapshot.
+    """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
+    actor = _actor_from_user(user)
+
+    preview = await fetch_link_preview(payload.url)
+    metadata: dict[str, Any] = {"snapshot": preview.to_snapshot()}
+    if payload.note:
+        metadata["note"] = payload.note
+
+    result = await add_node(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        type=payload.kind,
+        status=payload.status,
+        title=preview.title,
+        parent_subgraph_id=payload.parent_subgraph_id,
+        source="web",
+        source_id=preview.url,
+        metadata=metadata,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)

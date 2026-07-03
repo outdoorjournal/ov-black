@@ -336,15 +336,10 @@ def _resolve_note_anchor(
 
     iso = starts_at or metadata.get("start_time")
     if not isinstance(iso, str) or not iso:
-        return (
-            ItineraryError(
-                outcome=ItineraryOutcome.VALIDATION_ERROR,
-                detail="a note needs a time (starts_at) or a node to attach to "
-                "(attached_to_node_id)",
-            ),
-            None,
-            metadata,
-        )
+        # A timeless, unattached note is a Collection note (0035): it lives in
+        # the wish list with no schedule, exactly like any other unscheduled
+        # node. The relaxed `notes_anchored_or_attached` CHECK permits it.
+        return (None, None, metadata)
     rng = _build_starts_at(iso, duration_minutes)
     if rng is None or rng.lower is None:
         return (
@@ -1053,15 +1048,18 @@ async def update_node(
         else:
             setattr(node, key, value)
 
-    # Keep a free-standing note's starts_at column in sync with its
-    # metadata.start_time so a move (a metadata patch — see the web `moveNode`
-    # and the agent `move_node` tool) doesn't strand the column and trip the
-    # notes_anchored_or_attached CHECK. Attached notes (no own time) are skipped.
+    # Keep the starts_at column in sync with metadata.start_time on a metadata
+    # patch (the web `moveNode` / agent `move_node` schedule by writing the full
+    # merged metadata, start_time included). Applies to EVERY node type: a
+    # present start schedules the node (mirrored into the tstzrange column); an
+    # absent/blank start un-schedules it — clearing the column so the card
+    # returns to the Collection instead of a stale starts_at keeping it pinned to
+    # the timeline (the read serializer + web adapter fall back to the column).
+    # Attached notes ride a host and carry no own time, so they're left alone.
     if (
-        node.type is NodeType.note
-        and node.attached_to_node_id is None
-        and "metadata" in updates
+        "metadata" in updates
         and isinstance(node.metadata_, dict)
+        and not (node.type is NodeType.note and node.attached_to_node_id is not None)
     ):
         iso = node.metadata_.get("start_time")
         if isinstance(iso, str) and iso:
@@ -1078,6 +1076,8 @@ async def update_node(
                         **node.metadata_,
                         "tz_offset_minutes": int(offset.total_seconds() // 60),
                     }
+        else:
+            node.starts_at = None
 
     try:
         await session.flush()

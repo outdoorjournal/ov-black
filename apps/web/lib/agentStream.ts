@@ -29,6 +29,7 @@ import type {
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  ItineraryUpdatedFrame,
   MoodFrame,
   NodeUpdatedFrame,
   SseFrame,
@@ -44,6 +45,7 @@ export type {
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  ItineraryUpdatedFrame,
   MoodFrame,
   NodeUpdatedFrame,
   SseFrame,
@@ -68,6 +70,7 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "card_proposed",
   "draft_assembled",
   "node_updated",
+  "itinerary_updated",
   "mood",
 ]);
 
@@ -212,6 +215,13 @@ export type UseAgentStreamOptions = {
   onCardProposed?: (node: AgentNode) => void;
   onDraftAssembled?: (frame: DraftAssembledFrame) => void;
   onNodeUpdated?: (node: AgentNode) => void;
+  /**
+   * Fires when the agent calls ``update_trip_timing`` — the trip's dates
+   * changed. Timing is server-rendered onto the timeline, so surfaces that
+   * show it wire this to ``router.refresh()`` to re-pull the fresh window
+   * while keeping in-session graph state.
+   */
+  onItineraryUpdated?: (frame: ItineraryUpdatedFrame) => void;
   /**
    * Fires when the agent calls ``set_mood`` to shift basecamp ambience.
    * The basecamp shell wires this to its current-mood state which
@@ -365,6 +375,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "node_updated":
                 current.onNodeUpdated?.(frame.node);
                 break;
+              case "itinerary_updated":
+                current.onItineraryUpdated?.(frame);
+                break;
               case "mood":
                 current.onMood?.(frame);
                 break;
@@ -422,6 +435,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "node_updated":
         current.onNodeUpdated?.(frame.node);
+        break;
+      case "itinerary_updated":
+        current.onItineraryUpdated?.(frame);
         break;
       case "mood":
         current.onMood?.(frame);

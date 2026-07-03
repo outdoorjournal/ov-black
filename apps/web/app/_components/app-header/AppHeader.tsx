@@ -15,7 +15,7 @@
 
 import Link from "next/link";
 import { LogOut } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { signOutAction } from "@/app/_actions/sign-out";
 import type { AppHeaderUser } from "@/lib/appHeader";
@@ -87,23 +87,25 @@ export function AppHeader({ user, homeHref, crumbs = [], secondary }: AppHeaderP
                   {crumbs.map((crumb, i) => {
                     const isLast = i === crumbs.length - 1;
                     return (
-                      <BreadcrumbItem key={`${crumb.label}-${i}`} className="min-w-0">
-                        {isLast || !crumb.href ? (
-                          <BreadcrumbPage className="truncate text-paper">
-                            {crumb.label}
-                          </BreadcrumbPage>
-                        ) : (
-                          <>
+                      <Fragment key={`${crumb.label}-${i}`}>
+                        <BreadcrumbItem className="min-w-0">
+                          {isLast || !crumb.href ? (
+                            <BreadcrumbPage className="truncate text-paper">
+                              {crumb.label}
+                            </BreadcrumbPage>
+                          ) : (
                             <BreadcrumbLink
                               asChild
                               className="truncate text-paper/55 hover:text-paper"
                             >
                               <Link href={crumb.href}>{crumb.label}</Link>
                             </BreadcrumbLink>
-                            <BreadcrumbSeparator className="text-paper/30" />
-                          </>
-                        )}
-                      </BreadcrumbItem>
+                          )}
+                        </BreadcrumbItem>
+                        {!isLast ? (
+                          <BreadcrumbSeparator className="text-paper/30" />
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </BreadcrumbList>

@@ -58,6 +58,13 @@ export function MobileItineraryLayout({
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
 
   const tz = timeline.timezoneOffsetHours;
+  // See HorizontalView: gate the dated day-strip + pager on there being
+  // something to place OR concrete (exact) timing. A vague brief with an empty
+  // board shows only the concierge sheet + empty-state, not a "today" grid.
+  const timingKind =
+    (timeline.itinerary as { timing_kind?: string | null }).timing_kind ?? null;
+  const showTimeline =
+    nodes.length > 0 || pendingProposals.length > 0 || timingKind === "exact";
   const groups = useMemo(
     () => groupNodesByDay([...nodes, ...pendingProposals], timeline.days, tz),
     [nodes, pendingProposals, timeline.days, tz],
@@ -159,35 +166,40 @@ export function MobileItineraryLayout({
         </div>
       </header>
 
-      <DayStrip groups={groups} activeIndex={activeDay} onSelect={goToDay} />
+      {showTimeline ? (
+        <DayStrip groups={groups} activeIndex={activeDay} onSelect={goToDay} />
+      ) : null}
 
       {/* Horizontal pager — one full-width page per day, each scrolls its own
           card feed vertically. snap-mandatory makes swipes land on a day. The
           relative wrapper carries the empty-state overlay when nothing's on the
-          board yet. */}
+          board yet. When the timeline is gated off (vague brief, empty board),
+          only the empty-state lives here — no dated pager behind it. */}
       <div className="relative flex min-h-0 flex-1">
-      <div
-        ref={pagerRef}
-        onScroll={onPagerScroll}
-        className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {groups.map((g) => (
-          <section
-            key={g.date}
-            className="h-full w-screen shrink-0 snap-center overflow-y-auto"
+        {showTimeline ? (
+          <div
+            ref={pagerRef}
+            onScroll={onPagerScroll}
+            className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
-            <DayTimeline
-              group={g}
-              tzOffsetHours={tz}
-              flashNodeId={flashNodeId}
-              onCardClick={(id) => setExpandedId(id)}
-              attachedNotes={attachedNotes}
-              canLeaveNote={canLeaveNote}
-              onAddDayNote={addFreeStandingNote}
-            />
-          </section>
-        ))}
-      </div>
+            {groups.map((g) => (
+              <section
+                key={g.date}
+                className="h-full w-screen shrink-0 snap-center overflow-y-auto"
+              >
+                <DayTimeline
+                  group={g}
+                  tzOffsetHours={tz}
+                  flashNodeId={flashNodeId}
+                  onCardClick={(id) => setExpandedId(id)}
+                  attachedNotes={attachedNotes}
+                  canLeaveNote={canLeaveNote}
+                  onAddDayNote={addFreeStandingNote}
+                />
+              </section>
+            ))}
+          </div>
+        ) : null}
         {nodes.length === 0 && pendingProposals.length === 0 ? (
           <BuilderEmptyState hint="sheet" />
         ) : null}

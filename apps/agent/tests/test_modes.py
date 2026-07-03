@@ -34,6 +34,20 @@ def test_onboarding_prompt_mentions_search_inventory_and_propose_card() -> None:
     assert "Mode: onboarding" in prompt
 
 
+def test_every_mode_teaches_rendering_affordances() -> None:
+    # The RENDERING_NOTE (timeline tool + place-chip token) is appended to every
+    # mode's rubric so rich replies work regardless of persona.
+    for mode in (Mode.onboarding, Mode.planning, Mode.qa):
+        prompt = build_prompt(
+            mode=mode,
+            api_system="VP",
+            actor_kind="user",
+            itinerary_id_present=mode is not Mode.onboarding,
+        )
+        assert "propose_timeline" in prompt, mode
+        assert "place:" in prompt, mode
+
+
 def test_planning_prompt_client_vs_advisor_voice_differ() -> None:
     it_id = uuid.uuid4()
     client_prompt = build_prompt(
@@ -90,6 +104,12 @@ def test_tool_bundles_are_mode_appropriate() -> None:
     # Onboarding may propose cards but cannot update node status.
     assert "propose_card" in onboarding_names
     assert "update_node_status" not in onboarding_names
+
+    # The timeline is a pure rendering affordance (no writes) — available in
+    # every mode, including read-mostly Q&A.
+    assert "propose_timeline" in onboarding_names
+    assert "propose_timeline" in planning_names
+    assert "propose_timeline" in qa_names
 
     # Planning has the full write surface, including note + move.
     assert "propose_card" in planning_names

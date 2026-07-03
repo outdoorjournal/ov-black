@@ -4,8 +4,8 @@
 // browser never flashes the wrong shell:
 //   (a) first-touch single prompt — no prior turns, no itineraries
 //   (c) post-first-touch + no itineraries — has prior turns, no itineraries
-//       (shows a "finish your introduction" reminder when no profile facts
-//        have been recorded — i.e. the traveler skipped onboarding early)
+//       (shows a "finish your introduction" reminder until onboarding_complete
+//        — the server's one "do we know enough?" verdict — is true)
 //   (d) with itineraries — at least one itinerary
 // Variant (b) (active conversation) is purely a client-side morph from (a).
 //
@@ -73,7 +73,7 @@ export default async function BasecampPage() {
         last_turn_at: null,
         seeded_opener: null,
         has_prior_session: false,
-        has_profile_facts: false,
+        onboarding_complete: false,
       };
   const itineraries: MyItinerarySummary[] = itinerariesResult.ok
     ? itinerariesResult.itineraries
@@ -118,7 +118,7 @@ export default async function BasecampPage() {
       itineraries={itineraries}
       sessionId={onboarding.session_id}
       priorTurns={priorTurns}
-      hasProfileFacts={onboarding.has_profile_facts}
+      onboardingComplete={onboarding.onboarding_complete}
     />
   );
 }

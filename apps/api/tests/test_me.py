@@ -326,17 +326,31 @@ async def test_onboarding_session_ignores_advisor_audience(
             await engine.dispose()
 
 
+def test_evaluate_onboarding_rule() -> None:
+    """The one swappable onboarding rule, in isolation (ONB-2A).
+
+    Today: satisfied by a single profile fact. When the bar rises (e.g. two
+    facts plus a known age) this test moves with the rule — and it's the only
+    place besides the rule body that needs to; the nudge + milestone callers
+    read the bool and don't change.
+    """
+    from app.routers.me import evaluate_onboarding
+
+    assert evaluate_onboarding(profile_fact_count=0) is False
+    assert evaluate_onboarding(profile_fact_count=1) is True
+    assert evaluate_onboarding(profile_fact_count=3) is True
+
+
 @integration
 @pytest.mark.asyncio
-async def test_onboarding_session_reports_profile_facts_presence(
+async def test_onboarding_session_reports_onboarding_complete(
     db_session: AsyncSession,
 ) -> None:
-    """``has_profile_facts`` drives the onboarding nudge (ONB-2A).
+    """``onboarding_complete`` drives the nudge + milestone card (ONB-2A).
 
-    False until the client has a non-redacted ``profile_facts`` row — a
-    redacted (soft-deleted) fact must not count, matching the active-fact
-    filter used elsewhere. Basecamp shows the "finish your profile" reminder
-    only for a post_first_touch client whose facts are empty.
+    False until the onboarding rule is satisfied — today, one non-redacted
+    ``profile_facts`` row. A redacted (soft-deleted) fact must not count,
+    matching the active-fact filter used elsewhere.
     """
     from app.auth import AuthenticatedUser
     from app.routers.me import get_my_onboarding_session_endpoint
@@ -363,21 +377,21 @@ async def test_onboarding_session_reports_profile_facts_presence(
     try:
         # No facts yet — the traveler has told us nothing.
         resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
-        assert resp.has_profile_facts is False
+        assert resp.onboarding_complete is False
 
         # A redacted fact does not count.
         await _insert_profile_fact(
             db_session, client_id=client_id, recorded_by=traveler, redacted=True
         )
         resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
-        assert resp.has_profile_facts is False
+        assert resp.onboarding_complete is False
 
-        # A live fact flips it true.
+        # A live fact satisfies today's rule.
         await _insert_profile_fact(
             db_session, client_id=client_id, recorded_by=traveler, redacted=False
         )
         resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
-        assert resp.has_profile_facts is True
+        assert resp.onboarding_complete is True
     finally:
         # profile_facts cascade-delete with the client (FK ondelete CASCADE).
         await _cleanup(client_ids=(client_id,), owner=owner)

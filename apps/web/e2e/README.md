@@ -11,16 +11,37 @@ running stack and are invoked explicitly.
 e2e/
   advisor.setup.ts              # logs an advisor in, saves the session
   traveler.setup.ts             # logs a traveler (client) in, saves the session
-  support/auth.ts               # mints the magic-link callback URLs (local OR staging)
+  support/auth.ts               # mints magic-link callbacks + the shared advisor token
+  support/api.ts                # advisor-token API backstops (client/itinerary reads)
   public/login-page.spec.ts     # unauthenticated landing page
-  advisor/command-center.spec.ts   # advisor session → /command-center
-  traveler/basecamp.spec.ts        # traveler session → /basecamp
-  .auth/{advisor,traveler}.json    # captured cookies (gitignored)
+  advisor/command-center.spec.ts    # advisor session → /command-center
+  advisor/onboarding-invite.spec.ts # ONB-1/1A/1B: invite → pending/active, dup, nudge
+  onboarding/onboarding.spec.ts     # ONB-2/2A: new-user landing + skip nudge
+  traveler/basecamp.spec.ts         # traveler session → /basecamp
+  traveler-flows/                   # fresh-traveler task flows (intake, chat, party, …)
+    intake.spec.ts                  #   ITB-1/1A/1B/1C/2/3
+    empty-state.spec.ts             #   ITB-4 (empty-state guidance)
+    timeline-visibility.spec.ts     #   ITB-6/6A (hide dated timeline until concrete)
+    write-gate.spec.ts              #   ITB-5 (stranger 404 visibility gate)
+    preferences.spec.ts             #   ONB-3 (party self-edit → advisor sees)
+    chat.spec.ts                    #   ONB-2 + ITB-4 live concierge turns (serial)
+  .auth/{advisor,traveler}.json     # captured cookies (gitignored)
 ```
 
 Projects: `setup:advisor` → `advisor`, `setup:traveler` → `traveler` (and
 `setup:traveler` runs after `setup:advisor`, since it reuses the advisor to
-create the traveler's linked client), plus `public` (no auth, independent).
+create the traveler's linked client), `onboarding` and `traveler-flows` (both
+provision their OWN throwaway travelers per test and self-authenticate, so they
+never pollute the shared `traveler` persona), plus `public` (no auth, independent).
+
+The **`traveler-flows`** project is `fullyParallel: false` and depends on
+`setup:traveler` — that serialises it after all advisor-credential minting, and
+the shared advisor token is cached to a tmp file (`support/auth.ts`) so the
+project's several spec files, spread across worker processes, mint the advisor
+link exactly **once** (concurrent magic-link generation for one email invalidates
+itself). Local-only: it provisions fresh users on demand. The live-agent chat
+turns (`chat.spec.ts`) share one file so they run serially against the single
+local agent rather than contending.
 
 ## How login works here
 

@@ -26,6 +26,7 @@ export type BasecampChatState = {
   currentMood: MoodId;
   commitUserTurn: (turn: AgentTurnView) => void;
   commitAssistantSeed: (content: string) => void;
+  commitMilestone: () => void;
   startStream: (turnIndex: number) => void;
   appendDelta: (text: string) => void;
   finishStream: (frame: DoneFrame) => void;
@@ -65,6 +66,21 @@ export const basecampChatStore = createStoreContext<
             content,
           };
           return { turns: [...s.turns, seed] };
+        }),
+      // Drop the celebratory milestone card into the stream when the server's
+      // onboarding_complete verdict flips true. Fire-once per session: a second
+      // call (a redundant flip detection) is a no-op so we never stack cards.
+      commitMilestone: () =>
+        set((s) => {
+          if (s.turns.some((t) => t.role === "milestone")) return s;
+          const idx = nextTurnIndex(s.turns);
+          const item: AgentTurnView = {
+            id: `milestone-${idx}`,
+            turn_index: idx,
+            role: "milestone",
+            content: "",
+          };
+          return { turns: [...s.turns, item] };
         }),
       startStream: (turnIndex) =>
         set({ streaming: { turnIndex, buffer: "" } }),

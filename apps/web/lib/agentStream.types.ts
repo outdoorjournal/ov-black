@@ -82,6 +82,25 @@ export type NodeUpdatedFrame = {
   node: AgentNode;
 };
 
+// Emitted after the agent calls `update_trip_timing` to set the trip's dates
+// (or loosen them back to flexible). The itinerary's brief + timing live as a
+// server-rendered prop on the timeline, so consumers refresh the route rather
+// than patch a store; the payload mirrors the API's ItineraryResponse timing
+// fields for consumers that want to read the new values directly.
+export type ItineraryUpdatedFrame = {
+  type: "itinerary_updated";
+  itinerary: {
+    id: string;
+    title?: string;
+    brief?: string | null;
+    timing_kind?: "exact" | "window" | "flexible" | null;
+    date_start?: string | null;
+    date_end?: string | null;
+    duration_nights?: number | null;
+    timing_note?: string | null;
+  };
+};
+
 // Emitted when the agent calls `set_mood` to shift basecamp ambience.
 // `mood_id` is one of the curated MoodIds in apps/web/lib/atmos/moods.ts.
 // The wire payload is `{type:"mood", mood_id:string}` — we keep mood_id
@@ -101,4 +120,5 @@ export type SseFrame =
   | CardProposedFrame
   | DraftAssembledFrame
   | NodeUpdatedFrame
+  | ItineraryUpdatedFrame
   | MoodFrame;

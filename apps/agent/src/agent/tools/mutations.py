@@ -1,4 +1,4 @@
-"""Mutation tools — update node status, reschedule a node (move)."""
+"""Mutation tools — update node status, reschedule a node (move), set trip timing."""
 
 from __future__ import annotations
 
@@ -80,3 +80,66 @@ async def move_node(node_id: str, starts_at: str) -> dict:
         f"/itinerary/{itinerary_id}/nodes/{node_id}",
         json={"metadata": metadata},
     )
+
+
+@tool
+async def update_trip_timing(
+    timing_kind: Literal["exact", "window", "flexible"],
+    date_start: str | None = None,
+    date_end: str | None = None,
+    duration_nights: int | None = None,
+    timing_note: str | None = None,
+) -> dict:
+    """Set the trip's dates once they're known — the timing at the trip level.
+
+    Use this the moment the traveler settles the *when*: a vague brief like
+    "sometime in August 2026" becomes concrete dates, or a fixed window
+    loosens back to flexible. This edits the trip itself (not a card), so the
+    whole itinerary re-renders around the new dates.
+
+    ``timing_kind`` picks how to read the fields, and you must pass what that
+    kind needs:
+    - ``exact`` — the trip is booked to specific days. Pass ``date_start`` and
+      ``date_end`` (both ISO dates, ``"YYYY-MM-DD"``).
+    - ``window`` — dates are still soft but bounded. Pass ``date_start`` and
+      ``date_end`` for the acceptable window, plus ``duration_nights`` for the
+      target length inside it ("~7 nights within Jun–Aug").
+    - ``flexible`` — no dates chosen yet. Pass only ``timing_kind``; any stored
+      dates are cleared. Use this when the traveler steps back from a date they
+      had picked.
+
+    ``timing_note`` is optional free text for constraints the dates can't hold
+    ("not during school term", "back by a Sunday"); omit it to leave the stored
+    note untouched.
+
+    Requires an itinerary pinned to the session. Returns the updated itinerary.
+    The entrypoint observes this result and yields an ``itinerary_updated``
+    frame so the timeline refreshes around the new dates.
+    """
+    pin = pin_ctx.get() or {}
+    itinerary_id = pin.get("itinerary_id")
+    if not itinerary_id:
+        raise BackendError(status=None, reason="missing_itinerary_id")
+
+    # The PATCH is partial (exclude_unset on the API side) and treats an
+    # explicit null as "clear". Build the body per timing_kind so we only ever
+    # clear dates on a deliberate switch to ``flexible`` — never by accident.
+    body: dict[str, Any] = {"timing_kind": timing_kind}
+    if timing_kind == "flexible":
+        body["date_start"] = None
+        body["date_end"] = None
+        body["duration_nights"] = None
+    else:
+        # exact + window both carry a range. Refuse a dateless call rather than
+        # wiping the stored dates — a missing date here is a model slip, not an
+        # intent to clear.
+        if not date_start or not date_end:
+            raise BackendError(status=None, reason="dates_required")
+        body["date_start"] = date_start
+        body["date_end"] = date_end
+        if duration_nights is not None:
+            body["duration_nights"] = duration_nights
+    if timing_note is not None:
+        body["timing_note"] = timing_note
+
+    return await patch_json(f"/itinerary/{itinerary_id}", json=body)

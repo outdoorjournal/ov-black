@@ -7,6 +7,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
+import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
+
 import type { NodeResponse } from "../../model/horizontalTypes";
 import type { ChatMessage } from "../../store/itineraryGraphStore";
 
@@ -151,7 +153,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         isUser ? "ml-auto bg-ink text-paper" : "bg-ink/5 text-ink",
       ].join(" ")}
     >
-      {message.text}
+      {/* User bubbles stay literal (they typed it); the concierge's replies
+          render as markdown + embeds. */}
+      {isUser ? message.text : <ProseMessage content={message.text} />}
       {message.streaming ? (
         <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-[1px] bg-current align-middle opacity-70" />
       ) : null}
