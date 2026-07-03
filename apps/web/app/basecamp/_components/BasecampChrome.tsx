@@ -1,9 +1,10 @@
-// The shared full-bleed chrome for /basecamp. Mirrors the login page
-// (apps/web/app/page.tsx:6-22) so a freshly magic-linked client doesn't see
-// a visual seam between sign-in and home: same radial gradient, same hero
-// image at 60% opacity, same ink vignette. The chrome is purely decorative;
-// content lives in children, which we slot into a stacked container so
-// the gradients stay behind it.
+// The shared shell for /basecamp — the client's persistent home.
+//
+// Light editorial treatment: a warm paper frame with crisp ink type and a
+// single orange accent, matching the client-facing direction. The immersive
+// "dark chat" lives inside the children (AtmosFrame in SinglePromptCard's
+// engaged view, and the frosted RightRailChat) — those own their own dark
+// mood surfaces, so the shell stays light around them.
 
 import type { ReactNode } from "react";
 
@@ -15,37 +16,20 @@ export type BasecampChromeProps = {
 
 export function BasecampChrome({ children }: BasecampChromeProps) {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-ink text-paper">
-      <div
-        aria-hidden
-        className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_20%,#3a4a5c_0%,#1a1f2a_45%,#0a0a0a_85%)]"
-      />
-      <div
-        aria-hidden
-        className="absolute inset-0 bg-[url('/images/hero.jpg')] bg-cover bg-center opacity-60"
-      />
-      <div
-        aria-hidden
-        className="absolute inset-0 bg-gradient-to-b from-ink/50 via-ink/40 to-ink/90"
-      />
-      <div
-        aria-hidden
-        className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-ink to-transparent"
-      />
-
+    <main className="relative min-h-screen bg-paper text-ink">
       <header className="relative z-10 flex items-center justify-between px-6 py-6 sm:px-10">
         <div className="flex items-baseline gap-3">
           <span className="font-serif text-2xl tracking-tight">
             Outdoor Voyage
           </span>
-          <span className="text-[10px] uppercase tracking-[0.35em] text-paper/60">
+          <span className="text-[10px] uppercase tracking-eyebrow text-ink/50">
             Black
           </span>
         </div>
         <form action={signOutAction}>
           <button
             type="submit"
-            className="rounded-none border-b border-transparent text-[10px] uppercase tracking-[0.3em] text-paper/70 transition-colors hover:border-paper/70 hover:text-paper"
+            className="border-b border-transparent text-[10px] uppercase tracking-label text-ink/60 transition-colors hover:border-ink/60 hover:text-ink"
           >
             Sign out
           </button>

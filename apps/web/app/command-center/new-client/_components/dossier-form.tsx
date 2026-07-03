@@ -661,7 +661,7 @@ export function DossierForm() {
         ) : null}
 
         <div className="flex items-center justify-end gap-4">
-          <Button type="submit" disabled={isPending}>
+          <Button type="submit" variant="brand" disabled={isPending}>
             {isPending ? "saving…" : "Add client"}
           </Button>
         </div>

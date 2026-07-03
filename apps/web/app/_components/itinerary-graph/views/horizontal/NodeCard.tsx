@@ -122,7 +122,7 @@ export function NodeCard({
   // and we keep the keyboard semantics the cards prototype already gives.
   const wrapperClass = [
     "relative block w-full text-left",
-    flash ? "ring-2 ring-amber-400/70 rounded-lg" : "",
+    flash ? "ring-2 ring-brand rounded-lg" : "",
     "transition-shadow",
   ].join(" ");
 

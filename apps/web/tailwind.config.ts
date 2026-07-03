@@ -21,6 +21,14 @@ const config: Config = {
         // OV Black semantic palette — preserved from S01.
         ink: "#0a0a0a",
         paper: "#f7f4ee",
+        // OV signature accent — Outdoor Voyage burnt orange (#F5701F),
+        // driven by --brand. Restrained punctuation only (CTAs, focus,
+        // live/active states); see globals.css. The <alpha-value> slot lets
+        // opacity modifiers (e.g. ring-brand/30) resolve correctly.
+        brand: {
+          DEFAULT: "hsl(var(--brand) / <alpha-value>)",
+          foreground: "hsl(var(--brand-foreground) / <alpha-value>)",
+        },
         // shadcn CSS-variable tokens — consumed by the generated primitives.
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -60,6 +68,21 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      // The OV Black micro-label rhythm. `eyebrow` is the widely-tracked
+      // section/hero label; `label` is the slightly tighter caption/button.
+      letterSpacing: {
+        label: "0.3em",
+        eyebrow: "0.4em",
+      },
+      // Editorial elevation scale. `sheet` = a light card on a light surface
+      // (subtle); `float` / `float-lg` = a light card lifted off the dark
+      // chrome (resting / raised).
+      boxShadow: {
+        sheet: "0 24px 70px -28px rgba(10, 10, 10, 0.35)",
+        "sheet-lg": "0 32px 80px -30px rgba(10, 10, 10, 0.45)",
+        float: "0 30px 80px -20px rgba(0, 0, 0, 0.6)",
+        "float-lg": "0 40px 100px -20px rgba(0, 0, 0, 0.75)",
       },
       keyframes: {
         "accordion-down": {

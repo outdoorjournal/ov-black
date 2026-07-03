@@ -24,6 +24,7 @@ import {
   type OnboardingOpenerResponse,
 } from "@ov-black/api-client";
 
+import { Button } from "@/components/ui/button";
 import { AtmosFrame } from "@/app/chat/[client_id]/_components/AtmosFrame";
 import { ConversationStream } from "@/app/chat/[client_id]/_components/ConversationStream";
 import { Composer } from "@/app/chat/[client_id]/_components/Composer";
@@ -275,7 +276,7 @@ function SinglePromptInner({
           className={
             engaged
               ? "font-serif text-2xl leading-snug tracking-tight text-paper transition-all duration-700 ease-out sm:text-3xl"
-              : "max-w-3xl text-balance text-center font-serif text-4xl leading-[1.15] tracking-tight text-paper transition-all duration-700 ease-out sm:text-5xl lg:text-6xl"
+              : "max-w-3xl text-balance text-center font-serif text-4xl leading-[1.15] tracking-tight text-ink transition-all duration-700 ease-out sm:text-5xl lg:text-6xl"
           }
         >
           {opener.prompt}
@@ -289,33 +290,34 @@ function SinglePromptInner({
               onKeyDown={onKeyDown}
               placeholder="Begin in your own words…"
               rows={3}
-              className="w-full resize-none rounded-sm border border-paper/15 bg-paper/5 px-5 py-4 font-sans text-base leading-relaxed text-paper placeholder:text-paper/40 focus:border-paper/40 focus:outline-none"
+              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-5 py-4 font-sans text-base leading-relaxed text-ink transition placeholder:text-ink/40 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
               autoFocus
               disabled={opening}
             />
             <div className="flex items-center gap-4">
-              <button
+              <Button
                 type="button"
+                variant="brand"
                 onClick={() => void submit()}
                 disabled={opening || draft.trim().length === 0}
-                className="rounded-sm border border-paper/30 bg-paper/0 px-6 py-2 font-sans text-[10px] uppercase tracking-[0.4em] text-paper transition hover:bg-paper/10 disabled:opacity-40"
+                className="uppercase tracking-label"
               >
                 {opening ? "Connecting…" : "Reply"}
-              </button>
-              <span className="text-[10px] uppercase tracking-[0.4em] text-paper/45">
+              </Button>
+              <span className="text-[10px] uppercase tracking-eyebrow text-ink/45">
                 Press Enter to begin
               </span>
               <button
                 type="button"
                 onClick={() => void dismiss()}
                 disabled={dismissing || opening}
-                className="text-[10px] uppercase tracking-[0.4em] text-paper/45 transition hover:text-paper/80 disabled:opacity-40"
+                className="text-[10px] uppercase tracking-eyebrow text-ink/45 transition hover:text-ink/80 disabled:opacity-40"
               >
                 {dismissing ? "Closing…" : "Not now"}
               </button>
             </div>
             {openingError ? (
-              <p className="text-sm text-paper/60">
+              <p className="text-sm text-ink/60">
                 Our concierge is stepping away for a moment. Please try again.
               </p>
             ) : null}

@@ -104,7 +104,7 @@ export function Navbar({ email }: NavbarProps) {
                 {active ? (
                   <span
                     aria-hidden
-                    className="absolute inset-x-0 bottom-0 h-px bg-paper"
+                    className="absolute inset-x-0 bottom-0 h-0.5 bg-brand"
                   />
                 ) : null}
               </Link>

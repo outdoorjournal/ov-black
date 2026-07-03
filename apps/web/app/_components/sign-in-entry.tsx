@@ -7,6 +7,7 @@ import {
   type RequestLoginDetail,
 } from "@ov-black/api-client";
 
+import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/lib/env";
 
 type Status =
@@ -93,7 +94,7 @@ export function SignInEntry() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="mt-1 block w-full rounded border border-ink/20 bg-white px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+          className="mt-1 block w-full rounded border border-ink/20 bg-white px-3 py-2.5 text-sm text-ink transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
         />
       </div>
 
@@ -103,13 +104,14 @@ export function SignInEntry() {
         </p>
       ) : null}
 
-      <button
+      <Button
         type="submit"
+        variant="brand"
         disabled={submitting || email.trim() === ""}
-        className="w-full rounded bg-ink px-4 py-2 text-sm uppercase tracking-[0.2em] text-paper transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full uppercase tracking-label"
       >
         {submitting ? "Sending…" : "Send sign-in link"}
-      </button>
+      </Button>
     </form>
   );
 }

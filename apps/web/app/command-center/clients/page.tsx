@@ -51,7 +51,7 @@ export default async function ClientsPage() {
             Clients
           </h1>
         </div>
-        <Button asChild className="self-start sm:self-auto">
+        <Button asChild variant="brand" className="self-start sm:self-auto">
           <Link href="/command-center/new-client">New Client</Link>
         </Button>
       </header>
@@ -162,7 +162,7 @@ function InvitePill({ status }: { status: AccessStatus }) {
   const tone =
     status === "active"
       ? "border-paper/40 text-paper"
-      : "border-amber-300/40 text-amber-200/90";
+      : "border-brand/40 text-brand";
   return (
     <span
       className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}

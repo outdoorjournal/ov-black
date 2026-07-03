@@ -241,5 +241,13 @@ export const METRO_LINE_COLORS: Record<string, string> = {
 export const PAPER_BG = "#f7f4ee";
 export const INK = "#0a0a0a";
 
+// OV signature orange — the active/live accent: selection focus chrome, the
+// just-changed flash, and the primary action on a fresh proposal. Deliberately
+// distinct from the muted per-type TYPE_TOKENS accents above, which remain a
+// functional colour-coding system (flight vs hotel vs meal …). BRAND_RGB is the
+// space-separated channel triplet for building rgba() strings (e.g. focus glow).
+export const BRAND = "#f5701f";
+export const BRAND_RGB = "245, 112, 31";
+
 export const NOISE_BG =
   "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='1' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05 0 0 0 0 0.04 0 0 0 0 0.03 0 0 0 0.06 0'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>\")";

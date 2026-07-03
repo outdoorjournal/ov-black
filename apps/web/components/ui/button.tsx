@@ -11,6 +11,9 @@ const buttonVariants = cva(
       variant: {
         default:
           "bg-primary text-primary-foreground hover:bg-primary/90",
+        // OV signature CTA — reserved for the single primary affirmative
+        // action on a surface. Restraint is the point; don't over-use it.
+        brand: "bg-brand text-brand-foreground hover:bg-brand/90",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:

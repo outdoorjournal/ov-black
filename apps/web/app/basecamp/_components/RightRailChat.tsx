@@ -20,6 +20,7 @@ import {
   type AgentTurnSummary,
 } from "@ov-black/api-client";
 
+import { Eyebrow } from "@/components/ui/eyebrow";
 import { AtmosFrame } from "@/app/chat/[client_id]/_components/AtmosFrame";
 import { ConversationStream } from "@/app/chat/[client_id]/_components/ConversationStream";
 import { Composer } from "@/app/chat/[client_id]/_components/Composer";
@@ -174,14 +175,12 @@ function RightRailChatInner({
   }, []);
 
   return (
-    <aside className="relative flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-sm bg-paper text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] lg:sticky lg:top-24">
+    <aside className="relative flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-sm bg-paper text-ink shadow-float lg:sticky lg:top-24">
       <AtmosFrame mood={currentMood ?? DEFAULT_MOOD} phaseCounter={moodPhaseRef.current} />
       <div className="relative z-10 flex min-h-0 flex-1 flex-col bg-paper/95 backdrop-blur-sm">
         <header className="border-b border-ink/10 px-6 pb-4 pt-5">
-          <p className="font-sans text-[10px] uppercase tracking-[0.3em] text-ink/50">
-            Concierge
-          </p>
-          <h2 className="mt-1 font-serif text-xl text-ink">
+          <Eyebrow>Concierge</Eyebrow>
+          <h2 className="mt-2 font-serif text-xl text-ink">
             {turns.length > 0 ? "Continue your conversation" : "Reach the concierge"}
           </h2>
         </header>

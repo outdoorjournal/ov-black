@@ -31,6 +31,7 @@ import {
   offsetHoursOr,
 } from "../../model/horizontalTime";
 import type { NodeResponse, NodeStatus, NodeType } from "../../model/horizontalTypes";
+import { BRAND_RGB } from "../../shared/cards/tokens";
 
 const LOCKED_STATUSES: ReadonlySet<NodeStatus> = new Set(["approved", "confirmed"]);
 
@@ -558,15 +559,15 @@ function CardWrap({
           aria-disabled={dragDisabled || undefined}
           title={isLocked ? `Locked — status is ${p.node.status}` : undefined}
         >
-          {/* Focus chrome — matches the vertical prototype: a soft amber
-              ring as a motion box-shadow plus a 3px left-edge accent bar.
-              The motion.div hugs the rendered card exactly (260px wide), so
-              the focus halo never extends past the visible card. */}
+          {/* Focus chrome — the selected node's active accent: a brand-orange
+              ring as a motion box-shadow plus a 3px left-edge bar. The
+              motion.div hugs the rendered card exactly (260px wide), so the
+              focus halo never extends past the visible card. */}
           <motion.div
             animate={{
               boxShadow: isFocused
-                ? "0 0 0 1.5px rgba(184,138,62,0.85), 0 10px 28px -10px rgba(184,138,62,0.45)"
-                : "0 0 0 0 rgba(184,138,62,0), 0 0 0 0 rgba(0,0,0,0)",
+                ? `0 0 0 1.5px rgba(${BRAND_RGB}, 0.9), 0 10px 28px -10px rgba(${BRAND_RGB}, 0.45)`
+                : `0 0 0 0 rgba(${BRAND_RGB}, 0), 0 0 0 0 rgba(0,0,0,0)`,
             }}
             transition={{ duration: 0.18 }}
             className="relative rounded-lg"
@@ -574,8 +575,7 @@ function CardWrap({
             {isFocused ? (
               <span
                 aria-hidden
-                className="pointer-events-none absolute -left-1 top-2 bottom-2 w-[3px] rounded-full"
-                style={{ backgroundColor: "#b88a3e" }}
+                className="pointer-events-none absolute -left-1 top-2 bottom-2 w-[3px] rounded-full bg-brand"
               />
             ) : null}
             <NodeCard
@@ -595,7 +595,7 @@ function CardWrap({
                   e.stopPropagation();
                   onAccept();
                 }}
-                className="rounded-md bg-ink px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-paper"
+                className="rounded-md bg-brand px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-brand-foreground"
               >
                 Accept
               </button>
