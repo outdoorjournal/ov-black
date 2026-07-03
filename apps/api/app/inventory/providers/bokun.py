@@ -41,7 +41,8 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -55,6 +56,15 @@ from app.inventory.schemas import (
     Location,
     Price,
     Range,
+)
+from app.inventory.supplier_booking import (
+    SupplierAvailability,
+    SupplierBookingError,
+    SupplierBookingRecord,
+    SupplierCancellation,
+    SupplierCategoryPrice,
+    SupplierReservation,
+    SupplierSelection,
 )
 
 logger = logging.getLogger("ov_black.inventory.bokun")
@@ -86,6 +96,63 @@ _DEFAULT_LANG = "EN"
 # specific kinds that don't include this one, we skip the upstream call so
 # experiences never leak into (say) a flight-only aggregate search.
 _KIND = "experience"
+
+# ── Booking endpoint paths (Bokun REST) ──────────────────────────────────────
+# Reserve → confirm is Bokun's RESERVE_FOR_EXTERNAL_PAYMENT two-step (OV collects
+# payment first, then confirms the held reservation). Verified against the Bokun
+# developer docs; the exact ``directBooking`` sub-shape + the confirmed-booking
+# cancel path are the parts most worth re-checking against the live swagger +
+# the api.bokuntest.com sandbox before enabling in production.
+#   Availability : GET  /activity.json/{id}/availabilities
+#     https://bokun.dev/booking-api-restful/.../checking-availability-and-pricing
+#   Reserve      : POST /checkout.json/submit  (paymentMethod=RESERVE_FOR_EXTERNAL_PAYMENT)
+#   Confirm      : POST /checkout.json/confirm-reserved/{confirmationCode}
+#     https://bokun.dev/booking-api-rest/.../checkout
+#   Abort hold   : POST /booking.json/{confirmationCode}/abort-reserved
+#   Cancel booked: POST /booking.json/{bookingId}/cancel   (VERIFY exact path)
+_CHECKOUT_SUBMIT_PATH = "/checkout.json/submit"
+
+
+def _as_decimal(value: Any) -> Decimal | None:
+    """Coerce a Bokun money ``amount`` to a 2dp ``Decimal``, or ``None``."""
+    f = _as_float(value)
+    if f is None:
+        return None
+    try:
+        return Decimal(str(f))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _parse_bokun_date(value: Any) -> date | None:
+    """Read a Bokun availability ``date`` — epoch millis or an ISO/``yyyy-MM-dd`` string."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        # Bokun quotes the date as an epoch-millis midnight (UTC).
+        try:
+            return datetime.fromtimestamp(value / 1000, tz=UTC).date()
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            try:
+                return date.fromisoformat(value[:10])
+            except ValueError:
+                return None
+    return None
+
+
+def _coerce_id(value: str | None) -> int | str | None:
+    """Bokun ids are int64 on the wire; send an int when it parses, else the raw str."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return value
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -504,6 +571,241 @@ class BokunProvider(InventoryProvider):
                 extra={"source": "bokun", "source_id": source_id, "reason": exc.__class__.__name__},
             )
             raise BokunUpstreamError("bokun_detail_malformed") from exc
+
+    # ── SupplierBookingProvider: reserve → confirm → cancel ───────────────────
+    # OV is merchant-of-record: the traveler's payment clears BEFORE booking, so
+    # this uses Bokun's RESERVE_FOR_EXTERNAL_PAYMENT two-step (reserve holds ~30
+    # min, confirm commits). Every call raises :class:`SupplierBookingError` on
+    # failure so the fail-closed money gate can roll back; ``retryable`` marks an
+    # ambiguous transport/5xx (outcome unknown) apart from a definitive 4xx decline.
+
+    async def _send(
+        self, method: str, path: str, *, body: dict[str, Any] | None = None
+    ) -> httpx.Response:
+        """Issue one signed Bokun request, mapping transport failures to SupplierBookingError."""
+        if not self._has_credentials:
+            raise SupplierBookingError("bokun_no_credentials")
+        headers = self._signed_headers(method, path, with_body=body is not None)
+        url = f"{self._base_url}{path}"
+        try:
+            if body is None:
+                return await self._client.request(method, url, headers=headers)
+            return await self._client.request(
+                method, url, headers=headers, content=_json_bytes(body)
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "inventory.provider.error",
+                extra={"source": "bokun", "upstream_status": None, "reason": "timeout"},
+            )
+            raise SupplierBookingError("bokun_timeout", retryable=True) from exc
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "inventory.provider.error",
+                extra={
+                    "source": "bokun",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
+            )
+            raise SupplierBookingError(exc.__class__.__name__, retryable=True) from exc
+
+    @staticmethod
+    def _json_or_raise(resp: httpx.Response, reason: str) -> Any:
+        """Parse a 2xx JSON body or raise a SupplierBookingError with the wire status."""
+        if resp.status_code >= 400:
+            logger.warning(
+                "inventory.provider.error",
+                extra={"source": "bokun", "upstream_status": resp.status_code, "reason": reason},
+            )
+            raise SupplierBookingError(
+                reason, retryable=resp.status_code >= 500, status_code=resp.status_code
+            )
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise SupplierBookingError(f"{reason}_invalid_json") from exc
+
+    async def check_availability(
+        self,
+        *,
+        source_id: str,
+        start: date,
+        end: date,
+        currency: str,
+        ctx: InventoryCtx,
+    ) -> list[SupplierAvailability]:
+        """List bookable slots for an activity over ``[start, end]``.
+
+        ``GET /activity.json/{id}/availabilities`` returns an array of
+        availabilities, each with its own ``pricesByRate``; we flatten to one
+        :class:`SupplierAvailability` per (availability × rate) so a caller picks a
+        concrete rate + start-time to book.
+        """
+        ccy = _non_empty_str(currency) or _DEFAULT_CURRENCY
+        path = (
+            f"/activity.json/{source_id}/availabilities"
+            f"?start={start.isoformat()}&end={end.isoformat()}"
+            f"&currency={ccy}&lang={_DEFAULT_LANG}"
+        )
+        resp = await self._send("GET", path)
+        payload = self._json_or_raise(resp, "bokun_availabilities")
+        out: list[SupplierAvailability] = []
+        for raw in _as_list(payload):
+            avail = _as_dict(raw)
+            avail_id = avail.get("id")
+            if avail_id is None:
+                continue
+            slot_date = _parse_bokun_date(avail.get("date"))
+            if slot_date is None:
+                continue
+            start_time = _non_empty_str(avail.get("startTime"))
+            start_time_id = avail.get("startTimeId")
+            seats = _as_float(avail.get("availabilityCount"))
+            rates = _as_list(avail.get("pricesByRate")) or [{}]
+            for rate in rates:
+                rate_d = _as_dict(rate)
+                prices: list[SupplierCategoryPrice] = []
+                for cat in _as_list(rate_d.get("pricePerCategoryUnit")):
+                    cat_d = _as_dict(cat)
+                    money = _as_dict(cat_d.get("amount"))
+                    amount = _as_decimal(money.get("amount"))
+                    cat_id = cat_d.get("id")
+                    if amount is None or cat_id is None:
+                        continue
+                    prices.append(
+                        SupplierCategoryPrice(
+                            category_id=str(cat_id),
+                            amount=amount,
+                            currency=_non_empty_str(money.get("currency")) or ccy,
+                        )
+                    )
+                rate_id = rate_d.get("activityRateId")
+                out.append(
+                    SupplierAvailability(
+                        availability_id=str(avail_id),
+                        date=slot_date,
+                        start_time=start_time,
+                        start_time_id=str(start_time_id) if start_time_id is not None else None,
+                        seats_available=int(seats) if seats is not None else None,
+                        rate_id=str(rate_id) if rate_id is not None else None,
+                        prices=tuple(prices),
+                        raw=avail,
+                    )
+                )
+        return out
+
+    def _direct_booking(self, selection: SupplierSelection) -> dict[str, Any]:
+        """Assemble the ``directBooking`` body for a single-activity checkout.
+
+        Bokun's ``pricingCategoryBookings`` is one entry PER participant, so a
+        category with ``count=2`` expands to two entries. Ids are int64 on the
+        wire. (This sub-shape is the part most worth confirming against the live
+        swagger / sandbox — it's centralized here so a fix is one place.)
+        """
+        category_bookings: list[dict[str, Any]] = []
+        for pc in selection.pricing_categories:
+            entry_id = _coerce_id(pc.category_id)
+            for _ in range(max(pc.count, 0)):
+                category_bookings.append({"pricingCategoryId": entry_id})
+        activity_booking: dict[str, Any] = {
+            "activityId": _coerce_id(selection.source_id),
+            "date": selection.date.isoformat(),
+            "pricingCategoryBookings": category_bookings,
+        }
+        if selection.start_time_id is not None:
+            activity_booking["startTimeId"] = _coerce_id(selection.start_time_id)
+        if selection.rate_id is not None:
+            activity_booking["rateId"] = _coerce_id(selection.rate_id)
+        return {"activityBookings": [activity_booking]}
+
+    async def reserve(
+        self, *, selection: SupplierSelection, ctx: InventoryCtx
+    ) -> SupplierReservation:
+        """Hold the selected slot (``POST /checkout.json/submit``), returning its code."""
+        body = {
+            "source": "DIRECT_REQUEST",
+            "paymentMethod": "RESERVE_FOR_EXTERNAL_PAYMENT",
+            "directBooking": self._direct_booking(selection),
+        }
+        resp = await self._send("POST", _CHECKOUT_SUBMIT_PATH, body=body)
+        payload = self._json_or_raise(resp, "bokun_reserve")
+        booking = _as_dict(_as_dict(payload).get("booking")) or _as_dict(payload)
+        code = _non_empty_str(booking.get("bookingConfirmationCode"))
+        if code is None:
+            raise SupplierBookingError("bokun_reserve_no_confirmation_code")
+        booking_id = booking.get("bookingId") or booking.get("id")
+        money = _as_dict(booking.get("totalPriceAsMoney"))
+        logger.info(
+            "inventory.provider.reserve",
+            extra={"source": "bokun", "confirmation_code": code, "booking_id": str(booking_id)},
+        )
+        return SupplierReservation(
+            confirmation_code=code,
+            booking_id=str(booking_id) if booking_id is not None else None,
+            amount=_as_decimal(money.get("amount")) or _as_decimal(booking.get("totalPrice")),
+            currency=_non_empty_str(money.get("currency")),
+            raw=booking,
+        )
+
+    async def confirm(self, *, confirmation_code: str, ctx: InventoryCtx) -> SupplierBookingRecord:
+        """Commit a held reservation (``POST /checkout.json/confirm-reserved/{code}``).
+
+        Called only after OV's money gate has cleared the traveler's payment. The
+        confirm body carries no card data (payment was external); an empty object
+        is sent — the exact schema is worth confirming against the sandbox.
+        """
+        path = f"/checkout.json/confirm-reserved/{confirmation_code}"
+        resp = await self._send("POST", path, body={})
+        payload = self._json_or_raise(resp, "bokun_confirm")
+        booking = _as_dict(_as_dict(payload).get("booking")) or _as_dict(payload)
+        code = _non_empty_str(booking.get("bookingConfirmationCode")) or confirmation_code
+        booking_id = booking.get("bookingId") or booking.get("id")
+        logger.info(
+            "inventory.provider.confirm",
+            extra={"source": "bokun", "confirmation_code": code, "booking_id": str(booking_id)},
+        )
+        return SupplierBookingRecord(
+            confirmation_code=code,
+            booking_id=str(booking_id) if booking_id is not None else None,
+            status=_non_empty_str(booking.get("status")),
+            raw=booking,
+        )
+
+    async def abort(self, *, confirmation_code: str, ctx: InventoryCtx) -> SupplierCancellation:
+        """Release a held-but-unconfirmed reservation (idempotent: 404 ⇒ already gone)."""
+        path = f"/booking.json/{confirmation_code}/abort-reserved"
+        resp = await self._send("POST", path)
+        if resp.status_code == 404:
+            return SupplierCancellation(cancelled=True, status="not_found")
+        self._json_or_raise(resp, "bokun_abort")
+        return SupplierCancellation(cancelled=True, status="aborted")
+
+    async def cancel(
+        self, *, booking_id: str | None, confirmation_code: str, ctx: InventoryCtx
+    ) -> SupplierCancellation:
+        """Cancel a CONFIRMED booking (idempotent: 404 ⇒ already cancelled).
+
+        Prefers the internal ``booking_id`` (the cancel resource key); falls back
+        to the confirmation code when the id wasn't captured.
+        """
+        ref = booking_id or confirmation_code
+        if not ref:
+            raise SupplierBookingError("bokun_cancel_no_reference")
+        path = f"/booking.json/{ref}/cancel"
+        resp = await self._send("POST", path, body={"notify": False})
+        if resp.status_code == 404:
+            logger.info(
+                "inventory.provider.cancel",
+                extra={"source": "bokun", "booking_id": str(booking_id), "status": "already_gone"},
+            )
+            return SupplierCancellation(cancelled=True, status="not_found")
+        payload = self._json_or_raise(resp, "bokun_cancel")
+        logger.info(
+            "inventory.provider.cancel",
+            extra={"source": "bokun", "booking_id": str(booking_id), "status": "cancelled"},
+        )
+        return SupplierCancellation(cancelled=True, status="cancelled", raw=_as_dict(payload))
 
 
 def _json_bytes(body: dict[str, Any]) -> bytes:

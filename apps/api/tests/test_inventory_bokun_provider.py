@@ -15,6 +15,8 @@ import hashlib
 import hmac
 import json
 import logging
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,12 @@ from app.inventory.providers.bokun import (
 )
 from app.inventory.registry import InventoryCtx
 from app.inventory.schemas import ExperienceItem
+from app.inventory.supplier_booking import (
+    PricingCategoryBooking,
+    SupplierBookingError,
+    SupplierBookingProvider,
+    SupplierSelection,
+)
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "bokun_activities.json"
 
@@ -385,3 +393,258 @@ async def test_secret_key_never_logged(
         assert secret not in record.getMessage()
         for value in vars(record).values():
             assert secret not in repr(value)
+
+
+# ── SupplierBookingProvider: availability / reserve / confirm / abort / cancel ─
+
+
+def test_bokun_provider_satisfies_supplier_booking_protocol() -> None:
+    """The capability isinstance-gate the booking service relies on must hold."""
+    provider = _build_provider(lambda r: httpx.Response(404))
+    assert isinstance(provider, SupplierBookingProvider)
+
+
+_AVAILABILITIES = [
+    {
+        "id": 555,
+        "date": 1754006400000,  # epoch millis midnight UTC
+        "startTime": "09:00",
+        "startTimeId": 777,
+        "availabilityCount": 8,
+        "pricesByRate": [
+            {
+                "activityRateId": 42,
+                "pricePerCategoryUnit": [
+                    {"id": 1, "amount": {"amount": 120.0, "currency": "USD"}},
+                    {"id": 2, "amount": {"amount": 60.0, "currency": "USD"}},
+                ],
+            }
+        ],
+    }
+]
+
+
+@pytest.mark.asyncio
+async def test_check_availability_happy_path() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["raw_path"] = request.url.raw_path.decode()
+        captured["headers"] = dict(request.headers)
+        assert request.url.path == "/activity.json/1001/availabilities"
+        return httpx.Response(200, json=_AVAILABILITIES)
+
+    provider = _build_provider(handler)
+    try:
+        slots = await provider.check_availability(
+            source_id="1001",
+            start=date(2026, 8, 1),
+            end=date(2026, 8, 3),
+            currency="USD",
+            ctx=InventoryCtx(),
+        )
+    finally:
+        await provider.aclose()
+
+    assert len(slots) == 1
+    slot = slots[0]
+    assert slot.availability_id == "555"
+    assert slot.start_time_id == "777"
+    assert slot.rate_id == "42"
+    assert slot.seats_available == 8
+    assert isinstance(slot.date, date)
+    assert {p.category_id: p.amount for p in slot.prices} == {
+        "1": Decimal("120.0"),
+        "2": Decimal("60.0"),
+    }
+    # start/end/currency baked into the signed path; auth headers present.
+    assert captured["raw_path"] == (
+        "/activity.json/1001/availabilities?start=2026-08-01&end=2026-08-03&currency=USD&lang=EN"
+    )
+    assert "x-bokun-signature" in captured["headers"]
+
+
+def _selection() -> SupplierSelection:
+    return SupplierSelection(
+        source_id="1001",
+        date=date(2026, 8, 1),
+        rate_id="42",
+        start_time_id="777",
+        pricing_categories=(
+            PricingCategoryBooking(category_id="1", count=2),
+            PricingCategoryBooking(category_id="2", count=1),
+        ),
+        currency="USD",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reserve_happy_path_and_direct_booking_shape() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "booking": {
+                    "bookingId": 900123,
+                    "bookingConfirmationCode": "BOKUN-XYZ",
+                    "totalPriceAsMoney": {"amount": 240.0, "currency": "USD"},
+                }
+            },
+        )
+
+    provider = _build_provider(handler)
+    try:
+        reservation = await provider.reserve(selection=_selection(), ctx=InventoryCtx())
+    finally:
+        await provider.aclose()
+
+    assert reservation.confirmation_code == "BOKUN-XYZ"
+    assert reservation.booking_id == "900123"
+    assert reservation.amount == Decimal("240.0")
+    assert reservation.currency == "USD"
+
+    assert captured["path"] == "/checkout.json/submit"
+    body = captured["body"]
+    assert body["source"] == "DIRECT_REQUEST"
+    assert body["paymentMethod"] == "RESERVE_FOR_EXTERNAL_PAYMENT"
+    activity = body["directBooking"]["activityBookings"][0]
+    assert activity["activityId"] == 1001
+    assert activity["date"] == "2026-08-01"
+    assert activity["startTimeId"] == 777
+    assert activity["rateId"] == 42
+    # count expands to one pricingCategoryBooking entry per participant (2 + 1).
+    assert activity["pricingCategoryBookings"] == [
+        {"pricingCategoryId": 1},
+        {"pricingCategoryId": 1},
+        {"pricingCategoryId": 2},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reserve_missing_confirmation_code_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"booking": {"bookingId": 1}})
+
+    provider = _build_provider(handler)
+    try:
+        with pytest.raises(SupplierBookingError) as ei:
+            await provider.reserve(selection=_selection(), ctx=InventoryCtx())
+    finally:
+        await provider.aclose()
+    assert ei.value.reason == "bokun_reserve_no_confirmation_code"
+
+
+@pytest.mark.asyncio
+async def test_reserve_5xx_is_retryable_4xx_is_not() -> None:
+    provider = _build_provider(lambda r: httpx.Response(503, json={"message": "down"}))
+    try:
+        with pytest.raises(SupplierBookingError) as ei:
+            await provider.reserve(selection=_selection(), ctx=InventoryCtx())
+        assert ei.value.retryable is True
+        assert ei.value.status_code == 503
+    finally:
+        await provider.aclose()
+
+    provider = _build_provider(lambda r: httpx.Response(400, json={"message": "bad"}))
+    try:
+        with pytest.raises(SupplierBookingError) as ei:
+            await provider.reserve(selection=_selection(), ctx=InventoryCtx())
+        assert ei.value.retryable is False
+        assert ei.value.status_code == 400
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reserve_no_credentials_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("upstream must not be called without credentials")
+
+    provider = _build_provider(handler, secret_key="")
+    try:
+        with pytest.raises(SupplierBookingError) as ei:
+            await provider.reserve(selection=_selection(), ctx=InventoryCtx())
+    finally:
+        await provider.aclose()
+    assert ei.value.reason == "bokun_no_credentials"
+
+
+@pytest.mark.asyncio
+async def test_confirm_happy_path() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "booking": {
+                    "bookingId": 900123,
+                    "bookingConfirmationCode": "BOKUN-XYZ",
+                    "status": "CONFIRMED",
+                }
+            },
+        )
+
+    provider = _build_provider(handler)
+    try:
+        record = await provider.confirm(confirmation_code="BOKUN-XYZ", ctx=InventoryCtx())
+    finally:
+        await provider.aclose()
+
+    assert captured["path"] == "/checkout.json/confirm-reserved/BOKUN-XYZ"
+    assert record.confirmation_code == "BOKUN-XYZ"
+    assert record.booking_id == "900123"
+    assert record.status == "CONFIRMED"
+
+
+@pytest.mark.asyncio
+async def test_abort_happy_path_and_404_is_idempotent() -> None:
+    provider = _build_provider(lambda r: httpx.Response(200, json={}))
+    try:
+        aborted = await provider.abort(confirmation_code="BOKUN-XYZ", ctx=InventoryCtx())
+        assert aborted.cancelled is True
+    finally:
+        await provider.aclose()
+
+    provider = _build_provider(lambda r: httpx.Response(404, json={"message": "gone"}))
+    try:
+        gone = await provider.abort(confirmation_code="BOKUN-XYZ", ctx=InventoryCtx())
+        assert gone.cancelled is True
+        assert gone.status == "not_found"
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_happy_path_and_404_is_idempotent() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        return httpx.Response(200, json={"status": "CANCELLED"})
+
+    provider = _build_provider(handler)
+    try:
+        result = await provider.cancel(
+            booking_id="900123", confirmation_code="BOKUN-XYZ", ctx=InventoryCtx()
+        )
+    finally:
+        await provider.aclose()
+    assert captured["path"] == "/booking.json/900123/cancel"
+    assert result.cancelled is True
+
+    provider = _build_provider(lambda r: httpx.Response(404, json={"message": "gone"}))
+    try:
+        gone = await provider.cancel(
+            booking_id="900123", confirmation_code="BOKUN-XYZ", ctx=InventoryCtx()
+        )
+        assert gone.cancelled is True
+        assert gone.status == "not_found"
+    finally:
+        await provider.aclose()

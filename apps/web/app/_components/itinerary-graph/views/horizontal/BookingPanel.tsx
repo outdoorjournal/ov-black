@@ -15,6 +15,9 @@ import {
   refreshOffer,
 } from "@ov-black/api-client";
 
+import { copy } from "./bookingCopy";
+import { SupplierSlotPickerDialog } from "./SupplierSlotPickerDialog";
+
 // Advisor booking surface — the itinerary-aside Booking tab (M005/I3).
 //
 // Self-contained like InvoicePanel: it takes the staff credentials the store
@@ -29,31 +32,10 @@ const OK = "#1d6b3a";
 
 const BOOKABLE_TYPES = new Set(["flight", "hotel", "experience", "meal"]);
 
-const ERROR_COPY: Record<string, string> = {
-  not_found: "That item could not be found.",
-  advisor_only: "Booking is advisor-only.",
-  forbidden: "You don't have access to book here.",
-  node_not_paid: "Can't book yet — no covering paid invoice line. Pay it first, or override.",
-  already_booked: "That item is already booked.",
-  node_not_approved: "Only an approved item can be booked.",
-  node_not_booked: "Only a booked item can be confirmed.",
-  no_booking: "No booking found for that item.",
-  offer_required: "Re-price the flight first to hold a fresh fare.",
-  offer_expired: "The held fare lapsed — re-price before booking.",
-  offer_unavailable: "The held fare is gone; re-search the flight.",
-  reprice_failed: "Couldn't re-price with the supplier. Try again.",
-  node_has_no_cost: "That item has no cost to book against.",
-  supplier_ref_required: "Enter a supplier confirmation #.",
-  already_cancelled: "That booking is already cancelled.",
-  refund_declined: "The refund was declined — nothing was changed. Resolve it with the processor.",
-  refund_gateway_unavailable: "Couldn't reach the payment processor. Nothing changed — try again.",
-  payments_unconfigured: "Payments aren't configured, so the refund can't be processed.",
-  network_error: "Could not reach the server. Try again in a moment.",
-};
-
-function copy(detail: string): string {
-  return ERROR_COPY[detail] ?? "Something went wrong. Try again.";
-}
+// Sources that can be booked live through the supplier (reserve + confirm). Only
+// Bokun today; the server still gates on its own feature flag + credentials, and
+// the slot dialog falls back to a manual book when that gate is closed.
+const SUPPLIER_BOOKABLE_SOURCES = new Set(["bokun"]);
 
 function bookableNodes(nodes: NodeResponse[]): NodeResponse[] {
   return nodes
@@ -230,9 +212,11 @@ function BookingRow({
   const [offer, setOffer] = useState<OfferResponse | null>(null);
   const [ref, setRef] = useState("");
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const canWrite = editable && api !== null;
   const isFlight = node.type === "flight";
+  const isSupplierBookable = node.source != null && SUPPLIER_BOOKABLE_SOURCES.has(node.source);
 
   const run = useCallback(
     async (fn: () => Promise<{ ok: boolean; detail?: string }>) => {
@@ -307,20 +291,32 @@ function BookingRow({
               Re-price
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() =>
-              api &&
-              void run(() =>
-                bookNode(api, itineraryId, node.id, { override_unpaid: override }),
-              )
-            }
-            disabled={busy}
-            data-testid={`book-${node.id}`}
-            className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
-          >
-            Book
-          </button>
+          {isSupplierBookable ? (
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              disabled={busy}
+              data-testid={`book-slot-${node.id}`}
+              className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              Choose slot &amp; book
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                api &&
+                void run(() =>
+                  bookNode(api, itineraryId, node.id, { override_unpaid: override }),
+                )
+              }
+              disabled={busy}
+              data-testid={`book-${node.id}`}
+              className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.2em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              Book
+            </button>
+          )}
           <label className="flex items-center gap-1 font-sans text-[10px] uppercase tracking-[0.12em] text-ink/55">
             <input
               type="checkbox"
@@ -331,6 +327,17 @@ function BookingRow({
             Override (issued)
           </label>
         </div>
+      ) : null}
+
+      {pickerOpen && api ? (
+        <SupplierSlotPickerDialog
+          api={api}
+          itineraryId={itineraryId}
+          node={node}
+          overrideUnpaid={override}
+          onBooked={onChanged}
+          onClose={() => setPickerOpen(false)}
+        />
       ) : null}
 
       {canWrite && node.status === "booked" ? (

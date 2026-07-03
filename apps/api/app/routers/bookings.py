@@ -15,17 +15,23 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.inventory.registry import InventoryProviderRegistry
+from app.inventory.supplier_booking import (
+    PricingCategoryBooking,
+    SupplierAvailability,
+    SupplierSelection,
+)
 from app.models import NodeOffer, NodeStatus, RefundStatus
 from app.payments.base import PaymentGateway
 from app.routers.inventory import get_inventory_registry
@@ -46,11 +52,53 @@ router = APIRouter(tags=["bookings"])
 # ── Request / response models ──────────────────────────────────────────────
 
 
+class PricingCategoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # A supplier pricing-category id (e.g. adult / child) + how many to book.
+    category_id: str = Field(min_length=1, max_length=64)
+    count: int = Field(ge=1, le=64)
+
+
+class SupplierSelectionRequest(BaseModel):
+    """The specific supplier slot to book, from a ``supplier-availability`` result.
+
+    The activity itself is the node's own ``source_id`` (bound server-side), so it
+    isn't repeated here — this is only the date / start-time / rate / participants.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    rate_id: str | None = Field(default=None, max_length=64)
+    start_time_id: str | None = Field(default=None, max_length=64)
+    pricing_categories: list[PricingCategoryRequest] = Field(default_factory=list)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+
+    def to_selection(self) -> SupplierSelection:
+        # ``source_id`` is authoritative on the node; book_node rebinds it, so ""
+        # here is a placeholder that never reaches the supplier.
+        return SupplierSelection(
+            source_id="",
+            date=self.date,
+            rate_id=self.rate_id,
+            start_time_id=self.start_time_id,
+            pricing_categories=tuple(
+                PricingCategoryBooking(category_id=pc.category_id, count=pc.count)
+                for pc in self.pricing_categories
+            ),
+            currency=self.currency,
+        )
+
+
 class BookNodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # D-PAY override: book against a merely *issued* (not *paid*) invoice line.
     override_unpaid: bool = False
+    # The supplier slot to reserve+confirm — required only for a real supplier
+    # booking (a Bokun node with bokun_booking_enabled); ignored otherwise.
+    supplier_selection: SupplierSelectionRequest | None = None
 
 
 class RecordConfirmationRequest(BaseModel):
@@ -92,12 +140,31 @@ class BookingResponse(BaseModel):
     override_unpaid: bool
     booked_at: datetime
     confirmed_at: datetime | None = None
+    # Real supplier booking (0034) — null for a manual / no-supplier booking.
+    supplier_source: str | None = None
+    supplier_booking_id: str | None = None
     # Surfaced flight re-price: booked amount − the node's B4 cost (D024).
     reprice_delta: Decimal | None = None
     # Cancel + refund (0028) — null until the booking is cancelled.
     cancelled_at: datetime | None = None
     refund_status: RefundStatus | None = None
     refund_amount: Decimal | None = None
+
+
+class SupplierCategoryPriceResponse(BaseModel):
+    category_id: str
+    amount: Decimal
+    currency: str
+
+
+class SupplierAvailabilityResponse(BaseModel):
+    availability_id: str
+    date: date
+    start_time: str | None = None
+    start_time_id: str | None = None
+    seats_available: int | None = None
+    rate_id: str | None = None
+    prices: list[SupplierCategoryPriceResponse] = Field(default_factory=list)
 
 
 class ReconciliationRowResponse(BaseModel):
@@ -154,11 +221,35 @@ def _booking_response(view: BookingView) -> BookingResponse:
         override_unpaid=b.override_unpaid,
         booked_at=b.booked_at,
         confirmed_at=b.confirmed_at,
+        supplier_source=b.supplier_source,
+        supplier_booking_id=b.supplier_booking_id,
         reprice_delta=view.reprice_delta,
         cancelled_at=b.cancelled_at,
         refund_status=b.refund_status,
         refund_amount=b.refund_amount,
     )
+
+
+def _supplier_availability_response(
+    slots: list[SupplierAvailability],
+) -> list[SupplierAvailabilityResponse]:
+    return [
+        SupplierAvailabilityResponse(
+            availability_id=s.availability_id,
+            date=s.date,
+            start_time=s.start_time,
+            start_time_id=s.start_time_id,
+            seats_available=s.seats_available,
+            rate_id=s.rate_id,
+            prices=[
+                SupplierCategoryPriceResponse(
+                    category_id=p.category_id, amount=p.amount, currency=p.currency
+                )
+                for p in s.prices
+            ],
+        )
+        for s in slots
+    ]
 
 
 def _reconciliation_response(report: ReconciliationReport) -> ReconciliationResponse:
@@ -241,6 +332,39 @@ async def list_offers_endpoint(
     return [_offer_response(o) for o in offers]
 
 
+@router.get(
+    "/itinerary/{itinerary_id}/nodes/{node_id}/supplier-availability",
+    response_model=list[SupplierAvailabilityResponse],
+    summary="List real supplier availability for a bookable node (Bokun).",
+)
+async def supplier_availability_endpoint(
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    start: date = Query(..., description="First date to check (yyyy-mm-dd)."),
+    end: date = Query(..., description="Last date to check (yyyy-mm-dd)."),
+    currency: str = Query("USD", min_length=3, max_length=3),
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+    registry: InventoryProviderRegistry = Depends(get_inventory_registry),
+    settings: Settings = Depends(get_settings),
+) -> list[SupplierAvailabilityResponse]:
+    actor = _advisor_actor_from_user(user)
+    result = await bookings_svc.list_supplier_availability(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        node_id=node_id,
+        start=start,
+        end=end,
+        currency=currency,
+        registry=registry,
+        settings=settings,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _supplier_availability_response(result)
+
+
 @router.post(
     "/itinerary/{itinerary_id}/nodes/{node_id}/book",
     response_model=BookingResponse,
@@ -252,14 +376,24 @@ async def book_node_endpoint(
     payload: BookNodeRequest,
     user: AuthenticatedUser = Depends(require_advisor),
     session: AsyncSession = Depends(get_session),
+    registry: InventoryProviderRegistry = Depends(get_inventory_registry),
+    settings: Settings = Depends(get_settings),
 ) -> BookingResponse:
     actor = _advisor_actor_from_user(user)
+    selection = (
+        payload.supplier_selection.to_selection()
+        if payload.supplier_selection is not None
+        else None
+    )
     result = await bookings_svc.book_node(
         session,
         actor,
         itinerary_id=itinerary_id,
         node_id=node_id,
         override_unpaid=payload.override_unpaid,
+        supplier_selection=selection,
+        registry=registry,
+        settings=settings,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
@@ -304,6 +438,7 @@ async def cancel_node_endpoint(
     user: AuthenticatedUser = Depends(require_advisor),
     session: AsyncSession = Depends(get_session),
     gateway: PaymentGateway | None = Depends(get_payment_gateway),
+    registry: InventoryProviderRegistry = Depends(get_inventory_registry),
 ) -> BookingResponse:
     actor = _advisor_actor_from_user(user)
     result = await bookings_svc.cancel_booking(
@@ -313,6 +448,7 @@ async def cancel_node_endpoint(
         itinerary_id=itinerary_id,
         node_id=node_id,
         reason=payload.reason,
+        registry=registry,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)

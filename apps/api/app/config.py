@@ -199,6 +199,18 @@ class Settings(BaseSettings):
         ),
         repr=False,
     )
+    bokun_booking_enabled: bool = Field(
+        default=False,
+        description=(
+            "Gate the real supplier-booking path (reserve + confirm + cancel with "
+            "Bokun) in the money gate. When False (default) a Bokun-sourced node "
+            "books like any other source — a local booking record whose supplier "
+            "confirmation # is recorded manually by an advisor. When True, booking "
+            "an approved+paid Bokun node RESERVES then CONFIRMS the reservation "
+            "upstream and stores the returned confirmation code automatically. "
+            "Requires bokun_access_key / bokun_secret_key to be set."
+        ),
+    )
 
     # ── Payments (M005/I2, D025/D-PAY): Braintree ─────────────────────────
     # The gateway is selected by config; when these are empty the payments

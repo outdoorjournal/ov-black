@@ -54,6 +54,7 @@ import {
   bookNodeEndpointItineraryItineraryIdNodesNodeIdBookPost,
   cancelNodeEndpointItineraryItineraryIdNodesNodeIdCancelPost,
   confirmNodeEndpointItineraryItineraryIdNodesNodeIdConfirmPost,
+  supplierAvailabilityEndpointItineraryItineraryIdNodesNodeIdSupplierAvailabilityGet,
   reconciliationEndpointItineraryItineraryIdReconciliationGet,
   dismissOnboardingEndpointOnboardingDismissPost,
   downloadClientDocumentEndpointClientsClientIdDocumentsDocumentIdDownloadGet,
@@ -137,6 +138,7 @@ import type {
   OfferResponse,
   RecordConfirmationRequest,
   ReconciliationResponse,
+  SupplierAvailabilityResponse,
   MyInvoiceSummary,
   MyInvoicesResponse,
   NodeChangeResponse,
@@ -275,6 +277,12 @@ export type {
   ReconciliationResponse,
   ReconciliationRowResponse,
   ReconciliationViolationResponse,
+  // Real supplier booking (Bokun): the availability slots + the selection the
+  // advisor picks to reserve+confirm upstream through the money gate.
+  SupplierAvailabilityResponse,
+  SupplierCategoryPriceResponse,
+  SupplierSelectionRequest,
+  PricingCategoryRequest,
 } from "./generated/types.gen.js";
 
 // Clients (S03): advisor-facing /clients surface — the request/response
@@ -3654,6 +3662,14 @@ export type BookingDetail =
   | "refund_declined"
   | "refund_gateway_unavailable"
   | "payments_unconfigured"
+  // 409 — real supplier booking (Bokun): reserve/confirm/cancel failed upstream
+  | "supplier_selection_required"
+  | "supplier_reserve_failed"
+  | "supplier_confirm_failed"
+  | "supplier_cancel_failed"
+  | "supplier_provider_unavailable"
+  | "supplier_availability_failed"
+  | "node_not_supplier_bookable"
   // 400 — validation
   | "node_has_no_cost"
   | "offer_unpriced"
@@ -3679,6 +3695,13 @@ const _BOOKING_TOKENS = new Set<BookingDetail>([
   "refund_declined",
   "refund_gateway_unavailable",
   "payments_unconfigured",
+  "supplier_selection_required",
+  "supplier_reserve_failed",
+  "supplier_confirm_failed",
+  "supplier_cancel_failed",
+  "supplier_provider_unavailable",
+  "supplier_availability_failed",
+  "node_not_supplier_bookable",
   "node_has_no_cost",
   "offer_unpriced",
   "supplier_ref_required",
@@ -3841,6 +3864,38 @@ export async function getReconciliation(
       });
     if (error === undefined && data !== undefined) {
       return { ok: true, reconciliation: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type SupplierAvailabilityResult =
+  | { ok: true; slots: SupplierAvailabilityResponse[] }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/**
+ * GET /itinerary/{id}/nodes/{nodeId}/supplier-availability — real bookable slots
+ * for a supplier-sourced node (Bokun). Feeds the {@link bookNode}
+ * `supplier_selection`. `node_not_supplier_bookable` when the node isn't a
+ * supplier source or supplier booking is disabled.
+ */
+export async function supplierAvailability(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+  params: { start: string; end: string; currency?: string },
+): Promise<SupplierAvailabilityResult> {
+  try {
+    const { data, error, response } =
+      await supplierAvailabilityEndpointItineraryItineraryIdNodesNodeIdSupplierAvailabilityGet({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+        query: { start: params.start, end: params.end, currency: params.currency },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, slots: data };
     }
     return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
   } catch {

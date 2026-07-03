@@ -20,6 +20,7 @@ vi.mock("@ov-black/api-client", () => ({
   cancelBooking: vi.fn(),
   confirmNode: vi.fn(),
   refreshOffer: vi.fn(),
+  supplierAvailability: vi.fn(),
 }));
 
 import {
@@ -29,6 +30,7 @@ import {
   getItinerary,
   getReconciliation,
   refreshOffer,
+  supplierAvailability,
   type NodeResponse,
   type OfferResponse,
   type ReconciliationResponse,
@@ -61,6 +63,15 @@ function node(over: Partial<NodeResponse> & { id: string }): NodeResponse {
 const HOTEL = node({ id: "n-hotel", type: "hotel", title: "Park Hyatt", status: "approved" });
 const FLIGHT = node({ id: "n-flight", type: "flight", title: "DL275", status: "approved" });
 const BOOKED = node({ id: "n-booked", type: "hotel", title: "Aman", status: "booked" });
+const BOKUN = node({
+  id: "n-bokun",
+  type: "experience",
+  title: "Sushi class",
+  status: "approved",
+  source: "bokun",
+  source_id: "1001",
+  cost_currency: "USD",
+});
 
 const BALANCED: ReconciliationResponse = {
   balanced: true,
@@ -86,7 +97,7 @@ beforeEach(() => {
   vi.mocked(getItinerary).mockResolvedValue({
     ok: true,
     itinerary: {},
-    nodes: [HOTEL, FLIGHT, BOOKED],
+    nodes: [HOTEL, FLIGHT, BOOKED, BOKUN],
     edges: [],
   } as never);
   vi.mocked(getReconciliation).mockResolvedValue({ ok: true, reconciliation: BALANCED });
@@ -94,6 +105,20 @@ beforeEach(() => {
   vi.mocked(cancelBooking).mockResolvedValue({ ok: true, booking: {} } as never);
   vi.mocked(confirmNode).mockResolvedValue({ ok: true, booking: {} } as never);
   vi.mocked(refreshOffer).mockResolvedValue({ ok: true, offer: OFFER });
+  vi.mocked(supplierAvailability).mockResolvedValue({
+    ok: true,
+    slots: [
+      {
+        availability_id: "555",
+        date: "2026-08-01",
+        start_time: "09:00",
+        start_time_id: "777",
+        seats_available: 8,
+        rate_id: "42",
+        prices: [{ category_id: "1", amount: "120.00", currency: "USD" }],
+      },
+    ],
+  } as never);
 });
 
 function renderPanel(editable = true) {
@@ -193,6 +218,48 @@ test("an unbalanced report renders the Not reconciled banner", async () => {
   renderPanel();
   expect((await screen.findByTestId("reconciliation-status")).textContent).toContain(
     "Not reconciled",
+  );
+});
+
+test("a bokun node opens the slot picker and books the chosen slot", async () => {
+  renderPanel();
+  // Supplier-bookable nodes get the slot picker, not a plain Book button.
+  fireEvent.click(await screen.findByTestId("book-slot-n-bokun"));
+  expect(screen.queryByTestId("book-n-bokun")).toBeNull();
+  await waitFor(() =>
+    expect(supplierAvailability).toHaveBeenCalledWith({}, "itin-1", "n-bokun", {
+      start: expect.any(String),
+      end: expect.any(String),
+      currency: "USD",
+    }),
+  );
+  fireEvent.click(await screen.findByTestId("supplier-slot-555|42|777"));
+  fireEvent.click(await screen.findByTestId("supplier-book-confirm"));
+  await waitFor(() =>
+    expect(bookNode).toHaveBeenCalledWith({}, "itin-1", "n-bokun", {
+      override_unpaid: false,
+      supplier_selection: {
+        date: "2026-08-01",
+        rate_id: "42",
+        start_time_id: "777",
+        currency: "USD",
+        pricing_categories: [{ category_id: "1", count: 1 }],
+      },
+    }),
+  );
+});
+
+test("bokun node falls back to a manual book when supplier booking is disabled", async () => {
+  vi.mocked(supplierAvailability).mockResolvedValue({
+    ok: false,
+    status: 409,
+    detail: "node_not_supplier_bookable",
+  } as never);
+  renderPanel();
+  fireEvent.click(await screen.findByTestId("book-slot-n-bokun"));
+  fireEvent.click(await screen.findByTestId("supplier-book-fallback"));
+  await waitFor(() =>
+    expect(bookNode).toHaveBeenCalledWith({}, "itin-1", "n-bokun", { override_unpaid: false }),
   );
 });
 

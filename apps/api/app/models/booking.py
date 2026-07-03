@@ -113,9 +113,22 @@ class Booking(Base):
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(nullable=False)
-    # PNR / order id, recorded when the node advances booked → confirmed.
+    # PNR / order id — the human supplier confirmation code. Recorded when the
+    # node advances booked → confirmed (manually, or automatically from a real
+    # supplier booking = Bokun's ``bookingConfirmationCode``).
     supplier_ref: Mapped[str | None] = mapped_column(nullable=True)
     change_cancel_terms: Mapped[str | None] = mapped_column(nullable=True)
+    # ── Real supplier booking (0034) — null for a manual / no-supplier booking ──
+    # Which provider holds the booking ('bokun'); the cancel path dispatches on it.
+    supplier_source: Mapped[str | None] = mapped_column(nullable=True)
+    # The provider's INTERNAL booking id (Bokun ``bookingId``), distinct from the
+    # human ``supplier_ref`` confirmation code; the cancel call needs it.
+    supplier_booking_id: Mapped[str | None] = mapped_column(nullable=True)
+    # The exact slot we reserved (availability/start-time/rate/participants),
+    # snapshotted for audit + idempotent retries. Not sensitive.
+    supplier_selection: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Trimmed confirm response for audit — never card data / secrets.
+    supplier_raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # D-PAY override: booked against a merely *issued* (not *paid*) line. Logged.
     override_unpaid: Mapped[bool] = mapped_column(
         Boolean,

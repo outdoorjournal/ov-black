@@ -34,21 +34,29 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import partial
+from typing import Any
 
 import anyio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, get_settings
 from app.inventory.providers.duffel import ProviderUpstreamError
 from app.inventory.registry import (
     InventoryCtx,
     InventoryProviderRegistry,
     UnknownSourceError,
     get_registry,
+)
+from app.inventory.supplier_booking import (
+    SupplierAvailability,
+    SupplierBookingError,
+    SupplierBookingProvider,
+    SupplierSelection,
 )
 from app.models import (
     Booking,
@@ -395,6 +403,90 @@ async def _pick_covering_line(
     ).scalar_one_or_none()
 
 
+def _supplier_booking_provider(
+    settings: Settings,
+    node: Node,
+    registry: InventoryProviderRegistry,
+) -> SupplierBookingProvider | None:
+    """The provider that can BOOK this node's source, if the supplier path is on.
+
+    Returns ``None`` (→ the legacy manual flow: book locally, advisor records the
+    confirmation # later) unless supplier booking is enabled, the node carries a
+    provider source + id, and that provider implements the
+    :class:`SupplierBookingProvider` capability.
+    """
+    if not settings.bokun_booking_enabled:
+        return None
+    if not (node.source and node.source_id):
+        return None
+    if node.source not in registry.enabled_sources():
+        return None
+    provider = registry.get(node.source)
+    return provider if isinstance(provider, SupplierBookingProvider) else None
+
+
+def _supplier_provider_for_booking(
+    booking: Booking,
+    registry: InventoryProviderRegistry,
+) -> SupplierBookingProvider | None:
+    """The provider that made ``booking``, for the cancel path.
+
+    Resolved from what was actually booked (``supplier_source`` +
+    ``supplier_booking_id``), NOT the enable flag — a booking already placed
+    upstream must be cancelled upstream even if new supplier bookings were since
+    turned off. ``None`` when the booking has no supplier leg.
+    """
+    source = booking.supplier_source
+    if not source or not booking.supplier_booking_id:
+        return None
+    if source not in registry.enabled_sources():
+        return None
+    provider = registry.get(source)
+    return provider if isinstance(provider, SupplierBookingProvider) else None
+
+
+async def list_supplier_availability(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    start: date,
+    end: date,
+    currency: str = "USD",
+    registry: InventoryProviderRegistry | None = None,
+    settings: Settings | None = None,
+) -> list[SupplierAvailability] | ItineraryError:
+    """List a supplier-bookable node's real availability over ``[start, end]``.
+
+    The slots feed a :class:`SupplierSelection` for :func:`book_node`. Returns a
+    conflict when the node isn't a supplier-bookable source (wrong source, no id,
+    or supplier booking disabled) and surfaces an upstream failure as a conflict.
+    """
+    registry = registry or get_registry()
+    settings = settings or get_settings()
+    node = await _load_node(session, itinerary_id, node_id)
+    if node is None:
+        return _not_found()
+    supplier = _supplier_booking_provider(settings, node, registry)
+    if supplier is None or not node.source_id:
+        return _conflict("node_not_supplier_bookable")
+    try:
+        return await supplier.check_availability(
+            source_id=node.source_id,
+            start=start,
+            end=end,
+            currency=currency,
+            ctx=InventoryCtx(actor_kind=actor.kind.value, actor_id=actor.actor_id),
+        )
+    except SupplierBookingError as exc:
+        logger.warning(
+            "booking.supplier.availability_failed",
+            extra={"node_id": str(node_id), "source": node.source, "reason": exc.reason},
+        )
+        return _conflict("supplier_availability_failed")
+
+
 async def book_node(
     session: AsyncSession,
     actor: ActorContext,
@@ -402,6 +494,9 @@ async def book_node(
     itinerary_id: uuid.UUID,
     node_id: uuid.UUID,
     override_unpaid: bool = False,
+    supplier_selection: SupplierSelection | None = None,
+    registry: InventoryProviderRegistry | None = None,
+    settings: Settings | None = None,
 ) -> BookingView | ItineraryError:
     """Move an approved node to ``booked`` — the money gate.
 
@@ -410,7 +505,17 @@ async def book_node(
     against a merely *issued* line instead; that's recorded on the booking and
     logged (D-PAY override). A flight node additionally requires a *fresh*
     (non-expired) offer — its booked amount is that re-priced figure (D024).
+
+    When the node's source is a real bookable supplier (Bokun) and supplier
+    booking is enabled, the gate additionally RESERVES + CONFIRMS the
+    ``supplier_selection`` slot upstream (payment already cleared), advancing the
+    node straight to ``confirmed`` with the returned confirmation code — no manual
+    :func:`record_confirmation` step. Fail-closed: any supplier failure returns a
+    conflict with nothing written locally, so the collected payment stays
+    refundable and no phantom booking is recorded.
     """
+    registry = registry or get_registry()
+    settings = settings or get_settings()
     node = await _load_node(session, itinerary_id, node_id)
     if node is None:
         return _not_found()
@@ -462,6 +567,64 @@ async def book_node(
     else:
         return _conflict("node_not_paid")
 
+    # 2b. Real supplier booking (Bokun): with payment secured, RESERVE then CONFIRM
+    #     the chosen slot upstream. Fail-closed — any supplier failure returns a
+    #     conflict with NOTHING written locally (no session writes happen before
+    #     this point), so the money stays collected + refundable and we never record
+    #     a booking the supplier didn't actually make. A confirmed supplier booking
+    #     advances the node straight to ``confirmed`` (skips manual confirmation).
+    supplier = _supplier_booking_provider(settings, node, registry)
+    supplier_ref: str | None = None
+    supplier_source: str | None = None
+    supplier_booking_id: str | None = None
+    supplier_selection_snapshot: dict[str, Any] | None = None
+    supplier_raw: dict[str, Any] | None = None
+    node_target_status = NodeStatus.booked
+    confirmed_at: datetime | None = None
+    if supplier is not None:
+        if supplier_selection is None:
+            return _conflict("supplier_selection_required")
+        # The node is authoritative for WHICH activity is booked — rebind the
+        # selection's source_id to it so a client can't book a different activity
+        # than the node represents.
+        selection = replace(
+            supplier_selection, source_id=node.source_id or supplier_selection.source_id
+        )
+        ctx = InventoryCtx(actor_kind=actor.kind.value, actor_id=actor.actor_id)
+        try:
+            reservation = await supplier.reserve(selection=selection, ctx=ctx)
+        except SupplierBookingError as exc:
+            logger.warning(
+                "booking.supplier.reserve_failed",
+                extra={"node_id": str(node_id), "source": node.source, "reason": exc.reason},
+            )
+            return _conflict("supplier_reserve_failed")
+        try:
+            record = await supplier.confirm(
+                confirmation_code=reservation.confirmation_code, ctx=ctx
+            )
+        except SupplierBookingError as exc:
+            # Release the hold so inventory isn't stranded for its ~30-min window.
+            try:
+                await supplier.abort(confirmation_code=reservation.confirmation_code, ctx=ctx)
+            except SupplierBookingError:
+                logger.warning(
+                    "booking.supplier.abort_failed",
+                    extra={"node_id": str(node_id), "source": node.source},
+                )
+            logger.warning(
+                "booking.supplier.confirm_failed",
+                extra={"node_id": str(node_id), "source": node.source, "reason": exc.reason},
+            )
+            return _conflict("supplier_confirm_failed")
+        supplier_ref = record.confirmation_code
+        supplier_source = node.source
+        supplier_booking_id = record.booking_id or reservation.booking_id
+        supplier_selection_snapshot = selection.as_dict()
+        supplier_raw = record.raw
+        node_target_status = NodeStatus.confirmed
+        confirmed_at = _now()
+
     # 3. Commit the booking + flip the node, in one transaction with history.
     booking = Booking(
         node_id=node_id,
@@ -472,10 +635,16 @@ async def book_node(
         override_unpaid=used_override,
         booked_by=actor.user_id,
         booked_at=_now(),
+        supplier_ref=supplier_ref,
+        supplier_source=supplier_source,
+        supplier_booking_id=supplier_booking_id,
+        supplier_selection=supplier_selection_snapshot,
+        supplier_raw=supplier_raw,
+        confirmed_at=confirmed_at,
     )
     session.add(booking)
     before = _snapshot_node(node)
-    node.status = NodeStatus.booked
+    node.status = node_target_status
     await session.flush()
     await _write_node_history(
         session,
@@ -503,6 +672,7 @@ async def book_node(
             "node_id": str(node_id),
             "booking_id": str(booking.id),
             "override_unpaid": used_override,
+            "supplier_booked": supplier is not None,
             "actor_kind": actor.kind.value,
         },
     )
@@ -602,9 +772,10 @@ async def cancel_booking(
     itinerary_id: uuid.UUID,
     node_id: uuid.UUID,
     reason: str | None = None,
+    registry: InventoryProviderRegistry | None = None,
 ) -> BookingView | ItineraryError:
-    """Cancel a booked/confirmed node: refund its covering payment, reverse the
-    charge line, and demote the node back to ``approved`` (advisor-only).
+    """Cancel a booked/confirmed node: cancel any real supplier booking, refund its
+    covering payment, reverse the charge line, and demote the node to ``approved``.
 
     Money movement: a settled covering charge is **refunded**, an unsettled one
     **voided**; an ``override_unpaid`` booking (no money collected) cancels with
@@ -614,7 +785,13 @@ async def cancel_booking(
     same firmed→approved transition the G1 status gate permits an advisor, so a
     re-booking goes back through the money gate; reconcile stays balanced because
     the demoted node leaves the booked-sum and the reversal nets its coverage.
+
+    A booking with a real supplier leg (Bokun) is cancelled UPSTREAM FIRST — before
+    any refund — so we never return the traveler's money while the operator still
+    holds the booking. That call is idempotent (an already-gone booking resolves as
+    cancelled), so a retry after a refund failure re-cancels harmlessly.
     """
+    registry = registry or get_registry()
     node = await _load_node(session, itinerary_id, node_id)
     if node is None:
         return _not_found()
@@ -623,6 +800,35 @@ async def cancel_booking(
     booking = await _booking_for(session, node_id)
     if booking is None:
         return _conflict("no_booking")
+
+    # Cancel the real supplier booking FIRST (no local writes yet, so a failure just
+    # returns). A booking placed upstream MUST be cancellable upstream: if it has a
+    # supplier leg but no bookable provider is registered, refuse rather than refund
+    # into an orphaned operator booking.
+    if booking.supplier_booking_id:
+        supplier = _supplier_provider_for_booking(booking, registry)
+        if supplier is None:
+            logger.warning(
+                "booking.cancel.supplier_unavailable",
+                extra={"node_id": str(node_id), "source": booking.supplier_source},
+            )
+            return _conflict("supplier_provider_unavailable")
+        try:
+            await supplier.cancel(
+                booking_id=booking.supplier_booking_id,
+                confirmation_code=booking.supplier_ref or "",
+                ctx=InventoryCtx(actor_kind=actor.kind.value, actor_id=actor.actor_id),
+            )
+        except SupplierBookingError as exc:
+            logger.warning(
+                "booking.cancel.supplier_failed",
+                extra={
+                    "node_id": str(node_id),
+                    "source": booking.supplier_source,
+                    "reason": exc.reason,
+                },
+            )
+            return _conflict("supplier_cancel_failed")
 
     # Resolve the refund target: the settled gateway charge that covered this
     # booking. An override (issued, unpaid) booking has none — nothing to return.

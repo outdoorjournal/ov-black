@@ -19,20 +19,30 @@ from __future__ import annotations
 import logging
 import socket
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from app.config import Settings
 from app.inventory.registry import InventoryCtx, InventoryProvider, InventoryProviderRegistry
 from app.inventory.schemas import FlightItem, InventoryItem, Price
+from app.inventory.supplier_booking import (
+    PricingCategoryBooking,
+    SupplierBookingError,
+    SupplierBookingRecord,
+    SupplierCancellation,
+    SupplierReservation,
+    SupplierSelection,
+)
 from app.models import (
     Booking,
     CostKind,
     Invoice,
     InvoiceLineItem,
     InvoiceLineKind,
+    Node,
     NodeOffer,
     NodeStatus,
     NodeType,
@@ -66,7 +76,7 @@ from app.services.itineraries import (
     update_node,
 )
 from app.services.payments import pay_invoice
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -1031,3 +1041,328 @@ def test_reconciliation_endpoint_forbidden_for_stranger(
     booking_routes["returns"]["is_advisor"] = False
     resp = client.get(f"/itinerary/{uuid.uuid4()}/reconciliation", headers=_headers(make_token))
     assert resp.status_code == 403
+
+
+# ── Real supplier booking (Bokun): reserve/confirm/cancel wiring ─────────────
+
+
+class _StubSupplierProvider(InventoryProvider):
+    """A registered provider that also satisfies ``SupplierBookingProvider``.
+
+    Records the sequence of supplier calls + the selection / booking id it saw so
+    a test can assert the reserve→confirm / cancel handshake and the fail-closed
+    rollback. Failure injection is per method.
+    """
+
+    source = "bokun"
+
+    def __init__(
+        self,
+        *,
+        reserve_error: bool = False,
+        confirm_error: bool = False,
+        cancel_error: bool = False,
+    ) -> None:
+        self.reserve_error = reserve_error
+        self.confirm_error = confirm_error
+        self.cancel_error = cancel_error
+        self.calls: list[str] = []
+        self.reserved_selection: SupplierSelection | None = None
+        self.cancelled_booking_id: str | None = None
+
+    async def search(self, **_kw: Any) -> list[InventoryItem]:
+        return []
+
+    async def get_detail(self, *, source_id: str, ctx: InventoryCtx) -> InventoryItem | None:
+        return None
+
+    async def check_availability(self, **_kw: Any) -> list[Any]:
+        self.calls.append("check_availability")
+        return []
+
+    async def reserve(
+        self, *, selection: SupplierSelection, ctx: InventoryCtx
+    ) -> SupplierReservation:
+        self.calls.append("reserve")
+        if self.reserve_error:
+            raise SupplierBookingError("reserve_boom")
+        self.reserved_selection = selection
+        return SupplierReservation(
+            confirmation_code="BOKUN-CONF-1",
+            booking_id="900123",
+            amount=Decimal("240.00"),
+            currency="USD",
+        )
+
+    async def confirm(self, *, confirmation_code: str, ctx: InventoryCtx) -> SupplierBookingRecord:
+        self.calls.append("confirm")
+        if self.confirm_error:
+            raise SupplierBookingError("confirm_boom")
+        return SupplierBookingRecord(
+            confirmation_code=confirmation_code,
+            booking_id="900123",
+            status="CONFIRMED",
+            raw={"ok": True},
+        )
+
+    async def abort(self, *, confirmation_code: str, ctx: InventoryCtx) -> SupplierCancellation:
+        self.calls.append("abort")
+        return SupplierCancellation(cancelled=True, status="aborted")
+
+    async def cancel(
+        self, *, booking_id: str | None, confirmation_code: str, ctx: InventoryCtx
+    ) -> SupplierCancellation:
+        self.calls.append("cancel")
+        if self.cancel_error:
+            raise SupplierBookingError("cancel_boom")
+        self.cancelled_booking_id = booking_id
+        return SupplierCancellation(cancelled=True, status="cancelled")
+
+
+def _supplier_registry(provider: InventoryProvider) -> InventoryProviderRegistry:
+    reg = InventoryProviderRegistry()
+    reg.register(provider)
+    return reg
+
+
+def _supplier_settings() -> Settings:
+    return Settings(bokun_booking_enabled=True)
+
+
+def _selection(source_id: str = "1001") -> SupplierSelection:
+    return SupplierSelection(
+        source_id=source_id,
+        date=date(2026, 8, 1),
+        rate_id="42",
+        start_time_id="777",
+        pricing_categories=(PricingCategoryBooking(category_id="1", count=2),),
+        currency="USD",
+    )
+
+
+async def _supplier_node(session: AsyncSession, itinerary_id: uuid.UUID) -> Any:
+    node = await _priced_node(
+        session,
+        itinerary_id,
+        amount="240.00",
+        title="Sushi class",
+        node_type=NodeType.experience,
+        source="bokun",
+        source_id="1001",
+    )
+    await _pay_node(session, itinerary_id, node.id, paid=True)
+    return node
+
+
+async def _live_booking_count(session: AsyncSession, node_id: uuid.UUID) -> int:
+    # Column/scalar selects read committed DB truth without touching the identity
+    # map (no expire_all → no async lazy-load surprises).
+    return (
+        await session.execute(
+            select(func.count())
+            .select_from(Booking)
+            .where(Booking.node_id == node_id, Booking.cancelled_at.is_(None))
+        )
+    ).scalar_one()
+
+
+async def _node_status(session: AsyncSession, node_id: uuid.UUID) -> NodeStatus:
+    return (await session.execute(select(Node.status).where(Node.id == node_id))).scalar_one()
+
+
+@integration
+@pytest.mark.asyncio
+async def test_supplier_booking_reserves_confirms_and_records_ref(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="bokun-book")
+    try:
+        node = await _supplier_node(db_session, itin.id)
+        provider = _StubSupplierProvider()
+        # The client sends a stale/other source id; the node is authoritative.
+        view = await book_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            node_id=node.id,
+            supplier_selection=_selection(source_id="DIFFERENT"),
+            registry=_supplier_registry(provider),
+            settings=_supplier_settings(),
+        )
+        assert isinstance(view, BookingView)
+        assert provider.calls == ["reserve", "confirm"]
+        assert view.node_status is NodeStatus.confirmed
+        assert view.booking.supplier_ref == "BOKUN-CONF-1"
+        assert view.booking.supplier_booking_id == "900123"
+        assert view.booking.supplier_source == "bokun"
+        assert view.booking.confirmed_at is not None
+        assert view.booking.supplier_selection is not None
+        # Authoritative rebind: booked against the node's own source_id, not the
+        # id the client passed.
+        assert provider.reserved_selection is not None
+        assert provider.reserved_selection.source_id == "1001"
+
+        report = await reconcile_itinerary(db_session, itin.id)
+        assert report.balanced is True
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_supplier_selection_required_when_supplier_active(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="bokun-noselect")
+    try:
+        node = await _supplier_node(db_session, itin.id)
+        provider = _StubSupplierProvider()
+        result = await book_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            node_id=node.id,
+            registry=_supplier_registry(provider),
+            settings=_supplier_settings(),
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "supplier_selection_required"
+        assert provider.calls == []
+        assert await _node_status(db_session, node.id) is NodeStatus.approved
+        assert await _live_booking_count(db_session, node.id) == 0
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_supplier_reserve_failure_is_fail_closed(db_session: AsyncSession) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="bokun-reserve-fail")
+    try:
+        node = await _supplier_node(db_session, itin.id)
+        provider = _StubSupplierProvider(reserve_error=True)
+        result = await book_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            node_id=node.id,
+            supplier_selection=_selection(),
+            registry=_supplier_registry(provider),
+            settings=_supplier_settings(),
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "supplier_reserve_failed"
+        assert provider.calls == ["reserve"]
+        # Nothing written: node stays approved, no booking, money still collected.
+        assert await _node_status(db_session, node.id) is NodeStatus.approved
+        assert await _live_booking_count(db_session, node.id) == 0
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_supplier_confirm_failure_aborts_and_fails_closed(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="bokun-confirm-fail")
+    try:
+        node = await _supplier_node(db_session, itin.id)
+        provider = _StubSupplierProvider(confirm_error=True)
+        result = await book_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            node_id=node.id,
+            supplier_selection=_selection(),
+            registry=_supplier_registry(provider),
+            settings=_supplier_settings(),
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "supplier_confirm_failed"
+        # Reserve held, confirm failed → the hold is released via abort.
+        assert provider.calls == ["reserve", "confirm", "abort"]
+        assert await _node_status(db_session, node.id) is NodeStatus.approved
+        assert await _live_booking_count(db_session, node.id) == 0
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_supplier_booking_calls_upstream_then_demotes(
+    db_session: AsyncSession,
+) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="bokun-cancel")
+    try:
+        node = await _supplier_node(db_session, itin.id)
+        provider = _StubSupplierProvider()
+        reg = _supplier_registry(provider)
+        booked = await book_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            node_id=node.id,
+            supplier_selection=_selection(),
+            registry=reg,
+            settings=_supplier_settings(),
+        )
+        assert isinstance(booked, BookingView)
+
+        view = await cancel_booking(
+            db_session,
+            _actor(),
+            None,
+            itinerary_id=itin.id,
+            node_id=node.id,
+            reason="client changed plans",
+            registry=reg,
+        )
+        assert isinstance(view, BookingView)
+        # Supplier cancel ran with the internal booking id before any local write.
+        assert "cancel" in provider.calls
+        assert provider.cancelled_booking_id == "900123"
+        assert view.node_status is NodeStatus.approved
+        assert view.booking.cancelled_at is not None
+        # Paid via mark-paid (no settled Payment row) → nothing to refund.
+        assert view.booking.refund_status is RefundStatus.not_applicable
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_cancel_supplier_failure_is_fail_closed(db_session: AsyncSession) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="bokun-cancel-fail")
+    try:
+        node = await _supplier_node(db_session, itin.id)
+        provider = _StubSupplierProvider()
+        reg = _supplier_registry(provider)
+        booked = await book_node(
+            db_session,
+            _actor(),
+            itinerary_id=itin.id,
+            node_id=node.id,
+            supplier_selection=_selection(),
+            registry=reg,
+            settings=_supplier_settings(),
+        )
+        assert isinstance(booked, BookingView)
+
+        # Now the upstream cancel fails — the whole cancel must abort with no
+        # refund and no demotion (never refund while the operator still holds it).
+        provider.cancel_error = True
+        result = await cancel_booking(
+            db_session,
+            _actor(),
+            None,
+            itinerary_id=itin.id,
+            node_id=node.id,
+            registry=reg,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "supplier_cancel_failed"
+        assert await _node_status(db_session, node.id) is NodeStatus.confirmed
+        assert await _live_booking_count(db_session, node.id) == 1
+    finally:
+        await _cleanup(itin.id)
