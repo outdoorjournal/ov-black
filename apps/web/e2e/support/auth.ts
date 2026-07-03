@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -138,7 +139,17 @@ export async function advisorCallbackUrl(baseURL: string): Promise<string> {
 
 // mint-jwt.sh prints ONLY the advisor's access_token on stdout (logs → stderr),
 // ensuring the advisor user/profile exist as a side effect.
+//
+// Memoized per worker process: minting is a magic-link round-trip, and GoTrue
+// rate-limits / invalidates concurrent link generation for the same email. A
+// worker that provisions several fresh travelers would otherwise mint the same
+// advisor link repeatedly and stomp on itself (and on setup:advisor). One
+// advisor access token is good for the whole worker's run.
+let cachedAdvisorToken: string | null = null;
 function mintAdvisorAccessToken(): string {
+  if (cachedAdvisorToken) {
+    return cachedAdvisorToken;
+  }
   const script = path.join(repoRoot(), "scripts", "mint-jwt.sh");
   const token = execFileSync(
     script,
@@ -148,6 +159,7 @@ function mintAdvisorAccessToken(): string {
   if (!token) {
     throw new Error("mint-jwt.sh returned no token");
   }
+  cachedAdvisorToken = token;
   return token;
 }
 
@@ -160,6 +172,7 @@ function mintAdvisorAccessToken(): string {
 async function ensureTravelerLinkedClient(
   apiBaseUrl: string,
   advisorToken: string,
+  email: string,
 ): Promise<void> {
   const auth = { Authorization: `Bearer ${advisorToken}` };
 
@@ -169,7 +182,7 @@ async function ensureTravelerLinkedClient(
   }
   const clients = (await listResp.json()) as Array<{ email?: string | null }>;
   const linked = clients.some(
-    (c) => (c.email ?? "").toLowerCase() === E2E_TRAVELER_EMAIL.toLowerCase(),
+    (c) => (c.email ?? "").toLowerCase() === email.toLowerCase(),
   );
   if (linked) {
     return;
@@ -177,7 +190,7 @@ async function ensureTravelerLinkedClient(
 
   const body = {
     full_name: "E2E Linked Traveler",
-    email: E2E_TRAVELER_EMAIL,
+    email,
     dossier: { typed: { contact_preference: "email", travel_party_notes: "" } },
   };
   const createResp = await fetch(`${apiBaseUrl}/clients`, {
@@ -231,9 +244,44 @@ export async function travelerCallbackUrl(baseURL: string): Promise<string> {
   const key = getServiceRoleKey(supabaseUrl);
 
   if (isLocalSupabase(supabaseUrl)) {
-    await ensureTravelerLinkedClient(getApiBaseUrl(), mintAdvisorAccessToken());
+    await ensureTravelerLinkedClient(getApiBaseUrl(), mintAdvisorAccessToken(), E2E_TRAVELER_EMAIL);
     await confirmUser(supabaseUrl, key, E2E_TRAVELER_EMAIL);
   }
 
   return callbackUrl(baseURL, await mintHashedToken(supabaseUrl, key, E2E_TRAVELER_EMAIL));
+}
+
+/**
+ * Provision a brand-new, throwaway traveler and return a single-use
+ * `/auth/callback` URL that logs *them* in (plus their email, for API-level
+ * assertions). A unique email each call, so a spec that MUTATES onboarding
+ * state — sends a turn, dismisses the opener — never collides with the shared
+ * `traveler` persona or with a parallel spec under `fullyParallel`.
+ *
+ * Local-only: it provisions the linked client + confirmed auth user on demand.
+ * We don't create throwaway users against a deployed Supabase, so this throws
+ * off-box (the onboarding specs run against the local stack).
+ */
+export async function freshTravelerCallbackUrl(
+  baseURL: string,
+): Promise<{ email: string; callbackUrl: string }> {
+  const supabaseUrl = getSupabaseUrl();
+  if (!isLocalSupabase(supabaseUrl)) {
+    throw new Error(
+      "freshTravelerCallbackUrl is local-only — it provisions throwaway users, " +
+        "which we do not create against a deployed Supabase.",
+    );
+  }
+  const key = getServiceRoleKey(supabaseUrl);
+  // RFC 2606 reserved domain (see E2E_*_EMAIL) so it passes the API's EmailStr
+  // and can never deliver mail; the UUID keeps each run's traveler distinct.
+  const email = `e2e-onb-${randomUUID()}@example.com`;
+
+  await ensureTravelerLinkedClient(getApiBaseUrl(), mintAdvisorAccessToken(), email);
+  await confirmUser(supabaseUrl, key, email);
+
+  return {
+    email,
+    callbackUrl: callbackUrl(baseURL, await mintHashedToken(supabaseUrl, key, email)),
+  };
 }

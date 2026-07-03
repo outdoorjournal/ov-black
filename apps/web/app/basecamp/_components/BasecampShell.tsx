@@ -20,6 +20,8 @@ import type {
   OnboardingOpenerResponse,
 } from "@ov-black/api-client";
 
+import { Eyebrow } from "@/components/ui/eyebrow";
+
 import { BasecampChrome } from "./BasecampChrome";
 import { ItineraryGrid } from "./ItineraryGrid";
 import { RightRailChat } from "./RightRailChat";
@@ -41,6 +43,10 @@ export type BasecampShellProps = {
   // via createSessionEndpoint — open_or_reuse_session is idempotent.
   sessionId: string | null;
   priorTurns: AgentTurnSummary[];
+  // Whether the traveler has any recorded profile fact. When false on the
+  // post_first_touch variant, they skipped onboarding before we learned
+  // anything, so we show the "finish your introduction" reminder (ONB-2A).
+  hasProfileFacts: boolean;
 };
 
 export function BasecampShell({
@@ -52,6 +58,7 @@ export function BasecampShell({
   itineraries,
   sessionId,
   priorTurns,
+  hasProfileFacts,
 }: BasecampShellProps) {
   return (
     <BasecampChrome>
@@ -68,7 +75,7 @@ export function BasecampShell({
         <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[1fr_minmax(0,480px)] lg:gap-10">
           <div className="flex flex-col gap-6">
             <AccountLinks />
-            <EmptyItinerariesHint />
+            {hasProfileFacts ? <EmptyItinerariesHint /> : <OnboardingReminder />}
           </div>
           <RightRailChat
             clientId={clientId}
@@ -104,19 +111,19 @@ function AccountLinks() {
     <div className="flex flex-wrap gap-x-6 gap-y-2">
       <Link
         href="/basecamp/party"
-        className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+        className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55 transition-colors hover:text-ink"
       >
         Your travel party →
       </Link>
       <Link
         href="/basecamp/vault"
-        className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+        className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55 transition-colors hover:text-ink"
       >
         Your vault →
       </Link>
       <Link
         href="/basecamp/invoices"
-        className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+        className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55 transition-colors hover:text-ink"
       >
         Your invoices →
       </Link>
@@ -127,14 +134,31 @@ function AccountLinks() {
 function EmptyItinerariesHint() {
   return (
     <div className="flex min-h-[40vh] flex-col items-start justify-center gap-6 lg:min-h-full">
-      <p className="text-[10px] uppercase tracking-[0.4em] text-paper/55">
-        Your atelier
-      </p>
-      <h2 className="max-w-xl font-serif text-4xl leading-[1.1] text-paper sm:text-5xl">
+      <Eyebrow rule>Your atelier</Eyebrow>
+      <h2 className="max-w-xl font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
         Your itineraries will appear here.
       </h2>
-      <p className="max-w-md text-base leading-relaxed text-paper/70">
+      <p className="max-w-md text-base leading-relaxed text-ink/70">
         Reach the concierge any time — a thread to your right is always open.
+      </p>
+    </div>
+  );
+}
+
+// Shown on the post_first_touch variant when the traveler skipped onboarding
+// before telling us anything (no profile facts). A gentle nudge back into the
+// always-open thread rather than a blocking gate — the concierge can't tailor
+// anything until it knows a little about how they travel (ONB-2A).
+function OnboardingReminder() {
+  return (
+    <div className="flex min-h-[40vh] flex-col items-start justify-center gap-6 lg:min-h-full">
+      <Eyebrow rule>Your welcome, unfinished</Eyebrow>
+      <h2 className="max-w-xl font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
+        Tell us how you travel.
+      </h2>
+      <p className="max-w-md text-base leading-relaxed text-ink/70">
+        You stepped away before your concierge could learn your tastes. Pick the
+        thread back up whenever you like — a sentence or two is enough to begin.
       </p>
     </div>
   );

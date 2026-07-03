@@ -162,6 +162,34 @@ async def _insert_linked_client(
     return cid
 
 
+async def _insert_profile_fact(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    recorded_by: uuid.UUID,
+    redacted: bool = False,
+) -> None:
+    await session.execute(
+        text(
+            """
+            insert into public.profile_facts
+                (id, client_id, kind, text, source_kind, recorded_by, redacted_at)
+            values (:id, :client, cast('preference' as public.profile_fact_kind),
+                    :text, cast('traveler_told' as public.fact_source_kind),
+                    :rec, :redacted_at)
+            """
+        ),
+        {
+            "id": uuid.uuid4(),
+            "client": client_id,
+            "text": "loves onsen towns",
+            "rec": recorded_by,
+            "redacted_at": datetime(2026, 6, 30, tzinfo=UTC) if redacted else None,
+        },
+    )
+    await session.commit()
+
+
 async def _insert_session(
     session: AsyncSession,
     *,
@@ -289,6 +317,69 @@ async def test_onboarding_session_ignores_advisor_audience(
         resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
         assert resp.session_id == traveler_sid
     finally:
+        await _cleanup(client_ids=(client_id,), owner=owner)
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
+        finally:
+            await engine.dispose()
+
+
+@integration
+@pytest.mark.asyncio
+async def test_onboarding_session_reports_profile_facts_presence(
+    db_session: AsyncSession,
+) -> None:
+    """``has_profile_facts`` drives the onboarding nudge (ONB-2A).
+
+    False until the client has a non-redacted ``profile_facts`` row — a
+    redacted (soft-deleted) fact must not count, matching the active-fact
+    filter used elsewhere. Basecamp shows the "finish your profile" reminder
+    only for a post_first_touch client whose facts are empty.
+    """
+    from app.auth import AuthenticatedUser
+    from app.routers.me import get_my_onboarding_session_endpoint
+
+    owner = uuid.uuid4()
+    traveler = uuid.uuid4()
+    for uid in (owner, traveler):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.commit()
+
+    client_id = await _insert_linked_client(db_session, owner, traveler, "facts-traveler")
+    user = AuthenticatedUser(
+        sub=str(traveler), email=f"{traveler}@x.com", role="authenticated", claims={}
+    )
+    try:
+        # No facts yet — the traveler has told us nothing.
+        resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
+        assert resp.has_profile_facts is False
+
+        # A redacted fact does not count.
+        await _insert_profile_fact(
+            db_session, client_id=client_id, recorded_by=traveler, redacted=True
+        )
+        resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
+        assert resp.has_profile_facts is False
+
+        # A live fact flips it true.
+        await _insert_profile_fact(
+            db_session, client_id=client_id, recorded_by=traveler, redacted=False
+        )
+        resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
+        assert resp.has_profile_facts is True
+    finally:
+        # profile_facts cascade-delete with the client (FK ondelete CASCADE).
         await _cleanup(client_ids=(client_id,), owner=owner)
         engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
         try:

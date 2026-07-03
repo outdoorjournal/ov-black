@@ -26,6 +26,11 @@ export default defineConfig({
     baseURL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    // Record video of every test; keep only the failures' clips (green runs are
+    // discarded so the artifact dir doesn't balloon). Flip to "on" to capture a
+    // passing run too — useful for demos or watching a flow end-to-end. Videos
+    // and traces are embedded in the HTML report (test:e2e:report).
+    video: "retain-on-failure",
   },
   projects: [
     // Each setup logs one persona in and saves its session under e2e/.auth/.
@@ -43,6 +48,27 @@ export default defineConfig({
     {
       name: "public",
       testDir: "./e2e/public",
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // Onboarding lifecycle — each test provisions its OWN throwaway traveler
+    // and self-authenticates (no shared storageState), because these specs
+    // MUTATE onboarding state (send a turn / dismiss the opener) and would
+    // otherwise race the shared `traveler` persona. Local only
+    // (freshTravelerCallbackUrl provisions users on demand).
+    //
+    // fullyParallel:false keeps these tests in a single worker so the per-worker
+    // advisor-token cache is minted once. Depending on setup:traveler (which
+    // itself depends on setup:advisor) chains us *after* all the other advisor
+    // magic-link minting, preserving the suite invariant that advisor-credential
+    // mints never run concurrently — concurrent link generation for one email
+    // invalidates itself. We don't use the traveler persona; the dependency is
+    // purely for that serialization.
+    {
+      name: "onboarding",
+      testDir: "./e2e/onboarding",
+      fullyParallel: false,
+      dependencies: ["setup:traveler"],
       use: { ...devices["Desktop Chrome"] },
     },
 

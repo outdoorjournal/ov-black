@@ -38,6 +38,7 @@ from app.models import (
     InvoiceStatus,
     Itinerary,
     ItineraryStatus,
+    ProfileFact,
     SessionAudience,
     TurnRole,
 )
@@ -110,6 +111,14 @@ class MyOnboardingSessionResponse(BaseModel):
     the first-prompt opener UI so a user who clicks Skip / Close is not
     re-shown the opener on the next page load.
 
+    ``has_profile_facts`` is true iff the client has at least one
+    non-redacted ``profile_facts`` row — i.e. the traveler has told us
+    something about themselves. Basecamp combines it with the variant to
+    decide the onboarding nudge: a client in the ``post_first_touch``
+    state (a session exists, but no itinerary yet) with **no** profile
+    facts skipped onboarding before we learned anything, so basecamp
+    shows a gentle "finish your profile" reminder.
+
     All session-scoped fields are null when no active session exists.
     """
 
@@ -120,6 +129,7 @@ class MyOnboardingSessionResponse(BaseModel):
     last_turn_at: datetime | None
     seeded_opener: str | None
     has_prior_session: bool
+    has_profile_facts: bool
 
 
 @router.get(
@@ -263,6 +273,7 @@ async def get_my_onboarding_session_endpoint(
         last_turn_at=None,
         seeded_opener=None,
         has_prior_session=False,
+        has_profile_facts=False,
     )
     try:
         user_id = uuid.UUID(user.sub)
@@ -272,6 +283,21 @@ async def get_my_onboarding_session_endpoint(
     client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
     if client is None:
         return empty
+
+    # Has any non-redacted profile fact been recorded for this client? Drives
+    # the onboarding nudge — a post_first_touch client with none skipped before
+    # telling us anything. Redacted (soft-deleted) facts don't count, matching
+    # the active-fact filter used everywhere else (services/facts.py).
+    has_profile_facts = bool(
+        (
+            await session.execute(
+                select(func.count(ProfileFact.id)).where(
+                    ProfileFact.client_id == client.id,
+                    ProfileFact.redacted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+    )
 
     # Has-prior is independent of active/ended status — it gates the
     # first-prompt opener UI so a Skip / Close click is not re-prompted
@@ -306,6 +332,7 @@ async def get_my_onboarding_session_endpoint(
             last_turn_at=None,
             seeded_opener=None,
             has_prior_session=has_prior_session,
+            has_profile_facts=has_profile_facts,
         )
 
     summary = (
@@ -328,4 +355,5 @@ async def get_my_onboarding_session_endpoint(
         last_turn_at=last_turn_at,
         seeded_opener=agent_session.seeded_opener,
         has_prior_session=has_prior_session,
+        has_profile_facts=has_profile_facts,
     )
