@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -39,6 +39,7 @@ from app.models import (
     ForkStatus,
     Itinerary,
     ItineraryStatus,
+    ItineraryTimingKind,
     NodeStatus,
     NodeType,
     Profile,
@@ -79,6 +80,7 @@ from app.services.itineraries import (
     delete_node,
     get_itinerary_graph,
     release_lock,
+    update_itinerary_details,
     update_node,
 )
 from app.services.node_cost import cost_from_inventory_item
@@ -97,9 +99,47 @@ router = APIRouter(prefix="/itinerary", tags=["itinerary"])
 # ── Request / response models ──────────────────────────────────────────────
 
 
+# Trip brief + timing (0033). The goal ("sailing in Greece with my family") and
+# WHEN, modelled as a resolvable window + target duration + a discriminator so
+# it spans exact dates -> fuzzy-but-bounded -> flexible. ``timing_note`` is
+# free-text riding alongside for constraints the dates can't hold ("not August",
+# "back by a Sunday"). Shared field defs keep create / update / response aligned.
+_BRIEF_MAX = 2000
+_NOTE_MAX = 2000
+
+
 class CreateItineraryRequest(BaseModel):
     title: str = Field(default="", max_length=512)
     client_id: uuid.UUID | None = None
+    # Optional at create — the builder's first-run intake usually fills these in
+    # via PATCH, but a caller may seed them up front.
+    brief: str | None = Field(default=None, max_length=_BRIEF_MAX)
+    timing_kind: ItineraryTimingKind | None = None
+    date_start: date | None = None
+    date_end: date | None = None
+    duration_nights: int | None = Field(default=None, ge=1, le=365)
+    timing_note: str | None = Field(default=None, max_length=_NOTE_MAX)
+
+
+class UpdateItineraryRequest(BaseModel):
+    """Partial update of an itinerary's title + brief + timing.
+
+    ``extra="forbid"`` so a misspelled field is a 422, not a silent no-op. Only
+    fields explicitly present in the payload are applied (``exclude_unset``), so
+    sending ``date_start: null`` clears the date while omitting it leaves the
+    stored value untouched — the semantics the first-run intake relies on when a
+    traveler switches from exact dates to a flexible window.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=512)
+    brief: str | None = Field(default=None, max_length=_BRIEF_MAX)
+    timing_kind: ItineraryTimingKind | None = None
+    date_start: date | None = None
+    date_end: date | None = None
+    duration_nights: int | None = Field(default=None, ge=1, le=365)
+    timing_note: str | None = Field(default=None, max_length=_NOTE_MAX)
 
 
 class ItineraryResponse(BaseModel):
@@ -119,6 +159,13 @@ class ItineraryResponse(BaseModel):
     # fork; cleared on reconcile/abandon. None on a fork with no pending request.
     reconcile_requested_at: datetime | None = None
     reconcile_request_note: str | None = None
+    # Trip brief + timing (0033). All None until the first-run intake fills them.
+    brief: str | None = None
+    timing_kind: ItineraryTimingKind | None = None
+    date_start: date | None = None
+    date_end: date | None = None
+    duration_nights: int | None = None
+    timing_note: str | None = None
 
 
 class CreateNodeRequest(BaseModel):
@@ -749,17 +796,18 @@ async def create_itinerary_endpoint(
 ) -> ItineraryResponse:
     actor = _actor_from_user(user)
     itinerary = await create_itinerary(
-        session, actor, title=payload.title, client_id=payload.client_id
+        session,
+        actor,
+        title=payload.title,
+        client_id=payload.client_id,
+        brief=payload.brief,
+        timing_kind=payload.timing_kind,
+        date_start=payload.date_start,
+        date_end=payload.date_end,
+        duration_nights=payload.duration_nights,
+        timing_note=payload.timing_note,
     )
-    return ItineraryResponse(
-        id=itinerary.id,
-        title=itinerary.title,
-        client_id=itinerary.client_id,
-        created_by=itinerary.created_by,
-        status=itinerary.status or ItineraryStatus.draft,
-        approved_by=itinerary.approved_by,
-        approved_at=itinerary.approved_at,
-    )
+    return _itinerary_to_response(itinerary)
 
 
 @router.get(
@@ -786,6 +834,37 @@ async def get_itinerary_endpoint(
             session, user, baseline_id=itinerary_id
         )
     return response
+
+
+@router.patch(
+    "/{itinerary_id}",
+    response_model=ItineraryResponse,
+    summary="Update an itinerary's title, brief, and timing.",
+)
+async def update_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: UpdateItineraryRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ItineraryResponse:
+    """Set the first-class trip brief + timing (0033).
+
+    Trip-level metadata edit, gated by the same owner/creator/advisor test as
+    node writes — so the owning traveler can articulate the goal on a draft they
+    started, while the backend advisor guards stay the authority over the graph
+    itself. Partial: only fields present in the payload are applied.
+    """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
+    actor = _actor_from_user(user)
+    result = await update_itinerary_details(
+        session, actor, itinerary, fields=payload.model_dump(exclude_unset=True)
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
 
 
 @router.post(
@@ -968,6 +1047,12 @@ def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
         fork_status=getattr(itinerary, "fork_status", None),
         reconcile_requested_at=getattr(itinerary, "reconcile_requested_at", None),
         reconcile_request_note=getattr(itinerary, "reconcile_request_note", None),
+        brief=getattr(itinerary, "brief", None),
+        timing_kind=getattr(itinerary, "timing_kind", None),
+        date_start=getattr(itinerary, "date_start", None),
+        date_end=getattr(itinerary, "date_end", None),
+        duration_nights=getattr(itinerary, "duration_nights", None),
+        timing_note=getattr(itinerary, "timing_note", None),
     )
 
 

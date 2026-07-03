@@ -41,6 +41,7 @@ from app.schemas.facts import (
     ProfileFactDetail,
 )
 from app.schemas.party_members import PartyMemberCreate, PartyMemberDetail
+from app.services.agent import trip_brief_for_itinerary
 from app.services.agent_token import (
     AgentTokenClaims,
     AgentTokenError,
@@ -113,6 +114,19 @@ async def _resolve_session_fork_state(
     return (True, baseline_title, fork_row.reconcile_requested_at is not None)
 
 
+async def _resolve_session_trip_brief(session: AsyncSession, session_id: uuid.UUID) -> str | None:
+    """The pinned itinerary's rendered brief + timing (0033) for this session.
+
+    Extracted so the route tests can stub it, mirroring the fork-state read.
+    """
+    pinned_itinerary_id = (
+        await session.execute(
+            select(AgentSession.itinerary_id).where(AgentSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+    return await trip_brief_for_itinerary(session, pinned_itinerary_id)
+
+
 @router.get(
     "/context",
     response_model=AgentContext,
@@ -145,9 +159,14 @@ async def get_agent_context_endpoint(
         session, claims.session_id
     )
 
+    # Trip brief (0033): the goal + timing the traveler set at intake, so the
+    # agent grounds its suggestions in what they're planning.
+    trip_brief = await _resolve_session_trip_brief(session, claims.session_id)
+
     return AgentContext(
         client_id=ctx.client.id,
         client_full_name=ctx.client.full_name,
+        trip_brief=trip_brief,
         is_alternative=is_alternative,
         baseline_title=baseline_title,
         reconcile_requested=reconcile_requested,

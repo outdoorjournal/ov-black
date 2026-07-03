@@ -12,7 +12,7 @@
 // column (left) and an empty mood-board aside (right) that's ready to host
 // imagery in a later slice.
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import {
   useAgentStream,
@@ -55,6 +55,8 @@ export type ChatShellProps = {
   // (and S05/S06 vitest suites) can omit it without breaking.
   itineraryId?: string;
   initialCards?: InitialCardPayload[];
+  /** Shared app masthead, rendered above the immersive chat surface. */
+  header?: ReactNode;
 };
 
 export function ChatShell({
@@ -65,6 +67,7 @@ export function ChatShell({
   initialTurns,
   itineraryId,
   initialCards = [],
+  header = null,
 }: ChatShellProps) {
   return (
     <chatStore.Provider initial={{ initialTurns, initialCards }}>
@@ -74,6 +77,7 @@ export function ChatShell({
         apiBaseUrl={apiBaseUrl}
         client={client}
         itineraryId={itineraryId}
+        header={header}
       />
     </chatStore.Provider>
   );
@@ -85,6 +89,7 @@ type ChatShellInnerProps = {
   apiBaseUrl: string;
   client: { id: string; full_name: string };
   itineraryId: string | undefined;
+  header: ReactNode;
 };
 
 function ChatShellInner({
@@ -93,6 +98,7 @@ function ChatShellInner({
   apiBaseUrl,
   client,
   itineraryId,
+  header,
 }: ChatShellInnerProps) {
   const turns = chatStore.useStore((s) => s.turns);
   const streaming = chatStore.useStore((s) => s.streaming);
@@ -265,33 +271,36 @@ function ChatShellInner({
   }, []);
 
   return (
-    <main
-      className="relative min-h-screen"
-      data-client-id={client.id}
-      data-session-id={sessionId}
-    >
-      <AtmosFrame mood={currentMood} phaseCounter={phaseCounter} />
-      <div className="relative grid min-h-screen grid-cols-[1fr_minmax(0,480px)]">
-        <div className="flex min-h-screen flex-col">
-          <header className="flex items-baseline justify-between border-b border-ink/10 px-8 pb-6 pt-8">
-            <div>
-              <p className="font-sans text-[11px] uppercase tracking-[0.3em] text-ink/50">
-                Correspondence
-              </p>
-              <h1 className="mt-1 font-serif text-3xl text-ink">
-                {client.full_name}
-              </h1>
-            </div>
-          </header>
-          <ConversationStream turns={turns} streaming={streaming} />
-          <Composer
-            disabled={streaming !== null}
-            onSend={(content) => submit(content)}
-          />
+    <div className="flex h-[100dvh] flex-col">
+      {header}
+      <main
+        className="relative min-h-0 flex-1"
+        data-client-id={client.id}
+        data-session-id={sessionId}
+      >
+        <AtmosFrame mood={currentMood} phaseCounter={phaseCounter} />
+        <div className="relative grid h-full grid-cols-[1fr_minmax(0,480px)]">
+          <div className="flex h-full min-h-0 flex-col">
+            <header className="flex items-baseline justify-between border-b border-ink/10 px-8 pb-6 pt-8">
+              <div>
+                <p className="font-sans text-[11px] uppercase tracking-[0.3em] text-ink/50">
+                  Correspondence
+                </p>
+                <h1 className="mt-1 font-serif text-3xl text-ink">
+                  {client.full_name}
+                </h1>
+              </div>
+            </header>
+            <ConversationStream turns={turns} streaming={streaming} />
+            <Composer
+              disabled={streaming !== null}
+              onSend={(content) => submit(content)}
+            />
+          </div>
+          <MoodBoard cards={cards} onAction={onCardAction} />
         </div>
-        <MoodBoard cards={cards} onAction={onCardAction} />
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
 

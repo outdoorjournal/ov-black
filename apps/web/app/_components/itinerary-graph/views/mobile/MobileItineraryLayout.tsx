@@ -15,6 +15,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { BuilderEmptyState } from "../../shared/BuilderEmptyState";
 import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { Card } from "../../shared/ExpandedCard";
 import { NotesPanel } from "../../shared/NotesPanel";
@@ -39,10 +40,13 @@ import { DayTimeline } from "./DayTimeline";
 interface MobileItineraryLayoutProps {
   timeline: ItineraryTimeline;
   baselineTitle?: string | null;
+  /** Fill the flex parent (below the AppHeader) instead of the whole viewport. */
+  embedded?: boolean;
 }
 
 export function MobileItineraryLayout({
   timeline,
+  embedded = false,
 }: MobileItineraryLayoutProps) {
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const pendingProposals = itineraryGraphStore.useStore(
@@ -130,7 +134,12 @@ export function MobileItineraryLayout({
   const clientId = timeline.itinerary.client_id;
 
   return (
-    <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-paper text-ink">
+    <div
+      className={
+        "flex w-screen flex-col overflow-hidden bg-paper text-ink " +
+        (embedded ? "min-h-0 flex-1" : "h-[100dvh]")
+      }
+    >
       <header className="flex shrink-0 items-start justify-between gap-2 border-b border-ink/10 px-4 pb-1.5 pt-3">
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
@@ -153,11 +162,14 @@ export function MobileItineraryLayout({
       <DayStrip groups={groups} activeIndex={activeDay} onSelect={goToDay} />
 
       {/* Horizontal pager — one full-width page per day, each scrolls its own
-          card feed vertically. snap-mandatory makes swipes land on a day. */}
+          card feed vertically. snap-mandatory makes swipes land on a day. The
+          relative wrapper carries the empty-state overlay when nothing's on the
+          board yet. */}
+      <div className="relative flex min-h-0 flex-1">
       <div
         ref={pagerRef}
         onScroll={onPagerScroll}
-        className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {groups.map((g) => (
           <section
@@ -175,6 +187,10 @@ export function MobileItineraryLayout({
             />
           </section>
         ))}
+      </div>
+        {nodes.length === 0 && pendingProposals.length === 0 ? (
+          <BuilderEmptyState hint="sheet" />
+        ) : null}
       </div>
 
       <ConciergeSheet

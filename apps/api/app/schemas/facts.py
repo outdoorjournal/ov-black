@@ -168,6 +168,11 @@ class AgentContext(BaseModel):
 
     client_id: uuid.UUID
     client_full_name: str
+    # The pinned itinerary's first-class brief + timing (0033), pre-rendered for
+    # the prompt: the goal + when the traveler set at intake. Non-private — the
+    # agent grounds suggestions in it and may reference it naturally. None when
+    # the session has no pinned itinerary or no brief has been set yet.
+    trip_brief: str | None = None
     dossier: DossierDetail | None
     dossier_facts: list[DossierFactDetail]
     profile_facts: list[ProfileFactDetail]

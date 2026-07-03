@@ -61,6 +61,10 @@ async def get_traveler_context() -> dict:
 
     Returns these sections plus the dossier typed core:
 
+    * ``trip_brief`` — the goal + timing the traveller set for THIS itinerary
+      ("Sailing in Greece with my family"; a window; constraints like "not
+      August"). Non-private: ground every suggestion in it and reference it
+      naturally. May be null before a brief is set.
     * ``dossier`` — typed signals advisors seeded (group type, children
       ages, contact channel, party notes, net worth). PRIVATE — never
       reveal verbatim.

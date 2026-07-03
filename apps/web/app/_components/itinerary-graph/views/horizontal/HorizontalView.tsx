@@ -42,6 +42,7 @@ import {
 
 import { useRouter } from "next/navigation";
 
+import { BuilderEmptyState } from "../../shared/BuilderEmptyState";
 import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { NotesPanel } from "../../shared/NotesPanel";
@@ -108,6 +109,8 @@ interface HorizontalViewProps {
   timeline: ItineraryTimeline;
   /** Title of the baseline this itinerary forked from (G3), for the banner. */
   baselineTitle?: string | null;
+  /** Fill the flex parent (below the AppHeader) instead of the whole viewport. */
+  embedded?: boolean;
 }
 
 // The horizontal view is a pure consumer of itineraryGraphStore — the store
@@ -116,6 +119,7 @@ interface HorizontalViewProps {
 export function HorizontalView({
   timeline,
   baselineTitle = null,
+  embedded = false,
 }: HorizontalViewProps) {
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const edges = itineraryGraphStore.useStore((s) => s.edges);
@@ -562,7 +566,12 @@ export function HorizontalView({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-    <div className="flex h-screen w-screen flex-col bg-paper text-ink">
+    <div
+      className={
+        "flex w-screen flex-col bg-paper text-ink " +
+        (embedded ? "min-h-0 flex-1" : "h-screen")
+      }
+    >
       <header
         data-testid="itinerary-graph-header"
         data-itinerary-status={status}
@@ -719,6 +728,9 @@ export function HorizontalView({
               visible={scrollHints.right}
               onClick={() => scrollHintBy(SCROLL_HINT_STEP_PX)}
             />
+            {nodes.length === 0 && pendingProposals.length === 0 ? (
+              <BuilderEmptyState hint="aside" />
+            ) : null}
           </div>
 
           {/* Staff aside — fixed width, doesn't scroll with the canvas. For

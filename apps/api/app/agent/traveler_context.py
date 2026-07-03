@@ -56,6 +56,81 @@ def _typed_core_lines(dossier: Dossier | None) -> list[str]:
     return bits
 
 
+def _format_when(
+    timing_kind: str | None,
+    date_start: str | None,
+    date_end: str | None,
+    duration_nights: int | None,
+) -> str | None:
+    """Render an itinerary's timing (0033) into one human phrase for the prompt.
+
+    ``timing_kind`` governs how the dates read: ``exact`` = the trip; ``window``
+    = outer bounds with a target length inside; ``flexible`` = no dates yet.
+    """
+    if timing_kind == "exact":
+        if date_start and date_end:
+            return f"{date_start} to {date_end}"
+        if date_start:
+            return f"from {date_start}"
+        return None
+
+    if timing_kind == "window":
+        if date_start and date_end:
+            base: str | None = f"sometime between {date_start} and {date_end}"
+        elif date_start:
+            base = f"on or after {date_start}"
+        elif date_end:
+            base = f"by {date_end}"
+        else:
+            base = None
+        if duration_nights:
+            dur = f"about {duration_nights} night{'s' if duration_nights != 1 else ''}"
+            return f"{base}, {dur}" if base else dur
+        return base
+
+    if timing_kind == "flexible":
+        return "flexible — no fixed dates yet"
+
+    # No discriminator recorded — fall back to whatever dates exist.
+    if date_start and date_end:
+        return f"{date_start} to {date_end}"
+    if date_start:
+        return f"from {date_start}"
+    return None
+
+
+def format_trip_brief(
+    *,
+    brief: str | None,
+    timing_kind: str | None = None,
+    date_start: str | None = None,
+    date_end: str | None = None,
+    duration_nights: int | None = None,
+    timing_note: str | None = None,
+) -> str | None:
+    """Render the itinerary's first-class brief + timing (0033) into a prompt
+    section, or None when there is nothing to say.
+
+    Unlike Dossier/OSINT, the brief is the traveler's OWN stated goal — the
+    agent should ground every suggestion in it and may reference it naturally.
+    The label carries that instruction so it's in the model's working context.
+    """
+    lines: list[str] = []
+    if brief and brief.strip():
+        lines.append(f"Goal: {brief.strip()}")
+    when = _format_when(timing_kind, date_start, date_end, duration_nights)
+    if when:
+        lines.append(f"When: {when}")
+    if timing_note and timing_note.strip():
+        lines.append(f"Constraints: {timing_note.strip()}")
+    if not lines:
+        return None
+    return (
+        "Trip brief (what the traveler is planning — ground every suggestion in this; "
+        "you may reference it naturally):\n" + "\n".join(lines)
+    )
+
+
 def _fact_line(fact: DossierFact | ProfileFact | OsintFact) -> str:
     """Render one fact as ``[source_kind, kind] text``.
 
@@ -86,6 +161,7 @@ def assemble_traveler_context(
     osint_facts: list[OsintFact],
     client_full_name: str | None = None,
     alternative_of: str | None = None,
+    trip_brief: str | None = None,
 ) -> str:
     """Return the three-tier context block for the system prompt.
 
@@ -112,6 +188,12 @@ def assemble_traveler_context(
 
     if client_full_name:
         sections.append(f"Client: {client_full_name}")
+
+    # ── Trip brief (0033) ─────────────────────────────────────────────────
+    # Leads the substantive context (right after the client name) so the goal +
+    # timing frame every proposal. Non-private, unlike the tiers below.
+    if trip_brief:
+        sections.append(trip_brief)
 
     # ── Dossier ──────────────────────────────────────────────────────────
     dossier_body: list[str] = []

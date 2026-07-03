@@ -27,6 +27,7 @@ import {
   createClientPartyMemberEndpointClientsClientIdPartyMembersPost,
   createDossierFactEndpointClientsClientIdDossierFactsPost,
   createEdgeEndpointItineraryItineraryIdEdgesPost,
+  createItineraryEndpointItineraryPost,
   createMyPartyMemberEndpointMePartyMembersPost,
   createNodeEndpointItineraryItineraryIdNodesPost,
   createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost,
@@ -63,6 +64,7 @@ import {
   getAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdGet,
   getClientEndpointClientsClientIdGet,
   getItineraryEndpointItineraryItineraryIdGet,
+  updateItineraryEndpointItineraryItineraryIdPatch,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
   initClientDocumentEndpointClientsClientIdDocumentsPost,
   initMyDocumentEndpointMeDocumentsPost,
@@ -115,6 +117,7 @@ import type {
   ClientSessionSummary,
   ClientSummary,
   CreateEdgeRequest,
+  CreateItineraryRequest,
   CreateNodeRequest,
   DossierFactCreate,
   DossierFactDetail,
@@ -125,6 +128,7 @@ import type {
   ForkDiffResponse,
   GraphResponse,
   ItineraryResponse,
+  UpdateItineraryRequest,
   AddLineItemRequest,
   CreateInvoiceRequest,
   InvoiceResponse,
@@ -184,8 +188,10 @@ export type { Client } from "./generated/client/types.gen.js";
 // the assembled GraphResponse view consumed by apps/web.
 export type {
   CreateItineraryRequest,
+  UpdateItineraryRequest,
   ItineraryResponse,
   ItineraryStatus,
+  ItineraryTimingKind,
   CreateNodeRequest,
   UpdateNodeRequest,
   NodeResponse,
@@ -806,6 +812,90 @@ export async function getItinerary(
 function parseGetItineraryDetail(status: number): GetItineraryDetail {
   if (status === 404) return "itinerary_not_found";
   if (status === 403) return "forbidden";
+  return "unknown";
+}
+
+export type CreateItineraryResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: "validation_error" | "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for POST /itinerary. Creates an empty itinerary container —
+ * the entry point for a traveler (or advisor) starting a new trip. The brief +
+ * timing are captured afterwards by the builder's first-run intake via
+ * {@link updateItinerary}. Pass `client_id` to link it to the owning traveler.
+ */
+export async function createItinerary(
+  client: Client,
+  body: CreateItineraryRequest,
+): Promise<CreateItineraryResult> {
+  try {
+    const { data, error, response } = await createItineraryEndpointItineraryPost({
+      client,
+      body,
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 422 ? "validation_error" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type UpdateItineraryDetail =
+  | "itinerary_not_found"
+  | "forbidden"
+  // A bad timing payload — reversed date range, non-positive duration, or an
+  // unknown field. The intake validates before sending, so this is a backstop.
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type UpdateItineraryResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: UpdateItineraryDetail };
+
+/**
+ * Typed wrapper for PATCH /itinerary/{itinerary_id} (0033). Sets the
+ * first-class trip brief + timing captured by the builder's first-run intake.
+ * Partial: only the fields present in `body` are applied, and an explicit
+ * `null` clears a value (e.g. dropping dates when switching to a flexible
+ * window). Owner/creator/advisor only — a stranger collapses to `forbidden`.
+ */
+export async function updateItinerary(
+  client: Client,
+  itineraryId: string,
+  body: UpdateItineraryRequest,
+): Promise<UpdateItineraryResult> {
+  try {
+    const { data, error, response } =
+      await updateItineraryEndpointItineraryItineraryIdPatch({
+        client,
+        path: { itinerary_id: itineraryId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseUpdateItineraryDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseUpdateItineraryDetail(status: number): UpdateItineraryDetail {
+  if (status === 404) return "itinerary_not_found";
+  if (status === 403) return "forbidden";
+  if (status === 400 || status === 422) return "validation_error";
   return "unknown";
 }
 

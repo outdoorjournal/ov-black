@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from app.agent.traveler_context import assemble_traveler_context
+from app.agent.traveler_context import assemble_traveler_context, format_trip_brief
 from app.models import (
     ContactChannel,
     Dossier,
@@ -172,6 +172,83 @@ def test_no_alternative_framing_for_a_normal_itinerary() -> None:
         osint_facts=[],
     )
     assert "ALTERNATIVE VERSION" not in out
+
+
+# ── Trip brief (0033) ──────────────────────────────────────────────────────
+
+
+def test_format_trip_brief_exact_dates() -> None:
+    out = format_trip_brief(
+        brief="Sailing in Greece",
+        timing_kind="exact",
+        date_start="2027-03-18",
+        date_end="2027-03-25",
+    )
+    assert out is not None
+    assert "Goal: Sailing in Greece" in out
+    assert "When: 2027-03-18 to 2027-03-25" in out
+
+
+def test_format_trip_brief_window_with_duration() -> None:
+    out = format_trip_brief(
+        brief="A week in the sun",
+        timing_kind="window",
+        date_start="2027-06-01",
+        date_end="2027-08-31",
+        duration_nights=7,
+    )
+    assert out is not None
+    assert "sometime between 2027-06-01 and 2027-08-31" in out
+    assert "about 7 nights" in out
+
+
+def test_format_trip_brief_flexible_with_constraints() -> None:
+    out = format_trip_brief(
+        brief="Ski trip",
+        timing_kind="flexible",
+        timing_note="not August; back by a Sunday",
+    )
+    assert out is not None
+    assert "flexible — no fixed dates yet" in out
+    assert "Constraints: not August; back by a Sunday" in out
+
+
+def test_format_trip_brief_empty_is_none() -> None:
+    assert format_trip_brief(brief=None) is None
+    assert format_trip_brief(brief="   ", timing_kind=None) is None
+
+
+def test_assemble_includes_trip_brief_after_client_before_dossier() -> None:
+    brief = format_trip_brief(
+        brief="Sailing in Greece with my family",
+        timing_kind="window",
+        date_start="2027-06-01",
+        date_end="2027-08-31",
+        duration_nights=7,
+    )
+    out = assemble_traveler_context(
+        dossier=_dossier(),
+        dossier_facts=[_dossier_fact("loves heli-skiing")],
+        profile_facts=[],
+        osint_facts=[],
+        client_full_name="Alex Stone",
+        trip_brief=brief,
+    )
+    assert "Trip brief" in out
+    assert "Sailing in Greece with my family" in out
+    # Placed after the client name, before the Dossier tier.
+    assert out.index("Alex Stone") < out.index("Trip brief") < out.index("Dossier (private")
+
+
+def test_assemble_omits_trip_brief_when_none() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[_profile_fact("x")],
+        osint_facts=[],
+        trip_brief=None,
+    )
+    assert "Trip brief" not in out
 
 
 def test_alternative_framing_falls_back_when_baseline_untitled() -> None:

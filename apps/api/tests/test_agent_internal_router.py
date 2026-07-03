@@ -76,6 +76,13 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(agent_internal_module, "_resolve_session_fork_state", _fake_fork_state)
 
+    # Default: no trip brief set (0033). Individual tests override to assert the
+    # brief flows into the AgentContext payload.
+    async def _fake_trip_brief(_session: Any, _session_id: Any) -> str | None:
+        return None
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_trip_brief", _fake_trip_brief)
+
     # Side-by-side stubs for the two write paths. The stamp the routes
     # validate via DossierFactDetail / ProfileFactDetail expects every
     # timestamp populated, so the stubs fill them eagerly.
@@ -207,6 +214,22 @@ def test_get_context_with_valid_agent_token_returns_200(client: TestClient) -> N
     assert body["is_alternative"] is False
     assert body["baseline_title"] is None
     assert body["reconcile_requested"] is False
+    # No brief set by default (0033).
+    assert body["trip_brief"] is None
+
+
+def test_get_context_surfaces_trip_brief(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0033: the pinned itinerary's brief + timing flows into the payload."""
+
+    async def _brief(_session: Any, _session_id: Any) -> str | None:
+        return "Trip brief (...):\nGoal: Sailing in Greece\nWhen: 2027-03-18 to 2027-03-25"
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_trip_brief", _brief)
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
+    assert resp.status_code == 200
+    assert "Sailing in Greece" in resp.json()["trip_brief"]
 
 
 def test_get_context_surfaces_fork_awareness(

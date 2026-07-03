@@ -20,7 +20,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NamedTuple, TypedDict
 
@@ -36,6 +36,7 @@ from app.models import (
     EdgeType,
     Itinerary,
     ItineraryStatus,
+    ItineraryTimingKind,
     Node,
     NodeHistory,
     NodeStatus,
@@ -599,8 +600,18 @@ async def create_itinerary(
     *,
     title: str,
     client_id: uuid.UUID | None = None,
+    brief: str | None = None,
+    timing_kind: ItineraryTimingKind | None = None,
+    date_start: date | None = None,
+    date_end: date | None = None,
+    duration_nights: int | None = None,
+    timing_note: str | None = None,
 ) -> Itinerary:
     """Create a new itinerary container.
+
+    Optional ``brief`` + timing fields (0033) let a caller seed the trip goal /
+    when at creation; they usually arrive later via ``update_itinerary_details``
+    from the builder's first-run intake, so all default to None.
 
     Itineraries themselves are not audited in node_history / edge_history —
     those tables only track graph mutations. Auditing of itinerary-level
@@ -611,6 +622,12 @@ async def create_itinerary(
         client_id=client_id,
         created_by=actor.user_id,
         status=ItineraryStatus.draft,
+        brief=brief,
+        timing_kind=timing_kind,
+        date_start=date_start,
+        date_end=date_end,
+        duration_nights=duration_nights,
+        timing_note=timing_note,
     )
     session.add(itinerary)
     await session.flush()
@@ -621,6 +638,76 @@ async def create_itinerary(
             "itinerary_id": str(itinerary.id),
             "actor_kind": actor.kind.value,
             "actor_id": actor.actor_id,
+        },
+    )
+    return itinerary
+
+
+# Trip-level fields the builder's intake may write. Title is included but treated
+# specially (NOT NULL — an explicit null is ignored, not applied).
+_UPDATABLE_ITINERARY_FIELDS = frozenset(
+    {
+        "title",
+        "brief",
+        "timing_kind",
+        "date_start",
+        "date_end",
+        "duration_nights",
+        "timing_note",
+    }
+)
+
+
+async def update_itinerary_details(
+    session: AsyncSession,
+    actor: ActorContext,
+    itinerary: Itinerary,
+    *,
+    fields: dict[str, Any],
+) -> Itinerary | ItineraryError:
+    """Apply a partial update to an itinerary's title + brief + timing (0033).
+
+    Only keys present in ``fields`` are written (the router passes
+    ``model_dump(exclude_unset=True)``), so a caller clears a date by sending an
+    explicit ``None`` while omitted fields are left untouched — the semantics the
+    first-run intake relies on when switching from exact dates to a flexible
+    window. ``title`` is NOT NULL, so an explicit ``None`` there is ignored.
+
+    Date ordering is validated here (against the post-update values) so a bad
+    range returns a clean VALIDATION_ERROR instead of surfacing the DB CHECK as
+    a 500.
+    """
+    updates = {k: v for k, v in fields.items() if k in _UPDATABLE_ITINERARY_FIELDS}
+
+    # Validate the resulting range: a provided key overrides the stored value
+    # (including to None); an absent key keeps the stored value.
+    new_start = updates.get("date_start", itinerary.date_start)
+    new_end = updates.get("date_end", itinerary.date_end)
+    if new_start is not None and new_end is not None and new_end < new_start:
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="date_end_before_start",
+        )
+
+    changed: list[str] = []
+    for key, value in updates.items():
+        if key == "title" and value is None:
+            continue  # NOT NULL column — ignore an explicit clear.
+        if getattr(itinerary, key) != value:
+            setattr(itinerary, key, value)
+            changed.append(key)
+
+    if changed:
+        await session.commit()
+        await session.refresh(itinerary)
+    logger.info(
+        "itinerary.update_details",
+        extra={
+            "itinerary_id": str(itinerary.id),
+            "actor_kind": actor.kind.value,
+            "actor_id": actor.actor_id,
+            # Field NAMES only — never the free-text brief / note values.
+            "fields": ",".join(sorted(changed)),
         },
     )
     return itinerary

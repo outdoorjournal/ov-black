@@ -21,8 +21,10 @@ import { notFound, redirect } from "next/navigation";
 
 import { createApiClient, getItinerary } from "@ov-black/api-client";
 
-import { ItineraryGraphView } from "@/app/_components/itinerary-graph/ItineraryGraphView";
+import { AppHeader, type Crumb } from "@/app/_components/app-header/AppHeader";
+import { ItineraryBuilderScreen } from "@/app/_components/itinerary-graph/intake/ItineraryBuilderScreen";
 import { toItineraryTimeline } from "@/app/_components/itinerary-graph/adapter/toItineraryTimeline";
+import { headerUserFromSupabase } from "@/lib/appHeader";
 import { publicEnv } from "@/lib/env";
 import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -76,22 +78,46 @@ export default async function ItineraryPage({ params }: PageProps) {
     if (baseline.ok) baselineTitle = baseline.itinerary.title;
   }
 
+  // Shared masthead: wordmark → breadcrumbs → avatar menu. The builder's own
+  // title + staff controls remain as a secondary toolbar inside the view below.
+  const tripTitle = result.itinerary.title?.trim() || "Itinerary";
+  const homeHref = role === "advisor" ? "/command-center" : "/basecamp";
+  const crumbs: Crumb[] =
+    role === "advisor"
+      ? [{ label: "Clients", href: "/command-center/clients" }, { label: tripTitle }]
+      : [{ label: "Basecamp", href: "/basecamp" }, { label: tripTitle }];
+
+  // First-run gate: no brief yet → capture the goal + timing before the
+  // timeline. A fork inherits its baseline's intent, so only baselines gate.
+  const needsBrief =
+    !result.itinerary.forked_from_id &&
+    (result.itinerary.brief ?? "").trim().length === 0;
+
   return (
-    <ItineraryGraphView
-      timeline={timeline}
-      itineraryId={itineraryId}
-      status={status}
-      role={role}
-      baselineTitle={baselineTitle}
-      // The traveler's own open fork of this baseline ("My version"), resolved
-      // server-side, so the two-version toggle switches to it rather than
-      // spawning a duplicate fork.
-      viewerOpenForkId={result.viewer_open_fork_id ?? null}
-      // Each viewer gets their OWN session token: advisors use it to mutate,
-      // travelers use it to chat with the concierge. Capability is governed by
-      // `role` (UI) + the backend's advisor guards (authority).
-      apiBaseUrl={apiBaseUrl}
-      accessToken={accessToken}
-    />
+    <div className="flex h-[100dvh] flex-col bg-paper">
+      <AppHeader
+        user={headerUserFromSupabase(user)}
+        homeHref={homeHref}
+        crumbs={crumbs}
+      />
+      <ItineraryBuilderScreen
+        needsBrief={needsBrief}
+        audience={role === "advisor" ? "advisor" : "traveler"}
+        timeline={timeline}
+        itineraryId={itineraryId}
+        status={status}
+        role={role}
+        baselineTitle={baselineTitle}
+        // The traveler's own open fork of this baseline ("My version"), resolved
+        // server-side, so the two-version toggle switches to it rather than
+        // spawning a duplicate fork.
+        viewerOpenForkId={result.viewer_open_fork_id ?? null}
+        // Each viewer gets their OWN session token: advisors use it to mutate,
+        // travelers use it to chat with the concierge. Capability is governed by
+        // `role` (UI) + the backend's advisor guards (authority).
+        apiBaseUrl={apiBaseUrl}
+        accessToken={accessToken}
+      />
+    </div>
   );
 }

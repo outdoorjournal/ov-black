@@ -51,6 +51,10 @@ export type ItineraryGraphViewProps = {
   /** The viewer's own open fork of this baseline ("My version"), if any, so the
    *  two-version toggle resolves to it instead of spawning a duplicate. */
   viewerOpenForkId?: string | null;
+  /** When true the view fills its flex parent (`flex-1 min-h-0`) instead of the
+   *  viewport (`h-screen`), so it can sit BELOW the shared AppHeader. Standalone
+   *  usages (the prototype sandbox) leave it false to own the full viewport. */
+  embedded?: boolean;
 };
 
 export function ItineraryGraphView({
@@ -64,6 +68,7 @@ export function ItineraryGraphView({
   view = "horizontal",
   baselineTitle = null,
   viewerOpenForkId = null,
+  embedded = false,
 }: ItineraryGraphViewProps) {
   return (
     <itineraryGraphStore.Provider
@@ -82,7 +87,11 @@ export function ItineraryGraphView({
           own full-viewport root behaves as a direct child of the Provider. */}
       <div className="hidden md:contents">
         {view === "horizontal" ? (
-          <HorizontalView timeline={timeline} baselineTitle={baselineTitle} />
+          <HorizontalView
+            timeline={timeline}
+            baselineTitle={baselineTitle}
+            embedded={embedded}
+          />
         ) : null}
       </div>
       {/* below md : the swipe-driven mobile layout of the same graph. */}
@@ -90,6 +99,7 @@ export function ItineraryGraphView({
         <MobileItineraryLayout
           timeline={timeline}
           baselineTitle={baselineTitle}
+          embedded={embedded}
         />
       </div>
     </itineraryGraphStore.Provider>

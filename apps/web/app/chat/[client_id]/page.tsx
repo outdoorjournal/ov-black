@@ -30,7 +30,10 @@ import {
   type AgentTurnSummary,
 } from "@ov-black/api-client";
 
+import { AppHeader, type Crumb } from "@/app/_components/app-header/AppHeader";
+import { headerUserFromSupabase } from "@/lib/appHeader";
 import { publicEnv } from "@/lib/env";
+import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 import { ChatShell } from "./_components/ChatShell";
@@ -112,6 +115,23 @@ export default async function ChatPage({ params }: PageProps) {
         .filter((c): c is InitialCardPayload => c !== null)
     : [];
 
+  // Shared masthead over the immersive chat. Advisors reach it from their
+  // client; a client-of-self reaches it from basecamp. The big serif client
+  // name stays as the page title beneath the header.
+  const role = await resolveUserRole(supabase);
+  const homeHref = role === "advisor" ? "/command-center" : "/basecamp";
+  const crumbs: Crumb[] =
+    role === "advisor"
+      ? [
+          { label: "Clients", href: "/command-center/clients" },
+          {
+            label: clientForShell.full_name,
+            href: `/command-center/clients/${clientId}`,
+          },
+          { label: "Correspondence" },
+        ]
+      : [{ label: "Basecamp", href: "/basecamp" }, { label: "Correspondence" }];
+
   return (
     <ChatShell
       sessionId={sessionResult.session_id}
@@ -121,6 +141,13 @@ export default async function ChatPage({ params }: PageProps) {
       initialTurns={initialTurns}
       itineraryId={itineraryId}
       initialCards={initialCards}
+      header={
+        <AppHeader
+          user={headerUserFromSupabase(user)}
+          homeHref={homeHref}
+          crumbs={crumbs}
+        />
+      }
     />
   );
 }

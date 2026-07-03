@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, func, text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, Numeric, func, text
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -105,6 +105,25 @@ class ForkStatus(str, enum.Enum):
     abandoned = "abandoned"
 
 
+class ItineraryTimingKind(str, enum.Enum):
+    """Mirrors the public.itinerary_timing_kind Postgres enum (0033).
+
+    How to read an itinerary's timing fields:
+    - ``exact``: ``date_start``/``date_end`` are the fixed trip.
+    - ``window``: ``date_start``/``date_end`` bound the acceptable window and
+      ``duration_nights`` is the target length somewhere inside it
+      ("~7 nights within Jun-Aug").
+    - ``flexible``: no dates chosen yet; ``timing_note`` carries the intent.
+
+    NULL on legacy rows and freshly auto-created "Concierge draft" itineraries
+    that haven't been through the builder's first-run intake.
+    """
+
+    exact = "exact"
+    window = "window"
+    flexible = "flexible"
+
+
 # Reuse the Postgres-side enum types — SQLAlchemy must not try to CREATE TYPE,
 # the migration owns that. postgresql.ENUM surfaces create_type as a real
 # attribute (the generic sqlalchemy.Enum silently drops it), so tests can
@@ -160,6 +179,14 @@ itinerary_status_enum: PGEnum = PGEnum(
 fork_status_enum: PGEnum = PGEnum(
     ForkStatus,
     name="fork_status",
+    schema="public",
+    create_type=False,
+    values_callable=lambda e: [m.value for m in e],
+)
+
+itinerary_timing_kind_enum: PGEnum = PGEnum(
+    ItineraryTimingKind,
+    name="itinerary_timing_kind",
     schema="public",
     create_type=False,
     values_callable=lambda e: [m.value for m in e],
@@ -224,6 +251,21 @@ class Itinerary(Base):
         nullable=True,
     )
     reconcile_request_note: Mapped[str | None] = mapped_column(nullable=True)
+    # 0033 — first-class trip brief + timing. ``brief`` is the free-text goal
+    # ("sailing in Greece with my family"); the timing fields model when, from
+    # exact dates through a fuzzy-but-bounded window to fully flexible. See
+    # ``ItineraryTimingKind`` for how ``timing_kind`` governs date_start/date_end
+    # + duration_nights, and ``timing_note`` for free-text constraints ("not
+    # August", "back by a Sunday"). All NULL until the builder's first-run intake.
+    brief: Mapped[str | None] = mapped_column(nullable=True)
+    timing_kind: Mapped[ItineraryTimingKind | None] = mapped_column(
+        itinerary_timing_kind_enum,
+        nullable=True,
+    )
+    date_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    duration_nights: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timing_note: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

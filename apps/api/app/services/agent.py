@@ -46,7 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.bedrock import AgentRuntimeClient, AgentRuntimeError
 from app.agent.prompt import build_system_prompt
-from app.agent.traveler_context import assemble_traveler_context
+from app.agent.traveler_context import assemble_traveler_context, format_trip_brief
 from app.config import Settings, get_settings
 from app.models import (
     AgentSession,
@@ -515,6 +515,62 @@ async def _fork_baseline_title(session: AsyncSession, itinerary_id: uuid.UUID | 
         await session.execute(select(Itinerary.title).where(Itinerary.id == forked_from_id))
     ).scalar_one_or_none()
     return title or ""
+
+
+async def trip_brief_for_itinerary(
+    session: AsyncSession, itinerary_id: uuid.UUID | None
+) -> str | None:
+    """Render the pinned itinerary's first-class brief + timing (0033) for the
+    prompt, or None when there's nothing to say.
+
+    A fork carries no brief of its own (the intake gates baselines only), so when
+    the pin is a fork with an empty brief we inherit the baseline's — the
+    alternative version is still about the same trip.
+    """
+    if itinerary_id is None:
+        return None
+    row = (
+        await session.execute(
+            select(
+                Itinerary.brief,
+                Itinerary.timing_kind,
+                Itinerary.date_start,
+                Itinerary.date_end,
+                Itinerary.duration_nights,
+                Itinerary.timing_note,
+                Itinerary.forked_from_id,
+            ).where(Itinerary.id == itinerary_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    brief, timing_kind, date_start, date_end, duration_nights, timing_note, forked_from_id = row
+
+    # Fork with no brief of its own → fall back to the baseline's intent.
+    if (brief is None or not brief.strip()) and forked_from_id is not None:
+        base = (
+            await session.execute(
+                select(
+                    Itinerary.brief,
+                    Itinerary.timing_kind,
+                    Itinerary.date_start,
+                    Itinerary.date_end,
+                    Itinerary.duration_nights,
+                    Itinerary.timing_note,
+                ).where(Itinerary.id == forked_from_id)
+            )
+        ).first()
+        if base is not None:
+            brief, timing_kind, date_start, date_end, duration_nights, timing_note = base
+
+    return format_trip_brief(
+        brief=brief,
+        timing_kind=timing_kind.value if timing_kind is not None else None,
+        date_start=date_start.isoformat() if date_start is not None else None,
+        date_end=date_end.isoformat() if date_end is not None else None,
+        duration_nights=duration_nights,
+        timing_note=timing_note,
+    )
 
 
 async def _detect_mode(
@@ -987,6 +1043,10 @@ async def stream_turn(
         # prompt around "an alternative version" of the baseline.
         fork_baseline_title = await _fork_baseline_title(db, agent_session.itinerary_id)
 
+        # Trip brief (0033): the goal + timing the traveler set at intake, so the
+        # agent grounds its first suggestions in what they're actually planning.
+        trip_brief = await trip_brief_for_itinerary(db, agent_session.itinerary_id)
+
         # Assemble prompt + context OUTSIDE the log-safe zone.
         traveler_ctx = assemble_traveler_context(
             dossier=dossier,
@@ -995,6 +1055,7 @@ async def stream_turn(
             osint_facts=osint_facts,
             client_full_name=client_row.full_name,
             alternative_of=fork_baseline_title,
+            trip_brief=trip_brief,
         )
         system_prompt = build_system_prompt(traveler_ctx)
         agentcore_session_id = agent_session.agentcore_session_id

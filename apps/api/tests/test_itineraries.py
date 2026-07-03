@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import socket
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -30,11 +30,13 @@ from app.models import (
     EdgeHistory,
     EdgeType,
     Itinerary,
+    ItineraryTimingKind,
     Node,
     NodeHistory,
     NodeStatus,
     NodeType,
 )
+from app.routers.itineraries import UpdateItineraryRequest, _itinerary_to_response
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
@@ -48,6 +50,7 @@ from app.services.itineraries import (
     delete_edge,
     delete_node,
     get_itinerary_graph,
+    update_itinerary_details,
     update_node,
 )
 from fastapi import HTTPException
@@ -196,6 +199,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     calls: dict[str, list[dict[str, Any]]] = {
         "create_itinerary": [],
         "get_itinerary_graph": [],
+        "update_itinerary_details": [],
         "add_node": [],
         "update_node": [],
         "delete_node": [],
@@ -211,6 +215,30 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             title=kwargs.get("title", ""),
             client_id=kwargs.get("client_id"),
             created_by=actor.user_id,
+            brief=kwargs.get("brief"),
+            timing_kind=kwargs.get("timing_kind"),
+            date_start=kwargs.get("date_start"),
+            date_end=kwargs.get("date_end"),
+            duration_nights=kwargs.get("duration_nights"),
+            timing_note=kwargs.get("timing_note"),
+        )
+
+    async def _update_itinerary(
+        _session: Any, actor: ActorContext, _itinerary: Any, *, fields: dict[str, Any]
+    ) -> Any:
+        calls["update_itinerary_details"].append({"actor": actor, "fields": fields})
+        if "update_itinerary_details" in returns:
+            return returns["update_itinerary_details"]
+        # Echo the applied fields back on a fresh row so the response serializes.
+        return Itinerary(
+            id=uuid.uuid4(),
+            title=fields.get("title", ""),
+            brief=fields.get("brief"),
+            timing_kind=fields.get("timing_kind"),
+            date_start=fields.get("date_start"),
+            date_end=fields.get("date_end"),
+            duration_nights=fields.get("duration_nights"),
+            timing_note=fields.get("timing_note"),
         )
 
     async def _get_graph(_session: Any, itinerary_id: uuid.UUID) -> Any:
@@ -283,6 +311,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(routers_itineraries, "create_itinerary", _create)
     monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _get_graph)
+    monkeypatch.setattr(routers_itineraries, "update_itinerary_details", _update_itinerary)
     monkeypatch.setattr(routers_itineraries, "add_node", _add_node)
     monkeypatch.setattr(routers_itineraries, "update_node", _update_node)
     monkeypatch.setattr(routers_itineraries, "delete_node", _delete_node)
@@ -358,6 +387,129 @@ def test_create_itinerary_with_non_uuid_sub_still_succeeds(
     actor = stub_service["calls"]["create_itinerary"][0]["actor"]
     assert actor.user_id is None
     assert actor.actor_id == "not-a-uuid"
+
+
+# ── Trip brief + timing (0033) — router contract ───────────────────────────
+
+
+def test_create_itinerary_forwards_brief_and_timing(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.post(
+        "/itinerary",
+        json={
+            "title": "Greece",
+            "brief": "Sailing in Greece with my family",
+            "timing_kind": "window",
+            "date_start": "2027-06-01",
+            "date_end": "2027-08-31",
+            "duration_nights": 7,
+            "timing_note": "can't go in August; back by a Sunday",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["brief"] == "Sailing in Greece with my family"
+    assert body["timing_kind"] == "window"
+    assert body["date_start"] == "2027-06-01"
+    assert body["duration_nights"] == 7
+    # Fields reach the service verbatim.
+    fwd = stub_service["calls"]["create_itinerary"][0]
+    assert fwd["brief"] == "Sailing in Greece with my family"
+    assert fwd["timing_kind"] is ItineraryTimingKind.window
+    assert fwd["duration_nights"] == 7
+
+
+def test_update_itinerary_forwards_fields_and_returns_200(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    iid = uuid.uuid4()
+    resp = client.patch(
+        f"/itinerary/{iid}",
+        json={
+            "brief": "A week diving in the Red Sea",
+            "timing_kind": "exact",
+            "date_start": "2027-03-18",
+            "date_end": "2027-03-25",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["brief"] == "A week diving in the Red Sea"
+    assert body["timing_kind"] == "exact"
+    assert body["date_end"] == "2027-03-25"
+    # Only the fields actually sent are forwarded (partial semantics).
+    fields = stub_service["calls"]["update_itinerary_details"][0]["fields"]
+    assert set(fields) == {"brief", "timing_kind", "date_start", "date_end"}
+    assert "duration_nights" not in fields
+
+
+def test_update_itinerary_explicit_null_clears_date(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    # Switching from exact dates to a flexible window: an explicit null must
+    # reach the service as a present field (so it clears), not be dropped.
+    iid = uuid.uuid4()
+    resp = client.patch(
+        f"/itinerary/{iid}",
+        json={"timing_kind": "flexible", "date_start": None, "date_end": None},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    fields = stub_service["calls"]["update_itinerary_details"][0]["fields"]
+    assert fields["date_start"] is None
+    assert "date_start" in fields and "date_end" in fields
+
+
+def test_update_itinerary_rejects_zero_duration(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.patch(
+        f"/itinerary/{uuid.uuid4()}",
+        json={"duration_nights": 0},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_update_itinerary_rejects_unknown_field(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.patch(
+        f"/itinerary/{uuid.uuid4()}",
+        json={"destination": "Greece"},  # not a real field
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_update_itinerary_requires_jwt(client: TestClient, stub_service: dict[str, Any]) -> None:
+    resp = client.patch(f"/itinerary/{uuid.uuid4()}", json={"brief": "x"})
+    assert resp.status_code == 401
+
+
+def test_update_request_exclude_unset_distinguishes_omitted_from_null() -> None:
+    """The partial-PATCH contract the intake depends on, at the Pydantic layer."""
+    only_brief = UpdateItineraryRequest(brief="x").model_dump(exclude_unset=True)
+    assert only_brief == {"brief": "x"}
+
+    explicit_null = UpdateItineraryRequest(date_start=None).model_dump(exclude_unset=True)
+    assert "date_start" in explicit_null  # sent-as-null is "set", clears the value
+
+    empty = UpdateItineraryRequest().model_dump(exclude_unset=True)
+    assert empty == {}
 
 
 def test_get_itinerary_not_found_is_404(
@@ -880,6 +1032,92 @@ async def test_create_itinerary_persists_row(db_session: AsyncSession) -> None:
             await db_session.execute(select(Itinerary).where(Itinerary.id == itinerary.id))
         ).scalar_one()
         assert fetched.title == "Como trip"
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_create_itinerary_persists_brief_and_timing(db_session: AsyncSession) -> None:
+    itinerary = await create_itinerary(
+        db_session,
+        _actor(),
+        title="Greece",
+        brief="Sailing in Greece with my family",
+        timing_kind=ItineraryTimingKind.window,
+        date_start=date(2027, 6, 1),
+        date_end=date(2027, 8, 31),
+        duration_nights=7,
+        timing_note="can't go in August",
+    )
+    try:
+        fetched = (
+            await db_session.execute(select(Itinerary).where(Itinerary.id == itinerary.id))
+        ).scalar_one()
+        assert fetched.brief == "Sailing in Greece with my family"
+        assert fetched.timing_kind is ItineraryTimingKind.window
+        assert fetched.date_start == date(2027, 6, 1)
+        assert fetched.date_end == date(2027, 8, 31)
+        assert fetched.duration_nights == 7
+        assert fetched.timing_note == "can't go in August"
+        # The response serializer carries the fields through verbatim.
+        resp = _itinerary_to_response(fetched)
+        assert resp.brief == "Sailing in Greece with my family"
+        assert resp.timing_kind is ItineraryTimingKind.window
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_update_itinerary_details_partial_then_clear(db_session: AsyncSession) -> None:
+    itinerary = await create_itinerary(db_session, _actor(), title="draft")
+    try:
+        # 1) Set the brief only — timing stays untouched (None).
+        await update_itinerary_details(
+            db_session, _actor(), itinerary, fields={"brief": "Ski week in the Alps"}
+        )
+        assert itinerary.brief == "Ski week in the Alps"
+        assert itinerary.timing_kind is None
+
+        # 2) Commit to exact dates.
+        await update_itinerary_details(
+            db_session,
+            _actor(),
+            itinerary,
+            fields={
+                "timing_kind": ItineraryTimingKind.exact,
+                "date_start": date(2027, 1, 10),
+                "date_end": date(2027, 1, 17),
+            },
+        )
+        assert itinerary.timing_kind is ItineraryTimingKind.exact
+        assert itinerary.date_start == date(2027, 1, 10)
+
+        # 3) Clear the start via an explicit None; the end + brief stay put
+        #    (omitted keys are untouched, an explicit null clears).
+        await update_itinerary_details(db_session, _actor(), itinerary, fields={"date_start": None})
+        assert itinerary.date_start is None
+        assert itinerary.date_end == date(2027, 1, 17)
+        assert itinerary.brief == "Ski week in the Alps"
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_update_itinerary_details_rejects_reversed_range(db_session: AsyncSession) -> None:
+    itinerary = await create_itinerary(db_session, _actor(), title="draft")
+    try:
+        result = await update_itinerary_details(
+            db_session,
+            _actor(),
+            itinerary,
+            fields={"date_start": date(2027, 5, 10), "date_end": date(2027, 5, 1)},
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.outcome is ItineraryOutcome.VALIDATION_ERROR
+        assert result.detail == "date_end_before_start"
     finally:
         await _cleanup(db_session, itinerary.id)
 

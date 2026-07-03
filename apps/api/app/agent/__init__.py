@@ -17,7 +17,7 @@ from app.agent.bedrock import (
     MockAgentRuntimeClient,
 )
 from app.agent.prompt import build_system_prompt
-from app.agent.traveler_context import assemble_traveler_context
+from app.agent.traveler_context import assemble_traveler_context, format_trip_brief
 
 __all__ = [
     "AgentRuntimeClient",
@@ -26,4 +26,5 @@ __all__ = [
     "MockAgentRuntimeClient",
     "assemble_traveler_context",
     "build_system_prompt",
+    "format_trip_brief",
 ]
