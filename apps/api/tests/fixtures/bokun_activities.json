@@ -1,0 +1,99 @@
+{
+  "search": {
+    "tookInMillis": 18,
+    "totalHits": 2,
+    "tagFacets": [],
+    "tagFilters": [],
+    "termFacets": {
+      "country": { "name": "country", "title": "country", "entries": [], "sortedEntries": [] },
+      "city": { "name": "city", "title": "city", "entries": [], "sortedEntries": [] },
+      "supplier": { "name": "supplier", "title": "Operator", "entries": [], "sortedEntries": [] }
+    },
+    "items": [
+      {
+        "id": "1001",
+        "title": "Tokyo Tsukiji Sushi-Making Class",
+        "excerpt": "Hand-roll nigiri with a Ginza chef after a market walk.",
+        "summary": "Small-group sushi workshop in central Tokyo.",
+        "slug": "tokyo-tsukiji-sushi-making-class",
+        "price": 120.0,
+        "keyPhoto": {
+          "id": 501,
+          "originalUrl": "https://cdn.bokun.io/photos/501/original.jpg",
+          "fileName": "/sushi-hero.jpg",
+          "derived": [
+            { "name": "medium", "url": "https://cdn.bokun.io/photos/501/medium.jpg" }
+          ]
+        },
+        "photos": [
+          {
+            "id": 501,
+            "originalUrl": "https://cdn.bokun.io/photos/501/original.jpg"
+          },
+          {
+            "id": 502,
+            "originalUrl": "https://cdn.bokun.io/photos/502/original.jpg"
+          }
+        ],
+        "location": {
+          "city": "Tokyo",
+          "countryCode": "JP",
+          "latitude": 35.6655,
+          "longitude": 139.7708,
+          "wholeAddress": "Tsukiji, Chuo City, Tokyo, Japan"
+        },
+        "keywords": ["food", "culture", "half-day"],
+        "vendor": { "id": 88, "title": "Ginza Culinary Studio" }
+      },
+      {
+        "id": "1002",
+        "title": "Mt. Fuji Private Day Hike",
+        "excerpt": "Summit the Yoshida trail with a licensed mountain guide.",
+        "price": 340.5,
+        "keyPhoto": {
+          "id": 601,
+          "originalUrl": "https://cdn.bokun.io/photos/601/original.jpg"
+        },
+        "photos": [],
+        "location": {
+          "city": "Fujiyoshida",
+          "countryCode": "JP",
+          "latitude": 35.3606,
+          "longitude": 138.7274
+        },
+        "keywords": ["hiking", "mountains"],
+        "vendor": { "id": 91, "title": "Fuji Alpine Guides" }
+      }
+    ]
+  },
+  "detail": {
+    "id": 1001,
+    "externalId": "GCS-1001",
+    "title": "Tokyo Tsukiji Sushi-Making Class",
+    "description": "A three-hour hands-on workshop: walk the outer market, then shape nigiri and maki alongside a Ginza-trained chef. Includes tastings and sake pairing.",
+    "excerpt": "Hand-roll nigiri with a Ginza chef after a market walk.",
+    "keywords": ["food", "culture", "half-day"],
+    "durationDays": 0,
+    "durationHours": 3,
+    "durationText": "3 hours",
+    "difficultyLevel": 1,
+    "keyPhoto": {
+      "id": 501,
+      "originalUrl": "https://cdn.bokun.io/photos/501/original.jpg",
+      "derived": [{ "name": "medium", "url": "https://cdn.bokun.io/photos/501/medium.jpg" }]
+    },
+    "photos": [
+      { "id": 501, "originalUrl": "https://cdn.bokun.io/photos/501/original.jpg" },
+      { "id": 503, "originalUrl": "https://cdn.bokun.io/photos/503/original.jpg" }
+    ],
+    "nextDefaultPrice": 120.0,
+    "nextDefaultPriceMoney": { "amount": 120.0, "currency": "JPY" },
+    "googlePlace": {
+      "country": "Japan",
+      "countryCode": "JP",
+      "city": "Tokyo",
+      "geoLocationCenter": { "lat": 35.6655, "lng": 139.7708 }
+    },
+    "vendor": { "id": 88, "title": "Ginza Culinary Studio" }
+  }
+}

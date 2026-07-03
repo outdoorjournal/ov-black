@@ -14,6 +14,7 @@ from app.agent.bedrock import (
 from app.auth import PUBLIC_PATHS, AuthenticatedUser, JWTAuthMiddleware, require_user
 from app.config import get_settings
 from app.db import dispose_engine
+from app.inventory.providers.bokun import BokunProvider
 from app.inventory.providers.duffel import DuffelProvider
 from app.inventory.providers.google_places import GooglePlacesProvider
 from app.inventory.providers.mock import MockProvider
@@ -98,6 +99,9 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         elif name == "google_places":
             registry.register(GooglePlacesProvider(settings=settings))
             registered.append("google_places")
+        elif name == "bokun":
+            registry.register(BokunProvider(settings=settings))
+            registered.append("bokun")
         else:
             logger.warning(
                 "inventory.providers.unknown",
