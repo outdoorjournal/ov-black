@@ -132,6 +132,13 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(routers_itineraries, "_is_requester_advisor", _is_advisor)
     monkeypatch.setattr(routers_itineraries, "_resolve_client_auth_user_id", _resolve_auth)
 
+    # GET resolves the caller's own open fork with a real query — stub it here so
+    # these DB-less router tests don't touch the placeholder session.
+    async def _no_open_fork(_session: object, _user: object, *, baseline_id: uuid.UUID) -> None:
+        return None
+
+    monkeypatch.setattr(routers_itineraries, "_resolve_viewer_open_fork_id", _no_open_fork)
+
     async def _session_dep() -> Iterator[object]:
         yield object()
 

@@ -48,6 +48,9 @@ export type ItineraryGraphViewProps = {
   view?: ItineraryGraphViewKind;
   /** Title of the baseline this itinerary forked from (G3), for the banner. */
   baselineTitle?: string | null;
+  /** The viewer's own open fork of this baseline ("My version"), if any, so the
+   *  two-version toggle resolves to it instead of spawning a duplicate. */
+  viewerOpenForkId?: string | null;
 };
 
 export function ItineraryGraphView({
@@ -60,6 +63,7 @@ export function ItineraryGraphView({
   startLocked = false,
   view = "horizontal",
   baselineTitle = null,
+  viewerOpenForkId = null,
 }: ItineraryGraphViewProps) {
   return (
     <itineraryGraphStore.Provider
@@ -70,6 +74,7 @@ export function ItineraryGraphView({
         role,
         apiBaseUrl,
         accessToken,
+        viewerOpenForkId,
         startLocked,
       }}
     >

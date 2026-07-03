@@ -44,10 +44,11 @@ logger = logging.getLogger("ov_black.routers.demos")
 router = APIRouter(prefix="/demos", tags=["demos"])
 
 
-# Default trip start: 30 days from now, anchored at midnight UTC. Far
-# enough out that demo itineraries don't overlap the advisor's actual
-# calendar; midnight keeps offsets clean.
-DEFAULT_TRIP_LEAD_DAYS = 30
+# Default trip start: ~2 months from now, anchored at midnight UTC. Far enough
+# out that demo itineraries don't overlap the advisor's actual calendar and
+# that live flight inventory (incl. the arrival flight searched a day earlier)
+# is comfortably bookable; midnight keeps offsets clean.
+DEFAULT_TRIP_LEAD_DAYS = 60
 
 
 class JapanInstantiateRequest(BaseModel):

@@ -53,7 +53,25 @@ class S3VaultStorage:
         import boto3
         from botocore.config import Config
 
-        # SigV4 is required for SSE-KMS objects; pin it explicitly.
+        endpoint = self._settings.s3_endpoint_url
+        if endpoint:
+            # S3-compatible endpoint (local Supabase Storage / MinIO). Such hosts
+            # can't do virtual-host buckets, so force path-style addressing, and
+            # sign with the endpoint's own region + explicit keys rather than the
+            # AWS credential chain. Lets the vault run end-to-end with no AWS.
+            return boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                region_name=self._settings.s3_region or self._settings.aws_region,
+                aws_access_key_id=self._settings.s3_access_key_id or None,
+                aws_secret_access_key=self._settings.s3_secret_access_key or None,
+                config=Config(
+                    signature_version="s3v4",
+                    s3={"addressing_style": "path"},
+                ),
+            )
+
+        # Real AWS S3. SigV4 is required for SSE-KMS objects; pin it explicitly.
         return boto3.client(
             "s3",
             region_name=self._settings.aws_region,

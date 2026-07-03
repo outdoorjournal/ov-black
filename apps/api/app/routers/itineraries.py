@@ -57,6 +57,7 @@ from app.services.fork import (
     fork_itinerary,
     reconcile_fork,
     request_reconcile,
+    withdraw_reconcile,
 )
 from app.services.inventory import get_inventory_detail
 from app.services.itineraries import (
@@ -236,6 +237,12 @@ class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: list[NodeResponse]
     edges: list[EdgeResponse]
+    # The calling viewer's own OPEN fork of this itinerary, when it is a baseline
+    # (``forked_from_id is None``) — the traveler's "My version". Resolved per
+    # request in ``get_itinerary_endpoint`` so the two-version toggle switches to
+    # an existing fork instead of spawning a duplicate. Null on a fork itself, or
+    # when the viewer has no open fork.
+    viewer_open_fork_id: uuid.UUID | None = None
 
 
 class ReleaseLockResponse(BaseModel):
@@ -395,6 +402,38 @@ async def _resolve_client_auth_user_id(
     """
     return (
         await session.execute(select(Client.auth_user_id).where(Client.id == client_id))
+    ).scalar_one_or_none()
+
+
+async def _resolve_viewer_open_fork_id(
+    session: AsyncSession,
+    user: AuthenticatedUser,
+    *,
+    baseline_id: uuid.UUID,
+) -> uuid.UUID | None:
+    """The caller's own OPEN fork of ``baseline_id`` (their "My version"), or None.
+
+    A fork is stamped with ``created_by = actor.user_id`` (see ``fork_itinerary``),
+    so the traveler's own working copy is the open fork they created off this
+    baseline. Picks the most-recent so any pre-existing duplicate forks (from the
+    old "Make an alternative" flow) still resolve to one entry; the lazy-fork model
+    stops new duplicates being created.
+    """
+    try:
+        user_uuid = uuid.UUID(user.sub)
+    except ValueError:  # pragma: no cover — Supabase subs are always UUIDs
+        return None
+    return (
+        await session.execute(
+            select(Itinerary.id)
+            .where(
+                Itinerary.forked_from_id == baseline_id,
+                Itinerary.fork_status == ForkStatus.open,
+                Itinerary.created_by == user_uuid,
+            )
+            .order_by(Itinerary.created_at.desc())
+            .limit(1)
+        )
     ).scalar_one_or_none()
 
 
@@ -739,7 +778,14 @@ async def get_itinerary_endpoint(
     # Draft-read gate (shared with the analyze endpoints).
     await assert_itinerary_readable(session, user, result.itinerary)
     # mypy: result is GraphView past this point
-    return _graph_to_response(result)
+    response = _graph_to_response(result)
+    # On a baseline, surface the caller's own OPEN fork so the traveler's
+    # two-version toggle ("My version") resolves to it rather than re-forking.
+    if result.itinerary.forked_from_id is None:
+        response.viewer_open_fork_id = await _resolve_viewer_open_fork_id(
+            session, user, baseline_id=itinerary_id
+        )
+    return response
 
 
 @router.post(
@@ -1105,6 +1151,34 @@ async def request_reconcile_endpoint(
     if await _is_requester_advisor(session, actor.user_id):
         actor = _advisor_actor_from_user(user)
     result = await request_reconcile(session, actor, fork_id=fork_id, note=payload.note)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{fork_id}/cancel-reconcile",
+    response_model=ItineraryResponse,
+    summary="Withdraw a pending merge request (traveler/agent); the fork stays open.",
+)
+async def cancel_reconcile_endpoint(
+    fork_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ItineraryResponse:
+    """Clear the pending reconcile request on the fork without abandoning it.
+
+    The inverse of ``request-reconcile``: the traveler asked staff to merge, then
+    changed their mind. Owner / creator / advisor; the fork stays ``open`` so they
+    keep editing."""
+    fork = await _load_itinerary(session, fork_id)
+    if fork is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_forkable(session, user, fork)
+    actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
+    result = await withdraw_reconcile(session, actor, fork_id=fork_id)
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
     return _itinerary_to_response(result)

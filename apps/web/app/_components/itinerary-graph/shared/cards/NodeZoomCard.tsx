@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 
 import { formatClock, formatDuration, offsetHoursOr } from "../../model/horizontalTime";
 import type { NodeResponse } from "../../model/horizontalTypes";
+import { placePhotoUrl } from "../../model/placePhoto";
 import { inferCardKind } from "../../views/horizontal/NodeCard";
 import { CardShell, Chip, Sub, Title } from "./CardShell";
 import {
@@ -85,6 +86,15 @@ interface Driver {
   languages?: string[];
   contact_link?: string;
 }
+interface Place {
+  rating?: number;
+  rating_count?: number;
+  hours?: string[];
+  website?: string;
+  phone?: string;
+  maps_url?: string;
+  photo_token?: string;
+}
 
 interface ZoomMeta {
   description?: string;
@@ -155,6 +165,8 @@ interface ZoomMeta {
   walking_to?: WalkingDistance[];
   profile_prefs_honored?: string[];
   neighborhood_blurb?: string;
+  // experience + meal POI enrichment (Google Places)
+  place?: Place;
   // experience
   category?: string;
   energy_required?: number;
@@ -619,7 +631,7 @@ function HotelZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: numbe
 
 function ExperienceZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
   const t = TYPE_TOKENS.experience;
-  const cover = m.snapshot?.cover_image ?? m.ambient_image;
+  const cover = placePhotoUrl(m.place?.photo_token) ?? m.snapshot?.cover_image ?? m.ambient_image;
   const dur = typeof m.duration_minutes === "number" ? formatDuration(m.duration_minutes) : null;
   const gear = m.gear_list ?? [];
   return (
@@ -632,6 +644,8 @@ function ExperienceZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
       {m.description ? (
         <p className="mt-3 text-[12px] leading-relaxed text-ink/85">{m.description}</p>
       ) : null}
+
+      <PlaceInfo place={m.place} tint={t.tint} />
 
       <DetailGrid
         rows={[
@@ -665,7 +679,7 @@ function ExperienceZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
 
 function MealZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: number }) {
   const t = TYPE_TOKENS.meal;
-  const cover = m.snapshot?.cover_image ?? m.ambient_image;
+  const cover = placePhotoUrl(m.place?.photo_token) ?? m.snapshot?.cover_image ?? m.ambient_image;
   const seating = m.seating_at ? formatClock(m.seating_at, offsetHoursOr(m.seating_at, tz)) : null;
   const etiquette = (m.etiquette ?? []).filter((e) => e.label);
   const phrases = (m.pre_meal_phrases ?? []).filter((p) => p.native);
@@ -733,6 +747,8 @@ function MealZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: number
       ) : null}
 
       <ChipRow tint={t.tint} chips={[m.dress_code, ...diet.slice(0, 1)]} />
+
+      <PlaceInfo place={m.place} tint={t.tint} />
     </>
   );
 }
@@ -954,6 +970,59 @@ function DayWindow({ start, end, accent }: { start: number; end: number; accent:
   );
 }
 
+// Rating + hours + contact/map links for a Places-sourced POI. The gradient
+// stub is fine when we know nothing about a place; when Google gives us a crowd
+// rating, opening hours, and a way to reach it, showing that is what turns a
+// bare title into a real card. Renders nothing when `place` carries no content.
+function PlaceInfo({ place, tint }: { place: Place | undefined; tint: string }) {
+  if (!place) return null;
+  const rating = typeof place.rating === "number" ? place.rating.toFixed(1) : null;
+  const count =
+    typeof place.rating_count === "number" ? place.rating_count.toLocaleString() : null;
+  const hours = place.hours ?? [];
+  const links: Array<{ label: string; href: string }> = [];
+  if (place.website) links.push({ label: "Website ↗", href: place.website });
+  if (place.phone) links.push({ label: place.phone, href: `tel:${place.phone.replace(/\s+/g, "")}` });
+  if (place.maps_url) links.push({ label: "View on Google Maps ↗", href: place.maps_url });
+  if (!rating && hours.length === 0 && links.length === 0) return null;
+  return (
+    <div className="mt-4 rounded border border-ink/10 bg-paper/60 p-3">
+      {rating ? (
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-[13px] font-medium text-ink/90">★ {rating}</span>
+          {count ? <span className="text-[11px] text-ink/55">{count} reviews</span> : null}
+        </div>
+      ) : null}
+      {hours.length > 0 ? (
+        <div className="mt-2">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">Hours</p>
+          <ul className="mt-1 space-y-0.5 text-[11px] leading-relaxed text-ink/75">
+            {hours.map((h, i) => (
+              <li key={i}>{h}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {links.length > 0 ? (
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {links.map((l) => (
+            <a
+              key={l.href}
+              href={l.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-full border border-ink/15 px-2.5 py-1 text-[11px] text-ink/80 transition-colors hover:bg-ink/5"
+              style={{ backgroundColor: tint }}
+            >
+              {l.label}
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ImageHero({ src, fallbackTint, tall = false }: { src?: string | undefined; fallbackTint: string; tall?: boolean }) {
   return (
     <div
@@ -961,16 +1030,26 @@ function ImageHero({ src, fallbackTint, tall = false }: { src?: string | undefin
       role="img"
       aria-label="Card image"
       style={{
-        backgroundImage: src
-          ? `url(${JSON.stringify(src)})`
-          : `linear-gradient(135deg, ${fallbackTint} 0%, #f7f4ee 100%)`,
+        // Gradient is always the base layer; a real photo (when present) covers
+        // it and, on a load error, hides itself to reveal the tint underneath.
+        backgroundImage: `linear-gradient(135deg, ${fallbackTint} 0%, #f7f4ee 100%)`,
         backgroundSize: "cover",
         backgroundPosition: "center",
       }}
     >
-      {!src ? (
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element -- proxied/remote URL, next/image loaders unneeded; degrades to the gradient on error.
+        <img
+          src={src}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      ) : (
         <span className="absolute bottom-1 right-1.5 text-[8px] uppercase tracking-[0.18em] text-paper/85">photo</span>
-      ) : null}
+      )}
     </div>
   );
 }

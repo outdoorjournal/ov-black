@@ -74,12 +74,14 @@
               "origin": {
                 "iata_code": "LAX",
                 "name": "Los Angeles International Airport",
-                "terminal": "B"
+                "terminal": "B",
+                "time_zone": "America/Los_Angeles"
               },
               "destination": {
                 "iata_code": "HND",
                 "name": "Tokyo Haneda Airport",
-                "terminal": "3"
+                "terminal": "3",
+                "time_zone": "Asia/Tokyo"
               },
               "passengers": [
                 {
@@ -166,12 +168,14 @@
               "origin": {
                 "iata_code": "LAX",
                 "name": "Los Angeles International Airport",
-                "terminal": "B"
+                "terminal": "B",
+                "time_zone": "America/Los_Angeles"
               },
               "destination": {
                 "iata_code": "HND",
                 "name": "Tokyo Haneda Airport",
-                "terminal": "3"
+                "terminal": "3",
+                "time_zone": "Asia/Tokyo"
               },
               "passengers": [
                 {

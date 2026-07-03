@@ -83,6 +83,10 @@ export default async function ItineraryPage({ params }: PageProps) {
       status={status}
       role={role}
       baselineTitle={baselineTitle}
+      // The traveler's own open fork of this baseline ("My version"), resolved
+      // server-side, so the two-version toggle switches to it rather than
+      // spawning a duplicate fork.
+      viewerOpenForkId={result.viewer_open_fork_id ?? null}
       // Each viewer gets their OWN session token: advisors use it to mutate,
       // travelers use it to chat with the concierge. Capability is governed by
       // `role` (UI) + the backend's advisor guards (authority).

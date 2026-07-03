@@ -9,6 +9,7 @@ never leaking in — plus the ``GET /me/invoices`` JWT guard.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -136,3 +137,162 @@ async def test_list_invoices_for_client_spans_trips_and_isolates(
 def test_my_invoices_requires_jwt(client: Any) -> None:
     resp = client.get("/me/invoices")
     assert resp.status_code == 401
+
+
+async def _insert_linked_client(
+    session: AsyncSession, owner_id: uuid.UUID, auth_user_id: uuid.UUID, name: str
+) -> uuid.UUID:
+    cid = uuid.uuid4()
+    await session.execute(
+        text(
+            """
+            insert into public.clients (id, owner_id, auth_user_id, full_name, email)
+            values (:id, :owner, :auth, :name, :email)
+            """
+        ),
+        {
+            "id": cid,
+            "owner": owner_id,
+            "auth": auth_user_id,
+            "name": name,
+            "email": f"{name}@x.com",
+        },
+    )
+    await session.commit()
+    return cid
+
+
+async def _insert_session(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    audience: str,
+    started_at: datetime,
+) -> uuid.UUID:
+    sid = uuid.uuid4()
+    await session.execute(
+        text(
+            """
+            insert into public.agent_sessions
+                (id, client_id, agentcore_session_id, audience, started_at)
+            values (:id, :client, :acs, cast(:aud as session_audience), :started)
+            """
+        ),
+        {"id": sid, "client": client_id, "acs": str(sid), "aud": audience, "started": started_at},
+    )
+    await session.commit()
+    return sid
+
+
+@integration
+@pytest.mark.asyncio
+async def test_list_my_itineraries_excludes_forks(db_session: AsyncSession) -> None:
+    """Basecamp lists official baselines only — a fork is the traveler's private
+    'My version', reached via the two-version toggle, never a standalone trip."""
+    from app.auth import AuthenticatedUser
+    from app.routers.me import list_my_itineraries_endpoint
+
+    owner = uuid.uuid4()
+    traveler = uuid.uuid4()
+    for uid in (owner, traveler):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.commit()
+
+    client_id = await _insert_linked_client(db_session, owner, traveler, "fork-list-traveler")
+    baseline = await insert_itinerary(db_session, title="Official Kyoto", client_id=client_id)
+    fork = await insert_itinerary(db_session, title="Official Kyoto (fork)", client_id=client_id)
+    try:
+        await db_session.execute(
+            text(
+                "update public.itineraries set forked_from_id = :b, "
+                "fork_status = cast('open' as public.fork_status) where id = :f"
+            ),
+            {"b": baseline, "f": fork},
+        )
+        await db_session.commit()
+
+        user = AuthenticatedUser(
+            sub=str(traveler), email=f"{traveler}@x.com", role="authenticated", claims={}
+        )
+        resp = await list_my_itineraries_endpoint(user=user, session=db_session)
+        ids = {it.id for it in resp.itineraries}
+        assert baseline in ids
+        assert fork not in ids
+    finally:
+        await _cleanup(baseline, fork, client_ids=(client_id,), owner=owner)
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
+        finally:
+            await engine.dispose()
+
+
+@integration
+@pytest.mark.asyncio
+async def test_onboarding_session_ignores_advisor_audience(
+    db_session: AsyncSession,
+) -> None:
+    """Basecamp must resolve the traveler's session, never a newer advisor one.
+
+    Regression: an advisor session opened about the client (Command Center)
+    used to shadow the traveler's session here because the query picked the
+    most-recent open session across all audiences. The traveler's chat then
+    POSTed turns to an advisor session and the existence-hiding authz 404'd.
+    """
+    from app.auth import AuthenticatedUser
+    from app.routers.me import get_my_onboarding_session_endpoint
+
+    owner = uuid.uuid4()
+    traveler = uuid.uuid4()
+    for uid in (owner, traveler):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.commit()
+
+    client_id = await _insert_linked_client(db_session, owner, traveler, "kyoto-traveler")
+    try:
+        traveler_sid = await _insert_session(
+            db_session,
+            client_id=client_id,
+            audience="traveler",
+            started_at=datetime(2026, 6, 29, 2, 0, 0, tzinfo=UTC),
+        )
+        # Advisor session is newer — it would win a naive most-recent query.
+        await _insert_session(
+            db_session,
+            client_id=client_id,
+            audience="advisor",
+            started_at=datetime(2026, 6, 29, 5, 0, 0, tzinfo=UTC),
+        )
+
+        user = AuthenticatedUser(
+            sub=str(traveler), email=f"{traveler}@x.com", role="authenticated", claims={}
+        )
+        resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
+        assert resp.session_id == traveler_sid
+    finally:
+        await _cleanup(client_ids=(client_id,), owner=owner)
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
+        finally:
+            await engine.dispose()

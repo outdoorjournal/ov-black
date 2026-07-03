@@ -56,6 +56,7 @@ Design notes (mirror :mod:`app.inventory.providers.ov` / ``.duffel`` /
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -116,6 +117,37 @@ _FIELDS = (
 )
 _SEARCH_FIELD_MASK = ",".join(f"places.{f}" for f in _FIELDS)
 _DETAIL_FIELD_MASK = ",".join(_FIELDS)
+
+# Resolved photo CDN URLs are stable for a while; cache them in-process so a
+# cold-browser reload of a card doesn't re-bill Google's Photo SKU. Keyed by
+# photo resource name → (keyless CDN url, monotonic expiry).
+# TODO(prod): in-process = per-task, lost on restart. In production this belongs
+# in a shared store (Postgres/Redis) alongside the inventory cache so every task
+# and every deploy reuses a resolved URL rather than re-billing the Photo SKU.
+# (Low urgency: the browser's Cache-Control does most of the repeat-view work.)
+_PHOTO_URL_TTL_SECONDS = 3600.0
+_photo_url_cache: dict[str, tuple[str, float]] = {}
+
+
+def _photo_url_cache_get(ref: str) -> str | None:
+    entry = _photo_url_cache.get(ref)
+    if entry is None:
+        return None
+    url, expires_at = entry
+    if time.monotonic() >= expires_at:
+        _photo_url_cache.pop(ref, None)
+        return None
+    return url
+
+
+def _photo_url_cache_put(ref: str, url: str) -> None:
+    _photo_url_cache[ref] = (url, time.monotonic() + _PHOTO_URL_TTL_SECONDS)
+
+
+def reset_photo_url_cache() -> None:
+    """Test helper — drop the module-level resolved-photo-URL cache."""
+    _photo_url_cache.clear()
+
 
 # Coarse Places price-level enum → a $-symbol tag.
 _PRICE_SYMBOLS = {
@@ -264,6 +296,21 @@ def photos_of(place: dict[str, Any]) -> list[dict[str, Any]]:
     return [p for p in _as_list(place.get("photos")) if isinstance(p, dict)]
 
 
+def photo_refs_of(place: dict[str, Any]) -> list[str]:
+    """The photo resource *names* (``places/…/photos/…``), hero first.
+
+    These are opaque handles — the keyed ``/media`` proxy turns one into an
+    image. We surface them onto the inventory item so the card-mapping layer
+    can mint a signed proxy token without re-walking ``raw``.
+    """
+    out: list[str] = []
+    for photo in photos_of(place):
+        name = photo.get("name")
+        if isinstance(name, str) and name:
+            out.append(name)
+    return out
+
+
 def _humanize_type(value: str | None) -> str | None:
     """``sushi_restaurant`` → ``sushi restaurant``; ``None`` passes through."""
     if not value:
@@ -366,6 +413,15 @@ def normalize_place(place: dict[str, Any]) -> InventoryItem:
         "price": None,  # Places gives only a coarse priceLevel, never an amount
         "editorial_links": [],
         "tags": tags,
+        # POI enrichment — extracted here so callers never re-walk ``raw``.
+        # ``photo_refs`` stay opaque handles (resolved via the keyed proxy);
+        # ``photos`` stays empty per the photo-honesty note above.
+        "rating": rating_of(place),
+        "rating_count": user_rating_count_of(place),
+        "opening_hours": opening_hours_of(place),
+        "website": website_of(place),
+        "phone": phone_of(place),
+        "photo_refs": photo_refs_of(place),
         "raw": place,
     }
     if classify_kind(place) == "meal":
@@ -406,6 +462,11 @@ class GooglePlacesProvider(InventoryProvider):
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+
+    def _media_headers(self) -> dict[str, str]:
+        # The Place Photo /media endpoint takes no field mask — only the key.
+        # Never log this dict.
+        return {"X-Goog-Api-Key": self._api_key or "", "Accept": "application/json"}
 
     @staticmethod
     def _location_bias(filters: dict[str, Any]) -> dict[str, Any] | None:
@@ -656,6 +717,63 @@ class GooglePlacesProvider(InventoryProvider):
         if not isinstance(payload, dict) or not place_id_of(payload):
             return None
         return payload
+
+    async def resolve_photo_url(self, photo_ref: str, *, max_width_px: int = 1600) -> str | None:
+        """Resolve a Places photo resource name → a keyless, loadable image URL.
+
+        Calls the Place Photo ``…/media`` endpoint with ``skipHttpRedirect=true``
+        so Google returns ``{photoUri}`` (a googleusercontent CDN URL that needs
+        no API key) as JSON rather than 302-ing to it. That keeps our key
+        server-side while letting the browser fetch bytes straight from Google's
+        CDN. Returns ``None`` — never raises — on no key / bad ref / any upstream
+        failure, so the proxy degrades to a 404 the card treats as "no photo".
+
+        A small in-process TTL cache avoids re-billing the Photo SKU on repeat
+        loads; the proxy also sets ``Cache-Control`` so the browser caches too.
+        """
+        if not self._has_credentials or not photo_ref:
+            return None
+
+        cached = _photo_url_cache_get(photo_ref)
+        if cached is not None:
+            return cached
+
+        url = f"{self._base_url}/v1/{photo_ref.lstrip('/')}/media"
+        params = {"maxWidthPx": str(max_width_px), "skipHttpRedirect": "true"}
+        try:
+            resp = await self._client.get(url, params=params, headers=self._media_headers())
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "inventory.provider.error",
+                extra={
+                    "source": "google_places",
+                    "upstream_status": None,
+                    "reason": exc.__class__.__name__,
+                },
+            )
+            return None
+
+        if resp.status_code >= 400:
+            logger.warning(
+                "inventory.provider.error",
+                extra={
+                    "source": "google_places",
+                    "upstream_status": resp.status_code,
+                    "reason": "photo_non_2xx",
+                },
+            )
+            return None
+
+        try:
+            payload = resp.json()
+        except ValueError:
+            return None
+
+        photo_uri = _as_dict(payload).get("photoUri")
+        if not isinstance(photo_uri, str) or not photo_uri:
+            return None
+        _photo_url_cache_put(photo_ref, photo_uri)
+        return photo_uri
 
     async def get_detail(
         self,

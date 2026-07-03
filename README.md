@@ -64,6 +64,29 @@ Leaving `bedrock_agentcore_runtime_arn` blank makes [app/main.py](apps/api/app/m
 wire `MockAgentRuntimeClient` on startup, so the agent turn loop works without
 AWS credentials.
 
+#### Document vault (optional) — real local uploads via Supabase Storage
+
+By default `vault_bucket_name` is blank, so [app/main.py](apps/api/app/main.py)
+wires `MockVaultStorage`: presigned URLs point at a dead `mock-s3.local` host and
+a browser PUT no-ops. To exercise **real** upload/download locally — bytes stored,
+download works — back the vault with local Supabase's S3-compatible endpoint
+instead of AWS. Add to `apps/api/.env` (values from `supabase status`):
+
+```ini
+vault_bucket_name=vault
+s3_endpoint_url=http://127.0.0.1:54321/storage/v1/s3
+s3_region=local
+s3_access_key_id=<S3_PROTOCOL_ACCESS_KEY_ID>
+s3_secret_access_key=<S3_PROTOCOL_ACCESS_KEY_SECRET>
+```
+
+The private `vault` bucket is declared in [supabase/config.toml](supabase/config.toml)
+and created on `supabase start`. When `s3_endpoint_url` is set, the presigner
+([app/vault/storage.py](apps/api/app/vault/storage.py)) signs with path-style
+addressing + those keys instead of the AWS credential chain; staging/prod leave
+it blank and use a real S3 bucket. The test suite always forces `MockVaultStorage`,
+so this never affects pytest.
+
 ### `apps/web/.env.local`
 
 ```ini

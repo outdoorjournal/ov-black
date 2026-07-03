@@ -28,6 +28,7 @@ import {
 } from "../../model/horizontalTime";
 import type { HorizontalNodeMeta, NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
+import { placePhotoUrl } from "../../model/placePhoto";
 
 interface NodeCardProps {
   node: NodeResponse;
@@ -433,7 +434,8 @@ function ExperienceBody({
 }) {
   const t = TYPE_TOKENS.experience;
   const snap = meta.snapshot;
-  const cover = snap?.cover_image ?? meta.ambient_image;
+  const cover = placePhotoUrl(meta.place?.photo_token) ?? snap?.cover_image ?? meta.ambient_image;
+  const rating = typeof meta.place?.rating === "number" ? meta.place.rating.toFixed(1) : null;
   return (
     <>
       <ImageStub {...(cover ? { src: cover } : {})} fallbackTint="#b58a3a" />
@@ -442,6 +444,14 @@ function ExperienceBody({
         {meta.location?.label ?? snap?.location ?? "—"}
         {dur ? ` · ${dur}` : ""}
       </Sub>
+      {rating ? (
+        <div className="mt-1 text-[11px] text-ink/65">
+          ★ {rating}
+          {typeof meta.place?.rating_count === "number"
+            ? ` · ${compactCount(meta.place.rating_count)}`
+            : ""}
+        </div>
+      ) : null}
       {snap?.activities && snap.activities.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {snap.activities.slice(0, 3).map((a) => (
@@ -472,6 +482,7 @@ function MealBody({
   dur: string | null;
 }) {
   const t = TYPE_TOKENS.meal;
+  const rating = typeof meta.place?.rating === "number" ? meta.place.rating.toFixed(1) : null;
   return (
     <>
       <Title>{node.title}</Title>
@@ -480,6 +491,14 @@ function MealBody({
         {start ? ` · ${start}` : ""}
         {dur ? ` · ${dur}` : ""}
       </Sub>
+      {rating ? (
+        <div className="mt-1 text-[11px] text-ink/65">
+          ★ {rating}
+          {typeof meta.place?.rating_count === "number"
+            ? ` · ${compactCount(meta.place.rating_count)}`
+            : ""}
+        </div>
+      ) : null}
       {meta.time_of_day ? (
         <div className="mt-2 flex flex-wrap gap-1">
           <Chip tint={t.tint}>{capitalize(meta.time_of_day)}</Chip>
@@ -588,24 +607,42 @@ function ImageStub({
       role="img"
       aria-label="Card image"
       style={{
-        backgroundImage: src
-          ? `url(${JSON.stringify(src)})`
-          : `linear-gradient(135deg, ${fallbackTint} 0%, ${mix(fallbackTint, "#f7f4ee", 0.4)} 60%, #f7f4ee 100%)`,
+        // Gradient is the base layer; the photo (when present) covers it and,
+        // on a load error (missing /japan/* asset or a dead photo proxy), hides
+        // itself to reveal the tint rather than leaving a broken frame.
+        backgroundImage: `linear-gradient(135deg, ${fallbackTint} 0%, ${mix(fallbackTint, "#f7f4ee", 0.4)} 60%, #f7f4ee 100%)`,
         backgroundSize: "cover",
         backgroundPosition: "center",
       }}
     >
-      {!src ? (
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element -- proxied/remote URL, next/image loaders unneeded; degrades to the gradient on error.
+        <img
+          src={src}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      ) : (
         <span className="absolute bottom-1 right-1.5 text-[8px] uppercase tracking-[0.18em] text-paper/85">
           photo
         </span>
-      ) : null}
+      )}
     </div>
   );
 }
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Compact a review count for the glance tile: 92134 → "92k", 1342 → "1.3k".
+function compactCount(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return `${k >= 10 ? Math.round(k) : Math.round(k * 10) / 10}k`;
 }
 
 // Cheap hex mix for image-fallback gradients. Inputs assumed in #rrggbb form.

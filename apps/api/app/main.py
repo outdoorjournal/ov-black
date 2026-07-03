@@ -165,6 +165,11 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
     # local dev with no bucket configured, install a deterministic mock so
     # pytest + uvicorn run without AWS. The bucket name (never a secret) is
     # injected by CDK as VAULT_BUCKET_NAME in staging/prod.
+    #
+    # To exercise *real* presigned upload/download locally (browser PUT/GET that
+    # actually stores bytes), set vault_bucket_name to a Supabase Storage bucket
+    # plus the s3_endpoint_url/s3_region/s3_* keys from `supabase status` — that
+    # flips this to S3VaultStorage against the local S3-compatible endpoint.
     if settings.env == "local" and not settings.vault_bucket_name:
         _app.state.vault_storage = MockVaultStorage()
         logger.info("vault.storage.configured", extra={"mode": "mock"})
@@ -219,6 +224,10 @@ app.add_middleware(
         "/agent/profile/facts",
         "/agent/dossier/facts",
         "/agent/party-members",
+        # Places photo proxy — loaded by a browser <img> tag (no bearer
+        # header possible), so it gates on its own HS256-signed photo token
+        # instead of the Supabase JWT. See routers/integrations/google_places.
+        "/integrations/google-places/photo",
     },
 )
 

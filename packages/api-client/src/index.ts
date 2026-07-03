@@ -11,6 +11,7 @@ import { createClient } from "./generated/client/client.gen.js";
 import type { Client } from "./generated/client/types.gen.js";
 import {
   abandonForkEndpointItineraryForkIdAbandonPost,
+  cancelReconcileEndpointItineraryForkIdCancelReconcilePost,
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete,
   archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete,
@@ -754,6 +755,9 @@ export type GetItineraryResult =
       itinerary: ItineraryResponse;
       nodes: NodeResponse[];
       edges: EdgeResponse[];
+      // The caller's own open fork of this baseline ("My version"), when present
+      // — drives the traveler's two-version toggle. Null on a fork or when none.
+      viewer_open_fork_id: string | null;
     }
   | { ok: false; status: number; detail: GetItineraryDetail };
 
@@ -778,6 +782,7 @@ export async function getItinerary(
         itinerary: data.itinerary,
         nodes: data.nodes,
         edges: data.edges,
+        viewer_open_fork_id: data.viewer_open_fork_id ?? null,
       };
     }
     return {
@@ -3223,6 +3228,38 @@ export async function abandonFork(
   try {
     const { data, error, response } =
       await abandonForkEndpointItineraryForkIdAbandonPost({
+        client,
+        path: { fork_id: forkItineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itinerary: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseForkReconcileDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type CancelReconcileResult =
+  | { ok: true; itinerary: ItineraryResponse }
+  | { ok: false; status: number; detail: ForkReconcileDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{fork_id}/cancel-reconcile. The inverse of
+ * `requestReconcile`: the traveler withdraws a pending merge request and the
+ * fork stays open so they keep editing their alternative.
+ */
+export async function cancelReconcile(
+  client: Client,
+  forkItineraryId: string,
+): Promise<CancelReconcileResult> {
+  try {
+    const { data, error, response } =
+      await cancelReconcileEndpointItineraryForkIdCancelReconcilePost({
         client,
         path: { fork_id: forkItineraryId },
       });

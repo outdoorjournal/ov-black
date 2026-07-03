@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import AuthenticatedUser, require_user
@@ -38,6 +39,7 @@ from app.inventory.providers.google_places import (
     user_rating_count_of,
     website_of,
 )
+from app.services.places_photo_token import PhotoTokenError, verify_photo_token
 
 router = APIRouter(prefix="/integrations/google-places", tags=["integrations"])
 
@@ -204,6 +206,46 @@ async def search(
 
     summaries = [s for s in (_to_summary(p) for p in places) if s is not None]
     return SearchResponse(results=summaries)
+
+
+@router.get(
+    "/photo",
+    summary="Resolve a signed Places photo ref → image (public, token-gated).",
+    responses={302: {"description": "Redirect to a keyless image URL."}},
+)
+async def photo(
+    token: str,
+    provider: GooglePlacesProvider = Depends(get_google_places_provider),
+) -> RedirectResponse:
+    """Redirect to the image bytes for a signed photo reference.
+
+    Whitelisted from the Supabase JWT middleware because an ``<img>`` tag can't
+    send a bearer header — the HS256 ``token`` (minted at card-build time,
+    binding one photo resource name) is the gate instead. We resolve the ref to
+    a keyless googleusercontent URL **server-side** (so the API key never leaves
+    the backend) and 302 there; the browser fetches the bytes straight from
+    Google's CDN and caches them per ``Cache-Control``. Any failure — bad/expired
+    token, unknown ref, upstream hiccup — collapses to 404 so the card falls
+    back to its tint stub rather than showing a broken image with a reason.
+    """
+    try:
+        ref = verify_photo_token(token)
+    except PhotoTokenError as exc:
+        await provider.aclose()
+        raise HTTPException(status_code=404, detail="photo_not_found") from exc
+
+    try:
+        url = await provider.resolve_photo_url(ref)
+    finally:
+        await provider.aclose()
+
+    if not url:
+        raise HTTPException(status_code=404, detail="photo_not_found")
+    return RedirectResponse(
+        url,
+        status_code=302,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get(

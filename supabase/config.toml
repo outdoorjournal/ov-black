@@ -119,6 +119,14 @@ file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
 
+# Document vault (M003/V3). Local-only: in staging/prod the vault uses a real
+# AWS S3 bucket, but locally we back it with Supabase's S3-compatible endpoint
+# so presigned upload/download stores real bytes without AWS. Created on
+# `supabase start`; pairs with the s3_* / vault_bucket_name keys in apps/api/.env.
+[storage.buckets.vault]
+public = false
+file_size_limit = "50MiB"
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

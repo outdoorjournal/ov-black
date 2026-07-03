@@ -100,8 +100,11 @@ def test_summarize_offer_headline_facts(offers_fixture: dict[str, Any]) -> None:
     assert summary["flight_code"] == "NH105"
     assert summary["carrier"] == "ANA"
     assert summary["cabin"] == "business"
-    assert summary["depart_at"] == "2026-07-10T11:05:00"
-    assert summary["arrive_at"] == "2026-07-11T15:40:00"
+    # Duffel emits offset-less local wall-clock; the airport time_zone is
+    # attached so a trip that spans zones (LAX PDT → HND JST) reads as an
+    # unambiguous instant. Same wall-clock, now offset-bearing.
+    assert summary["depart_at"] == "2026-07-10T11:05:00-07:00"
+    assert summary["arrive_at"] == "2026-07-11T15:40:00+09:00"
     assert summary["stops"] == 0
     # The quote is time-boxed: amount + currency + expiry are first-class so
     # the pre-booking refresh / money gate can detect staleness and repricing.
@@ -153,6 +156,79 @@ def test_normalize_offer_tolerates_sparse_shape() -> None:
     assert item.title == "Flight"
     assert item.location is None
     assert item.price is not None and item.price.currency == "GBP"
+
+
+def _seg(
+    origin: str, dep: str, dest: str, arr: str, tz_o: str | None, tz_d: str | None
+) -> dict[str, Any]:
+    origin_place: dict[str, Any] = {"iata_code": origin}
+    dest_place: dict[str, Any] = {"iata_code": dest}
+    if tz_o:
+        origin_place["time_zone"] = tz_o
+    if tz_d:
+        dest_place["time_zone"] = tz_d
+    return {
+        "origin": origin_place,
+        "departing_at": dep,
+        "destination": dest_place,
+        "arriving_at": arr,
+    }
+
+
+def test_summarize_offer_arrival_from_last_segment() -> None:
+    """A one-way offer routed via a connection reports the FINAL arrival.
+
+    Departure comes off the first segment (HND, JST), arrival off the last
+    (LAX, PDT) — not the MNL layover in between — and each is localized to its
+    own airport zone.
+    """
+    offer = {
+        "slices": [
+            {
+                "origin": {"iata_code": "HND"},
+                "destination": {"iata_code": "LAX"},
+                "segments": [
+                    _seg(
+                        "HND",
+                        "2026-08-02T02:05:00",
+                        "MNL",
+                        "2026-08-02T05:40:00",
+                        "Asia/Tokyo",
+                        "Asia/Manila",
+                    ),
+                    _seg(
+                        "MNL",
+                        "2026-08-02T15:15:00",
+                        "LAX",
+                        "2026-08-02T13:45:00",
+                        "Asia/Manila",
+                        "America/Los_Angeles",
+                    ),
+                ],
+            }
+        ]
+    }
+    summary = summarize_offer(offer)
+    assert summary["depart_at"] == "2026-08-02T02:05:00+09:00"
+    assert summary["arrive_at"] == "2026-08-02T13:45:00-07:00"
+
+
+def test_summarize_offer_localize_falls_back_without_time_zone() -> None:
+    """No airport ``time_zone`` → keep the raw offset-less string (best effort)."""
+    offer = {
+        "slices": [
+            {
+                "origin": {"iata_code": "LAX"},
+                "destination": {"iata_code": "HND"},
+                "segments": [
+                    _seg("LAX", "2026-07-10T11:05:00", "HND", "2026-07-11T15:40:00", None, None),
+                ],
+            }
+        ]
+    }
+    summary = summarize_offer(offer)
+    assert summary["depart_at"] == "2026-07-10T11:05:00"
+    assert summary["arrive_at"] == "2026-07-11T15:40:00"
 
 
 # ── search(): happy path (two-step) ───────────────────────────────────────

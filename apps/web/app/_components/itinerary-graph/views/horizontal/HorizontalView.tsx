@@ -40,7 +40,9 @@ import {
   useState,
 } from "react";
 
-import { AlternativeControls } from "../../shared/AlternativeControls";
+import { useRouter } from "next/navigation";
+
+import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { NotesPanel } from "../../shared/NotesPanel";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
@@ -57,6 +59,7 @@ import {
   itineraryGraphStore,
   selectCanLeaveNote,
   selectEditable,
+  selectIsDraftMine,
   selectTravelerEditable,
 } from "../../store/itineraryGraphStore";
 
@@ -69,7 +72,9 @@ import { PartyPanel } from "./PartyPanel";
 import { VaultPanel } from "./VaultPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
 import { NodeCard } from "./NodeCard";
-import { MapStrip } from "./MapStrip";
+// MapStrip is temporarily not rendered (see the commented <MapStrip> below),
+// but kept around so the map can be re-enabled later.
+// import { MapStrip } from "./MapStrip";
 import { ScrollHint } from "./ScrollHint";
 import { TimeAxis } from "./TimeAxis";
 import { ZoomControls } from "./ZoomControls";
@@ -131,17 +136,20 @@ export function HorizontalView({
   const releasePending = itineraryGraphStore.useStore((s) => s.releasePending);
   const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
   const editable = itineraryGraphStore.useStore(selectEditable);
-  // Travelers may drag-move on their OWN alternative (a draft fork). Cards
-  // become draggable when either staff hold the lock (`editable`) or the
-  // traveler is on their alternative (`travelerEditable`); advisor-only panels
+  // Travelers may drag-move on their OWN version: an existing fork
+  // (`travelerEditable`) or the draft-mine preview on Official (`draftMine`),
+  // where the first drag lazily forks. Cards become draggable when staff hold
+  // the lock (`editable`) or either traveler path applies; advisor-only panels
   // stay gated on `editable` alone.
   const travelerEditable = itineraryGraphStore.useStore(selectTravelerEditable);
-  const draggable = editable || travelerEditable;
+  const draftMine = itineraryGraphStore.useStore(selectIsDraftMine);
+  const draggable = editable || travelerEditable || draftMine;
   // API creds — only present for staff (the server withholds them from
   // travelers), so the Concierge chat below is implicitly advisor-only.
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
   const storeApi = itineraryGraphStore.useStoreApi();
+  const router = useRouter();
 
   const canvasScrollRef = useRef<HTMLDivElement>(null);
   const axisScrollRef = useRef<HTMLDivElement>(null);
@@ -367,15 +375,19 @@ export function HorizontalView({
       const targetDayKey = overId.slice(4);
       if (!targetDayKey) return;
       const minute = snapshot.overMinute;
-      storeApi
-        .getState()
-        .moveNode(
-          String(active.id),
-          targetDayKey,
-          typeof minute === "number" ? minute : null,
+      const minuteOrNull = typeof minute === "number" ? minute : null;
+      const st = storeApi.getState();
+      // On the draft-mine preview (Official, no fork yet), the FIRST drag lazily
+      // forks and carries the move onto the new fork, then navigates to it.
+      if (selectIsDraftMine(st)) {
+        st.forkAndMove(String(active.id), targetDayKey, minuteOrNull, (id) =>
+          router.push(`/itinerary/${id}`),
         );
+      } else {
+        st.moveNode(String(active.id), targetDayKey, minuteOrNull);
+      }
     },
-    [drag, storeApi],
+    [drag, storeApi, router],
   );
 
   const handleDragCancel = useCallback(() => {
@@ -586,7 +598,7 @@ export function HorizontalView({
               onAddNode={handleAddNode}
             />
           ) : null}
-          <AlternativeControls />
+          <VersionSwitcher />
           <ZoomControls />
         </div>
       </header>
@@ -600,10 +612,13 @@ export function HorizontalView({
           className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm"
         >
           <span className="font-serif text-sm italic text-ink/80">
-            You&rsquo;re viewing an alternative version
+            You&rsquo;re viewing
+            {canEdit ? " an alternative version" : " your version"}
             {baselineTitle ? ` of “${baselineTitle}”` : " of the agreed plan"}.
           </span>
-          {forkedFromId ? (
+          {/* Travelers switch back via the toggle; advisors (no toggle) keep a
+              direct link to the baseline they're reconciling against. */}
+          {canEdit && forkedFromId ? (
             <a
               href={`/itinerary/${forkedFromId}`}
               className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/50 transition-colors hover:text-ink"
@@ -854,10 +869,11 @@ export function HorizontalView({
           </aside>
         </div>
 
-        {/* Bottom map strip — full body width including under the chat
-            aside. Anchored to the bottom of the body, doesn't scroll with
-            anything above. */}
-        <MapStrip focus={focusCoords} arc={focusArc} height={220} />
+        {/* Bottom map strip — temporarily removed from the itinerary view.
+            The MapStrip/MapFlyer components and the focusCoords/focusArc
+            wiring above are intentionally kept so we can re-enable this by
+            restoring the line below.
+        <MapStrip focus={focusCoords} arc={focusArc} height={220} /> */}
       </div>
 
       <AnimatePresence>

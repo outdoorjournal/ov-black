@@ -9,24 +9,26 @@ any provider item) renders the same way a seeded card does.
 
 Flights map to the typed :class:`FlightCardAttrs`, hotels to
 :class:`HotelCardAttrs`, and Google-Places meals to :class:`MealCardAttrs`.
-Remaining kinds (experience, destination, …) fall back to the legacy
-``{"snapshot": …}`` shape the experience cards already consume — enough to
-render a title/photo/price. A Places *experience* (attraction) deliberately
-stays on that shared snapshot path: it renders identically to an OV
-experience, and ``parse_card_attrs`` re-inflates the snapshot into an
-:class:`ExperienceCardAttrs` on read, so no provider-specific typing is
-needed there.
+A Places *experience* (attraction) maps to a typed :class:`ExperienceCardAttrs`
+too, because Places hands us POI enrichment worth surfacing — a crowd rating,
+opening hours, contact details, a map deep link, and a photo handle — that the
+bare snapshot has no home for. Remaining kinds (OV experiences, destinations,
+…) fall back to the legacy ``{"snapshot": …}`` shape the experience cards
+already consume; ``parse_card_attrs`` re-inflates that into an
+:class:`ExperienceCardAttrs` on read.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
+from urllib.parse import quote
 
 from app.inventory.providers.duffel import summarize_offer
 from app.inventory.providers.google_places import summarize_place
 from app.inventory.providers.ratehawk import summarize_hotel
 from app.inventory.schemas import (
+    ExperienceItem,
     FlightItem,
     HotelItem,
     InventoryItem,
@@ -35,11 +37,14 @@ from app.inventory.schemas import (
 )
 from app.schemas.card_attrs import (
     CardSnapshot,
+    ExperienceCardAttrs,
     FlightCardAttrs,
     GeoPoint,
     HotelCardAttrs,
     MealCardAttrs,
+    PlaceFacts,
 )
+from app.services.places_photo_token import mint_photo_token
 
 
 def _geo(lat: Any, lng: Any, label: str | None) -> GeoPoint | None:
@@ -222,6 +227,53 @@ def _meal_snapshot(item: MealItem, summary: dict[str, Any]) -> CardSnapshot:
     )
 
 
+def _maps_deep_link(item: InventoryItem) -> str | None:
+    """A keyless Google Maps deep link to the item's place.
+
+    Prefers exact coordinates + place id (drops the pin precisely on the POI);
+    falls back to the location label as a text query. ``None`` when we have
+    neither — the card then just omits the "View on Google Maps" affordance.
+    """
+    loc = item.location
+    query: str | None = None
+    if loc is not None and loc.lat is not None and loc.lng is not None:
+        query = f"{loc.lat},{loc.lng}"
+    elif loc is not None and loc.label:
+        query = loc.label
+    if not query:
+        return None
+    url = f"https://www.google.com/maps/search/?api=1&query={quote(query)}"
+    if item.source_id:
+        url += f"&query_place_id={quote(item.source_id)}"
+    return url
+
+
+def _place_facts(item: InventoryItem) -> PlaceFacts | None:
+    """Build the POI ``place`` block for a Google-Places-sourced item.
+
+    Returns ``None`` for non-Places items (an OV experience carries none of
+    this) and when the item yields nothing worth showing. The first photo
+    handle is minted into a signed proxy token here — the raw resource name
+    never reaches a card, and no signing secret simply means no photo.
+    """
+    if item.source != "google_places":
+        return None
+    photo_token = mint_photo_token(item.photo_refs[0]) if item.photo_refs else None
+    facts = PlaceFacts(
+        rating=item.rating,
+        rating_count=item.rating_count,
+        hours=item.opening_hours,
+        website=item.website,
+        phone=item.phone,
+        maps_url=_maps_deep_link(item),
+        photo_token=photo_token,
+    )
+    # Drop an all-empty block so we don't stamp a bare {} onto the card.
+    if facts.model_dump(exclude_none=True, exclude_defaults=True):
+        return facts
+    return None
+
+
 def meal_item_to_card_attrs(item: MealItem) -> MealCardAttrs:
     """Map a Google-Places-sourced :class:`MealItem` to :class:`MealCardAttrs`.
 
@@ -230,6 +282,8 @@ def meal_item_to_card_attrs(item: MealItem) -> MealCardAttrs:
     anchor from the item's normalized ``location``. Places gives no bookable
     amount, no seating time, and no reservation, so those typed fields stay
     ``None`` — they're filled conversationally once a table is actually held.
+    The POI ``place`` block carries the crowd rating, hours, contact, map link,
+    and photo handle.
     """
     s = summarize_place(item.raw)
     return MealCardAttrs(
@@ -239,6 +293,25 @@ def meal_item_to_card_attrs(item: MealItem) -> MealCardAttrs:
         ambient_image=item.photos[0] if item.photos else None,
         description=item.description,
         snapshot=_meal_snapshot(item, s),
+        place=_place_facts(item),
+    )
+
+
+def experience_item_to_card_attrs(item: ExperienceItem) -> ExperienceCardAttrs:
+    """Map a Google-Places-sourced :class:`ExperienceItem` to typed attrs.
+
+    Places experiences (temples, gardens, markets) carry no gear list,
+    difficulty, or energy model — those are conversational. What Places *does*
+    give is the POI ``place`` block (rating, hours, contact, map link, photo),
+    so the card renders a real hero image + trust signals instead of a bare
+    title over a colour stub.
+    """
+    label = item.location.label if item.location and item.location.label else None
+    return ExperienceCardAttrs(
+        description=item.description,
+        location=_geo_from_location(item.location),
+        snapshot=CardSnapshot(title=item.title, location=label),
+        place=_place_facts(item),
     )
 
 
@@ -274,4 +347,8 @@ def inventory_item_to_card_metadata(item: InventoryItem) -> dict[str, Any]:
         return hotel_item_to_card_attrs(item).model_dump(mode="json", exclude_none=True)
     if isinstance(item, MealItem):
         return meal_item_to_card_attrs(item).model_dump(mode="json", exclude_none=True)
+    # Places experiences get the POI-enriched typed mapping (real photo + rating
+    # + hours + map link); OV / other experiences keep the legacy snapshot.
+    if isinstance(item, ExperienceItem) and item.source == "google_places":
+        return experience_item_to_card_attrs(item).model_dump(mode="json", exclude_none=True)
     return _snapshot_fallback(item)

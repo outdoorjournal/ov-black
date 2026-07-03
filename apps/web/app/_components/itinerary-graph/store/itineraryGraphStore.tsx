@@ -24,8 +24,10 @@
 // domain.
 
 import {
+  abandonFork,
   acquireItineraryLock,
   approveItinerary,
+  cancelReconcile,
   createApiClient,
   createNode,
   createNodeFromInventory,
@@ -131,10 +133,19 @@ export type ItineraryGraphState = {
   releasePending: boolean;
   approvePending: boolean;
 
-  // ── alternative (fork) lifecycle, traveler-facing ──
-  creatingAlternative: boolean;
+  // ── two-version (Official ↔ My version) lifecycle, traveler-facing ──
+  /** The viewer's own OPEN fork of this baseline, if any (from the API). Null
+   *  on a fork itself or when the viewer has no open alternative. */
+  viewerOpenForkId: string | null;
+  /** On a baseline with no fork yet, the traveler toggled into editable "My
+   *  version" preview — still a read-through of Official until the first edit
+   *  materializes the fork. */
+  draftMine: boolean;
+  forking: boolean;
   requestingMerge: boolean;
   mergeRequested: boolean;
+  cancelingMerge: boolean;
+  discarding: boolean;
 
   // ── horizontal-view UI state ──
   pxPerMinute: number;
@@ -178,12 +189,30 @@ export type ItineraryGraphState = {
   addAttachedNote: (hostId: string, text: string) => void;
   // Drop a free-standing note on a day at noon ("a dinner between these").
   addFreeStandingNote: (dayKey: string, text: string) => void;
-  // ── alternative (fork) actions ──
-  // Branch an alternative version off this itinerary; `onForked` receives the
-  // new fork id so the caller can navigate to it.
-  createAlternative: (onForked: (forkId: string) => void) => void;
+  // ── two-version (Official ↔ My version) actions ──
+  // Switch between the official baseline and the traveler's version. On a fork,
+  // "official" navigates to the baseline; on a baseline, "mine" navigates to an
+  // existing fork or, with none yet, enters the draft-mine editable preview.
+  // `navigate` is the router push the caller supplies.
+  selectVersion: (
+    target: "official" | "mine",
+    navigate: (id: string) => void,
+  ) => void;
+  // Lazy fork: the traveler's FIRST edit in draft-mine mode. Forks the baseline,
+  // carries this move onto the matching fork node (by lineage), then navigates
+  // to the new fork via `navigate`.
+  forkAndMove: (
+    id: string,
+    dayKey: string,
+    minuteOfDay: number | null,
+    navigate: (id: string) => void,
+  ) => void;
   // Ask staff to merge this alternative back into the agreed plan.
   requestMerge: () => void;
+  // Withdraw a pending merge request; the fork stays open (keep editing).
+  cancelMerge: () => void;
+  // Discard this whole alternative (abandon the fork) and go back to Official.
+  discardMine: (navigate: (id: string) => void) => void;
 
   // ── authoring (B7): inventory search · analyze · fill ──
   // Reads (search/analyze/fill) gate on `canEdit`; the two writes
@@ -229,6 +258,9 @@ export type ItineraryGraphInit = {
   role: UserRole;
   apiBaseUrl: string | null;
   accessToken: string | null;
+  /** The viewer's own OPEN fork of this baseline (from `GraphResponse`), so the
+   *  two-version toggle resolves to it instead of spawning a duplicate. */
+  viewerOpenForkId?: string | null;
   // Demo/sandbox escape hatch: start already locked-by-me so the prototype
   // (which has no API to acquire a real lock against) can exercise the editing
   // affordances. Production leaves this false — staff must click Edit to lock.
@@ -257,16 +289,32 @@ export function selectCanLeaveNote(s: ItineraryGraphState): boolean {
 }
 
 /**
- * Travelers may reshape (drag-move) only their OWN alternative version — a fork
- * (`forked_from_id` set) that's still a draft. The agreed plan is never edited
- * directly from the traveler side; they branch an alternative first. Advisors
- * keep their lock-based `selectEditable` path.
+ * Travelers may reshape (drag-move) their OWN alternative version — a fork
+ * (`forked_from_id` set) that's still a draft. Persisted directly onto that
+ * fork. Advisors keep their lock-based `selectEditable` path.
  */
 export function selectTravelerEditable(s: ItineraryGraphState): boolean {
   return (
     !s.canEdit &&
     s.status !== "approved" &&
     Boolean(s.sample.itinerary?.forked_from_id) &&
+    Boolean(s.apiBaseUrl && s.accessToken)
+  );
+}
+
+/**
+ * The traveler is on the OFFICIAL baseline but has toggled into the editable
+ * "My version" preview, with no fork created yet. Edits here don't persist to
+ * the baseline — the FIRST edit lazily forks (see `forkAndMove`) and carries
+ * the change onto the new fork. Distinct from `selectTravelerEditable` (a real
+ * fork) so the drop handler knows which path to take.
+ */
+export function selectIsDraftMine(s: ItineraryGraphState): boolean {
+  return (
+    !s.canEdit &&
+    s.status !== "approved" &&
+    !s.sample.itinerary?.forked_from_id &&
+    s.draftMine &&
     Boolean(s.apiBaseUrl && s.accessToken)
   );
 }
@@ -323,6 +371,29 @@ function rebaseStartToDayAndMinute(
   );
 }
 
+// A moved node's new metadata (rebased `start_time`) for a day/minute drop, or
+// null when there's nothing to rebase. Shared by `moveNode` (persists onto the
+// current graph) and `forkAndMove` (carries the move onto a fresh fork).
+function rebasedMetadata(
+  node: NodeResponse,
+  dayKey: string,
+  minuteOfDay: number | null,
+  tzDefault: number,
+): Record<string, unknown> | null {
+  const meta = node.metadata as { start_time?: string; [k: string]: unknown };
+  // Preserve the node's OWN offset (the trip spans tzs) so a Tokyo node stays
+  // +09:00 after a drag; fall back to the trip default.
+  const tz = offsetHoursOr(meta.start_time ?? "", tzDefault);
+  const newStart =
+    minuteOfDay !== null
+      ? rebaseStartToDayAndMinute(dayKey, minuteOfDay, tz)
+      : meta.start_time
+        ? rebaseStartToDay(meta.start_time, dayKey, tz)
+        : null;
+  if (newStart === null) return null;
+  return { ...meta, start_time: newStart };
+}
+
 export const itineraryGraphStore = createStoreContext<
   ItineraryGraphState,
   ItineraryGraphInit
@@ -334,6 +405,7 @@ export const itineraryGraphStore = createStoreContext<
     role,
     apiBaseUrl,
     accessToken,
+    viewerOpenForkId = null,
     startLocked = false,
   }) =>
     (set, get) => {
@@ -383,9 +455,13 @@ export const itineraryGraphStore = createStoreContext<
         releasePending: false,
         approvePending: false,
 
-        creatingAlternative: false,
+        viewerOpenForkId,
+        draftMine: false,
+        forking: false,
         requestingMerge: false,
         mergeRequested: Boolean(timeline.itinerary?.reconcile_requested_at),
+        cancelingMerge: false,
+        discarding: false,
 
         pxPerMinute: ZOOM_PRESETS.day,
 
@@ -536,24 +612,13 @@ export const itineraryGraphStore = createStoreContext<
           const s = get();
           const apply = (n: NodeResponse): NodeResponse => {
             if (n.id !== id) return n;
-            const meta = n.metadata as {
-              start_time?: string;
-              [k: string]: unknown;
-            };
-            // Preserve the node's OWN offset (the trip spans tzs) so a Tokyo
-            // node stays +09:00 after a drag; fall back to the trip default.
-            const tz = offsetHoursOr(
-              meta.start_time ?? "",
+            const meta = rebasedMetadata(
+              n,
+              dayKey,
+              minuteOfDay,
               s.sample.timezoneOffsetHours,
             );
-            const newStart =
-              minuteOfDay !== null
-                ? rebaseStartToDayAndMinute(dayKey, minuteOfDay, tz)
-                : meta.start_time
-                  ? rebaseStartToDay(meta.start_time, dayKey, tz)
-                  : null;
-            if (newStart === null) return n;
-            return { ...n, metadata: { ...meta, start_time: newStart } };
+            return meta ? { ...n, metadata: meta } : n;
           };
           const previousNodes = s.nodes;
           set({
@@ -670,17 +735,66 @@ export const itineraryGraphStore = createStoreContext<
           });
         },
 
-        createAlternative: (onForked) => {
+        selectVersion: (target, navigate) => {
           const s = get();
-          if (s.creatingAlternative) return;
+          const forkedFrom = s.sample.itinerary?.forked_from_id ?? null;
+          if (target === "official") {
+            // On a fork → back to the baseline; on a baseline → leave draft mode.
+            if (forkedFrom) navigate(forkedFrom);
+            else set({ draftMine: false });
+            return;
+          }
+          // target === "mine"
+          if (forkedFrom) return; // already on my version
+          if (s.viewerOpenForkId) {
+            navigate(s.viewerOpenForkId); // an alternative already exists
+            return;
+          }
+          // No fork yet — enter the editable preview; the first edit forks it.
+          set({ draftMine: true });
+        },
+        forkAndMove: (id, dayKey, minuteOfDay, navigate) => {
+          const s = get();
+          if (s.forking || !selectIsDraftMine(s)) return;
           const c = client();
           if (!c) return;
-          set({ creatingAlternative: true });
+          // Optimistic local move so the card visibly shifts before we navigate.
+          const target = s.nodes.find((n) => n.id === id);
+          const newMeta = target
+            ? rebasedMetadata(target, dayKey, minuteOfDay, s.sample.timezoneOffsetHours)
+            : null;
+          const previousNodes = s.nodes;
+          if (newMeta) {
+            set((cur) => ({
+              nodes: cur.nodes.map((n) =>
+                n.id === id ? { ...n, metadata: newMeta } : n,
+              ),
+              flashNodeId: id,
+            }));
+          }
+          set({ forking: true });
           void forkItinerary(c, s.itineraryId)
             .then((result) => {
-              if (result.ok) onForked(result.graph.itinerary.id);
+              if (!result.ok) {
+                set({ nodes: previousNodes }); // revert the optimistic move
+                return;
+              }
+              const forkId = result.graph.itinerary.id;
+              // Carry the move onto the matching fork node (paired by lineage).
+              const forkNode = result.graph.nodes.find(
+                (n) => n.forked_from_node_id === id,
+              );
+              if (forkNode && newMeta) {
+                void updateNode(c, {
+                  itineraryId: forkId,
+                  nodeId: forkNode.id,
+                  patch: { metadata: newMeta },
+                }).finally(() => navigate(forkId));
+              } else {
+                navigate(forkId);
+              }
             })
-            .finally(() => set({ creatingAlternative: false }));
+            .finally(() => set({ forking: false }));
         },
         requestMerge: () => {
           const s = get();
@@ -693,6 +807,31 @@ export const itineraryGraphStore = createStoreContext<
               if (result.ok) set({ mergeRequested: true });
             })
             .finally(() => set({ requestingMerge: false }));
+        },
+        cancelMerge: () => {
+          const s = get();
+          if (s.cancelingMerge || !s.mergeRequested) return;
+          const c = client();
+          if (!c) return;
+          set({ cancelingMerge: true });
+          void cancelReconcile(c, s.itineraryId)
+            .then((result) => {
+              if (result.ok) set({ mergeRequested: false });
+            })
+            .finally(() => set({ cancelingMerge: false }));
+        },
+        discardMine: (navigate) => {
+          const s = get();
+          const forkedFrom = s.sample.itinerary?.forked_from_id ?? null;
+          if (s.discarding || !forkedFrom) return;
+          const c = client();
+          if (!c) return;
+          set({ discarding: true });
+          void abandonFork(c, s.itineraryId)
+            .then((result) => {
+              if (result.ok) navigate(forkedFrom);
+            })
+            .finally(() => set({ discarding: false }));
         },
         addFreeStandingNote: (dayKey, text) => {
           const s = get();

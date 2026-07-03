@@ -363,6 +363,45 @@ def _resolve_note_anchor(
     return (None, rng, mirrored)
 
 
+def _resolve_scheduled_anchor(
+    *,
+    metadata: dict[str, Any],
+    starts_at: str | None,
+    duration_minutes: int | None,
+) -> tuple[ItineraryError | None, Range[datetime] | None, dict[str, Any]]:
+    """Build a NON-note node's ``starts_at`` range from an ISO start + duration.
+
+    Flights, meals, experiences, … also live on the timeline by ``starts_at``;
+    the ``tstzrange`` column is their schedule. This mirrors the note anchor's
+    contract for them: parse the ISO start (plus optional ``duration_minutes``)
+    into a half-open range, and write the chosen wall-clock back into
+    ``metadata`` (``start_time`` / ``tz_offset_minutes`` / ``duration_minutes``)
+    so the read serializer and web timeline reconstruct the exact local time
+    the caller sent — the column stores UTC instants, so the offset would
+    otherwise be lost. ``starts_at is None`` leaves the node unscheduled and
+    returns ``(None, None, metadata)`` unchanged.
+    """
+    if starts_at is None:
+        return (None, None, metadata)
+    rng = _build_starts_at(starts_at, duration_minutes)
+    if rng is None or rng.lower is None:
+        return (
+            ItineraryError(
+                outcome=ItineraryOutcome.VALIDATION_ERROR,
+                detail="starts_at must be an ISO-8601 datetime",
+            ),
+            None,
+            metadata,
+        )
+    mirrored = {**metadata, "start_time": starts_at}
+    offset = rng.lower.utcoffset()
+    if offset is not None:
+        mirrored["tz_offset_minutes"] = int(offset.total_seconds() // 60)
+    if duration_minutes:
+        mirrored["duration_minutes"] = duration_minutes
+    return (None, rng, mirrored)
+
+
 async def _write_node_history(
     session: AsyncSession,
     *,
@@ -749,9 +788,9 @@ async def add_node(
     # build the starts_at range up front so the per-row CHECK is satisfied at
     # INSERT. ``metadata`` may be replaced with a mirrored copy below.
     node_metadata = dict(metadata or {})
-    note_starts_at: Range[datetime] | None = None
+    node_starts_at: Range[datetime] | None = None
     if type is NodeType.note:
-        anchor_err, note_starts_at, node_metadata = _resolve_note_anchor(
+        anchor_err, node_starts_at, node_metadata = _resolve_note_anchor(
             metadata=node_metadata,
             attached_to_node_id=attached_to_node_id,
             starts_at=starts_at,
@@ -778,6 +817,18 @@ async def add_node(
             outcome=ItineraryOutcome.VALIDATION_ERROR,
             detail="attached_to_node_id is only valid for note nodes",
         )
+    else:
+        # Non-note nodes carry their schedule on the same column. Persist an
+        # explicit starts_at (+ duration) instead of silently dropping it —
+        # otherwise the timeline has to synthesize placement (see the web
+        # adapter's SYNTH_START_HOUR fallback).
+        sched_err, node_starts_at, node_metadata = _resolve_scheduled_anchor(
+            metadata=node_metadata,
+            starts_at=starts_at,
+            duration_minutes=duration_minutes,
+        )
+        if sched_err is not None:
+            return sched_err
 
     node = Node(
         itinerary_id=itinerary_id,
@@ -792,7 +843,7 @@ async def add_node(
         cost_currency=cost_currency,
         cost_kind=cost_kind,
         attached_to_node_id=attached_to_node_id,
-        starts_at=note_starts_at,
+        starts_at=node_starts_at,
     )
     session.add(node)
     try:

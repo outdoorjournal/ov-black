@@ -46,6 +46,7 @@ from app.services.fork import (
     fork_itinerary,
     reconcile_fork,
     request_reconcile,
+    withdraw_reconcile,
 )
 from app.services.itineraries import (
     ActorContext,
@@ -462,6 +463,51 @@ async def test_request_then_abandon_stamps_and_clears(db_session: AsyncSession) 
 
 @integration
 @pytest.mark.asyncio
+async def test_request_then_withdraw_keeps_fork_open(db_session: AsyncSession) -> None:
+    """Withdrawing a merge request clears the stamp but leaves the fork open."""
+    baseline = await create_itinerary(db_session, _actor(), title="withdraw")
+    fork_id: uuid.UUID | None = None
+    try:
+        fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
+        assert isinstance(fork, Itinerary)
+        fork_id = fork.id
+
+        requested = await request_reconcile(
+            db_session, _actor(ActorKind.USER), fork_id=fork.id, note="merge please"
+        )
+        assert isinstance(requested, Itinerary)
+        assert requested.reconcile_requested_at is not None
+
+        withdrawn = await withdraw_reconcile(db_session, _actor(ActorKind.USER), fork_id=fork.id)
+        assert isinstance(withdrawn, Itinerary)
+        assert withdrawn.reconcile_requested_at is None
+        assert withdrawn.reconcile_request_note is None
+        # The fork is NOT abandoned — the traveler keeps editing their version.
+        assert withdrawn.fork_status is ForkStatus.open
+
+        # Idempotent: a second withdraw is a no-op, still open.
+        again = await withdraw_reconcile(db_session, _actor(ActorKind.USER), fork_id=fork.id)
+        assert isinstance(again, Itinerary)
+        assert again.reconcile_requested_at is None
+        assert again.fork_status is ForkStatus.open
+    finally:
+        await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
+
+
+@integration
+@pytest.mark.asyncio
+async def test_withdraw_reconcile_rejects_non_fork(db_session: AsyncSession) -> None:
+    plain = await create_itinerary(db_session, _actor(), title="plain")
+    try:
+        result = await withdraw_reconcile(db_session, _actor(ActorKind.USER), fork_id=plain.id)
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "not_a_fork"
+    finally:
+        await _cleanup(plain.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_request_reconcile_rejects_non_fork(db_session: AsyncSession) -> None:
     plain = await create_itinerary(db_session, _actor(), title="plain")
     try:
@@ -470,6 +516,65 @@ async def test_request_reconcile_rejects_non_fork(db_session: AsyncSession) -> N
         assert result.detail == "not_a_fork"
     finally:
         await _cleanup(plain.id)
+
+
+# ── viewer_open_fork_id resolution (two-version toggle) ──────────────────────
+
+
+@integration
+@pytest.mark.asyncio
+async def test_resolve_viewer_open_fork_id(db_session: AsyncSession) -> None:
+    """A baseline read surfaces the CALLER's own open fork — and only theirs."""
+    from app.auth import AuthenticatedUser
+    from app.routers.itineraries import _resolve_viewer_open_fork_id
+
+    uid = uuid.uuid4()
+    creator = ActorContext(user_id=uid, kind=ActorKind.USER, actor_id=str(uid))
+    user = AuthenticatedUser(sub=str(uid), email="t@x.com", role="authenticated", claims={})
+    other = AuthenticatedUser(
+        sub=str(uuid.uuid4()), email="o@x.com", role="authenticated", claims={}
+    )
+    # The fork's created_by FKs to auth.users — seed the creator row first.
+    await db_session.execute(
+        text(
+            """
+            insert into auth.users (id, email, aud, role, instance_id)
+            values (:id, :email, 'authenticated', 'authenticated',
+                    '00000000-0000-0000-0000-000000000000')
+            """
+        ),
+        {"id": uid, "email": "t@x.com"},
+    )
+    await db_session.commit()
+    baseline = await create_itinerary(db_session, creator, title="vof")
+    fork_id: uuid.UUID | None = None
+    try:
+        # No fork yet → None.
+        assert await _resolve_viewer_open_fork_id(db_session, user, baseline_id=baseline.id) is None
+
+        fork = await fork_itinerary(db_session, creator, itinerary_id=baseline.id)
+        assert isinstance(fork, Itinerary)
+        fork_id = fork.id
+
+        # The creator sees their open fork; a different viewer does not.
+        assert (
+            await _resolve_viewer_open_fork_id(db_session, user, baseline_id=baseline.id) == fork.id
+        )
+        assert (
+            await _resolve_viewer_open_fork_id(db_session, other, baseline_id=baseline.id) is None
+        )
+
+        # Once abandoned (no longer open) it stops resolving.
+        await abandon_fork(db_session, creator, fork_id=fork.id)
+        assert await _resolve_viewer_open_fork_id(db_session, user, baseline_id=baseline.id) is None
+    finally:
+        await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": uid})
+        finally:
+            await engine.dispose()
 
 
 # ── Router (service stubbed) ───────────────────────────────────────────────
@@ -485,7 +590,12 @@ def recon_routes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     from app.routers import itineraries as ri
     from app.services.itineraries import GraphView
 
-    calls: dict[str, list[Any]] = {"reconcile": [], "request": [], "abandon": []}
+    calls: dict[str, list[Any]] = {
+        "reconcile": [],
+        "request": [],
+        "abandon": [],
+        "withdraw": [],
+    }
     returns: dict[str, Any] = {"forkable": True, "baseline": object(), "is_advisor": True}
 
     async def _load(_s: Any, iid: uuid.UUID) -> Any:
@@ -539,6 +649,12 @@ def recon_routes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         calls["abandon"].append({"fork_id": fork_id})
         return Itinerary(id=fork_id, title="fork", fork_status=ForkStatus.abandoned)
 
+    async def _withdraw(_s: Any, actor: Any, *, fork_id: uuid.UUID) -> Any:
+        calls["withdraw"].append({"fork_id": fork_id})
+        return Itinerary(
+            id=fork_id, title="fork", forked_from_id=uuid.uuid4(), fork_status=ForkStatus.open
+        )
+
     monkeypatch.setattr(ri, "_load_itinerary", _load)
     monkeypatch.setattr(ri, "assert_itinerary_forkable", _forkable)
     monkeypatch.setattr(ri, "_is_requester_advisor", _is_advisor)
@@ -547,6 +663,7 @@ def recon_routes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(ri, "get_itinerary_graph", _graph)
     monkeypatch.setattr(ri, "request_reconcile", _request)
     monkeypatch.setattr(ri, "abandon_fork", _abandon)
+    monkeypatch.setattr(ri, "withdraw_reconcile", _withdraw)
 
     async def _dep() -> Any:
         yield object()
@@ -648,3 +765,18 @@ def test_abandon_endpoint_200(client: Any, recon_routes: dict[str, Any], make_to
     assert resp.status_code == 200, resp.text
     assert resp.json()["fork_status"] == "abandoned"
     assert recon_routes["calls"]["abandon"][-1]["fork_id"] == fork_id
+
+
+def test_cancel_reconcile_endpoint_200(
+    client: Any, recon_routes: dict[str, Any], make_token: Any
+) -> None:
+    fork_id = uuid.uuid4()
+    resp = client.post(f"/itinerary/{fork_id}/cancel-reconcile", headers=_headers(make_token))
+    assert resp.status_code == 200, resp.text
+    # Withdrawn request leaves the fork OPEN (not abandoned).
+    assert resp.json()["fork_status"] == "open"
+    assert recon_routes["calls"]["withdraw"][-1]["fork_id"] == fork_id
+
+
+def test_cancel_reconcile_endpoint_requires_jwt(client: Any, recon_routes: dict[str, Any]) -> None:
+    assert client.post(f"/itinerary/{uuid.uuid4()}/cancel-reconcile").status_code == 401

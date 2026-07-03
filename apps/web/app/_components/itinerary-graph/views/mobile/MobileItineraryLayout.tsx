@@ -15,7 +15,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AlternativeControls } from "../../shared/AlternativeControls";
+import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { Card } from "../../shared/ExpandedCard";
 import { NotesPanel } from "../../shared/NotesPanel";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
@@ -146,7 +146,7 @@ export function MobileItineraryLayout({
           </div>
         </div>
         <div className="shrink-0 pt-1">
-          <AlternativeControls />
+          <VersionSwitcher />
         </div>
       </header>
 

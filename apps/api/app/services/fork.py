@@ -991,6 +991,42 @@ async def request_reconcile(
     return row
 
 
+async def withdraw_reconcile(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    fork_id: uuid.UUID,
+) -> Itinerary | ItineraryError:
+    """Clear a pending reconcile request WITHOUT abandoning the fork. Idempotent.
+
+    The inverse of :func:`request_reconcile`: the traveler asked staff to merge,
+    then changed their mind. ``fork_status`` stays ``open`` so they keep editing
+    their alternative; only the request stamp + note are cleared.
+    """
+    fork_itin = (
+        await session.execute(select(Itinerary).where(Itinerary.id == fork_id))
+    ).scalar_one_or_none()
+    if fork_itin is None:
+        return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+    if fork_itin.forked_from_id is None:
+        return ItineraryError(outcome=ItineraryOutcome.VALIDATION_ERROR, detail="not_a_fork")
+    stmt = (
+        update(Itinerary)
+        .where(Itinerary.id == fork_id)
+        .values(reconcile_requested_at=None, reconcile_request_note=None)
+        .returning(Itinerary)
+        .execution_options(synchronize_session="fetch")
+    )
+    row = (await session.execute(stmt)).scalar_one()
+    await session.commit()
+    await session.refresh(row)
+    logger.info(
+        "fork.withdraw_reconcile",
+        extra={"fork_id": str(fork_id), "actor_kind": actor.kind.value},
+    )
+    return row
+
+
 async def abandon_fork(
     session: AsyncSession,
     actor: ActorContext,

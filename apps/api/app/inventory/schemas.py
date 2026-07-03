@@ -76,6 +76,19 @@ class InventoryItemBase(BaseModel):
     price: Price | None = None
     editorial_links: list[EditorialLink] = []
     tags: list[str] = []  # e.g. ["hiking", "unesco"]
+    # Point-of-interest enrichment surfaced on the card (Google Places et al.).
+    # Generic across providers — a POI has a rating, hours, and contact details
+    # regardless of who sourced it. Providers that don't carry these leave the
+    # defaults; the card-mapping layer turns them into the rendered ``place``
+    # block. ``photo_refs`` are opaque provider photo handles (a Places (New)
+    # photo is a resource *name*, not a URL) resolved through the keyed photo
+    # proxy — never a client-facing image URL on their own.
+    rating: float | None = None  # mean star rating, 1–5
+    rating_count: int | None = None  # number of ratings behind ``rating``
+    opening_hours: list[str] = []  # human weekday-description lines
+    website: str | None = None
+    phone: str | None = None
+    photo_refs: list[str] = []  # provider photo handles, hero first
     raw: dict[str, Any] = {}  # provider-specific pass-through
 
 

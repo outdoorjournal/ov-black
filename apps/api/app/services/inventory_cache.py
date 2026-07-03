@@ -47,6 +47,13 @@ _DEFAULT_TTL_SECONDS: dict[str, int | None] = {
 _FALLBACK_TTL_SECONDS = 60 * 60 * 24 * 7
 
 
+# TODO(prod): file-on-disk is a local-dev / demo strategy. On ECS Fargate this
+# dir lives on the task's ephemeral filesystem, so the cache is per-task, wiped
+# on every deploy, and never shared across ALB targets. In production this
+# cache should live in a shared, durable backend — Postgres (a cache table) or
+# Redis/ElastiCache — keyed by the same query hash, so builds share hits and
+# survive redeploys. INVENTORY_CACHE_DIR + an EFS mount is a cheap interim step;
+# a real store is the endgame.
 def _cache_dir() -> Path:
     override = os.environ.get("INVENTORY_CACHE_DIR")
     if override:

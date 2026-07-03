@@ -38,6 +38,7 @@ from app.models import (
     InvoiceStatus,
     Itinerary,
     ItineraryStatus,
+    SessionAudience,
     TurnRole,
 )
 from app.services import invoices as invoices_svc
@@ -154,12 +155,14 @@ async def list_my_itineraries_endpoint(
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> MyItinerariesResponse:
-    """Return every itinerary that belongs to the caller's client row.
+    """Return the OFFICIAL itineraries (baselines) for the caller's client row.
 
     Needed for Q&A mode where the agent may need to enumerate the client's
     trips ("which trip is next?") before drilling into a specific graph.
-    Orders newest-updated first. Empty list is a valid response — a client
-    in onboarding has no itineraries yet.
+    Forks (the traveler's private "My version" of a trip) are excluded — they
+    are reached via the two-version toggle on the itinerary page, not listed as
+    standalone trips. Orders newest-updated first. Empty list is a valid
+    response — a client in onboarding has no itineraries yet.
     """
     try:
         user_id = uuid.UUID(user.sub)
@@ -170,11 +173,17 @@ async def list_my_itineraries_endpoint(
     if client is None:
         return MyItinerariesResponse(itineraries=[])
 
+    # Only OFFICIAL itineraries (baselines) list here. A fork is the traveler's
+    # private "My version" of a trip — reached via the two-version toggle on the
+    # itinerary page, never shown as a standalone trip card on basecamp.
     rows = (
         (
             await session.execute(
                 select(Itinerary)
-                .where(Itinerary.client_id == client.id)
+                .where(
+                    Itinerary.client_id == client.id,
+                    Itinerary.forked_from_id.is_(None),
+                )
                 .order_by(Itinerary.updated_at.desc())
             )
         )
@@ -242,9 +251,11 @@ async def get_my_onboarding_session_endpoint(
 
     Powers basecamp's "have we conversed yet?" decision: if ``turn_count``
     is zero we render the single-prompt opener UI; otherwise we render the
-    persistent right-rail chat invite. Returns the most-recent session
-    across all modes — the basecamp UI only branches on whether ANY
-    conversation has happened, not on which mode it was in.
+    persistent right-rail chat invite. Basecamp is a traveler-facing
+    surface, so this is scoped to ``audience == traveler`` — an advisor
+    session opened about this client (Command Center) must never leak into
+    basecamp, or the traveler's chat would POST turns to a session the
+    existence-hiding authz collapses to 404.
     """
     empty = MyOnboardingSessionResponse(
         session_id=None,
@@ -268,7 +279,10 @@ async def get_my_onboarding_session_endpoint(
     has_prior_session = bool(
         (
             await session.execute(
-                select(func.count(AgentSession.id)).where(AgentSession.client_id == client.id)
+                select(func.count(AgentSession.id)).where(
+                    AgentSession.client_id == client.id,
+                    AgentSession.audience == SessionAudience.traveler,
+                )
             )
         ).scalar_one()
     )
@@ -278,6 +292,7 @@ async def get_my_onboarding_session_endpoint(
             select(AgentSession)
             .where(
                 AgentSession.client_id == client.id,
+                AgentSession.audience == SessionAudience.traveler,
                 AgentSession.ended_at.is_(None),
             )
             .order_by(AgentSession.started_at.desc())

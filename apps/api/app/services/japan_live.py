@@ -25,11 +25,12 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.inventory.providers.duffel import summarize_offer
 from app.inventory.registry import InventoryCtx, InventoryProviderRegistry
 from app.inventory.schemas import InventoryItem
 from app.models import EdgeType, Itinerary, ItineraryStatus, NodeStatus, NodeType
@@ -45,6 +46,14 @@ from app.services.itineraries import (
 from app.services.node_cost import cost_from_inventory_item
 
 logger = logging.getLogger("ov_black.demos.japan_live")
+
+
+# The whole curated spine is in Japan (Tokyo / Kyoto / Hiroshima), so every
+# ``hhmm`` slot is Japan-local wall-clock. Tag placements with JST rather than
+# the trip_start_at frame (UTC by default) so the timeline reads Tokyo time —
+# a 19:30 dinner shows at 19:30, not 04:30. Flights override this with their
+# own provider tz.
+_JST = timezone(timedelta(hours=9))
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,12 @@ class _Stop:
     origin: str | None = None
     destination: str | None = None
     cabin_class: str | None = None
+    # Days to add to ``day`` when picking a flight's search departure_date. A
+    # trans-Pacific eastbound red-eye departs the calendar day BEFORE it lands
+    # in Tokyo, so the arrival flight searches ``day - 1`` to touch down on the
+    # trip's first day rather than after the day-0 activities. 0 = depart on
+    # the placement day (the westbound return arrives the same date it leaves).
+    depart_day_offset: int = 0
 
 
 # City anchors for Google Places location bias.
@@ -96,6 +111,8 @@ _PLAN: list[_Stop] = [
         origin="LAX",
         destination="HND",
         cabin_class="business",
+        # Eastbound red-eye: depart LAX the day before to land on trip day 0.
+        depart_day_offset=-1,
     ),
     _Stop(
         "Sushi dinner · Ginza",
@@ -240,12 +257,72 @@ def _hhmm(value: str) -> tuple[int, int]:
     return int(h), int(m)
 
 
+def _flight_schedule(metadata: dict[str, Any]) -> tuple[str | None, int | None]:
+    """(starts_at, duration_minutes) for a flight from its card metadata.
+
+    A flight is the one stop whose real timing the provider gives us: Duffel's
+    ``depart_at`` / ``arrive_at`` (tz-aware after the offer is localized). We
+    anchor the node's ``starts_at`` range on the true flight — lower bound =
+    departure, width = arrival − departure — so the tile lands at the real time
+    across zones instead of the curated placeholder slot, and its span matches
+    the depart→arrive line the card renders. Returns ``(None, None)`` when an
+    endpoint is missing or unparseable so the caller keeps the curated slot.
+    """
+    dep = metadata.get("depart_at")
+    arr = metadata.get("arrive_at")
+    if not isinstance(dep, str) or not dep:
+        return (None, None)
+    try:
+        dep_dt = datetime.fromisoformat(dep)
+    except ValueError:
+        return (None, None)
+    if not isinstance(arr, str) or not arr:
+        return (dep, None)
+    try:
+        arr_dt = datetime.fromisoformat(arr)
+        duration = round((arr_dt - dep_dt).total_seconds() / 60)
+    except (ValueError, TypeError):
+        # Unparseable arrival or a naive/aware mismatch — anchor at departure,
+        # leave the width to the caller/timeline default rather than guess.
+        return (dep, None)
+    return (dep, duration if duration > 0 else None)
+
+
 def _pick(items: list[InventoryItem], kind: str) -> InventoryItem | None:
     """First item matching the desired kind, else the first item at all."""
     for it in items:
         if it.kind == kind:
             return it
     return items[0] if items else None
+
+
+def _pick_flight(items: list[InventoryItem], target_arrival: date) -> InventoryItem | None:
+    """Earliest flight that ARRIVES on ``target_arrival`` (its local date).
+
+    Duffel returns offers cheapest-first, but the cheapest LAX→HND is often a
+    near-midnight red-eye — or a connection that lands at 23:30 — so even
+    landing on the right day it arrives AFTER the day-0 evening plan. So among
+    offers whose arrival lands on the intended day, take the EARLIEST arrival:
+    a midday touchdown leaves room for the day's activities. Fall back to the
+    plain cheapest flight when none land on the day (better a real flight than
+    none).
+    """
+    flights = [it for it in items if it.kind == "flight"]
+    on_day: list[tuple[datetime, InventoryItem]] = []
+    for it in flights:
+        arr = summarize_offer(it.raw).get("arrive_at")
+        if not isinstance(arr, str):
+            continue
+        try:
+            arr_dt = datetime.fromisoformat(arr)
+        except ValueError:
+            continue
+        if arr_dt.date() == target_arrival:
+            on_day.append((arr_dt, it))
+    if on_day:
+        on_day.sort(key=lambda pair: pair[0])
+        return on_day[0][1]
+    return flights[0] if flights else (items[0] if items else None)
 
 
 async def _search_stop(
@@ -258,13 +335,19 @@ async def _search_stop(
     filters: dict[str, Any] = {"limit": 6}
     keyword = stop.keyword
     if stop.source == "duffel":
-        depart = (trip_start_at + timedelta(days=stop.day)).date().isoformat()
+        depart = (
+            (trip_start_at + timedelta(days=stop.day + stop.depart_day_offset)).date().isoformat()
+        )
         filters.update(
             origin=stop.origin,
             destination=stop.destination,
             departure_date=depart,
             cabin_class=stop.cabin_class or "business",
             adults=2,
+            # Widen past the cheapest handful: the day-0 arrival pick needs
+            # enough offers to find a midday touchdown (nonstops price higher
+            # than the red-eye connections that dominate the cheapest few).
+            limit=30,
         )
     elif stop.near is not None:
         filters.update(near_lat=stop.near[0], near_lng=stop.near[1], radius_m=stop.radius_m)
@@ -284,6 +367,10 @@ async def _search_stop(
             extra={"label": stop.label, "source": stop.source, "error": str(exc)},
         )
         return None
+    if stop.kind == "flight":
+        # ``day`` is the intended arrival day; prefer an offer that lands then.
+        target_arrival = (trip_start_at + timedelta(days=stop.day)).date()
+        return _pick_flight(items, target_arrival)
     return _pick(items, stop.kind)
 
 
@@ -333,8 +420,22 @@ async def build_live_japan_itinerary(
             continue
 
         h, m = _hhmm(stop.hhmm)
-        starts_at = (trip_start_at + timedelta(days=stop.day, hours=h, minutes=m)).isoformat()
+        # Take the trip's start DATE and place the slot at its Japan-local
+        # wall-clock (strip the incoming UTC frame, re-tag JST) so days/times
+        # read as Tokyo time on the timeline.
+        placed = trip_start_at.replace(tzinfo=None) + timedelta(days=stop.day, hours=h, minutes=m)
+        starts_at = placed.replace(tzinfo=_JST).isoformat()
         metadata = inventory_item_to_card_metadata(item)
+        duration_minutes = stop.duration_minutes
+        # Flights carry their own real schedule from Duffel; anchor on it so the
+        # tile matches the card instead of the curated slot. Meals/experiences
+        # (Google Places gives no canonical time) keep the curated placement.
+        if stop.kind == "flight":
+            flight_start, flight_duration = _flight_schedule(metadata)
+            if flight_start is not None:
+                starts_at = flight_start
+                if flight_duration is not None:
+                    duration_minutes = flight_duration
         cost = cost_from_inventory_item(item)
 
         result = await add_node(
@@ -351,7 +452,7 @@ async def build_live_japan_itinerary(
             cost_currency=cost.currency if cost else None,
             cost_kind=cost.kind if cost else None,
             starts_at=starts_at,
-            duration_minutes=stop.duration_minutes,
+            duration_minutes=duration_minutes,
         )
         if isinstance(result, ItineraryError):
             skipped.append(f"{stop.label} (write {result.outcome.value})")

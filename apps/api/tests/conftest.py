@@ -19,6 +19,7 @@ from app import auth as auth_module
 from app.auth import JWKSCache
 from app.config import Settings, get_settings
 from app.main import app as fastapi_app
+from app.vault.storage import MockVaultStorage, get_vault_storage
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from jwt.algorithms import RSAAlgorithm
@@ -127,5 +128,12 @@ def make_token(rsa_keypair: tuple[Any, Any]):
 
 @pytest.fixture()
 def client() -> Iterator[TestClient]:
-    with TestClient(fastapi_app) as c:
-        yield c
+    # Force the offline mock presigner so vault tests stay deterministic
+    # regardless of how a developer's apps/api/.env wires storage (e.g. pointing
+    # vault_bucket_name + s3_endpoint_url at local Supabase for manual uploads).
+    fastapi_app.dependency_overrides[get_vault_storage] = MockVaultStorage
+    try:
+        with TestClient(fastapi_app) as c:
+            yield c
+    finally:
+        fastapi_app.dependency_overrides.pop(get_vault_storage, None)

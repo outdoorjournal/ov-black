@@ -304,6 +304,14 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(routers_itineraries, "_load_itinerary", _load)
     monkeypatch.setattr(routers_itineraries, "assert_itinerary_writable", _writable)
 
+    # GET resolves the caller's own open fork ("My version") with a real query —
+    # stub it for these DB-less router-contract tests (exercised against a live
+    # session in test_fork_reconcile.py::test_resolve_viewer_open_fork_id).
+    async def _no_open_fork(_session: Any, _user: Any, *, baseline_id: uuid.UUID) -> Any:
+        return None
+
+    monkeypatch.setattr(routers_itineraries, "_resolve_viewer_open_fork_id", _no_open_fork)
+
     # Also override the session dependency so no DB is required.
     async def _dep() -> Iterator[object]:
         yield object()
@@ -906,6 +914,70 @@ async def test_add_node_writes_history_in_same_transaction(
         assert rows[0].after["title"] == "Amalfi"
         assert rows[0].actor_kind == "system"
         assert rows[0].actor_id == "test-actor"
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_add_node_persists_schedule_for_non_note(
+    db_session: AsyncSession,
+) -> None:
+    """A non-note node (flight) keeps its starts_at + duration through the graph.
+
+    Regression: add_node used to honor starts_at only for note nodes, so a
+    flight/meal/experience landed with a NULL range and the timeline had to
+    synthesize a placeholder slot. The offset (JST here) must survive the
+    UTC tstzrange round-trip, and the wall-clock is mirrored into metadata.
+    """
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="schedule test")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.flight,
+            title="LAX → HND",
+            starts_at="2026-07-29T21:40:00-07:00",
+            duration_minutes=740,
+        )
+        assert isinstance(node, Node)
+        # Mirrored back into metadata so the web timeline reads the local time.
+        assert node.metadata_["start_time"] == "2026-07-29T21:40:00-07:00"
+        assert node.metadata_["tz_offset_minutes"] == -420
+        assert node.metadata_["duration_minutes"] == 740
+
+        view = await get_itinerary_graph(db_session, itinerary.id)
+        placed = next(n for n in view.nodes if n.id == node.id)
+        # Same instant, re-emitted in the caller's offset (not UTC), with the
+        # duration recovered from the range width.
+        assert placed.starts_at == "2026-07-29T21:40:00-07:00"
+        assert placed.duration_minutes == 740
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_add_node_rejects_malformed_schedule(
+    db_session: AsyncSession,
+) -> None:
+    """A non-note node with an unparseable starts_at is a validation error,
+    not a silent drop."""
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="bad schedule")
+    try:
+        result = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="broken",
+            starts_at="not-a-datetime",
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.outcome is ItineraryOutcome.VALIDATION_ERROR
     finally:
         await _cleanup(db_session, itinerary.id)
 

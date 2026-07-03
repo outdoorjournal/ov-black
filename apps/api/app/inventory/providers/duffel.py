@@ -35,7 +35,9 @@ Design notes (mirrors :mod:`app.inventory.providers.ov`):
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from pydantic import ValidationError
@@ -100,6 +102,54 @@ def _first_segment(offer: dict[str, Any]) -> dict[str, Any]:
     return _as_dict(segments[0])
 
 
+def _last_outbound_segment(offer: dict[str, Any]) -> dict[str, Any]:
+    """Final segment of the FIRST slice — the true arrival leg.
+
+    A one-way offer can still route via a connection (e.g. HND→MNL→LAX is one
+    slice, two segments), so the arrival airport + time live on the LAST
+    segment, not the first. Taking them from ``_first_segment`` would report a
+    layover as the destination. Scoped to the first slice so a round-trip
+    offer's arrival is the outbound arrival, not the return leg.
+    """
+    slices = offer.get("slices")
+    if not isinstance(slices, list) or not slices:
+        return {}
+    segments = _as_dict(slices[0]).get("segments")
+    if not isinstance(segments, list) or not segments:
+        return {}
+    return _as_dict(segments[-1])
+
+
+def _localize(naive_local: Any, place: Any) -> str | None:
+    """Attach an airport's UTC offset to a Duffel offset-less local datetime.
+
+    Duffel emits ``departing_at`` / ``arriving_at`` as wall-clock at the
+    airport with NO offset (e.g. ``"2026-07-29T21:40:00"``); the airport
+    ``place`` carries an IANA ``time_zone`` (e.g. ``"America/Los_Angeles"``).
+    A trip spans zones (LAX departs PDT, HND arrives JST), so without the
+    offset the same string is an ambiguous instant. Return an offset-bearing
+    ISO 8601 string for the SAME wall-clock (e.g. ``"…-07:00"`` / ``"…+09:00"``);
+    fall back to the raw string when the time or zone is missing/unknown, and
+    leave an already offset-bearing value untouched.
+    """
+    if not isinstance(naive_local, str) or not naive_local:
+        return None
+    try:
+        dt = datetime.fromisoformat(naive_local)
+    except ValueError:
+        return naive_local
+    if dt.tzinfo is not None:
+        return naive_local
+    tz_name = _as_dict(place).get("time_zone")
+    if not isinstance(tz_name, str) or not tz_name:
+        return naive_local
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return naive_local
+    return dt.replace(tzinfo=tz).isoformat()
+
+
 def _carrier_name(offer: dict[str, Any]) -> str | None:
     name = _as_dict(offer.get("owner")).get("name")
     return name if isinstance(name, str) and name else None
@@ -145,6 +195,7 @@ def summarize_offer(offer: dict[str, Any]) -> dict[str, Any]:
     """
     iata_from, iata_to = _slice_endpoints(offer)
     seg = _first_segment(offer)
+    arr_seg = _last_outbound_segment(offer)
     carrier = seg.get("marketing_carrier") or seg.get("operating_carrier")
     flight_number = seg.get("marketing_carrier_flight_number")
     carrier_code = _iata(carrier)
@@ -163,8 +214,8 @@ def summarize_offer(offer: dict[str, Any]) -> dict[str, Any]:
         "flight_code": flight_code,
         "carrier": _carrier_name(offer),
         "cabin": cabins[0] if cabins else None,
-        "depart_at": seg.get("departing_at") if isinstance(seg.get("departing_at"), str) else None,
-        "arrive_at": seg.get("arriving_at") if isinstance(seg.get("arriving_at"), str) else None,
+        "depart_at": _localize(seg.get("departing_at"), seg.get("origin")),
+        "arrive_at": _localize(arr_seg.get("arriving_at"), arr_seg.get("destination")),
         "stops": _stop_count(offer),
         "total_amount": offer.get("total_amount")
         if isinstance(offer.get("total_amount"), str)

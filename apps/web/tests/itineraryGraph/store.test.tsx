@@ -17,6 +17,7 @@ import {
   itineraryGraphStore,
   selectCanLeaveNote,
   selectEditable,
+  selectIsDraftMine,
   selectTravelerEditable,
   type ItineraryGraphInit,
   type ItineraryGraphState,
@@ -176,5 +177,37 @@ describe("selectTravelerEditable", () => {
   test("false once approved, or without creds", () => {
     expect(selectTravelerEditable({ ...fork, status: "approved" })).toBe(false);
     expect(selectTravelerEditable({ ...fork, accessToken: null })).toBe(false);
+  });
+});
+
+describe("selectIsDraftMine", () => {
+  // Baseline (no fork) + draft-mine preview toggled on + creds → editable, and
+  // the first edit lazily forks via forkAndMove.
+  const draft = {
+    canEdit: false,
+    status: "draft",
+    apiBaseUrl: "x",
+    accessToken: "t",
+    draftMine: true,
+    sample: { itinerary: { forked_from_id: null } },
+  } as unknown as ItineraryGraphState;
+
+  test("true on the Official baseline once draft-mine is entered", () => {
+    expect(selectIsDraftMine(draft)).toBe(true);
+  });
+  test("false until draft-mine is entered", () => {
+    expect(selectIsDraftMine({ ...draft, draftMine: false })).toBe(false);
+  });
+  test("false on a real fork (that's the selectTravelerEditable path)", () => {
+    const onFork = {
+      ...draft,
+      sample: { itinerary: { forked_from_id: "base-1" } },
+    } as unknown as ItineraryGraphState;
+    expect(selectIsDraftMine(onFork)).toBe(false);
+  });
+  test("false for advisors, when approved, or without creds", () => {
+    expect(selectIsDraftMine({ ...draft, canEdit: true })).toBe(false);
+    expect(selectIsDraftMine({ ...draft, status: "approved" })).toBe(false);
+    expect(selectIsDraftMine({ ...draft, accessToken: null })).toBe(false);
   });
 });

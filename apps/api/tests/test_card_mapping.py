@@ -18,9 +18,23 @@ import pytest
 from app.inventory.providers.duffel import normalize_duffel_offer
 from app.inventory.providers.google_places import normalize_place
 from app.inventory.providers.ratehawk import normalize_ratehawk_hotel
-from app.inventory.schemas import DestinationItem, FlightItem, HotelItem, MealItem
-from app.schemas.card_attrs import FlightCardAttrs, HotelCardAttrs, MealCardAttrs
+from app.inventory.schemas import (
+    DestinationItem,
+    ExperienceItem,
+    FlightItem,
+    HotelItem,
+    MealItem,
+)
+from app.schemas.card_attrs import (
+    ExperienceCardAttrs,
+    FlightCardAttrs,
+    HotelCardAttrs,
+    MealCardAttrs,
+    parse_card_attrs,
+)
+from app.services import card_mapping as card_mapping_module
 from app.services.card_mapping import (
+    experience_item_to_card_attrs,
     flight_item_to_card_attrs,
     hotel_item_to_card_attrs,
     inventory_item_to_card_metadata,
@@ -66,9 +80,10 @@ def test_flight_item_to_card_attrs_carries_cabin_times_route(
     assert attrs.iata_to == "HND"
     assert attrs.flight_code == "NH105"
     assert attrs.cabin == "business"
-    # Duffel-local ISO strings coerced to datetime by Pydantic.
-    assert attrs.depart_at == datetime.fromisoformat("2026-07-10T11:05:00")
-    assert attrs.arrive_at == datetime.fromisoformat("2026-07-11T15:40:00")
+    # Duffel-local ISO strings, localized to the airport tz (LAX PDT / HND JST),
+    # coerced to tz-aware datetime by Pydantic.
+    assert attrs.depart_at == datetime.fromisoformat("2026-07-10T11:05:00-07:00")
+    assert attrs.arrive_at == datetime.fromisoformat("2026-07-11T15:40:00+09:00")
 
 
 def test_flight_item_to_card_attrs_builds_airport_geometry(
@@ -235,3 +250,80 @@ def test_meal_generic_restaurant_has_no_cuisine_class() -> None:
     assert attrs.cuisine_class is None
     assert attrs.snapshot is not None
     assert attrs.snapshot.activities == []
+
+
+# ── POI ``place`` block (rating / hours / contact / map link / photo) ────
+
+
+@pytest.fixture(scope="module")
+def experience_item() -> ExperienceItem:
+    places = json.loads(PLACES_FIXTURE_PATH.read_text())["places"]
+    item = normalize_place(places[1])  # Fushimi Inari Taisha (tourist_attraction)
+    assert isinstance(item, ExperienceItem)
+    return item
+
+
+def test_experience_place_block_carries_rating_hours_contact(
+    experience_item: ExperienceItem,
+) -> None:
+    attrs = experience_item_to_card_attrs(experience_item)
+    assert isinstance(attrs, ExperienceCardAttrs)
+    assert attrs.kind == "experience"
+    assert attrs.snapshot is not None
+    assert attrs.snapshot.title == "Fushimi Inari Taisha"
+    # The POI enrichment that used to be dropped on the floor.
+    assert attrs.place is not None
+    assert attrs.place.rating == pytest.approx(4.7)
+    assert attrs.place.rating_count and attrs.place.rating_count > 0
+    assert attrs.place.hours  # weekday-description lines
+    assert attrs.place.website
+    # Deep link points at the exact place (coords + place id), keyless.
+    assert attrs.place.maps_url is not None
+    assert attrs.place.maps_url.startswith("https://www.google.com/maps/search/?api=1&query=")
+    assert "query_place_id=" in attrs.place.maps_url
+
+
+def test_meal_place_block_present(meal_item: MealItem) -> None:
+    attrs = meal_item_to_card_attrs(meal_item)
+    assert attrs.place is not None
+    assert attrs.place.rating == pytest.approx(4.6)
+    assert attrs.place.maps_url and "query_place_id=" in attrs.place.maps_url
+
+
+def test_experience_photo_token_minted_from_first_ref(
+    experience_item: ExperienceItem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The raw photo resource name must never reach a card — only a signed token.
+    monkeypatch.setattr(card_mapping_module, "mint_photo_token", lambda ref: f"signed::{ref}")
+    attrs = experience_item_to_card_attrs(experience_item)
+    assert attrs.place is not None
+    assert attrs.place.photo_token == f"signed::{experience_item.photo_refs[0]}"
+
+
+def test_experience_metadata_round_trips_through_parse_card_attrs(
+    experience_item: ExperienceItem,
+) -> None:
+    # node.metadata IS the card-attrs dump, and the read side re-validates it
+    # against the extra="forbid" model — so the ``place`` block must be a
+    # declared field, not a stray key.
+    meta = inventory_item_to_card_metadata(experience_item)
+    assert meta["kind"] == "experience"
+    assert meta["place"]["rating"] == pytest.approx(4.7)
+    reparsed = parse_card_attrs("experience", meta)
+    assert isinstance(reparsed, ExperienceCardAttrs)
+    assert reparsed.place is not None
+    assert reparsed.place.rating == pytest.approx(4.7)
+
+
+def test_non_places_experience_stays_on_snapshot_fallback() -> None:
+    # An OV-sourced experience carries no POI enrichment and must not grow a
+    # (necessarily empty) ``place`` block.
+    item = ExperienceItem(
+        source="ov",
+        source_id="ov-123",
+        title="Guided Ridge Hike",
+        location=None,
+    )
+    meta = inventory_item_to_card_metadata(item)
+    assert "place" not in meta
+    assert meta["snapshot"]["title"] == "Guided Ridge Hike"

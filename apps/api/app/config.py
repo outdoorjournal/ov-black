@@ -172,6 +172,34 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    bokun_base_url: str = Field(
+        default="https://api.bokun.io",
+        description=(
+            "Base URL for the Bokun (Seller) REST API. Production is "
+            "api.bokun.io; the sandbox is api.bokuntest.com (a SEPARATE account "
+            "with its own access/secret keys — production keys 401 there)."
+        ),
+    )
+    bokun_access_key: str = Field(
+        default="",
+        description=(
+            "Bokun API access key — the public half of the HMAC credential, sent "
+            "as the X-Bokun-AccessKey header. Paired with bokun_secret_key; both "
+            "must be set for the provider to issue calls. When empty the Bokun "
+            "provider stays registered but every search returns []."
+        ),
+        repr=False,
+    )
+    bokun_secret_key: str = Field(
+        default="",
+        description=(
+            "Bokun API secret key — used to compute the HmacSHA1 request "
+            "signature (X-Bokun-Signature). NEVER log this value; it never "
+            "appears in a request header or response body directly."
+        ),
+        repr=False,
+    )
+
     # ── Payments (M005/I2, D025/D-PAY): Braintree ─────────────────────────
     # The gateway is selected by config; when these are empty the payments
     # service degrades to a Fake gateway (CI/local need no credentials) and a
@@ -221,8 +249,8 @@ class Settings(BaseSettings):
         description=(
             "Comma-separated list of inventory provider sources to register at "
             "startup. Known values: 'ov', 'mock', 'duffel', 'ratehawk', "
-            "'google_places'. Unknown names are skipped with a warning so a typo "
-            "doesn't crash the boot."
+            "'google_places', 'bokun'. Unknown names are skipped with a warning "
+            "so a typo doesn't crash the boot."
         ),
     )
 
@@ -256,6 +284,42 @@ class Settings(BaseSettings):
         description=(
             "Lifetime of presigned upload/download URLs for vault documents. "
             "Short by design (default 15 min) — access is re-minted per request."
+        ),
+    )
+    s3_endpoint_url: str = Field(
+        default="",
+        description=(
+            "Override the S3 endpoint for vault presigning. Empty = real AWS S3 "
+            "(staging/prod, ambient credential chain). Set to an S3-compatible "
+            "endpoint to back the vault locally without AWS — e.g. local "
+            "Supabase Storage at http://127.0.0.1:54321/storage/v1/s3. When set, "
+            "the presigner uses path-style addressing + the s3_* credentials "
+            "below instead of the AWS chain."
+        ),
+    )
+    s3_region: str = Field(
+        default="",
+        description=(
+            "Signing region for s3_endpoint_url (SigV4 scope). Empty falls back "
+            "to aws_region. Supabase Storage validates this — use 'local' "
+            "(S3_PROTOCOL_REGION from `supabase status`)."
+        ),
+    )
+    s3_access_key_id: str = Field(
+        default="",
+        description=(
+            "Access key id for s3_endpoint_url. Only used when s3_endpoint_url "
+            "is set; real AWS uses the ambient credential chain instead. "
+            "Locally this is S3_PROTOCOL_ACCESS_KEY_ID from `supabase status`."
+        ),
+    )
+    s3_secret_access_key: str = Field(
+        default="",
+        repr=False,
+        description=(
+            "Secret key for s3_endpoint_url (paired with s3_access_key_id). "
+            "Locally this is S3_PROTOCOL_ACCESS_KEY_SECRET from `supabase "
+            "status`. repr=False so it never lands in a log or traceback."
         ),
     )
     agent_first_token_timeout_seconds: float = Field(
@@ -323,6 +387,31 @@ class Settings(BaseSettings):
             "agent runtime must not require a longer-lived token because "
             "POST /sessions is called for every fresh session — and "
             "long-running sessions can ask for a refresh in a later slice."
+        ),
+    )
+    places_photo_signing_secret: str = Field(
+        default="",
+        description=(
+            "HS256 signing key for Places photo-proxy tokens. The proxy route "
+            "GET /integrations/google-places/photo is whitelisted (an <img> "
+            "tag cannot send a bearer header), so the signed token IS its "
+            "auth — it binds one photo resource name and stops third parties "
+            "from burning our Places quota. Falls back to "
+            "``agent_token_signing_secret`` when empty so local dev works "
+            "without extra provisioning; empty for both disables photo URLs "
+            "(cards fall back to the tint stub). NEVER log this value."
+        ),
+        repr=False,
+    )
+    places_photo_token_ttl_seconds: int = Field(
+        default=60 * 60 * 24 * 365,
+        ge=3600,
+        description=(
+            "Lifetime of a Places photo-proxy token. Minted at card-build "
+            "time and persisted in node metadata, so it must outlive the "
+            "inventory cache (30 days) and ordinary node longevity — a year "
+            "by default. Re-builds re-mint, so expiry only bites a long-dormant "
+            "itinerary (it then degrades to the tint stub, never an error)."
         ),
     )
 

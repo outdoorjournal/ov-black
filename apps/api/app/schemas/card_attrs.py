@@ -74,6 +74,29 @@ class TimeOfDayWindow(BaseModel):
     end_hour: int = Field(ge=0, le=24)
 
 
+class PlaceFacts(BaseModel):
+    """Point-of-interest facts (Google Places et al.) surfaced on experience /
+    meal cards: crowd rating, opening hours, contact details, an external map
+    deep link, and a signed handle for the keyed photo proxy.
+
+    Read-only context — never a booking surface. ``photo_token`` is an
+    HS256-signed reference to one Places photo; the client builds
+    ``{apiBase}/integrations/google-places/photo?token=…`` from it (the token,
+    not a raw key, is what reaches the browser). ``maps_url`` is a keyless
+    Google Maps deep link the card links out to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rating: float | None = Field(default=None, ge=0.0, le=5.0)
+    rating_count: int | None = Field(default=None, ge=0)
+    hours: list[str] = Field(default_factory=list)  # human weekday-description lines
+    website: str | None = None
+    phone: str | None = None
+    maps_url: str | None = None
+    photo_token: str | None = None
+
+
 # ── Subway / train sub-models ─────────────────────────────────────────
 
 
@@ -348,6 +371,7 @@ class ExperienceCardAttrs(_CardBase):
     language_support: str | None = None
     group_size: str | None = None
     snapshot: CardSnapshot | None = None
+    place: PlaceFacts | None = None
 
 
 class MealCardAttrs(_CardBase):
@@ -362,6 +386,7 @@ class MealCardAttrs(_CardBase):
     cancellation_policy: str | None = None
     price: str | None = None
     snapshot: CardSnapshot | None = None
+    place: PlaceFacts | None = None
 
 
 class FreeTimeCardAttrs(_CardBase):
@@ -473,6 +498,7 @@ __all__ = [
     "MealCardAttrs",
     "NoteCardAttrs",
     "Phrase",
+    "PlaceFacts",
     "SceneryCallout",
     "SignageGloss",
     "SubwayCardAttrs",

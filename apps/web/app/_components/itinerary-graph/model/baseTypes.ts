@@ -42,6 +42,7 @@ export interface NodeMeta {
   body?: string;
   emoji?: string;
   description?: string;
+  place?: PlaceFacts;
 }
 
 export interface CardSnapshot {
@@ -52,6 +53,21 @@ export interface CardSnapshot {
   difficulty?: string;
   location?: string;
   activities?: string[];
+}
+
+// Point-of-interest enrichment (Google Places et al.) surfaced on experience
+// and meal cards: crowd rating, opening hours, contact, an external map deep
+// link, and a signed handle for the keyed photo proxy. `photo_token` is NOT a
+// URL — the card builds `{apiBase}/integrations/google-places/photo?token=…`
+// from it (see `placePhotoUrl`). `maps_url` is a keyless Google Maps deep link.
+export interface PlaceFacts {
+  rating?: number;
+  rating_count?: number;
+  hours?: string[];
+  website?: string;
+  phone?: string;
+  maps_url?: string;
+  photo_token?: string;
 }
 
 export function getMeta(node: NodeResponse): NodeMeta {
