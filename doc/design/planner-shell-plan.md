@@ -7,9 +7,64 @@
 > [mvp-plan.md](../mvp-plan.md) house style. Holds the craft line (R014): no emoji, no spinners, serif
 > concierge prose.
 >
-> **One decision is still held — Q13** (chat substrate). It gates only the two human-channel slices (PS7/PS8);
-> a spike (**PS0**) resolves it before they start, and everything else proceeds without it. On milestone
-> green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this slots into `mvp-plan.md` as M006.
+> **Status (handoff):** **PS0, PS1, PS2 are landed on `dev`** — see §0 below for exactly what's done, what was
+> deferred within those slices, verification, and what's next. Q13 is **resolved (UNIFY, endorsed)**. On
+> milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this slots into
+> `mvp-plan.md` as M006.
+
+---
+
+## 0. Status — handoff ledger
+
+**Landed on `dev`** (3 commits): `a61c1dc` docs · `98f50bc` agent (PS2 backend + client) · `07146b3` web
+(PS1 shell + PS2 UI).
+
+| Slice | State | Notes |
+| --- | --- | --- |
+| **PS0** | **done** | Q13 resolved → **UNIFY** (endorsed by the human call). Recommendation memo appended to [planner-shell.md §10](./planner-shell.md); draft migration in `scratchpad/00NN_messaging_threads.draft.sql` (throwaway — real one lands in PS7). Graduates to a D0xx on green-light. |
+| **PS1** | **done** | Two-axis shell: `itinerary/[id]/layout.tsx` (Provider lift), routed `timeline` / `collection` / advisor-only `studio` (+ index→`/timeline` redirect), `_shell/*` (ItineraryShell · Rail · ConciergeColumn · MobileTabBar · the three planning-space views), and `TimelineDataContext`. |
+| **PS2** | **done** | Scoped Artemis session list: migration `0036`, scope-aware reuse (no re-pin) + `force_new` + `list`/`patch` + auto-title, endpoints, api-client wrappers (`listSessions`/`patchSession`), `SessionThread` + `ConciergeColumn` UI, `ConciergeChat` `sessionId`/`onSessionOpened`. |
+
+**Verified:** api — 858 pytest pass, mypy + ruff clean; web — 39 files / 230 vitest pass, typecheck + lint
+clean; api-client builds. **NOT run:** the Playwright `e2e/traveler-flows/*` (needs the live Supabase + API +
+agent stack) — audited for structural compatibility only (URLs use unanchored regexes; the concierge composer
+is visible in the shell column at the 1280px test viewport; stranger→404 preserved). **Run these before
+calling M006 done.**
+
+**Deferred *within* PS1/PS2 — carry into the noted slice (not lost, but not done):**
+- Zoom/`pxPerMinute` still lives in `itineraryGraphStore` (extract to a view-local store — PS1's own TODO;
+  cleanliness only, no bug since only the timeline reads it).
+- The mobile **peek-sheet** concierge was dropped on the routed timeline in favor of the **Chat tab**
+  (`showConciergeSheet={false}`); the design wanted to keep the sheet — **revisit in PS6**.
+- Concierge **collapse** is basic (in-flow ≥1100px, summonable overlay below via Rail button / Chat tab); full
+  Q5 polish → **PS6**.
+- **Context-chip** is a scaffold (an empty slot + comment in `ConciergeColumn`) — **PS4** wires "ask about this".
+- The transitional advisor **Studio** route (`/studio`) holds Party/Vault/Invoices/Booking **and** Build/Diff so
+  nothing was lost; **PS3** rehomes the first four into the Dashboard, **PS6** finalizes Build/Diff and removes
+  the leftover in-canvas aside (still there behind `showConciergeAside`/`showConciergeSheet` on
+  `HorizontalView`/`MobileItineraryLayout`, kept for the prototype).
+- **Scroll-to-node from chat** is not wired in the relocated ConciergeColumn (chat is no longer canvas-adjacent);
+  re-add via a store signal if wanted.
+- The **people-circle** "Advisor" circle is a disabled placeholder (the human channel is **PS7**).
+
+**Heads-up — pre-existing failures, NOT from this work (don't chase):**
+`apps/api/tests/test_me.py::test_evaluate_onboarding_rule` and `::test_onboarding_session_reports_onboarding_complete`
+fail on `dev` independently — `evaluate_onboarding` is `profile_fact_count >= 2` but those tests still assert
+`>= 1`. `app/routers/me.py` is untouched here. Fix the stale tests (or the rule) as a separate cleanup.
+
+**Local-dev notes for the next agent:**
+- Migration `0036` is **already applied to the local Supabase** (`:54322`). Integration tests are
+  `@integration` (skip when the DB is down; CI has no Postgres, so they never run there — write DB-behavior
+  tests this way).
+- After any apps/api schema change: `pnpm -C packages/api-client generate` (boots the API itself), then add the
+  discriminated wrapper in `packages/api-client/src/index.ts`. `src/generated/` + `dist/` are **gitignored**
+  (regenerated), so only `src/index.ts` is committed.
+- A running web `next dev` holds `.next`; a concurrent `next build` will `MODULE_NOT_FOUND` in the prerender
+  worker *after* "Compiled successfully" — that's the collision, not a real build failure.
+
+**Next (unchanged critical path):** PS1 → PS2 → **PS4** (card detail, now the front of the critical path).
+**PS3** (Dashboard) and **PS5** (place-mode) parallelize off PS1 with no backend. **PS7/PS8** (human channel +
+@-mention bridge) are now unblocked by Q13=unify but remain the late second track.
 
 ---
 
@@ -32,7 +87,7 @@ Veto any before we start the affected slice.
 | Q10 | AI multiplicity | **Session list** (many, scoped, resumable). | PS2 |
 | Q11 | General-chat scope | Basecamp = you ↔ advisor; itinerary = you ↔ advisor ↔ that trip's party. | PS7 |
 | Q12 | Sessions → graph | **Single spine** — sessions are peers writing one graph. | PS2, PS8 |
-| **Q13** | **Chat substrate** | **HELD** — unify (one thread/message store, `agent_session` as per-thread engine) vs bridge two stores. **PS0 decides.** | PS7, PS8 |
+| Q13 | Chat substrate | **RESOLVED (PS0): UNIFY** — one `threads`/`messages`/`thread_participants` store, `agent_session` as the per-thread AI engine (endorsed). Additive/back-compatible: PS2 ships first, PS7 introduces threads + backfills. | PS7, PS8 |
 
 ---
 
@@ -72,6 +127,7 @@ and can run late without blocking the traveler-facing shell.
 ## 4. Slices
 
 ### PS0 — Messaging substrate spike (resolves Q13)
+> **DONE** (see §0). Outcome: **UNIFY**. Memo in [planner-shell.md §10](./planner-shell.md); draft migration in scratchpad.
 - **goal:** decide unify-vs-bridge for the human channel and commit a concrete schema, so PS7/PS8 are unblocked.
 - **deliverables:** a short decision memo appended to [planner-shell.md](./planner-shell.md) Q13 + a D0xx entry;
   a *draft* migration sketching `threads` / `messages` / `thread_participants` under the chosen model, and how
@@ -83,6 +139,7 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** — · **size:** S · **parallel to PS1.**
 
 ### PS1 — Shell skeleton (routes + nested layout + Provider lift)
+> **DONE** (commit `07146b3`, see §0). Rail order shipped as **Timeline · Collection · ─ · Studio** (Home/Dashboard joins in PS3). Deferred: zoom→view-local store, mobile peek-sheet, full Q5 collapse. The in-canvas aside is retained behind `showConciergeAside`/`showConciergeSheet` for the prototype (removed in PS6).
 - **goal:** the three-region desktop shell and mobile tab bar exist; the concierge persists across view
   navigation; today's Timeline & Collection render **unchanged** inside routed destinations.
 - **deliverables:**
@@ -110,6 +167,7 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** — · **size:** L (the foundational refactor).
 
 ### PS2 — Artemis session list (un-collapse sessions)
+> **DONE** (commits `98f50bc` + `07146b3`, see §0). Migration `0036` applied to local DB. Reuse index shipped as a **plain** partial index on `(client_id, audience, itinerary_id, started_at desc) WHERE ended_at IS NULL AND archived_at IS NULL` (not unique — multiple live sessions per scope). Context-chip is scaffolded (empty), wired in PS4; the people-circle "Advisor" is a PS7 placeholder.
 - **goal:** many named, scoped, resumable Artemis sessions per scope; switching trips no longer re-pins the one
   session; the concierge column shows the list.
 - **deliverables:**
@@ -229,13 +287,15 @@ and can run late without blocking the traveler-facing shell.
 
 ## 5. New data model (cumulative)
 
-| Migration (next avail.) | Slice | Change |
+| Migration | Slice | Change |
 | --- | --- | --- |
-| 00NN | PS2 | `agent_sessions` += `title text`, `archived_at timestamptz`; revisit the open-session partial index so reuse can honor scope |
-| 00NN | PS4 | *(only if missing)* per-node charges read — no schema change, reads `invoice_line_items` + `bookings` |
-| 00NN | PS7 | `threads` / `messages` / `thread_participants` (+ RLS) — shape decided in **PS0/Q13** |
+| **0036** ✱ | PS2 | **done** — `agent_sessions` += `title text`, `archived_at timestamptz`; open-session partial index replaced with a scope-aware one (`client_id, audience, itinerary_id, started_at desc`) over live rows |
+| next avail. | PS4 | *(only if missing)* per-node charges read — no schema change, reads `invoice_line_items` + `bookings` |
+| next avail. | PS7 | `threads` / `messages` / `thread_participants` (+ RLS) — shape in **PS0/Q13 = UNIFY**; see `scratchpad/00NN_messaging_threads.draft.sql` |
 
-Every schema change re-runs `pnpm -C packages/api-client generate` and commits `src/generated/`.
+✱ Next free migration number after this is **0037**. Every schema change re-runs
+`pnpm -C packages/api-client generate` and adds a wrapper in `packages/api-client/src/index.ts` (generated
+output is gitignored — not committed).
 
 ---
 
@@ -259,9 +319,9 @@ new coverage above; craft line held; staging UAT passed.
 
 ## 8. Still needs a human call
 
-- **Q13 (PS0 output).** The one held decision — unify vs bridge. PS0 produces the recommendation; confirm
-  before PS7.
-- **Default vetoes.** Q3 (takeover), Q5 (collapse threshold), Q7 (rail order) were decided by default in §1 —
-  say the word to change any before its slice.
+- ~~**Q13 (PS0 output).**~~ **RESOLVED — UNIFY** (endorsed). No longer blocks; PS7 builds on it.
+- **Default vetoes still open** for their upcoming slices: Q3 (card takeover → PS4), Q6 (does the Collection
+  drawer's open/closed belong in the URL? → PS5). Q5 (collapse threshold) and Q7 (rail order) already shipped in
+  PS1 as defaulted — changing them now is a small follow-up, not a veto.
 - **Green-light.** On approval, the §1 decisions graduate to `doc/decisions.md` (D0xx) and this registers in
   `mvp-plan.md` as **M006**.
