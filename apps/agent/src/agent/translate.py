@@ -41,6 +41,13 @@ logger = logging.getLogger("agent.translate")
 
 _TOOL_FRAME_TYPES = {
     "propose_card": "card_proposed",
+    "propose_flight": "card_proposed",
+    # Collection writes surface as cards too — they persist an unscheduled node,
+    # which the client files into the wish list (no start_time) rather than the
+    # timeline. Same frame, same store add; the rail derives the Collection view.
+    "save_to_collection": "card_proposed",
+    "save_link_to_collection": "card_proposed",
+    "add_collection_note": "card_proposed",
     "assemble_draft": "draft_assembled",
     "update_node_status": "node_updated",
     "update_trip_timing": "itinerary_updated",

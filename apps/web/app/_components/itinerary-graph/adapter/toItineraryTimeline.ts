@@ -282,27 +282,39 @@ export function toItineraryTimeline(
   });
 
   const resolvedNodes: NodeResponse[] = timed.map((n) => {
-    const start = explicitStart(n) ?? synthStartMinute.get(n.id) ?? null;
+    const explicit = explicitStart(n);
+    const start = explicit ?? synthStartMinute.get(n.id) ?? null;
     const duration = resolveDuration(n);
     const meta = metaOf(n);
+    // Distinguish a REAL placement (an advisor/agent gave it a time) from a
+    // SYNTHESIZED one (this node is undated and we're just laying it out so the
+    // timeline can render it). The Collection owns undated nodes, so the
+    // dominance logic + timeline layout key off this flag rather than the mere
+    // presence of a `start_time`.
+    const synthesized = explicit === null && start !== null;
     return {
       ...n,
       metadata: {
         ...meta,
         ...(start ? { start_time: start } : {}),
+        ...(synthesized ? { start_synthesized: true } : {}),
         duration_minutes: duration,
       },
     };
   });
 
-  // Build the contiguous day span from earliest to latest node date.
-  const dayKeys = resolvedNodes
+  // Build the contiguous day span from earliest to latest node date, widened to
+  // cover the trip's exact-date window (0033) so a dated-but-empty itinerary
+  // still renders its full length. Nodes falling outside the window extend it.
+  const nodeDayKeys = resolvedNodes
     .map((n) => (n.metadata as NodeMetaTiming).start_time)
     .filter((s): s is string => typeof s === "string")
-    .map((s) => localDayKey(s))
-    .sort();
-  const firstDay = dayKeys[0] ?? synthAnchor;
-  const lastDay = dayKeys[dayKeys.length - 1] ?? firstDay;
+    .map((s) => localDayKey(s));
+  const firstDay =
+    [...nodeDayKeys, ...(exactStart ? [exactStart] : [])].sort()[0] ??
+    synthAnchor;
+  const lastCandidates = [...nodeDayKeys, ...(exactEnd ? [exactEnd] : [])].sort();
+  const lastDay = lastCandidates[lastCandidates.length - 1] ?? firstDay;
   const span = Math.max(0, diffDays(firstDay, lastDay));
   const days = Array.from({ length: span + 1 }, (_, i) => {
     const date = addDaysToKey(firstDay, i);

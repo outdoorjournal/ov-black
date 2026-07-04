@@ -334,3 +334,90 @@ async def test_move_free_standing_note_resyncs_starts_at(
         assert read.starts_at == "2025-07-02T21:00:00+09:00"
     finally:
         await _cleanup(itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_metadata_patch_schedules_then_unschedules_non_note(
+    db_session: AsyncSession,
+) -> None:
+    # Collection ↔ timeline for a non-note (0035): scheduling by writing
+    # metadata.start_time mirrors into the starts_at column; clearing it (drag a
+    # card back to the Collection) clears the column so the read no longer
+    # places it on the timeline — not just for notes.
+    itinerary = await create_itinerary(db_session, _actor(), title="collection sched")
+    try:
+        node = await add_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="Tea ceremony",
+        )
+        assert not isinstance(node, ItineraryError)
+        assert node.starts_at is None  # lands in the Collection, unscheduled
+
+        # Schedule it (a move is a full metadata patch carrying start_time).
+        scheduled = await update_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            metadata={"start_time": "2025-07-02T13:30:00+09:00"},
+        )
+        assert not isinstance(scheduled, ItineraryError)
+        view = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(view, ItineraryError)
+        (read,) = view.nodes
+        assert read.starts_at == "2025-07-02T13:30:00+09:00"
+
+        # Un-schedule it: a metadata patch with no start_time → back to Collection.
+        unscheduled = await update_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            metadata={"note": "maybe later"},
+        )
+        assert not isinstance(unscheduled, ItineraryError)
+        view2 = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(view2, ItineraryError)
+        (read2,) = view2.nodes
+        assert read2.starts_at is None
+    finally:
+        await _cleanup(itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_unschedule_note_returns_to_collection(
+    db_session: AsyncSession,
+) -> None:
+    # A free-standing (timed) note dragged back to the Collection becomes a
+    # timeless, unattached note — legal under the relaxed 0035 CHECK.
+    itinerary = await create_itinerary(db_session, _actor(), title="note uncollect")
+    try:
+        note = await add_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            type=NodeType.note,
+            title="dinner?",
+            starts_at="2025-07-02T19:30:00+09:00",
+        )
+        assert not isinstance(note, ItineraryError)
+        unscheduled = await update_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            node_id=note.id,
+            metadata={"body": "still thinking about it"},
+        )
+        assert not isinstance(unscheduled, ItineraryError)
+        view = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(view, ItineraryError)
+        (read,) = view.nodes
+        assert read.starts_at is None
+        assert read.attached_to_node_id is None
+    finally:
+        await _cleanup(itinerary.id)

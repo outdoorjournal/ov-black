@@ -10,6 +10,12 @@ them to instantiate each turn's ``Agent``.
 from __future__ import annotations
 
 from agent.schemas import Mode
+from agent.tools.collection import (
+    add_collection_note,
+    get_collection,
+    save_link_to_collection,
+    save_to_collection,
+)
 from agent.tools.fill import fill_gap
 from agent.tools.fork import fork_itinerary
 from agent.tools.inventory import get_inventory_detail, search_inventory
@@ -37,6 +43,11 @@ _TOOLS_ONBOARDING = [
     search_inventory,
     get_inventory_detail,
     propose_card,
+    # Collection (wish list) — the dominant surface before a timeline exists.
+    save_to_collection,
+    save_link_to_collection,
+    add_collection_note,
+    get_collection,
     propose_timeline,
     set_mood,
 ]
@@ -53,6 +64,11 @@ _TOOLS_PLANNING = [
     fill_gap,
     propose_card,
     propose_flight,
+    # Collection (wish list) — shop it before searching fresh inventory.
+    save_to_collection,
+    save_link_to_collection,
+    add_collection_note,
+    get_collection,
     propose_timeline,
     assemble_draft,
     update_node_status,
@@ -73,6 +89,7 @@ _TOOLS_QA = [
     get_traveler_context,
     list_itineraries,
     get_itinerary,
+    get_collection,
     propose_timeline,
     add_note,
     fork_itinerary,

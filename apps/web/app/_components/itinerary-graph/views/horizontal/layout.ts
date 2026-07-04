@@ -8,9 +8,12 @@
 //
 // Strategy: **uniform timeline with elision**. Live regions scale linearly
 // with zoom — `(end−start) × pxPerMinute` — so the timeline compresses
-// evenly when the user zooms out. Dead overnight stretches (no card within
-// `ELIDE_THRESHOLD_MIN` of either edge) collapse to a fixed elision band so
-// the day fits at any zoom. No per-slot min-row-height inflation: a slot
+// evenly when the user zooms out. Dead stretches collapse to a fixed elision
+// band so the day fits at any zoom — but ONLY the night/evening shoulders
+// (before `DAY_START_MIN` / after `DAY_END_MIN`). Empty *daytime* time stays
+// live and full-height so there's always somewhere to drop an afternoon plan;
+// otherwise a sparse day crams its two cards together over a 56px band and the
+// hours between them aren't droppable. No per-slot min-row-height inflation: a slot
 // containing a tall glance card doesn't add real-estate. Start times still
 // snap to a 15-minute grid for clean lane assignment. To stop short events
 // from visually overlapping their neighbors at low zoom, each card
@@ -64,9 +67,18 @@ export const VERTICAL_PAD = 8;
 // lane assignment and card positions land on clean quarter-hour boundaries.
 export const SNAP_SLOT_MIN = 15;
 
-// Empty runs longer than this collapse to a fixed-height elision band.
+// Empty runs longer than this collapse to a fixed-height elision band —
+// but only outside the active-day window (see below).
 const ELIDE_THRESHOLD_MIN = 90;
 const ELIDE_BAND_PX = 56;
+
+// Active-day window. Empty stretches *inside* [DAY_START_MIN, DAY_END_MIN]
+// never elide — they stay live so an advisor can always drop a card into an
+// open afternoon. Only the shoulders (early morning / evening / overnight)
+// collapse. Generous bounds (07:00–21:00) so early-evening plans still land on
+// real, droppable time; genuinely late/overnight dead air is what compresses.
+const DAY_START_MIN = 7 * 60;
+const DAY_END_MIN = 21 * 60;
 
 export interface TimelineSegment {
   type: "live" | "elide";
@@ -232,6 +244,9 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   for (const n of nodes) {
     const m = getHMeta(n);
     if (!m.start_time) continue;
+    // Synthesized placements are Collection items, not timeline cards — the
+    // rail renders them. Skip so they don't double-render onto the timeline.
+    if (m.start_synthesized) continue;
     // Each node is placed by ITS OWN local wall-clock (a trip spans tzs), so
     // resolve the offset from the node's start_time and only fall back to the
     // trip-level default when the string carries none.
@@ -386,41 +401,43 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     const out: TimelineSegment[] = [];
     let yCursor = 0;
     let cursorMin = 0;
+    const pushLive = (s: number, e: number) => {
+      if (e - s <= 0) return;
+      const liveH = (e - s) * effectivePxPerMin;
+      out.push({ type: "live", startMin: s, endMin: e, yStart: yCursor, yEnd: yCursor + liveH });
+      yCursor += liveH;
+    };
+    const pushElide = (s: number, e: number) => {
+      if (e - s <= 0) return;
+      out.push({ type: "elide", startMin: s, endMin: e, yStart: yCursor, yEnd: yCursor + ELIDE_BAND_PX });
+      yCursor += ELIDE_BAND_PX;
+    };
+    // A shoulder (outside the active-day window) elides when it's long enough;
+    // short dead gaps stay live so we don't collapse trivial ones.
+    const pushShoulder = (s: number, e: number) => {
+      if (e - s <= 0) return;
+      if (e - s > ELIDE_THRESHOLD_MIN) pushElide(s, e);
+      else pushLive(s, e);
+    };
+    // Split an empty gap into leading-night shoulder, live daytime core, and
+    // trailing-night shoulder. The daytime core is ALWAYS live (never elided)
+    // so open afternoons keep their full, droppable height.
     const pushGap = (s: number, e: number) => {
-      const span = e - s;
-      if (span <= 0) return;
-      if (span > ELIDE_THRESHOLD_MIN) {
-        out.push({
-          type: "elide",
-          startMin: s,
-          endMin: e,
-          yStart: yCursor,
-          yEnd: yCursor + ELIDE_BAND_PX,
-        });
-        yCursor += ELIDE_BAND_PX;
-      } else {
-        const liveH = span * effectivePxPerMin;
-        out.push({
-          type: "live",
-          startMin: s,
-          endMin: e,
-          yStart: yCursor,
-          yEnd: yCursor + liveH,
-        });
-        yCursor += liveH;
+      if (e - s <= 0) return;
+      const dayS = Math.max(s, DAY_START_MIN);
+      const dayE = Math.min(e, DAY_END_MIN);
+      if (dayE <= dayS) {
+        // Gap lies entirely outside the active-day window.
+        pushShoulder(s, e);
+        return;
       }
+      pushShoulder(s, dayS); // leading night shoulder, if any
+      pushLive(dayS, dayE); // daytime core — full height, droppable
+      pushShoulder(dayE, e); // trailing night/evening shoulder, if any
     };
     for (const [s, e] of merged) {
       pushGap(cursorMin, s);
-      const liveH = (e - s) * effectivePxPerMin;
-      out.push({
-        type: "live",
-        startMin: s,
-        endMin: e,
-        yStart: yCursor,
-        yEnd: yCursor + liveH,
-      });
-      yCursor += liveH;
+      pushLive(s, e);
       cursorMin = e;
     }
     pushGap(cursorMin, MINUTES_PER_DAY);

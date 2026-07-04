@@ -5,7 +5,11 @@ import { describe, expect, test } from "vitest";
 
 import type { NodeResponse } from "@ov-black/api-client";
 
-import { computeHorizontalLayout } from "@/app/_components/itinerary-graph/views/horizontal/layout";
+import {
+  computeHorizontalLayout,
+  mapMinuteToY,
+  mapYToMinute,
+} from "@/app/_components/itinerary-graph/views/horizontal/layout";
 
 function node(id: string, startTime: string): NodeResponse {
   return {
@@ -60,5 +64,37 @@ describe("computeHorizontalLayout per-node timezone", () => {
     const lateY = layout.positions.get("late")!.y;
     const morningY = layout.positions.get("morning")!.y;
     expect(lateY).toBeGreaterThan(morningY);
+  });
+});
+
+describe("computeHorizontalLayout daytime is never elided", () => {
+  // A sparse day with a big empty afternoon between two cards must keep that
+  // gap as real, droppable time — otherwise an advisor can't place anything in
+  // the open afternoon. Overnight/evening dead air still collapses.
+  const morning = node("morning", "2024-06-20T09:00:00Z"); // 09:00
+  const afternoon = node("afternoon", "2024-06-20T16:00:00Z"); // 16:00, ~6h gap
+  const layout = computeHorizontalLayout({
+    nodes: [morning, afternoon],
+    edges: [],
+    pxPerMinute: 1.2,
+    tzOffsetHours: 0,
+    daysMeta: [{ date: "2024-06-20", label: "Day 1" }],
+  });
+
+  test("the empty afternoon between two cards stays a live segment", () => {
+    // 13:00 (780) sits in the empty gap between the 09:00 and 16:00 cards.
+    const mid = layout.segments.find((s) => 780 >= s.startMin && 780 < s.endMin);
+    expect(mid?.type).toBe("live");
+  });
+
+  test("a drop into the empty afternoon lands at that time, not a collapsed edge", () => {
+    // Round-tripping a mid-gap minute through the y axis must return ~that
+    // minute. An elide band would instead snap it to the band's end minute.
+    const y = mapMinuteToY(780, layout.segments);
+    expect(mapYToMinute(y, layout.segments)).toBeCloseTo(780, 0);
+  });
+
+  test("the overnight shoulder still collapses to an elision band", () => {
+    expect(layout.segments.some((s) => s.type === "elide")).toBe(true);
   });
 });

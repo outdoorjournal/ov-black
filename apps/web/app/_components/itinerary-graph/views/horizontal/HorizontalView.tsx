@@ -57,12 +57,16 @@ import {
   mapYToMinute,
 } from "./layout";
 import {
+  collectionItemsOf,
   itineraryGraphStore,
+  nodeIdFromDragId,
+  scheduledCountOf,
   selectCanLeaveNote,
   selectEditable,
   selectIsDraftMine,
   selectTravelerEditable,
 } from "../../store/itineraryGraphStore";
+import { CollectionRail } from "../../collection/CollectionRail";
 
 import { AuthoringPanel } from "./AuthoringPanel";
 import { ConciergeChat } from "./ConciergeChat";
@@ -208,6 +212,19 @@ export function HorizontalView({
     () => [...nodes, ...pendingProposals],
     [nodes, pendingProposals],
   );
+
+  // Collection (wish list) = unscheduled, non-discarded nodes. When nothing is
+  // scheduled yet it's the dominant surface (an empty dated grid is meaningless
+  // this early); once items land on the timeline it condenses to a side rail.
+  const collectionItems = useMemo(
+    () => collectionItemsOf(nodes, pendingProposals),
+    [nodes, pendingProposals],
+  );
+  const scheduledCount = useMemo(
+    () => scheduledCountOf(nodes, pendingProposals),
+    [nodes, pendingProposals],
+  );
+  const collectionDominant = scheduledCount === 0 && collectionItems.length > 0;
 
   const activeNode = useMemo(
     () => (drag.activeId ? allNodes.find((n) => n.id === drag.activeId) : null) ?? null,
@@ -383,7 +400,15 @@ export function HorizontalView({
       const snapshot = drag;
       setDrag({ activeId: null, overDayKey: null, overMinute: null });
       if (!over) return;
+      // A rail card's drag id is namespaced (`collection:<id>`); strip back to
+      // the real node id so scheduling/moving hits the right node.
+      const nodeId = nodeIdFromDragId(String(active.id));
       const overId = String(over.id);
+      // Dropped onto the Collection rail → un-schedule (return to the wish list).
+      if (overId === "collection-drop") {
+        storeApi.getState().unscheduleNode(nodeId);
+        return;
+      }
       if (!overId.startsWith("day-")) return;
       const targetDayKey = overId.slice(4);
       if (!targetDayKey) return;
@@ -393,11 +418,11 @@ export function HorizontalView({
       // On the draft-mine preview (Official, no fork yet), the FIRST drag lazily
       // forks and carries the move onto the new fork, then navigates to it.
       if (selectIsDraftMine(st)) {
-        st.forkAndMove(String(active.id), targetDayKey, minuteOrNull, (id) =>
+        st.forkAndMove(nodeId, targetDayKey, minuteOrNull, (id) =>
           router.push(`/itinerary/${id}`),
         );
       } else {
-        st.moveNode(String(active.id), targetDayKey, minuteOrNull);
+        st.moveNode(nodeId, targetDayKey, minuteOrNull);
       }
     },
     [drag, storeApi, router],
@@ -570,7 +595,7 @@ export function HorizontalView({
     <DndContext
       sensors={sensors}
       collisionDetection={pointerWithin}
-      onDragStart={(e) => handleDragStart(String(e.active.id))}
+      onDragStart={(e) => handleDragStart(nodeIdFromDragId(String(e.active.id)))}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
@@ -668,7 +693,7 @@ export function HorizontalView({
               DAY_HEADER_HEIGHT is a spacer that lines up with the canvas's
               sticky-top day-headers strip, so 09:00 in the axis sits at the
               same y as 09:00 in the cards. */}
-          {showTimeline ? (
+          {showTimeline && !collectionDominant ? (
             <div
               ref={axisScrollRef}
               className="shrink-0 overflow-hidden border-r border-ink/10 bg-paper/85 backdrop-blur-sm"
@@ -698,7 +723,7 @@ export function HorizontalView({
               cards. When the timeline is gated off (vague brief, empty board),
               only the empty-state lives here — no dated grid behind it. */}
           <div className="relative flex min-w-0 flex-1">
-            {showTimeline ? (
+            {showTimeline && !collectionDominant ? (
               <>
                 <div
                   ref={canvasScrollRef}
@@ -745,10 +770,24 @@ export function HorizontalView({
                 />
               </>
             ) : null}
-            {nodes.length === 0 && pendingProposals.length === 0 ? (
+            {collectionDominant ? (
+              <CollectionRail variant="board" />
+            ) : nodes.length === 0 && pendingProposals.length === 0 ? (
               <BuilderEmptyState hint="aside" />
             ) : null}
           </div>
+
+          {/* Collection rail beside a populated timeline (xl+). When nothing is
+              scheduled yet the Collection is dominant above instead, so this is
+              gated on !collectionDominant. */}
+          {!collectionDominant && collectionItems.length > 0 ? (
+            <aside
+              data-testid="collection-rail-aside"
+              className="hidden w-[320px] shrink-0 xl:flex"
+            >
+              <CollectionRail variant="rail" />
+            </aside>
+          ) : null}
 
           {/* Staff aside — fixed width, doesn't scroll with the canvas. For
               advisors it switches between the authoring tools (Build), a
@@ -831,6 +870,7 @@ export function HorizontalView({
                       accessToken={accessToken}
                       clientId={clientId}
                       itineraryId={timeline.itinerary.id}
+                      hydrateHistory
                       intro="Private workspace — just you and the concierge. The traveler never sees this conversation."
                       onScrollToNode={scrollToNode}
                     />
@@ -892,6 +932,7 @@ export function HorizontalView({
                 accessToken={accessToken}
                 clientId={clientId}
                 itineraryId={timeline.itinerary.id}
+                hydrateHistory
                 onScrollToNode={scrollToNode}
               />
             )}

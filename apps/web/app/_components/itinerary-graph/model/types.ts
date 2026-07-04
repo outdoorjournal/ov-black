@@ -27,6 +27,10 @@ export interface VerticalNodeMeta extends NodeMeta {
   weather_emoji?: string;
   night_bar?: boolean;
   alt_group?: string;
+  // Set by the adapter when `start_time` was auto-laid-out for an undated node
+  // (vs. a real placement). Such nodes belong to the Collection, so the
+  // timeline layout skips them and the dominance logic treats them as unscheduled.
+  start_synthesized?: boolean;
 }
 
 export function getVerticalMeta(node: NodeResponse): VerticalNodeMeta {

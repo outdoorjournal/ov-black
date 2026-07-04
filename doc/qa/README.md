@@ -188,5 +188,6 @@ the live app" section).
 | --- | --- | --- |
 | Onboarding | `ONB` | [onboarding.md](./onboarding.md) |
 | Itinerary Builder | `ITB` | [itinerary-builder.md](./itinerary-builder.md) |
+| Collection (Wish List) | `COL` | [collection.md](./collection.md) |
 
 _Add a row when you start a new area file._

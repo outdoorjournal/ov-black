@@ -29,9 +29,12 @@ import {
   groupNodesByDay,
 } from "../../shared/groupNodesByDay";
 import {
+  collectionItemsOf,
   itineraryGraphStore,
+  scheduledCountOf,
   selectCanLeaveNote,
 } from "../../store/itineraryGraphStore";
+import { CollectionRail } from "../../collection/CollectionRail";
 
 import { ConciergeSheet } from "./ConciergeSheet";
 import { DayStrip } from "./DayStrip";
@@ -69,6 +72,15 @@ export function MobileItineraryLayout({
     () => groupNodesByDay([...nodes, ...pendingProposals], timeline.days, tz),
     [nodes, pendingProposals, timeline.days, tz],
   );
+  // Collection dominates the small screen when nothing is scheduled yet (an
+  // empty dated pager would be meaningless). Once items are on the timeline, the
+  // pager returns; the Collection is then reached from the desktop rail.
+  const collectionItems = useMemo(
+    () => collectionItemsOf(nodes, pendingProposals),
+    [nodes, pendingProposals],
+  );
+  const collectionDominant =
+    scheduledCountOf(nodes, pendingProposals) === 0 && collectionItems.length > 0;
   const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
   const canLeaveNote = itineraryGraphStore.useStore(selectCanLeaveNote);
   const addAttachedNote = itineraryGraphStore.useStore((s) => s.addAttachedNote);
@@ -166,7 +178,7 @@ export function MobileItineraryLayout({
         </div>
       </header>
 
-      {showTimeline ? (
+      {showTimeline && !collectionDominant ? (
         <DayStrip groups={groups} activeIndex={activeDay} onSelect={goToDay} />
       ) : null}
 
@@ -176,7 +188,12 @@ export function MobileItineraryLayout({
           board yet. When the timeline is gated off (vague brief, empty board),
           only the empty-state lives here — no dated pager behind it. */}
       <div className="relative flex min-h-0 flex-1">
-        {showTimeline ? (
+        {collectionDominant ? (
+          <div className="min-h-0 w-full flex-1">
+            <CollectionRail variant="board" />
+          </div>
+        ) : null}
+        {showTimeline && !collectionDominant ? (
           <div
             ref={pagerRef}
             onScroll={onPagerScroll}

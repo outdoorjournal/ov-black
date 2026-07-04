@@ -31,6 +31,8 @@ import {
   createMyPartyMemberEndpointMePartyMembersPost,
   createNodeEndpointItineraryItineraryIdNodesPost,
   createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost,
+  createNodeFromLinkEndpointItineraryItineraryIdNodesFromLinkPost,
+  getCollectionEndpointItineraryItineraryIdCollectionGet,
   createOsintFactEndpointClientsClientIdOsintFactsPost,
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
@@ -155,6 +157,7 @@ import type {
   MyOnboardingSessionResponse,
   NodeResponse,
   NodeStatus,
+  NodeType,
   OnboardingOpenerResponse,
   OpenSessionRequest,
   OpenSessionResponse,
@@ -1356,6 +1359,118 @@ function parseCreateNodeFromInventoryDetail(
   if (status === 400) return "unknown_source";
   if (status === 404) return "inventory_not_found";
   if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type CreateNodeFromLinkDetail =
+  | "itinerary_not_found"
+  | "forbidden"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+export type CreateNodeFromLinkResult =
+  | { ok: true; node: NodeResponse }
+  | { ok: false; status: number; detail: CreateNodeFromLinkDetail };
+
+export type CreateNodeFromLinkArgs = {
+  itineraryId: string;
+  url: string;
+  // Files the link under a Collection category (a restaurant → `meal`); the
+  // server defaults to `note` (unfiled) when omitted.
+  kind?: NodeType;
+  status?: NodeStatus;
+  note?: string;
+  parentSubgraphId?: string | null;
+};
+
+/**
+ * Typed wrapper for POST /itinerary/{id}/nodes/from-link. Saves a pasted web
+ * link into the Collection: the server fetches its OpenGraph preview and adds
+ * an unscheduled card (default status `proposed`, default kind `note`). 403 →
+ * `forbidden`, 404 → `itinerary_not_found`, 422 → `validation_error`.
+ */
+export async function createNodeFromLink(
+  client: Client,
+  args: CreateNodeFromLinkArgs,
+): Promise<CreateNodeFromLinkResult> {
+  try {
+    const { data, error, response } =
+      await createNodeFromLinkEndpointItineraryItineraryIdNodesFromLinkPost({
+        client,
+        path: { itinerary_id: args.itineraryId },
+        body: {
+          url: args.url,
+          ...(args.kind ? { kind: args.kind } : {}),
+          ...(args.status ? { status: args.status } : {}),
+          ...(args.note !== undefined ? { note: args.note } : {}),
+          ...(args.parentSubgraphId !== undefined
+            ? { parent_subgraph_id: args.parentSubgraphId }
+            : {}),
+        },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, node: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseCreateNodeFromLinkDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseCreateNodeFromLinkDetail(status: number): CreateNodeFromLinkDetail {
+  if (status === 403) return "forbidden";
+  if (status === 404) return "itinerary_not_found";
+  if (status === 422) return "validation_error";
+  return "unknown";
+}
+
+export type GetCollectionDetail =
+  | "itinerary_not_found"
+  | "forbidden"
+  | "network_error"
+  | "unknown";
+
+export type GetCollectionResult =
+  | { ok: true; itineraryId: string; items: NodeResponse[] }
+  | { ok: false; status: number; detail: GetCollectionDetail };
+
+/**
+ * Typed wrapper for GET /itinerary/{id}/collection — the wish list:
+ * unscheduled, non-discarded nodes. The web usually derives the Collection
+ * from the graph it already loads; this is the cheap read for surfaces that
+ * only need the wish list. 403 → `forbidden`, 404 → `itinerary_not_found`.
+ */
+export async function getCollection(
+  client: Client,
+  itineraryId: string,
+): Promise<GetCollectionResult> {
+  try {
+    const { data, error, response } =
+      await getCollectionEndpointItineraryItineraryIdCollectionGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, itineraryId: data.itinerary_id, items: data.items };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseGetCollectionDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseGetCollectionDetail(status: number): GetCollectionDetail {
+  if (status === 403) return "forbidden";
+  if (status === 404) return "itinerary_not_found";
   return "unknown";
 }
 

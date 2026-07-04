@@ -46,6 +46,13 @@ vi.mock("@/lib/supabase/client", () => ({
   },
 }));
 
+// ConciergeChat calls useRouter().refresh() on the `itinerary_updated` frame to
+// re-pull server-rendered trip timing. jsdom has no app-router context, so stub
+// it; the stubbed useAgentStream never fires that frame, so refresh is unused.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+}));
+
 import {
   createSessionEndpoint,
   listTurns,

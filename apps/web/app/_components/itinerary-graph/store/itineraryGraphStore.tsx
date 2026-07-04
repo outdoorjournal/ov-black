@@ -31,6 +31,7 @@ import {
   createApiClient,
   createNode,
   createNodeFromInventory,
+  createNodeFromLink,
   deleteNode,
   fillGap,
   forkItinerary,
@@ -189,6 +190,14 @@ export type ItineraryGraphState = {
   addAttachedNote: (hostId: string, text: string) => void;
   // Drop a free-standing note on a day at noon ("a dinner between these").
   addFreeStandingNote: (dayKey: string, text: string) => void;
+  // ── Collection (wish list) writes (credentialed; backend authorizes) ──
+  // A pasted web link → server fetches its OpenGraph preview into a card.
+  savingLink: boolean;
+  saveLinkToCollection: (url: string, kind?: NodeType, note?: string) => void;
+  // A timeless note into the wish list (no anchor, no time).
+  addCollectionNote: (text: string) => void;
+  // Return a scheduled card to the Collection by clearing its start_time.
+  unscheduleNode: (id: string) => void;
   // ── two-version (Official ↔ My version) actions ──
   // Switch between the official baseline and the traveler's version. On a fork,
   // "official" navigates to the baseline; on a baseline, "mine" navigates to an
@@ -319,6 +328,82 @@ export function selectIsDraftMine(s: ItineraryGraphState): boolean {
   );
 }
 
+/**
+ * A node is scheduled once it carries a REAL `metadata.start_time` — one an
+ * advisor/agent actually placed. A *synthesized* start (the adapter auto-lays
+ * out undated nodes so the timeline can draw them, stamping
+ * `start_synthesized`) does NOT count: those nodes still belong to the
+ * Collection until someone gives them a time.
+ */
+function isScheduled(node: NodeResponse): boolean {
+  const meta = node.metadata as { start_time?: string; start_synthesized?: boolean };
+  if (meta.start_synthesized === true) return false;
+  return typeof meta.start_time === "string" && meta.start_time.length > 0;
+}
+
+/**
+ * The Collection (wish list): every non-discarded node the viewer is
+ * accumulating — persisted nodes AND fresh agent proposals, deduped by id.
+ * This is the pile the rail renders. It's the whole mood board, so a node that
+ * gets *placed* on the timeline (given a real start_time) STAYS here too — the
+ * timeline is an additional surface for it, not a move out of the Collection.
+ * Only discarding a node removes it.
+ *
+ * Pure over the two raw arrays so React components can `useMemo` it off the
+ * stable `s.nodes` / `s.pendingProposals` references rather than passing a
+ * new-array-every-render selector straight to `useStore` (which would defeat
+ * the store's `Object.is` change check).
+ */
+export function collectionItemsOf(
+  nodes: NodeResponse[],
+  pending: NodeResponse[],
+): NodeResponse[] {
+  const seen = new Set<string>();
+  const out: NodeResponse[] = [];
+  for (const n of [...nodes, ...pending]) {
+    if (seen.has(n.id)) continue;
+    if (n.status === "discarded") continue;
+    seen.add(n.id);
+    out.push(n);
+  }
+  return out;
+}
+
+export function selectCollectionItems(s: ItineraryGraphState): NodeResponse[] {
+  return collectionItemsOf(s.nodes, s.pendingProposals);
+}
+
+// A placed node now shows in BOTH the timeline and the Collection rail (see
+// `collectionItemsOf`). Both make it draggable inside the same DndContext, so
+// the rail namespaces its draggable id to avoid a duplicate-id collision with
+// the timeline card. Handlers strip the prefix back to the real node id.
+const COLLECTION_DRAG_PREFIX = "collection:";
+export const collectionDragId = (nodeId: string): string =>
+  `${COLLECTION_DRAG_PREFIX}${nodeId}`;
+export const nodeIdFromDragId = (dragId: string): string =>
+  dragId.startsWith(COLLECTION_DRAG_PREFIX)
+    ? dragId.slice(COLLECTION_DRAG_PREFIX.length)
+    : dragId;
+
+/**
+ * How many items are actually placed on the timeline. When this is zero the
+ * Collection is the dominant surface (there's no meaningful timeline to show
+ * yet), so the view hands it the main canvas.
+ */
+export function scheduledCountOf(
+  nodes: NodeResponse[],
+  pending: NodeResponse[],
+): number {
+  let n = 0;
+  for (const node of nodes) if (node.status !== "discarded" && isScheduled(node)) n += 1;
+  for (const node of pending) if (isScheduled(node)) n += 1;
+  return n;
+}
+
+export function selectScheduledCount(s: ItineraryGraphState): number {
+  return scheduledCountOf(s.nodes, s.pendingProposals);
+}
+
 // Move the start_time of a node onto a different day, keeping HH:MM and tz
 // offset intact. This is what powers the drag-and-drop "move to day N" gesture.
 function rebaseStartToDay(
@@ -391,7 +476,11 @@ function rebasedMetadata(
         ? rebaseStartToDay(meta.start_time, dayKey, tz)
         : null;
   if (newStart === null) return null;
-  return { ...meta, start_time: newStart };
+  // A real drop sheds the synthesized marker: the node now has a placement
+  // someone chose, so it belongs on the timeline, not the Collection.
+  const next: Record<string, unknown> = { ...meta, start_time: newStart };
+  delete next["start_synthesized"];
+  return next;
 }
 
 export const itineraryGraphStore = createStoreContext<
@@ -872,6 +961,94 @@ export const itineraryGraphStore = createStoreContext<
                 ? cur.nodes.map((n) => (n.id === tempId ? result.node : n))
                 : cur.nodes.filter((n) => n.id !== tempId),
             }));
+          });
+        },
+
+        // ── Collection (wish list) writes ───────────────────────────────────
+        savingLink: false,
+        saveLinkToCollection: (url, kind, note) => {
+          const s = get();
+          const trimmed = url.trim();
+          if (!trimmed || s.savingLink || !selectCanLeaveNote(s)) return;
+          const c = client();
+          if (!c) return;
+          set({ savingLink: true });
+          void createNodeFromLink(c, {
+            itineraryId: s.itineraryId,
+            url: trimmed,
+            ...(kind ? { kind } : {}),
+            ...(note ? { note } : {}),
+          })
+            .then((result) => {
+              if (result.ok) {
+                set((cur) => ({
+                  nodes: [...cur.nodes, result.node],
+                  flashNodeId: result.node.id,
+                }));
+              }
+            })
+            .finally(() => set({ savingLink: false }));
+        },
+        addCollectionNote: (text) => {
+          const s = get();
+          const body = text.trim();
+          if (!body || !selectCanLeaveNote(s)) return;
+          const c = client();
+          if (!c) return;
+          const tempId = `tmp-note-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+          const optimistic: NodeResponse = {
+            id: tempId,
+            itinerary_id: s.itineraryId,
+            parent_subgraph_id: null,
+            type: "note",
+            status: "proposed",
+            title: body,
+            source: null,
+            source_id: null,
+            metadata: {},
+          };
+          set({ nodes: [...s.nodes, optimistic], flashNodeId: tempId });
+          void createNode(c, {
+            itineraryId: s.itineraryId,
+            body: { type: "note", title: body, status: "proposed" },
+          }).then((result) => {
+            set((cur) => ({
+              nodes: result.ok
+                ? cur.nodes.map((n) => (n.id === tempId ? result.node : n))
+                : cur.nodes.filter((n) => n.id !== tempId),
+            }));
+          });
+        },
+        unscheduleNode: (id) => {
+          const s = get();
+          const target =
+            s.nodes.find((n) => n.id === id) ??
+            s.pendingProposals.find((n) => n.id === id);
+          if (!target) return;
+          // Strip start_time (+ mirrored offset) so the node returns to the
+          // Collection. Persist only for actors who may write; the backend then
+          // clears the starts_at column to match (0035 update_node fix).
+          const meta = { ...(target.metadata as Record<string, unknown>) };
+          delete meta["start_time"];
+          delete meta["tz_offset_minutes"];
+          delete meta["start_synthesized"];
+          const apply = (n: NodeResponse): NodeResponse =>
+            n.id === id ? { ...n, metadata: meta } : n;
+          const previousNodes = s.nodes;
+          set({
+            nodes: s.nodes.map(apply),
+            pendingProposals: s.pendingProposals.map(apply),
+            flashNodeId: id,
+          });
+          if (!selectEditable(get()) && !selectTravelerEditable(get())) return;
+          const c = client();
+          if (!c) return;
+          void updateNode(c, {
+            itineraryId: s.itineraryId,
+            nodeId: id,
+            patch: { metadata: meta },
+          }).then((result) => {
+            if (!result.ok) set({ nodes: previousNodes });
           });
         },
 

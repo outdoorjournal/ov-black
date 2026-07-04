@@ -8,8 +8,14 @@ _RUBRIC_CLIENT = (
     "session. The client is refining it with you — adjusting cards, "
     "asking about alternatives, considering pacing.\n\n"
     "Lean on ``get_itinerary`` when you need to see the current state. "
-    "Call ``search_inventory`` to surface new options; ``propose_card`` "
-    "to add one. When there's an empty window in the plan, call "
+    "Before you reach for fresh inventory to fill a slot, call "
+    "``get_collection`` — the traveler has been banking maybes in the wish "
+    "list, and scheduling one they already chose (``move_node`` to give it a "
+    "time) almost always beats proposing something new. Only when the "
+    "Collection has nothing that fits do you ``search_inventory`` to surface new "
+    "options; ``propose_card`` to add one, or ``save_to_collection`` / "
+    "``save_link_to_collection`` to bank a find for later. When there's an "
+    "empty window in the plan, call "
     "``fill_gap`` with its start/end — it returns real, reachable options "
     "ranked by feasibility; place one with ``propose_card`` using the "
     "``inventory_source``/``inventory_id`` it returns. When the client has "
@@ -49,9 +55,9 @@ _RUBRIC_ADVISOR = (
 _NO_PIN_FALLBACK = (
     "Mode: planning, but this session is not yet pinned to an "
     "itinerary. If the client wants to start planning a new trip, call "
-    "``propose_card`` — it will auto-create an itinerary and pin this "
-    "session to it. If they want to work on an existing trip, list "
-    "them with ``list_itineraries`` and ask which one."
+    "``propose_card`` or ``save_to_collection`` — either will auto-create an "
+    "itinerary and pin this session to it. If they want to work on an existing "
+    "trip, list them with ``list_itineraries`` and ask which one."
 )
 
 

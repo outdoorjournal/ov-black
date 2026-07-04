@@ -171,6 +171,7 @@ export function ConciergeSheet({
             accessToken={accessToken}
             clientId={clientId}
             itineraryId={itineraryId}
+            hydrateHistory
             hideHeader
           />
         </div>

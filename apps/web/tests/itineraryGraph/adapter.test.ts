@@ -200,3 +200,63 @@ describe("toItineraryTimeline — days + tz", () => {
     }
   });
 });
+
+describe("toItineraryTimeline — exact trip window (0033)", () => {
+  const EXACT: ItineraryResponse = {
+    ...ITINERARY,
+    timing_kind: "exact",
+    date_start: "2026-08-10",
+    date_end: "2026-08-18",
+  };
+
+  test("empty exact itinerary spans the full date window", () => {
+    const tl = toItineraryTimeline(EXACT, [], []);
+    // Aug 10 → 18 inclusive = 9 days, even with nothing scheduled.
+    expect(tl.days.map((d) => d.date)).toEqual([
+      "2026-08-10",
+      "2026-08-11",
+      "2026-08-12",
+      "2026-08-13",
+      "2026-08-14",
+      "2026-08-15",
+      "2026-08-16",
+      "2026-08-17",
+      "2026-08-18",
+    ]);
+    expect(tl.windowStart.startsWith("2026-08-10")).toBe(true);
+    expect(tl.windowEnd.startsWith("2026-08-18")).toBe(true);
+  });
+
+  test("an undated node lands on the trip window, not today", () => {
+    const tl = toItineraryTimeline(EXACT, [makeNode("a")], []);
+    // Synth anchor is date_start, so the first undated card sits on Aug 10.
+    expect(meta(tl.nodes[0]!).start_time?.startsWith("2026-08-10")).toBe(true);
+  });
+
+  test("a node outside the window extends the span", () => {
+    const tl = toItineraryTimeline(
+      EXACT,
+      [makeNode("late", { starts_at: "2026-08-20T09:00:00+00:00" })],
+      [],
+    );
+    // Window ends Aug 18 but a node on Aug 20 stretches the span to cover it.
+    expect(tl.days[0]!.date).toBe("2026-08-10");
+    expect(tl.days[tl.days.length - 1]!.date).toBe("2026-08-20");
+  });
+
+  test("window/flexible kinds stay node-driven (no fabricated days)", () => {
+    // A loose window with dates set but nothing scheduled must NOT fabricate a
+    // wall of empty days — only `exact` owns the span.
+    const loose: ItineraryResponse = {
+      ...ITINERARY,
+      timing_kind: "window",
+      date_start: "2026-06-01",
+      date_end: "2026-08-31",
+    };
+    const tl = toItineraryTimeline(loose, [], [], {
+      synthAnchorDate: "2026-06-15",
+    });
+    expect(tl.days).toHaveLength(1);
+    expect(tl.days[0]!.date).toBe("2026-06-15");
+  });
+});
