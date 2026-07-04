@@ -62,9 +62,11 @@ export function ItineraryShell({
 }: ItineraryShellProps) {
   const [showIntake, setShowIntake] = useState(needsBrief);
   // <1100px the concierge is a summonable overlay (opened from the Rail on a
-  // tablet, or the Chat tab on a phone); ≥1100px it is an in-flow column and
-  // this flag is inert. Q5 default — full collapse polish lands in PS6.
+  // tablet, or the Chat tab on a phone); ≥1100px it is an in-flow column.
   const [conciergeOpen, setConciergeOpen] = useState(false);
+  // Q5 (PS6): ≥1100px the concierge is open by default but collapsible to a slim
+  // edge tab, so the planning space can take the full width when wanted.
+  const [conciergeCollapsed, setConciergeCollapsed] = useState(false);
 
   if (showIntake && apiBaseUrl && accessToken) {
     return (
@@ -101,21 +103,42 @@ export function ItineraryShell({
           >
             <Rail onOpenConcierge={() => setConciergeOpen(true)} />
 
-            {/* People axis. ≥1100px: an in-flow column. Below that: hidden until
-                summoned, then a full-screen overlay (neutralised back to in-flow
-                at ≥1100 so the state never traps the desktop layout). */}
+            {/* People axis. ≥1100px: an in-flow column (collapsible to an edge
+                tab — Q5). Below that: hidden until summoned, then a full-screen
+                overlay (neutralised back to in-flow at ≥1100 so the state never
+                traps the desktop layout). */}
             <aside
               data-testid="concierge-column"
-              className={
-                "flex-col bg-paper " +
-                "min-[1100px]:flex min-[1100px]:w-[380px] min-[1100px]:shrink-0 min-[1100px]:border-r min-[1100px]:border-ink/10 " +
-                (conciergeOpen
+              data-collapsed={conciergeCollapsed ? "true" : "false"}
+              className={[
+                "flex-col bg-paper",
+                conciergeCollapsed
+                  ? "min-[1100px]:hidden"
+                  : "min-[1100px]:flex min-[1100px]:w-[380px] min-[1100px]:shrink-0 min-[1100px]:border-r min-[1100px]:border-ink/10",
+                conciergeOpen
                   ? "fixed inset-0 z-40 flex min-[1100px]:static min-[1100px]:inset-auto min-[1100px]:z-auto"
-                  : "hidden min-[1100px]:flex")
-              }
+                  : "hidden",
+              ].join(" ")}
             >
-              <ConciergeColumn onClose={() => setConciergeOpen(false)} />
+              <ConciergeColumn
+                onClose={() => setConciergeOpen(false)}
+                onCollapse={() => setConciergeCollapsed(true)}
+              />
             </aside>
+
+            {/* Reopen tab — only when the ≥1100px column is collapsed. A slim
+                left-edge affordance so the concierge is one click from back. */}
+            {conciergeCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setConciergeCollapsed(false)}
+                data-testid="concierge-reopen"
+                aria-label="Reopen the concierge"
+                className="hidden shrink-0 items-center border-r border-ink/10 bg-paper/85 px-1.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink min-[1100px]:flex"
+              >
+                <span className="[writing-mode:vertical-rl] rotate-180">Concierge ›</span>
+              </button>
+            ) : null}
 
             {/* Planning space — the routed destination fills the rest. The
                 padding clears the fixed mobile tab bar (h-14); none on md+. */}

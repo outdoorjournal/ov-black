@@ -183,10 +183,29 @@ describe("ItineraryShell · first-run intake gate", () => {
   });
 });
 
+describe("ItineraryShell · concierge collapse (Q5)", () => {
+  test("collapses the ≥1100px column to an edge tab and reopens", () => {
+    renderShell("client");
+    const aside = screen.getByTestId("concierge-column");
+    expect(aside.getAttribute("data-collapsed")).toBe("false");
+    expect(screen.queryByTestId("concierge-reopen")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("concierge-collapse"));
+    expect(aside.getAttribute("data-collapsed")).toBe("true");
+
+    fireEvent.click(screen.getByTestId("concierge-reopen"));
+    expect(aside.getAttribute("data-collapsed")).toBe("false");
+    expect(screen.queryByTestId("concierge-reopen")).toBeNull();
+  });
+});
+
 describe("Rail · places axis", () => {
-  test("advisor sees Timeline, Collection, and the advisor-only Studio", () => {
+  test("advisor sees Home, Timeline, Collection, and the advisor-only Studio", () => {
     render(withProviders("advisor", <Rail onOpenConcierge={() => {}} />));
     const rail = screen.getByTestId("planner-rail");
+    expect(within(rail).getByTestId("rail-home").getAttribute("href")).toBe(
+      "/itinerary/it-1/dashboard",
+    );
     expect(within(rail).getByTestId("rail-timeline").getAttribute("href")).toBe(
       "/itinerary/it-1/timeline",
     );

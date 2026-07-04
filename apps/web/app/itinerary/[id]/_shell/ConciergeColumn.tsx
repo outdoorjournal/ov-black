@@ -19,7 +19,15 @@ import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataC
 
 import { SessionThread } from "./SessionThread";
 
-export function ConciergeColumn({ onClose }: { onClose: () => void }) {
+export function ConciergeColumn({
+  onClose,
+  onCollapse,
+}: {
+  /** Close the <1100px summoned overlay. */
+  onClose: () => void;
+  /** Collapse the ≥1100px in-flow column to the edge tab (Q5). */
+  onCollapse?: () => void;
+}) {
   const { timeline } = useTimelineData();
   const canEdit = itineraryGraphStore.useStore((s) => s.canEdit);
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
@@ -59,6 +67,17 @@ export function ConciergeColumn({ onClose }: { onClose: () => void }) {
       >
         <PersonCircle label="Artemis" active />
         <PersonCircle label="Advisor" disabled title="Human chat arrives in a later slice" />
+        {onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            data-testid="concierge-collapse"
+            aria-label="Collapse the concierge"
+            className="ml-auto hidden h-7 items-center rounded-md px-2 font-sans text-base text-ink/45 transition-colors hover:bg-ink/5 hover:text-ink min-[1100px]:flex"
+          >
+            ‹
+          </button>
+        ) : null}
       </div>
 
       {/* Context chip (PS4) — the card the concierge is scoped to. Sits above
