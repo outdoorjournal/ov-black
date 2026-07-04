@@ -8,16 +8,21 @@
 import { HorizontalView } from "@/app/_components/itinerary-graph/views/horizontal/HorizontalView";
 import { MobileItineraryLayout } from "@/app/_components/itinerary-graph/views/mobile/MobileItineraryLayout";
 
+import { useOpenNode } from "./useOpenNode";
+
 export function TimelinePlanningSpace() {
+  // A card click routes to the full-bleed card detail (PS4) rather than the old
+  // in-place modal — same target on both breakpoints, so a deep-link resolves.
+  const openNode = useOpenNode();
   return (
     <>
       {/* md+ : the horizontal timeline canvas. */}
       <div className="hidden md:contents">
-        <HorizontalView embedded showConciergeAside={false} />
+        <HorizontalView embedded showConciergeAside={false} onOpenNode={openNode} />
       </div>
       {/* below md : the swipe-driven day pager of the same graph. */}
       <div className="contents md:hidden">
-        <MobileItineraryLayout embedded showConciergeSheet={false} />
+        <MobileItineraryLayout embedded showConciergeSheet={false} onOpenNode={openNode} />
       </div>
     </>
   );

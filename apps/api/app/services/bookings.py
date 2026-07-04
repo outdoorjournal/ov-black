@@ -146,6 +146,27 @@ class ReconciliationReport:
     balanced: bool
 
 
+@dataclass(frozen=True, slots=True)
+class NodeCharges:
+    """The money facet for a single node (M006/PS4): its billed charge line, the
+    covering invoice's status + id (the pay target), the paid/owed split, and the
+    node's live booking. A read-only roll-*down* of the ledger to one inventory
+    item — the mirror of the Dashboard roll-*up*; the pay/book actions themselves
+    live on the invoice + booking endpoints. Charges add and reversals subtract,
+    matching reconciliation; a voided invoice's lines are ignored."""
+
+    node_id: uuid.UUID
+    node_status: NodeStatus
+    currency: str | None
+    line_item_id: uuid.UUID | None
+    invoice_id: uuid.UUID | None
+    invoice_status: InvoiceStatus | None
+    billed_amount: Decimal
+    paid_amount: Decimal
+    owed_amount: Decimal
+    booking: Booking | None
+
+
 def _err(detail: str) -> ItineraryError:
     return ItineraryError(outcome=ItineraryOutcome.VALIDATION_ERROR, detail=detail)
 
@@ -401,6 +422,68 @@ async def _pick_covering_line(
             .limit(1)
         )
     ).scalar_one_or_none()
+
+
+async def node_charges(
+    session: AsyncSession, itinerary_id: uuid.UUID, node_id: uuid.UUID
+) -> NodeCharges | ItineraryError:
+    """This node's money facet (M006/PS4).
+
+    Sums the node's invoice lines across its non-void invoices — ``billed`` over
+    issued+paid, ``paid`` over paid only, so ``owed = billed − paid``; reversals
+    net out (a voided charge stops billing). The ``primary`` line/invoice a pay
+    action targets is the most recent ``charge`` line, preferring a payable
+    (issued) invoice, then paid, then draft. Also attaches the node's live
+    booking (cancelled rows excluded, per :func:`_booking_for`).
+    """
+    node = await _load_node(session, itinerary_id, node_id)
+    if node is None:
+        return _not_found()
+
+    rows = (
+        await session.execute(
+            select(InvoiceLineItem, Invoice.status, Invoice.id)
+            .join(Invoice, Invoice.id == InvoiceLineItem.invoice_id)
+            .where(
+                InvoiceLineItem.node_id == node_id,
+                Invoice.status != InvoiceStatus.void,
+            )
+            .order_by(InvoiceLineItem.created_at.asc())
+        )
+    ).all()
+
+    # A payable invoice outranks a settled one outranks a still-draft one, so the
+    # facet's single "pay this" affordance points at the line that can be acted on.
+    _rank = {InvoiceStatus.issued: 3, InvoiceStatus.paid: 2, InvoiceStatus.draft: 1}
+    billed = _ZERO
+    paid = _ZERO
+    currency: str | None = None
+    primary: tuple[InvoiceLineItem, InvoiceStatus, uuid.UUID] | None = None
+    for line, status, invoice_id in rows:
+        if currency is None:
+            currency = line.currency
+        if status in (InvoiceStatus.issued, InvoiceStatus.paid):
+            billed += line.amount
+        if status is InvoiceStatus.paid:
+            paid += line.amount
+        if line.kind is InvoiceLineKind.charge and (
+            primary is None or _rank.get(status, 0) > _rank.get(primary[1], 0)
+        ):
+            primary = (line, status, invoice_id)
+
+    booking = await _booking_for(session, node_id)
+    return NodeCharges(
+        node_id=node_id,
+        node_status=node.status,
+        currency=currency,
+        line_item_id=primary[0].id if primary else None,
+        invoice_id=primary[2] if primary else None,
+        invoice_status=primary[1] if primary else None,
+        billed_amount=billed,
+        paid_amount=paid,
+        owed_amount=billed - paid,
+        booking=booking,
+    )
 
 
 def _supplier_booking_provider(

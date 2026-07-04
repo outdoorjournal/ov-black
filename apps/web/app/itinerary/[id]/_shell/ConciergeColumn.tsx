@@ -30,6 +30,11 @@ export function ConciergeColumn({ onClose }: { onClose: () => void }) {
   // Advisor-only: which audience (private workspace vs shared client thread).
   const [audience, setAudience] = useState<"advisor" | "traveler">("advisor");
 
+  // PS4 "ask about this" scopes the concierge to a card; the next turn is
+  // prefixed with it (see ConciergeChat) and then it clears.
+  const askContext = itineraryGraphStore.useStore((s) => s.askContext);
+  const setAskContext = itineraryGraphStore.useStore((s) => s.setAskContext);
+
   return (
     <div data-testid="concierge" className="flex min-h-0 flex-1 flex-col">
       {/* Overlay chrome — only when the column is a summoned overlay (<1100px). */}
@@ -56,8 +61,30 @@ export function ConciergeColumn({ onClose }: { onClose: () => void }) {
         <PersonCircle label="Advisor" disabled title="Human chat arrives in a later slice" />
       </div>
 
-      {/* Context-chip scaffold (PS4 "ask about this" focuses the concierge with a
-          "Re: …" chip here). Intentionally empty until PS4 wires it. */}
+      {/* Context chip (PS4) — the card the concierge is scoped to. Sits above
+          the thread so the next question reads as a reply about that card. */}
+      {askContext ? (
+        <div
+          data-testid="concierge-context-chip"
+          className="flex shrink-0 items-center gap-2 border-b border-ink/10 bg-[rgba(245,112,31,0.06)] px-3 py-2"
+        >
+          <span className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
+            Re:
+          </span>
+          <span className="min-w-0 flex-1 truncate font-serif text-[13px] text-ink">
+            {askContext.title}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAskContext(null)}
+            data-testid="concierge-context-clear"
+            aria-label="Clear card context"
+            className="shrink-0 rounded px-1 font-sans text-sm text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
 
       {canEdit ? (
         <>

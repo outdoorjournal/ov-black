@@ -118,6 +118,10 @@ interface HorizontalViewProps {
    *  passes `false`; the standalone prototype keeps the aside (default `true`).
    *  Transitional — retired with the aside in PS6. */
   showConciergeAside?: boolean;
+  /** Where a card click goes. The routed shell (M006/PS4) passes a navigate to
+   *  /item/[nodeId] (a full-bleed takeover); absent, cards open the in-place
+   *  modal (the prototype / any standalone host). */
+  onOpenNode?: (nodeId: string) => void;
 }
 
 // The horizontal view is a pure consumer of itineraryGraphStore (the mutable
@@ -128,6 +132,7 @@ interface HorizontalViewProps {
 export function HorizontalView({
   embedded = false,
   showConciergeAside = true,
+  onOpenNode,
 }: HorizontalViewProps) {
   const { timeline, baselineTitle } = useTimelineData();
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
@@ -755,7 +760,7 @@ export function HorizontalView({
                         storeApi.getState().focusNode(id);
                       }
                     }}
-                    onCardClick={(id) => setExpandedId(id)}
+                    onCardClick={(id) => (onOpenNode ? onOpenNode(id) : setExpandedId(id))}
                     onAcceptProposal={(id) =>
                       storeApi.getState().acceptProposal(id)
                     }

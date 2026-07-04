@@ -32,7 +32,7 @@ from app.inventory.supplier_booking import (
     SupplierAvailability,
     SupplierSelection,
 )
-from app.models import NodeOffer, NodeStatus, RefundStatus
+from app.models import Booking, InvoiceStatus, NodeOffer, NodeStatus, RefundStatus
 from app.payments.base import PaymentGateway
 from app.routers.inventory import get_inventory_registry
 from app.routers.invoices import _assert_itinerary_access, get_payment_gateway
@@ -151,6 +151,25 @@ class BookingResponse(BaseModel):
     refund_amount: Decimal | None = None
 
 
+class NodeChargesResponse(BaseModel):
+    """The per-node money facet (M006/PS4) — this item's charge, invoice status,
+    paid/owed split, and its live booking. Read-only; the pay action deep-links
+    to ``invoice_id`` and the booking flow lives on the ``/book`` endpoints."""
+
+    node_id: uuid.UUID
+    node_status: NodeStatus
+    currency: str | None = None
+    # The most recent charge line + its invoice (the pay/deep-link target); null
+    # when nothing has been billed against this node yet.
+    line_item_id: uuid.UUID | None = None
+    invoice_id: uuid.UUID | None = None
+    invoice_status: InvoiceStatus | None = None
+    billed_amount: Decimal
+    paid_amount: Decimal
+    owed_amount: Decimal
+    booking: BookingResponse | None = None
+
+
 class SupplierCategoryPriceResponse(BaseModel):
     category_id: str
     amount: Decimal
@@ -224,6 +243,31 @@ def _booking_response(view: BookingView) -> BookingResponse:
         supplier_source=b.supplier_source,
         supplier_booking_id=b.supplier_booking_id,
         reprice_delta=view.reprice_delta,
+        cancelled_at=b.cancelled_at,
+        refund_status=b.refund_status,
+        refund_amount=b.refund_amount,
+    )
+
+
+def _booking_response_bare(b: Booking, node_status: NodeStatus) -> BookingResponse:
+    """A BookingResponse from a raw Booking (no offer/reprice context) — for the
+    money facet read, which doesn't recompute the flight re-price delta."""
+    return BookingResponse(
+        id=b.id,
+        node_id=b.node_id,
+        node_status=node_status,
+        amount=b.amount,
+        currency=b.currency,
+        offer_id=b.offer_id,
+        invoice_line_item_id=b.invoice_line_item_id,
+        supplier_ref=b.supplier_ref,
+        change_cancel_terms=b.change_cancel_terms,
+        override_unpaid=b.override_unpaid,
+        booked_at=b.booked_at,
+        confirmed_at=b.confirmed_at,
+        supplier_source=b.supplier_source,
+        supplier_booking_id=b.supplier_booking_id,
+        reprice_delta=None,
         cancelled_at=b.cancelled_at,
         refund_status=b.refund_status,
         refund_amount=b.refund_amount,
@@ -330,6 +374,40 @@ async def list_offers_endpoint(
     await _assert_itinerary_access(session, user, itinerary_id)
     offers = await bookings_svc.list_offers(session, node_id)
     return [_offer_response(o) for o in offers]
+
+
+@router.get(
+    "/itinerary/{itinerary_id}/nodes/{node_id}/charges",
+    response_model=NodeChargesResponse,
+    summary="This node's money facet: charge line, invoice status, paid/owed, and booking.",
+)
+async def node_charges_endpoint(
+    itinerary_id: uuid.UUID,
+    node_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> NodeChargesResponse:
+    # Same read gate as offers/reconciliation: advisor, owning client, or creator.
+    await _assert_itinerary_access(session, user, itinerary_id)
+    result = await bookings_svc.node_charges(session, itinerary_id, node_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return NodeChargesResponse(
+        node_id=result.node_id,
+        node_status=result.node_status,
+        currency=result.currency,
+        line_item_id=result.line_item_id,
+        invoice_id=result.invoice_id,
+        invoice_status=result.invoice_status,
+        billed_amount=result.billed_amount,
+        paid_amount=result.paid_amount,
+        owed_amount=result.owed_amount,
+        booking=(
+            _booking_response_bare(result.booking, result.node_status)
+            if result.booking is not None
+            else None
+        ),
+    )
 
 
 @router.get(

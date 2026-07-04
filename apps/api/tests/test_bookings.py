@@ -54,9 +54,11 @@ from app.payments.base import PaymentGatewayError, RefundResult
 from app.payments.braintree_gateway import FakeGateway
 from app.services.bookings import (
     BookingView,
+    NodeCharges,
     ReconciliationReport,
     book_node,
     cancel_booking,
+    node_charges,
     reconcile_itinerary,
     record_confirmation,
     refresh_offer,
@@ -329,6 +331,78 @@ async def test_money_gate_blocks_unpaid_then_books_paid_and_confirms(
         assert any(
             r.currency == "USD" and r.booked_total == Decimal("1000.00") for r in report.rows
         )
+    finally:
+        await _cleanup(itin.id)
+
+
+# ── Per-node money facet (M006/PS4) ──────────────────────────────────────────
+
+
+@integration
+@pytest.mark.asyncio
+async def test_node_charges_tracks_billed_paid_owed_and_booking(
+    db_session: AsyncSession,
+) -> None:
+    """The per-node money facet walks the ledger: nothing billed → issued (owed) →
+    paid (owed clears) → booked (the live booking attaches)."""
+    itin = await create_itinerary(db_session, _actor(), title="charges")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
+
+        # 1. Nothing billed yet — an empty facet, but the node resolves.
+        empty = await node_charges(db_session, itin.id, node.id)
+        assert isinstance(empty, NodeCharges)
+        assert empty.currency is None
+        assert empty.billed_amount == Decimal("0.00")
+        assert empty.paid_amount == Decimal("0.00")
+        assert empty.owed_amount == Decimal("0.00")
+        assert empty.invoice_id is None
+        assert empty.line_item_id is None
+        assert empty.booking is None
+        assert empty.node_status is NodeStatus.approved
+
+        # 2. Issued (not paid) — the whole charge is owed; the pay target is set.
+        await _pay_node(db_session, itin.id, node.id, paid=False)
+        issued = await node_charges(db_session, itin.id, node.id)
+        assert isinstance(issued, NodeCharges)
+        assert issued.currency == "USD"
+        assert issued.billed_amount == Decimal("1000.00")
+        assert issued.paid_amount == Decimal("0.00")
+        assert issued.owed_amount == Decimal("1000.00")
+        assert issued.invoice_id is not None
+        assert issued.line_item_id is not None
+        assert issued.invoice_status is not None and issued.invoice_status.value == "issued"
+
+        # 3. Paid — owed clears.
+        marked = await mark_invoice_paid(db_session, invoice_id=issued.invoice_id)
+        assert isinstance(marked, Invoice)
+        await db_session.commit()
+        paid = await node_charges(db_session, itin.id, node.id)
+        assert isinstance(paid, NodeCharges)
+        assert paid.paid_amount == Decimal("1000.00")
+        assert paid.owed_amount == Decimal("0.00")
+        assert paid.invoice_status is not None and paid.invoice_status.value == "paid"
+
+        # 4. Booked — the live booking attaches with the node's new status.
+        view = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(view, BookingView)
+        booked = await node_charges(db_session, itin.id, node.id)
+        assert isinstance(booked, NodeCharges)
+        assert booked.node_status is NodeStatus.booked
+        assert booked.booking is not None
+        assert booked.booking.amount == Decimal("1000.00")
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_node_charges_unknown_node_is_not_found(db_session: AsyncSession) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="charges-404")
+    try:
+        result = await node_charges(db_session, itin.id, uuid.uuid4())
+        assert isinstance(result, ItineraryError)
+        assert result.outcome.value == "not_found"
     finally:
         await _cleanup(itin.id)
 
@@ -898,6 +972,23 @@ def booking_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def _reconcile(_s: Any, _iid: uuid.UUID) -> ReconciliationReport:
         return ReconciliationReport(rows=[], violations=[], balanced=True)
 
+    async def _charges(_s: Any, _iid: uuid.UUID, node_id: uuid.UUID) -> Any:
+        err = returns.get("charges_error")
+        if err is not None:
+            return err
+        return NodeCharges(
+            node_id=node_id,
+            node_status=NodeStatus.approved,
+            currency="USD",
+            line_item_id=uuid.uuid4(),
+            invoice_id=uuid.uuid4(),
+            invoice_status=None,
+            billed_amount=Decimal("1000.00"),
+            paid_amount=Decimal("0.00"),
+            owed_amount=Decimal("1000.00"),
+            booking=None,
+        )
+
     async def _assert_access(_s: Any, _u: Any, _iid: uuid.UUID) -> None:
         if not returns.get("is_advisor", True):
             from fastapi import HTTPException
@@ -907,6 +998,7 @@ def booking_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(rb.bookings_svc, "book_node", _book)
     monkeypatch.setattr(rb.bookings_svc, "cancel_booking", _cancel)
     monkeypatch.setattr(rb.bookings_svc, "reconcile_itinerary", _reconcile)
+    monkeypatch.setattr(rb.bookings_svc, "node_charges", _charges)
     monkeypatch.setattr(rb, "_assert_itinerary_access", _assert_access)
 
     async def _dep() -> Any:
@@ -980,6 +1072,37 @@ def test_book_endpoint_money_gate_409(client: Any, booking_routes: Any, make_tok
     )
     assert resp.status_code == 409
     assert resp.json()["detail"] == "node_not_paid"
+
+
+def test_charges_endpoint_200(client: Any, booking_routes: Any, make_token: Any) -> None:
+    resp = client.get(
+        f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/charges",
+        headers=_headers(make_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["billed_amount"] == "1000.00"
+    assert body["owed_amount"] == "1000.00"
+    assert body["currency"] == "USD"
+    assert body["booking"] is None
+
+
+def test_charges_endpoint_requires_jwt(client: Any, booking_routes: Any) -> None:
+    resp = client.get(f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/charges")
+    assert resp.status_code == 401
+
+
+def test_charges_endpoint_forbidden_for_stranger(
+    client: Any, booking_routes: Any, make_token: Any
+) -> None:
+    # The read admits advisor / owning client / creator; a stranger is gated by
+    # `_assert_itinerary_access` → 403 (the router surfaces the access error).
+    booking_routes["returns"]["is_advisor"] = False
+    resp = client.get(
+        f"/itinerary/{uuid.uuid4()}/nodes/{uuid.uuid4()}/charges",
+        headers=_headers(make_token),
+    )
+    assert resp.status_code == 403
 
 
 def test_cancel_endpoint_200(client: Any, booking_routes: Any, make_token: Any) -> None:

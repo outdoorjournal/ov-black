@@ -54,6 +54,7 @@ import {
   payInvoiceEndpointInvoicesInvoiceIdPayPost,
   refreshOfferEndpointItineraryItineraryIdNodesNodeIdOffersRefreshPost,
   listOffersEndpointItineraryItineraryIdNodesNodeIdOffersGet,
+  nodeChargesEndpointItineraryItineraryIdNodesNodeIdChargesGet,
   bookNodeEndpointItineraryItineraryIdNodesNodeIdBookPost,
   cancelNodeEndpointItineraryItineraryIdNodesNodeIdCancelPost,
   confirmNodeEndpointItineraryItineraryIdNodesNodeIdConfirmPost,
@@ -143,6 +144,7 @@ import type {
   BookNodeRequest,
   BookingResponse,
   CancelBookingRequest,
+  NodeChargesResponse,
   OfferResponse,
   RecordConfirmationRequest,
   ReconciliationResponse,
@@ -285,6 +287,7 @@ export type {
   BookNodeRequest,
   BookingResponse,
   CancelBookingRequest,
+  NodeChargesResponse,
   OfferResponse,
   RecordConfirmationRequest,
   ReconciliationResponse,
@@ -4065,6 +4068,32 @@ export async function listOffers(
       });
     if (error === undefined && data !== undefined) {
       return { ok: true, offers: data };
+    }
+    return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type NodeChargesResult =
+  | { ok: true; charges: NodeChargesResponse }
+  | { ok: false; status: number; detail: BookingDetail };
+
+/** GET /itinerary/{id}/nodes/{nodeId}/charges — the card's money facet (M006/PS4):
+ *  this item's charge line, invoice status, paid/owed split, and live booking. */
+export async function getNodeCharges(
+  client: Client,
+  itineraryId: string,
+  nodeId: string,
+): Promise<NodeChargesResult> {
+  try {
+    const { data, error, response } =
+      await nodeChargesEndpointItineraryItineraryIdNodesNodeIdChargesGet({
+        client,
+        path: { itinerary_id: itineraryId, node_id: nodeId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, charges: data };
     }
     return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
   } catch {

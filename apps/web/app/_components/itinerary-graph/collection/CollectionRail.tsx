@@ -31,8 +31,11 @@ import { GROUP_AXES, groupCollection, type GroupAxis } from "./grouping";
 
 export function CollectionRail({
   variant = "rail",
+  onOpenNode,
 }: {
   variant?: "board" | "rail";
+  /** Open a card's full-bleed detail (M006/PS4). Absent → cards are browse-only. */
+  onOpenNode?: (nodeId: string) => void;
 }) {
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const pending = itineraryGraphStore.useStore((s) => s.pendingProposals);
@@ -111,7 +114,11 @@ export function CollectionRail({
                 <div className="flex flex-col gap-3">
                   <AnimatePresence initial={false}>
                     {lane.items.map((node) => (
-                      <CollectionCard key={node.id} node={node} />
+                      <CollectionCard
+                        key={node.id}
+                        node={node}
+                        {...(onOpenNode ? { onOpen: onOpenNode } : {})}
+                      />
                     ))}
                   </AnimatePresence>
                 </div>
@@ -217,7 +224,13 @@ function AddAffordances() {
   );
 }
 
-function CollectionCard({ node }: { node: NodeResponse }) {
+function CollectionCard({
+  node,
+  onOpen,
+}: {
+  node: NodeResponse;
+  onOpen?: (nodeId: string) => void;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: collectionDragId(node.id),
   });
@@ -246,6 +259,7 @@ function CollectionCard({ node }: { node: NodeResponse }) {
         type="button"
         {...listeners}
         {...attributes}
+        onClick={onOpen ? () => onOpen(node.id) : undefined}
         className="w-full cursor-grab overflow-hidden rounded-lg border border-ink/12 bg-paper text-left shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
       >
         {cover ? (

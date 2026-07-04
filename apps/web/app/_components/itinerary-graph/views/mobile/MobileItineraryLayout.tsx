@@ -45,11 +45,15 @@ interface MobileItineraryLayoutProps {
    *  the concierge into the Chat tab, so it passes `false`; the standalone
    *  prototype keeps the sheet (default `true`). */
   showConciergeSheet?: boolean;
+  /** Where a card tap goes. The routed shell (M006/PS4) passes a navigate to
+   *  /item/[nodeId]; absent, a tap opens the in-place full-screen sheet. */
+  onOpenNode?: (nodeId: string) => void;
 }
 
 export function MobileItineraryLayout({
   embedded = false,
   showConciergeSheet = true,
+  onOpenNode,
 }: MobileItineraryLayoutProps) {
   const { timeline } = useTimelineData();
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
@@ -209,7 +213,7 @@ export function MobileItineraryLayout({
                   group={g}
                   tzOffsetHours={tz}
                   flashNodeId={flashNodeId}
-                  onCardClick={(id) => setExpandedId(id)}
+                  onCardClick={(id) => (onOpenNode ? onOpenNode(id) : setExpandedId(id))}
                   attachedNotes={attachedNotes}
                   canLeaveNote={canLeaveNote}
                   onAddDayNote={addFreeStandingNote}

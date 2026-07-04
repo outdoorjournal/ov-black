@@ -530,6 +530,8 @@ function CardWrap({
   return (
     <motion.div
       layout
+      data-testid="timeline-card"
+      data-node-id={p.node.id}
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{
         opacity: isDragging || isActiveDrag ? 0.25 : 1,

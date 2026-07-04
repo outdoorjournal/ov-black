@@ -26,6 +26,7 @@ import { TimelineDataProvider } from "@/app/_components/itinerary-graph/Timeline
 import type { UserRole } from "@/lib/role";
 
 import { ConciergeColumn } from "./ConciergeColumn";
+import { ConciergeControlProvider } from "./ConciergeControl";
 import { MobileTabBar } from "./MobileTabBar";
 import { Rail } from "./Rail";
 
@@ -90,39 +91,43 @@ export function ItineraryShell({
       }}
     >
       <TimelineDataProvider value={{ timeline, baselineTitle }}>
-        <div
-          data-testid="itinerary-shell"
-          className="relative flex min-h-0 flex-1 overflow-hidden"
+        <ConciergeControlProvider
+          value={{ openConcierge: () => setConciergeOpen(true) }}
         >
-          <Rail onOpenConcierge={() => setConciergeOpen(true)} />
-
-          {/* People axis. ≥1100px: an in-flow column. Below that: hidden until
-              summoned, then a full-screen overlay (neutralised back to in-flow
-              at ≥1100 so the state never traps the desktop layout). */}
-          <aside
-            data-testid="concierge-column"
-            className={
-              "flex-col bg-paper " +
-              "min-[1100px]:flex min-[1100px]:w-[380px] min-[1100px]:shrink-0 min-[1100px]:border-r min-[1100px]:border-ink/10 " +
-              (conciergeOpen
-                ? "fixed inset-0 z-40 flex min-[1100px]:static min-[1100px]:inset-auto min-[1100px]:z-auto"
-                : "hidden min-[1100px]:flex")
-            }
+          <div
+            data-testid="itinerary-shell"
+            className="relative flex min-h-0 flex-1 overflow-hidden"
           >
-            <ConciergeColumn onClose={() => setConciergeOpen(false)} />
-          </aside>
+            <Rail onOpenConcierge={() => setConciergeOpen(true)} />
 
-          {/* Planning space — the routed destination fills the rest. The
-              padding clears the fixed mobile tab bar (h-14); none on md+. */}
-          <main
-            data-testid="planning-space"
-            className="relative flex min-w-0 flex-1 flex-col pb-14 md:pb-0"
-          >
-            {children}
-          </main>
+            {/* People axis. ≥1100px: an in-flow column. Below that: hidden until
+                summoned, then a full-screen overlay (neutralised back to in-flow
+                at ≥1100 so the state never traps the desktop layout). */}
+            <aside
+              data-testid="concierge-column"
+              className={
+                "flex-col bg-paper " +
+                "min-[1100px]:flex min-[1100px]:w-[380px] min-[1100px]:shrink-0 min-[1100px]:border-r min-[1100px]:border-ink/10 " +
+                (conciergeOpen
+                  ? "fixed inset-0 z-40 flex min-[1100px]:static min-[1100px]:inset-auto min-[1100px]:z-auto"
+                  : "hidden min-[1100px]:flex")
+              }
+            >
+              <ConciergeColumn onClose={() => setConciergeOpen(false)} />
+            </aside>
 
-          <MobileTabBar onOpenConcierge={() => setConciergeOpen(true)} />
-        </div>
+            {/* Planning space — the routed destination fills the rest. The
+                padding clears the fixed mobile tab bar (h-14); none on md+. */}
+            <main
+              data-testid="planning-space"
+              className="relative flex min-w-0 flex-1 flex-col pb-14 md:pb-0"
+            >
+              {children}
+            </main>
+
+            <MobileTabBar onOpenConcierge={() => setConciergeOpen(true)} />
+          </div>
+        </ConciergeControlProvider>
       </TimelineDataProvider>
     </itineraryGraphStore.Provider>
   );

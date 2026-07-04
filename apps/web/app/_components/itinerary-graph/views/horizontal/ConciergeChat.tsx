@@ -235,12 +235,18 @@ export function ConciergeChat({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || !canChat) return;
+      // PS4: if a card scoped the concierge ("ask about this"), prefix the turn
+      // so the reply is about that card, then clear the chip. Prefixing (not a
+      // hidden field) keeps the scope visible in the transcript on resume.
+      const ask = storeApi.getState().askContext;
+      const turnText = ask ? `Regarding “${ask.title}”: ${trimmed}` : trimmed;
+      if (ask) storeApi.getState().setAskContext(null);
       const n = (seqRef.current += 1);
       const userId = `${audience}-u-${n}`;
       const assistantId = `${audience}-a-${n}`;
       setMessages((prev) => [
         ...prev,
-        { id: userId, role: "user", text: trimmed },
+        { id: userId, role: "user", text: turnText },
         { id: assistantId, role: "assistant", text: "", streaming: true },
       ]);
       streamingIdRef.current = assistantId;
@@ -261,10 +267,10 @@ export function ConciergeChat({
           setStreaming(false);
           return;
         }
-        await sendTurn(trimmed);
+        await sendTurn(turnText);
       })();
     },
-    [audience, canChat, ensureSession, appendDelta, sendTurn],
+    [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],
   );
 
   return (

@@ -107,6 +107,14 @@ export function clampZoom(value: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
 }
 
+/**
+ * The card the persistent concierge is currently scoped to (M006/PS4). Set by a
+ * card's "Ask Artemis about this" — the ConciergeColumn renders it as a "Re: …"
+ * chip, and the next agent turn is prefixed with it, then it clears. A shared UI
+ * slice (not a URL) because the concierge lives beside every routed destination.
+ */
+export type AskContext = { nodeId: string; title: string };
+
 export type ItineraryGraphState = {
   // ── identity / config ──
   itineraryId: string;
@@ -152,6 +160,9 @@ export type ItineraryGraphState = {
   pxPerMinute: number;
 
   // ── focus / chat ──
+  /** The card the concierge is scoped to (PS4 "ask about this"); null = general. */
+  askContext: AskContext | null;
+  setAskContext: (ctx: AskContext | null) => void;
   focusNode: (id: string | null) => void;
   appendUserMessage: (id: string, text: string) => void;
   appendAssistantMessage: (id: string, text?: string) => void;
@@ -537,6 +548,7 @@ export const itineraryGraphStore = createStoreContext<
         focusedNodeId: defaultFocus?.id ?? null,
         flashNodeId: null,
         assemblePulse: 0,
+        askContext: null,
 
         status,
         lockStatus: startLocked ? "locked-by-me" : "unlocked",
@@ -554,6 +566,7 @@ export const itineraryGraphStore = createStoreContext<
 
         pxPerMinute: ZOOM_PRESETS.day,
 
+        setAskContext: (ctx) => set({ askContext: ctx }),
         focusNode: (id) => set({ focusedNodeId: id }),
         appendUserMessage: (id, text) =>
           set((s) => ({

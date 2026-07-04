@@ -7,29 +7,36 @@
 > [mvp-plan.md](../mvp-plan.md) house style. Holds the craft line (R014): no emoji, no spinners, serif
 > concierge prose.
 >
-> **Status (handoff):** **PS0, PS1, PS2 are landed on `dev`** — see §0 below for exactly what's done, what was
-> deferred within those slices, verification, and what's next. Q13 is **resolved (UNIFY, endorsed)**. On
-> milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this slots into
-> `mvp-plan.md` as M006.
+> **Status (handoff):** **PS0, PS1, PS2 are landed on `dev`; PS4 is implemented + verified (commit pending)** —
+> see §0 below for exactly what's done, what was deferred within those slices, verification, and what's next.
+> Q13 is **resolved (UNIFY, endorsed)**; Q3 (card takeover → PS4) shipped as its default. On milestone
+> green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this slots into `mvp-plan.md` as M006.
 
 ---
 
 ## 0. Status — handoff ledger
 
-**Landed on `dev`** (3 commits): `a61c1dc` docs · `98f50bc` agent (PS2 backend + client) · `07146b3` web
-(PS1 shell + PS2 UI).
+**Landed on `dev`:** PS0/PS1/PS2 in `a61c1dc` (docs) · `98f50bc` (PS2 agent + client) · `07146b3` (PS1 shell +
+PS2 UI); **PS4 in this commit** (backend + client + shell + unit + e2e + this ledger). Next up: **PS3 / PS5**.
 
 | Slice | State | Notes |
 | --- | --- | --- |
 | **PS0** | **done** | Q13 resolved → **UNIFY** (endorsed by the human call). Recommendation memo appended to [planner-shell.md §10](./planner-shell.md); draft migration in `scratchpad/00NN_messaging_threads.draft.sql` (throwaway — real one lands in PS7). Graduates to a D0xx on green-light. |
 | **PS1** | **done** | Two-axis shell: `itinerary/[id]/layout.tsx` (Provider lift), routed `timeline` / `collection` / advisor-only `studio` (+ index→`/timeline` redirect), `_shell/*` (ItineraryShell · Rail · ConciergeColumn · MobileTabBar · the three planning-space views), and `TimelineDataContext`. |
 | **PS2** | **done** | Scoped Artemis session list: migration `0036`, scope-aware reuse (no re-pin) + `force_new` + `list`/`patch` + auto-title, endpoints, api-client wrappers (`listSessions`/`patchSession`), `SessionThread` + `ConciergeColumn` UI, `ConciergeChat` `sessionId`/`onSessionOpened`. |
+| **PS4** | **done** | Card detail as a route: `item/[nodeId]/page.tsx` + `CardDetailView` (full-bleed takeover; back affordance) with the six facets — (a) Maps/directions, (b) the data-driven `NodeZoomCard` (not the prototype fixtures), (c) `NotesPanel`, (d) "Ask Artemis about this" → concierge **context chip** (new `askContext` store slice + `ConciergeControl` context), (e) reschedule/unschedule/title via the store's `moveNode`/`unscheduleNode`/`editNodeField`, (f) money — new **`GET /itinerary/{id}/nodes/{node_id}/charges`** (billed/paid/owed + booking) + `getNodeCharges` wrapper. Card clicks everywhere route via a shared `useOpenNode` (timeline/mobile/collection); the old in-place modal stays as the fallback for non-shell hosts. |
 
-**Verified:** api — 858 pytest pass, mypy + ruff clean; web — 39 files / 230 vitest pass, typecheck + lint
-clean; api-client builds. **NOT run:** the Playwright `e2e/traveler-flows/*` (needs the live Supabase + API +
-agent stack) — audited for structural compatibility only (URLs use unanchored regexes; the concierge composer
-is visible in the shell column at the 1280px test viewport; stranger→404 preserved). **Run these before
-calling M006 done.**
+**Verified (incl. PS4):** api — 863 pytest pass (the 2 `test_me` onboarding failures below are pre-existing),
+mypy + ruff (check + format) clean; web — 40 files / 235 vitest pass (+`cardDetail.test.tsx`: facets · money
+read · booking status · missing-node · ask→chip), typecheck + lint clean; api-client builds.
+**e2e (Playwright, against the live mproc stack):** new `e2e/traveler-flows/card-detail.spec.ts` —
+**CARD-1** (deep-link → facets), **CARD-2** (timeline card click → route; needed a `data-testid="timeline-card"`
+hook on the canvas card + a `force` click, since the card is framer-motion-animated), **CARD-3** (ask-about-this
+→ Re: chip → a **real live agent turn** on the itinerary path) — **all green**. Every other traveler-flows spec
+(COL-1..4, ITB-6/6A, empty-state ITB-4, chat ITB-4) **passes in isolation** — the PS1/PS2 shell is structurally
+sound. **Pre-existing red (NOT PS4):** `chat.spec ONB-2` (the *basecamp onboarding* opener turn) fails
+consistently with the D015 "concierge stepping away" fallback — an onboarding-agent-path issue, separate from
+the itinerary agent path (which is green via ITB-4 + CARD-3). Fix ONB-2 as its own cleanup before M006 done.
 
 **Deferred *within* PS1/PS2 — carry into the noted slice (not lost, but not done):**
 - Zoom/`pxPerMinute` still lives in `itineraryGraphStore` (extract to a view-local store — PS1's own TODO;
@@ -38,7 +45,8 @@ calling M006 done.**
   (`showConciergeSheet={false}`); the design wanted to keep the sheet — **revisit in PS6**.
 - Concierge **collapse** is basic (in-flow ≥1100px, summonable overlay below via Rail button / Chat tab); full
   Q5 polish → **PS6**.
-- **Context-chip** is a scaffold (an empty slot + comment in `ConciergeColumn`) — **PS4** wires "ask about this".
+- ~~**Context-chip** is a scaffold~~ — **done in PS4** (`askContext` store slice → the `Re: …` chip in
+  `ConciergeColumn`, consumed as a turn prefix in `ConciergeChat`).
 - The transitional advisor **Studio** route (`/studio`) holds Party/Vault/Invoices/Booking **and** Build/Diff so
   nothing was lost; **PS3** rehomes the first four into the Dashboard, **PS6** finalizes Build/Diff and removes
   the leftover in-canvas aside (still there behind `showConciergeAside`/`showConciergeSheet` on
@@ -46,6 +54,22 @@ calling M006 done.**
 - **Scroll-to-node from chat** is not wired in the relocated ConciergeColumn (chat is no longer canvas-adjacent);
   re-add via a store signal if wanted.
 - The **people-circle** "Advisor" circle is a disabled placeholder (the human channel is **PS7**).
+
+**Deferred *within* PS4 — carry into the noted slice (not lost, but not done):**
+- The money facet (f) is **read-only** — it shows this item's charge/paid/owed + booking + invoice status, but
+  the actual **pay/deposit action** is **PS3** (the Dashboard money roll-up owns the pay affordance; the card's
+  "what to pay" rolls up there and the roll-up deep-links back). The read (`getNodeCharges`) already returns
+  `invoice_id`, so a pay button here is a small follow-up once the client pay flow has a home.
+- Facet (b) uses the existing **data-driven `NodeZoomCard`**, not the `prototype/cards/*` fixtures (those are
+  hardcoded design mocks). The plan named the prototype as *source material*; `NodeZoomCard` already renders the
+  per-type detail from node metadata, so wiring it was the right unbundling — no new adapter needed.
+- The scheduling facet (e) gates on holding the lock (`selectEditable`) or a real fork (`selectTravelerEditable`);
+  a **draft-mine** traveler (previewing Official with no fork yet) still reschedules via the timeline drag
+  (which lazily forks) — the card facet stays read-only for them. Fine for PS4; revisit if the card should be
+  able to trigger the lazy fork too.
+- Card taps route to the **same** full-bleed detail on every breakpoint (deep-linkable on mobile); the old
+  in-place desktop modal + mobile sheet remain **only** as the `onOpenNode`-absent fallback (the prototype / any
+  standalone host). Removing them for good rides with the aside teardown in **PS6**.
 
 **Heads-up — pre-existing failures, NOT from this work (don't chase):**
 `apps/api/tests/test_me.py::test_evaluate_onboarding_rule` and `::test_onboarding_session_reports_onboarding_complete`
@@ -62,9 +86,10 @@ fail on `dev` independently — `evaluate_onboarding` is `profile_fact_count >= 
 - A running web `next dev` holds `.next`; a concurrent `next build` will `MODULE_NOT_FOUND` in the prerender
   worker *after* "Compiled successfully" — that's the collision, not a real build failure.
 
-**Next (unchanged critical path):** PS1 → PS2 → **PS4** (card detail, now the front of the critical path).
-**PS3** (Dashboard) and **PS5** (place-mode) parallelize off PS1 with no backend. **PS7/PS8** (human channel +
-@-mention bridge) are now unblocked by Q13=unify but remain the late second track.
+**Next:** PS1 → PS2 → PS4 are done. The front is now **PS3** (Dashboard — the money roll-up + pay action the
+PS4 card facet deep-links to) and **PS5** (place-mode); both parallelize off PS1 with no backend. **PS6** needs
+PS3 (panel rehome) + finalizes the Studio/aside teardown. **PS7/PS8** (human channel + @-mention bridge) are
+unblocked by Q13=unify but remain the late second track.
 
 ---
 
@@ -207,6 +232,12 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1 (links to PS4) · **size:** M.
 
 ### PS4 — Card detail as a route
+> **DONE** (commit pending, see §0). Route is `itinerary/[id]/item/[nodeId]` (nested under the shell so the
+> concierge + store persist beside the takeover). Facet (b) reused the data-driven `NodeZoomCard` (the
+> `prototype/cards/*` are hardcoded fixtures); money facet added `GET …/nodes/{id}/charges` (no schema change);
+> the ask-chip is a new `askContext` store slice + a tiny `ConciergeControl` context (the shell hosts the store
+> Provider, so the overlay-open control can't live in the store). Deferred: the money **pay action** (→ PS3),
+> draft-mine card-triggered fork (→ drag path for now), modal/sheet teardown (→ PS6).
 - **goal:** clicking a card opens `/item/[nodeId]` — full-bleed takeover (desktop) / sheet (mobile) — with all
   six facets. Role-agnostic (travelers open + ask too).
 - **deliverables:** `CardDetailView` wrapping `NodeZoomCard` + facet sections: **(a)** actions (Maps/directions),
@@ -290,7 +321,7 @@ and can run late without blocking the traveler-facing shell.
 | Migration | Slice | Change |
 | --- | --- | --- |
 | **0036** ✱ | PS2 | **done** — `agent_sessions` += `title text`, `archived_at timestamptz`; open-session partial index replaced with a scope-aware one (`client_id, audience, itinerary_id, started_at desc`) over live rows |
-| next avail. | PS4 | *(only if missing)* per-node charges read — no schema change, reads `invoice_line_items` + `bookings` |
+| **none** ✱ | PS4 | **done** — `GET /itinerary/{id}/nodes/{node_id}/charges` (no schema change): sums `invoice_line_items.node_id` across non-void invoices (billed/paid/owed) + attaches the live `bookings` row |
 | next avail. | PS7 | `threads` / `messages` / `thread_participants` (+ RLS) — shape in **PS0/Q13 = UNIFY**; see `scratchpad/00NN_messaging_threads.draft.sql` |
 
 ✱ Next free migration number after this is **0037**. Every schema change re-runs
@@ -320,8 +351,9 @@ new coverage above; craft line held; staging UAT passed.
 ## 8. Still needs a human call
 
 - ~~**Q13 (PS0 output).**~~ **RESOLVED — UNIFY** (endorsed). No longer blocks; PS7 builds on it.
-- **Default vetoes still open** for their upcoming slices: Q3 (card takeover → PS4), Q6 (does the Collection
-  drawer's open/closed belong in the URL? → PS5). Q5 (collapse threshold) and Q7 (rail order) already shipped in
-  PS1 as defaulted — changing them now is a small follow-up, not a veto.
+- **Default vetoes still open** for their upcoming slices: Q6 (does the Collection drawer's open/closed belong
+  in the URL? → PS5). Q3 (card takeover) shipped in **PS4** as its default (full-bleed takeover, back
+  affordance, deep-linkable on both breakpoints); Q5 (collapse threshold) and Q7 (rail order) shipped defaulted
+  in PS1 — changing any now is a small follow-up, not a veto.
 - **Green-light.** On approval, the §1 decisions graduate to `doc/decisions.md` (D0xx) and this registers in
   `mvp-plan.md` as **M006**.
