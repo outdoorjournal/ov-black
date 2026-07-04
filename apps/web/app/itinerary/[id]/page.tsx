@@ -1,6 +1,6 @@
-// The itinerary index (M006/PS1). No surface of its own yet — it lands the
-// planner on the Timeline. PS3 replaces this with the per-trip Dashboard (the
-// "you're not lost" home). Auth + fetch + the shell live in the layout.
+// The itinerary index (M006/PS3). It lands the planner on the per-trip Dashboard
+// — the "you're not lost" home (brief · next action · money · party). Auth +
+// fetch + the shell live in the layout; the Dashboard view renders under it.
 
 import { redirect } from "next/navigation";
 
@@ -12,5 +12,5 @@ type PageProps = {
 
 export default async function ItineraryIndexPage({ params }: PageProps) {
   const { id } = await params;
-  redirect(`/itinerary/${id}/timeline`);
+  redirect(`/itinerary/${id}/dashboard`);
 }

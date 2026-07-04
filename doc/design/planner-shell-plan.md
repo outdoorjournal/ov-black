@@ -7,17 +7,19 @@
 > [mvp-plan.md](../mvp-plan.md) house style. Holds the craft line (R014): no emoji, no spinners, serif
 > concierge prose.
 >
-> **Status (handoff):** **PS0, PS1, PS2 are landed on `dev`; PS4 is implemented + verified (commit pending)** —
+> **Status (handoff):** **PS0, PS1, PS2, PS4 are landed on `dev`; PS3 is implemented + verified (commit pending)** —
 > see §0 below for exactly what's done, what was deferred within those slices, verification, and what's next.
-> Q13 is **resolved (UNIFY, endorsed)**; Q3 (card takeover → PS4) shipped as its default. On milestone
-> green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this slots into `mvp-plan.md` as M006.
+> Q13 is **resolved (UNIFY, endorsed)**; Q3 (card takeover → PS4) and Q4 (keep both homes → PS3) shipped as
+> their defaults. On milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this
+> slots into `mvp-plan.md` as M006.
 
 ---
 
 ## 0. Status — handoff ledger
 
 **Landed on `dev`:** PS0/PS1/PS2 in `a61c1dc` (docs) · `98f50bc` (PS2 agent + client) · `07146b3` (PS1 shell +
-PS2 UI); **PS4 in this commit** (backend + client + shell + unit + e2e + this ledger). Next up: **PS3 / PS5**.
+PS2 UI); **PS4 in `59bed60`** (card detail + charges read); **PS3 in this commit** (Dashboard view + rail Home +
+index→dashboard + Studio trimmed to Build/Diff + unit tests + this ledger — **no backend**). Next up: **PS5 / PS6**.
 
 | Slice | State | Notes |
 | --- | --- | --- |
@@ -25,10 +27,16 @@ PS2 UI); **PS4 in this commit** (backend + client + shell + unit + e2e + this le
 | **PS1** | **done** | Two-axis shell: `itinerary/[id]/layout.tsx` (Provider lift), routed `timeline` / `collection` / advisor-only `studio` (+ index→`/timeline` redirect), `_shell/*` (ItineraryShell · Rail · ConciergeColumn · MobileTabBar · the three planning-space views), and `TimelineDataContext`. |
 | **PS2** | **done** | Scoped Artemis session list: migration `0036`, scope-aware reuse (no re-pin) + `force_new` + `list`/`patch` + auto-title, endpoints, api-client wrappers (`listSessions`/`patchSession`), `SessionThread` + `ConciergeColumn` UI, `ConciergeChat` `sessionId`/`onSessionOpened`. |
 | **PS4** | **done** | Card detail as a route: `item/[nodeId]/page.tsx` + `CardDetailView` (full-bleed takeover; back affordance) with the six facets — (a) Maps/directions, (b) the data-driven `NodeZoomCard` (not the prototype fixtures), (c) `NotesPanel`, (d) "Ask Artemis about this" → concierge **context chip** (new `askContext` store slice + `ConciergeControl` context), (e) reschedule/unschedule/title via the store's `moveNode`/`unscheduleNode`/`editNodeField`, (f) money — new **`GET /itinerary/{id}/nodes/{node_id}/charges`** (billed/paid/owed + booking) + `getNodeCharges` wrapper. Card clicks everywhere route via a shared `useOpenNode` (timeline/mobile/collection); the old in-place modal stays as the fallback for non-shell hosts. |
+| **PS3** | **done** | Per-trip Dashboard: `dashboard/page.tsx` + `DashboardView` (index now redirects here; rail/tab **Home** entry + `DashboardIcon`). Sections — **hero** (mood-splash via `MOODS[timeline.mood]` + title/brief/timing; edit reuses `ItineraryIntake` prefilled → `router.refresh()`), one derived **next best action** (`deriveNextAction`, pure), the **money roll-up** (`listInvoices` → `rollupInvoices` owed-per-currency/issued/paid; per-invoice **pay** → existing `/invoices/[id]`; charge lines with `node_id` deep-link **down** to the PS4 card money facet), and **travel party** (advisor → `PartyPanel`; traveler → read-only `listItineraryParty` glance + link to `/basecamp/party`). Advisor-only **Trip management** tabs (Vault · Invoices · Booking) **rehomed out of Studio** — `StudioPlanningSpace` is now Build/Diff only. **No backend** (client-side roll-up over existing reads). |
 
-**Verified (incl. PS4):** api — 863 pytest pass (the 2 `test_me` onboarding failures below are pre-existing),
-mypy + ruff (check + format) clean; web — 40 files / 235 vitest pass (+`cardDetail.test.tsx`: facets · money
-read · booking status · missing-node · ask→chip), typecheck + lint clean; api-client builds.
+**Verified (incl. PS3):** web — **42 files / 254 vitest pass** (+`dashboardModel.test.ts`: roll-up nets
+payments/excludes draft+void · next-action priority · timing format; +`dashboard.test.tsx`: hero+edit gate ·
+money owed/pay-link/line-deep-link · next-action · role split), **typecheck + lint clean**; the new
+`dashboard`/`timeline` route segments **compile on the live dev server** (307 → auth redirect, no 500). PS3 is
+**web-only** — no api/api-client change, so the api suite is unchanged from PS4 (863 pytest, mypy + ruff clean).
+A full authenticated **browser UAT** of the hero splash + roll-up visuals is the remaining craft-line sign-off.
+**Prior (PS4):** api — 863 pytest pass (the 2 `test_me` onboarding failures below are pre-existing); web
+`cardDetail.test.tsx` (facets · money read · booking status · missing-node · ask→chip).
 **e2e (Playwright, against the live mproc stack):** new `e2e/traveler-flows/card-detail.spec.ts` —
 **CARD-1** (deep-link → facets), **CARD-2** (timeline card click → route; needed a `data-testid="timeline-card"`
 hook on the canvas card + a `force` click, since the card is framer-motion-animated), **CARD-3** (ask-about-this
@@ -47,10 +55,10 @@ the itinerary agent path (which is green via ITB-4 + CARD-3). Fix ONB-2 as its o
   Q5 polish → **PS6**.
 - ~~**Context-chip** is a scaffold~~ — **done in PS4** (`askContext` store slice → the `Re: …` chip in
   `ConciergeColumn`, consumed as a turn prefix in `ConciergeChat`).
-- The transitional advisor **Studio** route (`/studio`) holds Party/Vault/Invoices/Booking **and** Build/Diff so
-  nothing was lost; **PS3** rehomes the first four into the Dashboard, **PS6** finalizes Build/Diff and removes
-  the leftover in-canvas aside (still there behind `showConciergeAside`/`showConciergeSheet` on
-  `HorizontalView`/`MobileItineraryLayout`, kept for the prototype).
+- ~~The transitional advisor **Studio** route (`/studio`) holds Party/Vault/Invoices/Booking **and** Build/Diff~~
+  — **done in PS3**: Party/Vault/Invoices/Booking rehomed into the Dashboard; `StudioPlanningSpace` is now
+  Build/Diff only. **PS6** still finalizes Build/Diff and removes the leftover in-canvas aside (behind
+  `showConciergeAside`/`showConciergeSheet` on `HorizontalView`/`MobileItineraryLayout`, kept for the prototype).
 - **Scroll-to-node from chat** is not wired in the relocated ConciergeColumn (chat is no longer canvas-adjacent);
   re-add via a store signal if wanted.
 - The **people-circle** "Advisor" circle is a disabled placeholder (the human channel is **PS7**).
@@ -71,6 +79,23 @@ the itinerary agent path (which is green via ITB-4 + CARD-3). Fix ONB-2 as its o
   in-place desktop modal + mobile sheet remain **only** as the `onOpenNode`-absent fallback (the prototype / any
   standalone host). Removing them for good rides with the aside teardown in **PS6**.
 
+**Deferred *within* PS3 — carry into the noted slice (not lost, but not done):**
+- The money roll-up **pay** action is a link to the **existing** `/invoices/[id]` `PayInvoiceView` (traveler pays,
+  advisor reviews) rather than a new inline pay flow — reuse, not scope creep. Closes the PS4↔PS3 loop: the card
+  money facet rolls **up** into the Dashboard total, and each issued invoice's charge lines (those with `node_id`)
+  deep-link **down** to that card's facet.
+- The Dashboard money roll-up shows **issued/paid** only; **draft** invoices are advisor scaffolding surfaced in
+  the rehomed **Invoices** management tab (advisor assembles there), never counted as "owed."
+- The traveler **travel-party** section is a **read-only** glance (`listItineraryParty`, which is `require_user`)
+  + a link to self-service `/basecamp/party`; household attach/detach stays the advisor `PartyPanel`. A first-class
+  in-Dashboard traveler party editor (and the **advisor notifications** feed named in §4) are follow-ups — the
+  current "notices" surface is implicit (the next-action derives from pending proposals + unpaid invoices).
+- Brief **edit** reuses the full-screen `ItineraryIntake` inline (prefilled) rather than an inline field editor;
+  fine, and it already PATCHes `/itinerary/{id}` + `router.refresh()`es the server-prop brief.
+- **Live browser UAT** (hero splash render, roll-up visuals, mobile Home tab) not yet run — a `next dev` was
+  holding `.next`, so `next build` was skipped to avoid the known prerender-collision; typecheck + full vitest +
+  a live route-compile probe stood in. Run the UAT before M006 "done."
+
 **Heads-up — pre-existing failures, NOT from this work (don't chase):**
 `apps/api/tests/test_me.py::test_evaluate_onboarding_rule` and `::test_onboarding_session_reports_onboarding_complete`
 fail on `dev` independently — `evaluate_onboarding` is `profile_fact_count >= 2` but those tests still assert
@@ -86,10 +111,12 @@ fail on `dev` independently — `evaluate_onboarding` is `profile_fact_count >= 
 - A running web `next dev` holds `.next`; a concurrent `next build` will `MODULE_NOT_FOUND` in the prerender
   worker *after* "Compiled successfully" — that's the collision, not a real build failure.
 
-**Next:** PS1 → PS2 → PS4 are done. The front is now **PS3** (Dashboard — the money roll-up + pay action the
-PS4 card facet deep-links to) and **PS5** (place-mode); both parallelize off PS1 with no backend. **PS6** needs
-PS3 (panel rehome) + finalizes the Studio/aside teardown. **PS7/PS8** (human channel + @-mention bridge) are
-unblocked by Q13=unify but remain the late second track.
+**Next:** PS1 → PS2 → PS4 → PS3 are done. The front is now **PS5** (place-mode — pick-then-place + Collection as
+an overlay layer; parallelizes off PS1, no backend) and **PS6** (advisor Studio finalize + concierge collapse +
+a11y sweep — PS3's panel rehome is already done, so PS6 now only needs to finish Build/Diff, remove the leftover
+in-canvas aside, and land the Q5 collapse). **PS7/PS8** (human channel + @-mention bridge) are unblocked by
+Q13=unify but remain the late second track. Cleanup still owed regardless: the pre-existing `chat.spec ONB-2`
+(basecamp onboarding opener) + the two stale `test_me` onboarding assertions.
 
 ---
 
@@ -215,6 +242,13 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1 · **size:** M–L.
 
 ### PS3 — Dashboard view (per-trip home)
+> **DONE** (commit pending, see §0). Index redirects to `dashboard/`; rail/tab **Home** entry added. `DashboardView`
+> composes hero (mood-splash + editable brief via `ItineraryIntake`) · one `deriveNextAction` · money roll-up
+> (`rollupInvoices`, per-currency owed, pay → `/invoices/[id]`, charge-line deep-links to the PS4 card facet) ·
+> travel party (advisor `PartyPanel` / traveler read-only glance). Vault/Invoices/Booking **rehomed** into an
+> advisor-only Trip-management tab strip; `StudioPlanningSpace` trimmed to Build/Diff. Pure helpers in
+> `_shell/dashboardModel.ts` are unit-tested. Deferred: real pay flow reuses the existing `/invoices/[id]` page;
+> advisor-notifications feed + traveler party editor → follow-ups; live UAT pending.
 - **goal:** `/itinerary/[id]` lands on a guided per-trip dashboard; folds Party/Vault/Invoices/Booking in.
 - **deliverables:** `DashboardView` — brief + splash (editable), travel party, advisor notifications, one
   guided **next best action**, and the **money roll-up** (total owed · issued invoices · what-to-pay · pay
@@ -322,6 +356,7 @@ and can run late without blocking the traveler-facing shell.
 | --- | --- | --- |
 | **0036** ✱ | PS2 | **done** — `agent_sessions` += `title text`, `archived_at timestamptz`; open-session partial index replaced with a scope-aware one (`client_id, audience, itinerary_id, started_at desc`) over live rows |
 | **none** ✱ | PS4 | **done** — `GET /itinerary/{id}/nodes/{node_id}/charges` (no schema change): sums `invoice_line_items.node_id` across non-void invoices (billed/paid/owed) + attaches the live `bookings` row |
+| **none** | PS3 | **done** — no backend: the Dashboard money roll-up is a **client-side** `rollupInvoices` over the existing `listInvoices` read; next-action is a client-side derivation; pay reuses the existing `/invoices/[id]` page |
 | next avail. | PS7 | `threads` / `messages` / `thread_participants` (+ RLS) — shape in **PS0/Q13 = UNIFY**; see `scratchpad/00NN_messaging_threads.draft.sql` |
 
 ✱ Next free migration number after this is **0037**. Every schema change re-runs
@@ -352,8 +387,9 @@ new coverage above; craft line held; staging UAT passed.
 
 - ~~**Q13 (PS0 output).**~~ **RESOLVED — UNIFY** (endorsed). No longer blocks; PS7 builds on it.
 - **Default vetoes still open** for their upcoming slices: Q6 (does the Collection drawer's open/closed belong
-  in the URL? → PS5). Q3 (card takeover) shipped in **PS4** as its default (full-bleed takeover, back
-  affordance, deep-linkable on both breakpoints); Q5 (collapse threshold) and Q7 (rail order) shipped defaulted
-  in PS1 — changing any now is a small follow-up, not a veto.
+  in the URL? → PS5). Q3 (card takeover) shipped in **PS4** and Q4 (keep both homes — Basecamp cross-trip +
+  per-trip Dashboard) shipped in **PS3** as their defaults; Q5 (collapse threshold) and Q7 (rail order — Home ·
+  Timeline · Collection · ─ · Studio, now with Home live) shipped defaulted in PS1/PS3 — changing any now is a
+  small follow-up, not a veto.
 - **Green-light.** On approval, the §1 decisions graduate to `doc/decisions.md` (D0xx) and this registers in
   `mvp-plan.md` as **M006**.

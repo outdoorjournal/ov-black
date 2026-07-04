@@ -13,6 +13,16 @@ const BASE = {
   strokeLinejoin: "round" as const,
 };
 
+export function DashboardIcon() {
+  return (
+    <svg {...BASE} aria-hidden>
+      <path d="M3 8.5 10 3l7 5.5" />
+      <path d="M5 8v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8" />
+      <path d="M8 17v-4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V17" />
+    </svg>
+  );
+}
+
 export function TimelineIcon() {
   return (
     <svg {...BASE} aria-hidden>

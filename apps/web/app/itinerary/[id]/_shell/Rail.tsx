@@ -4,9 +4,9 @@
 // noun per destination; role changes affordances WITHIN a surface, not access,
 // so the only role gate here is the advisor-only Studio below the divider.
 //
-// PS1 ships Timeline · Collection · ─ · Studio. Home/Dashboard joins at the top
-// in PS3 (the per-trip home). Party + notifications live in the Dashboard, not
-// the rail (Q7). Below md the rail hides and the MobileTabBar carries the axis.
+// The rail is Home · Timeline · Collection · ─ · Studio (Q7). Home (the per-trip
+// Dashboard, PS3) sits at the top; Party + notifications live in the Dashboard,
+// not the rail. Below md the rail hides and the MobileTabBar carries the axis.
 
 import type { Route } from "next";
 import Link from "next/link";
@@ -18,6 +18,7 @@ import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/iti
 import {
   CollectionIcon,
   ConciergeIcon,
+  DashboardIcon,
   StudioIcon,
   TimelineIcon,
 } from "./icons";
@@ -34,6 +35,12 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
       aria-label="Views"
       className="hidden w-[76px] shrink-0 flex-col items-stretch border-r border-ink/10 bg-paper/85 py-3 md:flex"
     >
+      <RailLink
+        href={`/itinerary/${id}/dashboard`}
+        label="Home"
+        active={activeSeg === "dashboard"}
+        icon={<DashboardIcon />}
+      />
       <RailLink
         href={`/itinerary/${id}/timeline`}
         label="Timeline"

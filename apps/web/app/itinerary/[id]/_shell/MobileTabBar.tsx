@@ -3,7 +3,7 @@
 // The places axis on a phone (M006/PS1) — a fixed bottom tab bar carrying the
 // same routed destinations as the desktop Rail, plus a Chat tab that summons the
 // concierge as a full-screen overlay (the people axis has no room to sit beside
-// the plan on a phone). Home joins in PS3 alongside the Dashboard.
+// the plan on a phone). Home (the per-trip Dashboard, PS3) leads the bar.
 
 import type { Route } from "next";
 import Link from "next/link";
@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 
-import { CollectionIcon, ConciergeIcon, TimelineIcon } from "./icons";
+import { CollectionIcon, ConciergeIcon, DashboardIcon, TimelineIcon } from "./icons";
 
 export function MobileTabBar({
   onOpenConcierge,
@@ -29,6 +29,12 @@ export function MobileTabBar({
       aria-label="Views"
       className="fixed inset-x-0 bottom-0 z-30 flex h-14 border-t border-ink/10 bg-paper/95 backdrop-blur md:hidden"
     >
+      <TabLink
+        href={`/itinerary/${id}/dashboard`}
+        label="Home"
+        active={seg === "dashboard"}
+        icon={<DashboardIcon />}
+      />
       <TabLink
         href={`/itinerary/${id}/timeline`}
         label="Timeline"

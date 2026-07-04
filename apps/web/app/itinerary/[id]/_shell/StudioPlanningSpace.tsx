@@ -1,27 +1,23 @@
 "use client";
 
-// The advisor Studio destination (M006/PS1, transitional). The eight-tab aside
-// split three ways: chat → the concierge column, Party/Vault/Invoices/Booking →
-// (eventually) the Dashboard (PS3), and Build/Diff → this advisor-only inspector
-// (PS6 makes it the final home). For PS1 the not-yet-rehomed panels all live here
-// so nothing is lost. The route is advisor-gated server-side; this reads the
-// shared store, so the lock acquired on the Timeline carries over.
+// The advisor Studio destination (M006). The eight-tab aside split three ways:
+// chat → the concierge column, Party/Vault/Invoices/Booking → the per-trip
+// Dashboard (PS3, now their home), and Build/Diff → this advisor-only authoring
+// inspector. The route is advisor-gated server-side; this reads the shared store,
+// so the lock acquired on the Timeline carries over. PS6 finalises Studio and
+// tears down the last in-canvas aside.
 
 import { useState } from "react";
 
 import { AuthoringPanel } from "@/app/_components/itinerary-graph/views/horizontal/AuthoringPanel";
-import { BookingPanel } from "@/app/_components/itinerary-graph/views/horizontal/BookingPanel";
 import { DiffPanel } from "@/app/_components/itinerary-graph/views/horizontal/DiffPanel";
-import { InvoicePanel } from "@/app/_components/itinerary-graph/views/horizontal/InvoicePanel";
-import { PartyPanel } from "@/app/_components/itinerary-graph/views/horizontal/PartyPanel";
-import { VaultPanel } from "@/app/_components/itinerary-graph/views/horizontal/VaultPanel";
 import {
   itineraryGraphStore,
   selectEditable,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
 
-type StudioTab = "build" | "diff" | "party" | "vault" | "invoices" | "booking";
+type StudioTab = "build" | "diff";
 
 export function StudioPlanningSpace() {
   const { timeline } = useTimelineData();
@@ -32,16 +28,8 @@ export function StudioPlanningSpace() {
 
   const forkedFromId = timeline.itinerary.forked_from_id ?? null;
   const isAlternative = Boolean(forkedFromId);
-  const clientId = timeline.itinerary.client_id;
 
-  const tabs: StudioTab[] = [
-    "build",
-    ...(isAlternative ? (["diff"] as const) : []),
-    "party",
-    "vault",
-    "invoices",
-    "booking",
-  ];
+  const tabs: StudioTab[] = ["build", ...(isAlternative ? (["diff"] as const) : [])];
   const [tab, setTab] = useState<StudioTab>(isAlternative ? "diff" : "build");
 
   return (
@@ -86,38 +74,6 @@ export function StudioPlanningSpace() {
             />
           </div>
         ) : null}
-        <div className={tab === "party" ? "h-full" : "hidden"}>
-          <PartyPanel
-            clientId={clientId}
-            itineraryId={itineraryId}
-            apiBaseUrl={apiBaseUrl}
-            accessToken={accessToken}
-          />
-        </div>
-        <div className={tab === "vault" ? "h-full" : "hidden"}>
-          <VaultPanel
-            clientId={clientId}
-            itineraryId={itineraryId}
-            apiBaseUrl={apiBaseUrl}
-            accessToken={accessToken}
-          />
-        </div>
-        <div className={tab === "invoices" ? "h-full" : "hidden"}>
-          <InvoicePanel
-            itineraryId={itineraryId}
-            apiBaseUrl={apiBaseUrl}
-            accessToken={accessToken}
-            editable={editable}
-          />
-        </div>
-        <div className={tab === "booking" ? "h-full" : "hidden"}>
-          <BookingPanel
-            itineraryId={itineraryId}
-            apiBaseUrl={apiBaseUrl}
-            accessToken={accessToken}
-            editable={editable}
-          />
-        </div>
       </div>
     </div>
   );
@@ -126,8 +82,4 @@ export function StudioPlanningSpace() {
 const STUDIO_TAB_LABEL: Record<StudioTab, string> = {
   build: "Build",
   diff: "Diff",
-  party: "Party",
-  vault: "Vault",
-  invoices: "Invoices",
-  booking: "Booking",
 };
