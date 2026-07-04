@@ -146,7 +146,10 @@ export function SessionThread({
     sessions.find((s) => s.session_id === activeId)?.title ?? null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    // h-full (not flex-1): the host wrappers in ConciergeColumn are plain block
+    // divs with a definite height, so flex-1 would be inert here and the thread
+    // would size to its content and overflow the column instead of filling it.
+    <div className="flex h-full min-h-0 flex-col">
       {/* Session bar: the active title (tap to browse) + start-new. */}
       <div className="flex shrink-0 items-center gap-2 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm">
         <button
