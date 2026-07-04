@@ -25,6 +25,7 @@ import {
   collectionItemsOf,
   itineraryGraphStore,
   selectCanLeaveNote,
+  selectCanSchedule,
 } from "../store/itineraryGraphStore";
 
 import { GROUP_AXES, groupCollection, type GroupAxis } from "./grouping";
@@ -33,7 +34,10 @@ export function CollectionRail({
   variant = "rail",
   onOpenNode,
 }: {
-  variant?: "board" | "rail";
+  // `board` = dominant surface (no timeline yet); `rail` = beside a populated
+  // timeline (also a drop target for un-scheduling); `overlay` = a summonable
+  // drawer that floats over another surface for pick-then-place (M006/PS5).
+  variant?: "board" | "rail" | "overlay";
   /** Open a card's full-bleed detail (M006/PS4). Absent → cards are browse-only. */
   onOpenNode?: (nodeId: string) => void;
 }) {
@@ -234,6 +238,10 @@ function CollectionCard({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: collectionDragId(node.id),
   });
+  const storeApi = itineraryGraphStore.useStoreApi();
+  // Place mode (PS5): a tap-not-drag path for scheduling. Only a real editable
+  // surface offers it (a draft-mine traveler keeps the drag→lazy-fork path).
+  const canSchedule = itineraryGraphStore.useStore(selectCanSchedule);
   const token = TYPE_TOKENS[node.type as CardKind] ?? TYPE_TOKENS.destination;
   const meta = getMeta(node);
   const cover = meta.snapshot?.cover_image;
@@ -253,7 +261,21 @@ function CollectionCard({
       data-testid="collection-card"
       data-node-id={node.id}
       data-node-type={node.type}
+      className="relative"
     >
+      {/* Place mode: lift into the holding chip (sibling of the draggable card
+          button — nesting buttons is invalid, and this must not start a drag). */}
+      {canSchedule ? (
+        <button
+          type="button"
+          onClick={() => storeApi.getState().holdItem(node.id)}
+          data-testid="collection-schedule"
+          aria-label={`Schedule ${node.title || "this"}`}
+          className="absolute right-2 top-2 z-10 rounded-full border border-ink/15 bg-paper/95 px-2.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 shadow-sm transition-colors hover:bg-ink hover:text-paper"
+        >
+          Schedule
+        </button>
+      ) : null}
       <button
         ref={setNodeRef}
         type="button"

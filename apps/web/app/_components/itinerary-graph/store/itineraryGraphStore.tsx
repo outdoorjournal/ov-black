@@ -115,6 +115,17 @@ export function clampZoom(value: number): number {
  */
 export type AskContext = { nodeId: string; title: string };
 
+// Place mode (PS5): pick-then-place scheduling. `HeldItem` is the card lifted
+// off the Collection and floating, waiting for a slot; `PlacedItem` is the
+// just-dropped card the undo toast can return to the Collection.
+export type HeldItem = { nodeId: string; title: string };
+export type PlacedItem = {
+  nodeId: string;
+  title: string;
+  dayKey: string;
+  minute: number;
+};
+
 export type ItineraryGraphState = {
   // ── identity / config ──
   itineraryId: string;
@@ -158,6 +169,23 @@ export type ItineraryGraphState = {
 
   // ── horizontal-view UI state ──
   pxPerMinute: number;
+
+  // ── place mode (PS5): pick-then-place ──
+  /** The card lifted off the Collection, floating until it lands on a slot. */
+  heldItem: HeldItem | null;
+  /** The most recent placement — drives the undo toast; cleared on undo/dismiss. */
+  lastPlacement: PlacedItem | null;
+  /** Lift a Collection card into the holding chip (start place mode). */
+  holdItem: (nodeId: string) => void;
+  /** Cancel place mode without placing (Esc / the chip's cancel). */
+  clearHeldItem: () => void;
+  /** Drop the held card onto (dayKey, minuteOfDay) — reuses moveNode; a no-op
+   *  for a viewer who can't schedule. Records the placement for undo. */
+  placeHeldItem: (dayKey: string, minuteOfDay: number) => void;
+  /** Undo the last placement — returns the card to the Collection. */
+  undoPlacement: () => void;
+  /** Dismiss the undo toast without undoing. */
+  clearLastPlacement: () => void;
 
   // ── focus / chat ──
   /** The card the concierge is scoped to (PS4 "ask about this"); null = general. */
@@ -337,6 +365,16 @@ export function selectIsDraftMine(s: ItineraryGraphState): boolean {
     s.draftMine &&
     Boolean(s.apiBaseUrl && s.accessToken)
   );
+}
+
+/**
+ * Whether the viewer can schedule via place mode (PS5) — a real editable
+ * surface: an advisor holding the lock, or a traveler on their own fork. A
+ * draft-mine traveler is excluded on purpose (their first change must lazily
+ * fork, which the drag path handles); place mode stays a same-surface action.
+ */
+export function selectCanSchedule(s: ItineraryGraphState): boolean {
+  return selectEditable(s) || selectTravelerEditable(s);
 }
 
 /**
@@ -549,6 +587,8 @@ export const itineraryGraphStore = createStoreContext<
         flashNodeId: null,
         assemblePulse: 0,
         askContext: null,
+        heldItem: null,
+        lastPlacement: null,
 
         status,
         lockStatus: startLocked ? "locked-by-me" : "unlocked",
@@ -567,6 +607,52 @@ export const itineraryGraphStore = createStoreContext<
         pxPerMinute: ZOOM_PRESETS.day,
 
         setAskContext: (ctx) => set({ askContext: ctx }),
+
+        // ── place mode (PS5) ──
+        holdItem: (nodeId) => {
+          const s = get();
+          const node =
+            s.nodes.find((n) => n.id === nodeId) ??
+            s.pendingProposals.find((n) => n.id === nodeId);
+          if (!node) return;
+          set({
+            heldItem: { nodeId, title: node.title },
+            // A new pickup supersedes any lingering undo toast.
+            lastPlacement: null,
+          });
+        },
+        clearHeldItem: () => set({ heldItem: null }),
+        placeHeldItem: (dayKey, minuteOfDay) => {
+          const s = get();
+          const held = s.heldItem;
+          if (!held) return;
+          // Only a real editable surface places here; a draft-mine traveler keeps
+          // the drag→lazy-fork path (parity with the PS4 card facet), so drop the
+          // hold rather than mutate a read-through preview.
+          if (!selectEditable(s) && !selectTravelerEditable(s)) {
+            set({ heldItem: null });
+            return;
+          }
+          s.moveNode(held.nodeId, dayKey, minuteOfDay);
+          set({
+            heldItem: null,
+            lastPlacement: {
+              nodeId: held.nodeId,
+              title: held.title,
+              dayKey,
+              minute: minuteOfDay,
+            },
+          });
+        },
+        undoPlacement: () => {
+          const s = get();
+          const last = s.lastPlacement;
+          if (!last) return;
+          s.unscheduleNode(last.nodeId);
+          set({ lastPlacement: null });
+        },
+        clearLastPlacement: () => set({ lastPlacement: null }),
+
         focusNode: (id) => set({ focusedNodeId: id }),
         appendUserMessage: (id, text) =>
           set((s) => ({

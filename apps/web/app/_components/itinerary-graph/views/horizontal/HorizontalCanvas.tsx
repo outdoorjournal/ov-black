@@ -67,6 +67,11 @@ interface HorizontalCanvasProps {
   axisWidth: number;
   activeDragId: string | null;
   ghostId: string | null;
+  // Place mode (PS5): while a card is held, day columns become pulsing tap
+  // targets. `onPlaceTap` reports the tapped day + raw clientY back to the
+  // host, which resolves it to a minute against the shared layout segments.
+  placing: boolean;
+  onPlaceTap: (dayKey: string, clientY: number) => void;
   bodyRef: React.Ref<HTMLDivElement>;
   onCardHover: (id: string | null) => void;
   onCardClick: (id: string) => void;
@@ -113,6 +118,8 @@ export function HorizontalCanvas({
   axisWidth,
   activeDragId,
   ghostId,
+  placing,
+  onPlaceTap,
   bodyRef,
   onCardHover,
   onCardClick,
@@ -208,6 +215,29 @@ export function HorizontalCanvas({
             isDragActive={isDragActive}
           />
         ))}
+
+        {/* Place mode (PS5): while a card is held, every day column is a pulsing
+            tap target. A tap reports its clientY up to the host, which maps it to
+            a minute — a non-drag, keyboard-and-touch-friendly way to schedule. */}
+        {placing
+          ? layout.days.map((d) => (
+              <button
+                key={`place-${d.date}`}
+                type="button"
+                data-testid="place-target"
+                data-day={d.date}
+                aria-label={`Place on ${d.label}`}
+                onClick={(e) => onPlaceTap(d.date, e.clientY)}
+                className="absolute z-30 rounded-lg border-2 border-dashed border-brand/50 bg-brand/[0.06] transition-colors animate-pulse hover:animate-none hover:bg-brand/[0.12]"
+                style={{
+                  left: colXOf(d) - 4,
+                  top: 0,
+                  width: d.columnWidth + 8,
+                  height: layout.totalHeight,
+                }}
+              />
+            ))
+          : null}
 
         {/* Night bars under cards. */}
         {positioned

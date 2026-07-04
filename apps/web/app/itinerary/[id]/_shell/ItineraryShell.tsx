@@ -28,6 +28,7 @@ import type { UserRole } from "@/lib/role";
 import { ConciergeColumn } from "./ConciergeColumn";
 import { ConciergeControlProvider } from "./ConciergeControl";
 import { MobileTabBar } from "./MobileTabBar";
+import { PlaceModeLayer } from "./PlaceModeLayer";
 import { Rail } from "./Rail";
 
 export type ItineraryShellProps = {
@@ -126,6 +127,10 @@ export function ItineraryShell({
             </main>
 
             <MobileTabBar onOpenConcierge={() => setConciergeOpen(true)} />
+
+            {/* Place mode's cross-surface chrome (PS5): the holding chip + undo
+                toast float above every destination, driven by the shared store. */}
+            <PlaceModeLayer />
           </div>
         </ConciergeControlProvider>
       </TimelineDataProvider>

@@ -146,6 +146,9 @@ export function HorizontalView({
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
   const pxPerMinute = itineraryGraphStore.useStore((s) => s.pxPerMinute);
+  // Place mode (PS5): a card lifted off the Collection, waiting for a slot. When
+  // set, the day columns become pulsing tap targets (see onPlaceTap below).
+  const heldItem = itineraryGraphStore.useStore((s) => s.heldItem);
   // Whether to draw the dated timeline scaffold at all. With nothing on the
   // board AND only a vague window/flexible brief, a dated grid is meaningless —
   // the adapter would synthesize a "today" day — so we show only the concierge
@@ -441,6 +444,21 @@ export function HorizontalView({
   const handleDragCancel = useCallback(() => {
     setDrag({ activeId: null, overDayKey: null, overMinute: null });
   }, []);
+
+  // Place mode (PS5): the held card lands where the user TAPS a day column.
+  // Reuse the drag path's pointer→minute math — the tapped clientY, resolved
+  // against the same body rect + layout segments, snapped to the 15-min grid.
+  const handlePlaceTap = useCallback(
+    (dayKey: string, clientY: number) => {
+      const body = bodyRef.current;
+      if (!body) return;
+      const rect = body.getBoundingClientRect();
+      const raw = mapYToMinute(clientY - rect.top, layout.segments);
+      const minute = Math.max(0, Math.min(1439, Math.round(raw / 15) * 15));
+      storeApi.getState().placeHeldItem(dayKey, minute);
+    },
+    [layout.segments, storeApi],
+  );
 
 
   // Recompute whether scroll-hints should show based on the canvas's current
@@ -754,6 +772,8 @@ export function HorizontalView({
                     axisWidth={TIME_GUTTER}
                     activeDragId={drag.activeId}
                     ghostId={ghostNode?.id ?? null}
+                    placing={heldItem !== null}
+                    onPlaceTap={handlePlaceTap}
                     bodyRef={bodyRef}
                     onCardHover={(id) => {
                       if (id && id !== storeApi.getState().focusedNodeId) {
