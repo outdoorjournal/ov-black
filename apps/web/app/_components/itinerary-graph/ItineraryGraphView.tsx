@@ -28,6 +28,7 @@ import type { UserRole } from "@/lib/role";
 
 import type { ItineraryTimeline } from "./model/types";
 import { itineraryGraphStore } from "./store/itineraryGraphStore";
+import { TimelineDataProvider } from "./TimelineDataContext";
 import { HorizontalView } from "./views/horizontal/HorizontalView";
 import { MobileItineraryLayout } from "./views/mobile/MobileItineraryLayout";
 
@@ -83,25 +84,20 @@ export function ItineraryGraphView({
         startLocked,
       }}
     >
-      {/* md+ : the selected desktop view. `display: contents` so the view's
-          own full-viewport root behaves as a direct child of the Provider. */}
-      <div className="hidden md:contents">
-        {view === "horizontal" ? (
-          <HorizontalView
-            timeline={timeline}
-            baselineTitle={baselineTitle}
-            embedded={embedded}
-          />
-        ) : null}
-      </div>
-      {/* below md : the swipe-driven mobile layout of the same graph. */}
-      <div className="contents md:hidden">
-        <MobileItineraryLayout
-          timeline={timeline}
-          baselineTitle={baselineTitle}
-          embedded={embedded}
-        />
-      </div>
+      {/* The server-fresh timeline (day scaffold + timing) flows through context
+          so both layouts read it without prop-drilling and it refreshes on
+          `router.refresh()`; the store above holds the mutable graph domain. */}
+      <TimelineDataProvider value={{ timeline, baselineTitle }}>
+        {/* md+ : the selected desktop view. `display: contents` so the view's
+            own full-viewport root behaves as a direct child of the Provider. */}
+        <div className="hidden md:contents">
+          {view === "horizontal" ? <HorizontalView embedded={embedded} /> : null}
+        </div>
+        {/* below md : the swipe-driven mobile layout of the same graph. */}
+        <div className="contents md:hidden">
+          <MobileItineraryLayout embedded={embedded} />
+        </div>
+      </TimelineDataProvider>
     </itineraryGraphStore.Provider>
   );
 }

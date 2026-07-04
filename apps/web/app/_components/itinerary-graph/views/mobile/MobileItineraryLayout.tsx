@@ -20,10 +20,7 @@ import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { Card } from "../../shared/ExpandedCard";
 import { NotesPanel } from "../../shared/NotesPanel";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
-import type {
-  ItineraryTimeline,
-  NodeResponse,
-} from "../../model/horizontalTypes";
+import type { NodeResponse } from "../../model/horizontalTypes";
 import {
   dayIndexForNode,
   groupNodesByDay,
@@ -35,22 +32,26 @@ import {
   selectCanLeaveNote,
 } from "../../store/itineraryGraphStore";
 import { CollectionRail } from "../../collection/CollectionRail";
+import { useTimelineData } from "../../TimelineDataContext";
 
 import { ConciergeSheet } from "./ConciergeSheet";
 import { DayStrip } from "./DayStrip";
 import { DayTimeline } from "./DayTimeline";
 
 interface MobileItineraryLayoutProps {
-  timeline: ItineraryTimeline;
-  baselineTitle?: string | null;
   /** Fill the flex parent (below the AppHeader) instead of the whole viewport. */
   embedded?: boolean;
+  /** Render the built-in peek-sheet concierge. The routed planner shell moves
+   *  the concierge into the Chat tab, so it passes `false`; the standalone
+   *  prototype keeps the sheet (default `true`). */
+  showConciergeSheet?: boolean;
 }
 
 export function MobileItineraryLayout({
-  timeline,
   embedded = false,
+  showConciergeSheet = true,
 }: MobileItineraryLayoutProps) {
+  const { timeline } = useTimelineData();
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const pendingProposals = itineraryGraphStore.useStore(
     (s) => s.pendingProposals,
@@ -155,7 +156,7 @@ export function MobileItineraryLayout({
   return (
     <div
       className={
-        "flex w-screen flex-col overflow-hidden bg-paper text-ink " +
+        "flex w-full flex-col overflow-hidden bg-paper text-ink " +
         (embedded ? "min-h-0 flex-1" : "h-[100dvh]")
       }
     >
@@ -222,21 +223,23 @@ export function MobileItineraryLayout({
         ) : null}
       </div>
 
-      <ConciergeSheet
-        audience={audience}
-        apiBaseUrl={apiBaseUrl}
-        accessToken={accessToken}
-        clientId={clientId}
-        itineraryId={timeline.itinerary.id}
-        pendingCount={pendingProposals.length}
-        proposalHint={hint}
-        onJumpToProposal={() => {
-          if (hint) {
-            goToDay(hint.dayIndex);
-            setHint(null);
-          }
-        }}
-      />
+      {showConciergeSheet ? (
+        <ConciergeSheet
+          audience={audience}
+          apiBaseUrl={apiBaseUrl}
+          accessToken={accessToken}
+          clientId={clientId}
+          itineraryId={timeline.itinerary.id}
+          pendingCount={pendingProposals.length}
+          proposalHint={hint}
+          onJumpToProposal={() => {
+            if (hint) {
+              goToDay(hint.dayIndex);
+              setHint(null);
+            }
+          }}
+        />
+      ) : null}
 
       <AnimatePresence>
         {expandedNode ? (

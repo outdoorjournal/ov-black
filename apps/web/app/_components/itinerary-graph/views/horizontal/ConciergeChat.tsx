@@ -46,6 +46,14 @@ type ConciergeChatProps = {
   onScrollToNode?: (id: string) => void;
   /** Suppress ChatPanel's own header (a host provides one, e.g. the sheet). */
   hideHeader?: boolean;
+  /** M006/PS2: bind to a SPECIFIC session (resume from the list) instead of
+   *  lazily opening one. When set, no session is created — this thread streams
+   *  onto the given id and hydrates its turns. */
+  sessionId?: string;
+  /** Called with the session id once this thread has one — whether passed in
+   *  via `sessionId` or lazily created on the first turn. Lets a host (the
+   *  concierge column) refresh its session list. */
+  onSessionOpened?: (sessionId: string) => void;
 };
 
 export function ConciergeChat({
@@ -58,6 +66,8 @@ export function ConciergeChat({
   intro,
   onScrollToNode,
   hideHeader = false,
+  sessionId,
+  onSessionOpened,
 }: ConciergeChatProps) {
   const pendingProposals = itineraryGraphStore.useStore(
     (s) => s.pendingProposals,
@@ -72,7 +82,9 @@ export function ConciergeChat({
   );
   const [streaming, setStreaming] = useState(false);
 
-  const sessionIdRef = useRef<string | null>(null);
+  // Seed from an explicit resume target (PS2) so ensureSession returns it
+  // without ever creating a session.
+  const sessionIdRef = useRef<string | null>(sessionId ?? null);
   const streamingIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const seqRef = useRef(0);
@@ -179,8 +191,9 @@ export function ConciergeChat({
     });
     if (!result.ok) return null;
     sessionIdRef.current = result.session_id;
+    onSessionOpened?.(result.session_id);
     return result.session_id;
-  }, [apiBaseUrl, accessToken, clientId, itineraryId, audience]);
+  }, [apiBaseUrl, accessToken, clientId, itineraryId, audience, onSessionOpened]);
 
   // Client thread: eagerly open + replay the traveler's prior turns so the
   // advisor joins an existing conversation rather than a blank one.

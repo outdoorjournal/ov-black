@@ -47,8 +47,9 @@ import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { NotesPanel } from "../../shared/NotesPanel";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
-import type { ItineraryTimeline, NodeResponse } from "../../model/horizontalTypes";
+import type { NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
+import { useTimelineData } from "../../TimelineDataContext";
 import { offsetHoursOr, tzDayKey } from "../../model/horizontalTime";
 import {
   computeHorizontalLayout,
@@ -110,21 +111,25 @@ function buildIsoOnDayAtMinute(
 const SCROLL_HINT_STEP_PX = 320;
 
 interface HorizontalViewProps {
-  timeline: ItineraryTimeline;
-  /** Title of the baseline this itinerary forked from (G3), for the banner. */
-  baselineTitle?: string | null;
   /** Fill the flex parent (below the AppHeader) instead of the whole viewport. */
   embedded?: boolean;
+  /** Render the built-in chat + authoring aside. The routed planner shell moves
+   *  chat into the concierge column and the advisor panels into Studio, so it
+   *  passes `false`; the standalone prototype keeps the aside (default `true`).
+   *  Transitional — retired with the aside in PS6. */
+  showConciergeAside?: boolean;
 }
 
-// The horizontal view is a pure consumer of itineraryGraphStore — the store
-// Provider is owned by <ItineraryGraphView> one level up, so the same store
-// instance is shared with any future view.
+// The horizontal view is a pure consumer of itineraryGraphStore (the mutable
+// graph domain) + TimelineDataContext (the server-fresh day scaffold/timing).
+// The store Provider + the context are owned one level up — by the routed shell
+// or by <ItineraryGraphView> — so the same graph instance is shared across
+// views and the timing window refreshes without resetting in-session edits.
 export function HorizontalView({
-  timeline,
-  baselineTitle = null,
   embedded = false,
+  showConciergeAside = true,
 }: HorizontalViewProps) {
+  const { timeline, baselineTitle } = useTimelineData();
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const edges = itineraryGraphStore.useStore((s) => s.edges);
   // Attached `note` nodes grouped by host (0014) — drives the per-card badge
@@ -602,7 +607,7 @@ export function HorizontalView({
     >
     <div
       className={
-        "flex w-screen flex-col bg-paper text-ink " +
+        "flex w-full flex-col bg-paper text-ink " +
         (embedded ? "min-h-0 flex-1" : "h-screen")
       }
     >
@@ -673,7 +678,11 @@ export function HorizontalView({
           {canEdit ? (
             <button
               type="button"
-              onClick={() => setAsidePanel("diff")}
+              onClick={() =>
+                showConciergeAside
+                  ? setAsidePanel("diff")
+                  : router.push(`/itinerary/${timeline.itinerary.id}/studio`)
+              }
               data-testid="alternative-banner-reconcile"
               className="font-sans text-[10px] uppercase tracking-[0.2em] transition-colors hover:opacity-70"
               style={{ color: "#8b2a1d" }}
@@ -793,7 +802,10 @@ export function HorizontalView({
               advisors it switches between the authoring tools (Build), a
               PRIVATE advisor↔AI chat (Concierge), and the SHARED client
               conversation (Client thread). All three stay mounted so a
-              conversation isn't lost on tab switch; travelers only see chat. */}
+              conversation isn't lost on tab switch; travelers only see chat.
+              The routed shell suppresses this (chat → concierge column, panels →
+              Studio); the standalone prototype keeps it. Transitional (PS6). */}
+          {showConciergeAside ? (
           <aside className="hidden w-[440px] shrink-0 md:block">
             {canEdit ? (
               <div className="flex h-full flex-col">
@@ -937,6 +949,7 @@ export function HorizontalView({
               />
             )}
           </aside>
+          ) : null}
         </div>
 
         {/* Bottom map strip — temporarily removed from the itinerary view.

@@ -1,33 +1,8 @@
-// Unified itinerary graph route (traveler + staff).
-//
-// Both the traveler and an advisor land here on the SAME view. The server
-// resolves the viewer's `role` and passes it straight through — the store
-// derives editability from it (advisor → editable). Each viewer is handed
-// their OWN Supabase session token (already in their browser), so:
-//   - traveler → role=client: the editing UI stays locked, but the token
-//                powers the traveler-facing concierge (chat) and the read-only
-//                graph.
-//   - advisor  → role=advisor: the lock/approve/edit/add/remove mutations call
-//                the API. The backend's advisor guards remain the real
-//                authority over every mutation regardless of the UI.
-// Passing the viewer their own token leaks nothing — it is the same JWT they
-// already hold; what we never do is hand one viewer another's credentials.
-//
-// The S08 API gate (approved || advisor || owning client) on GET /itinerary
-// is the source of truth for *visibility*; a non-entitled viewer collapses to
-// notFound() so a draft's existence stays hidden.
+// The itinerary index (M006/PS1). No surface of its own yet — it lands the
+// planner on the Timeline. PS3 replaces this with the per-trip Dashboard (the
+// "you're not lost" home). Auth + fetch + the shell live in the layout.
 
-import { notFound, redirect } from "next/navigation";
-
-import { createApiClient, getItinerary } from "@ov-black/api-client";
-
-import { AppHeader, type Crumb } from "@/app/_components/app-header/AppHeader";
-import { ItineraryBuilderScreen } from "@/app/_components/itinerary-graph/intake/ItineraryBuilderScreen";
-import { toItineraryTimeline } from "@/app/_components/itinerary-graph/adapter/toItineraryTimeline";
-import { headerUserFromSupabase } from "@/lib/appHeader";
-import { publicEnv } from "@/lib/env";
-import { resolveUserRole } from "@/lib/role";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -35,89 +10,7 @@ type PageProps = {
   params: Promise<{ id: string }>;
 };
 
-export default async function ItineraryPage({ params }: PageProps) {
-  const { id: itineraryId } = await params;
-
-  const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    redirect("/");
-  }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const accessToken = session?.access_token;
-  if (!accessToken) {
-    redirect("/");
-  }
-
-  const { apiBaseUrl } = publicEnv();
-  const api = createApiClient({ baseUrl: apiBaseUrl, accessToken });
-
-  const result = await getItinerary(api, itineraryId);
-  if (!result.ok) {
-    notFound();
-  }
-
-  const role = await resolveUserRole(supabase);
-  const status = result.itinerary.status ?? "draft";
-  const timeline = toItineraryTimeline(
-    result.itinerary,
-    result.nodes,
-    result.edges,
-  );
-
-  // When this is an alternative version (a fork, G3), resolve the baseline's
-  // title so the banner can name the agreed plan it diverges from.
-  let baselineTitle: string | null = null;
-  if (result.itinerary.forked_from_id) {
-    const baseline = await getItinerary(api, result.itinerary.forked_from_id);
-    if (baseline.ok) baselineTitle = baseline.itinerary.title;
-  }
-
-  // Shared masthead: wordmark → breadcrumbs → avatar menu. The builder's own
-  // title + staff controls remain as a secondary toolbar inside the view below.
-  const tripTitle = result.itinerary.title?.trim() || "Itinerary";
-  const homeHref = role === "advisor" ? "/command-center" : "/basecamp";
-  const crumbs: Crumb[] =
-    role === "advisor"
-      ? [{ label: "Clients", href: "/command-center/clients" }, { label: tripTitle }]
-      : [{ label: "Basecamp", href: "/basecamp" }, { label: tripTitle }];
-
-  // First-run gate: no brief yet → capture the goal + timing before the
-  // timeline. A fork inherits its baseline's intent, so only baselines gate.
-  const needsBrief =
-    !result.itinerary.forked_from_id &&
-    (result.itinerary.brief ?? "").trim().length === 0;
-
-  return (
-    <div className="flex h-[100dvh] flex-col bg-paper">
-      <AppHeader
-        user={headerUserFromSupabase(user)}
-        homeHref={homeHref}
-        crumbs={crumbs}
-      />
-      <ItineraryBuilderScreen
-        needsBrief={needsBrief}
-        audience={role === "advisor" ? "advisor" : "traveler"}
-        timeline={timeline}
-        itineraryId={itineraryId}
-        status={status}
-        role={role}
-        baselineTitle={baselineTitle}
-        // The traveler's own open fork of this baseline ("My version"), resolved
-        // server-side, so the two-version toggle switches to it rather than
-        // spawning a duplicate fork.
-        viewerOpenForkId={result.viewer_open_fork_id ?? null}
-        // Each viewer gets their OWN session token: advisors use it to mutate,
-        // travelers use it to chat with the concierge. Capability is governed by
-        // `role` (UI) + the backend's advisor guards (authority).
-        apiBaseUrl={apiBaseUrl}
-        accessToken={accessToken}
-      />
-    </div>
-  );
+export default async function ItineraryIndexPage({ params }: PageProps) {
+  const { id } = await params;
+  redirect(`/itinerary/${id}/timeline`);
 }
