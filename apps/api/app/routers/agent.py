@@ -36,14 +36,18 @@ from app.schemas.agent import (
     AgentTurnSummary,
     OpenSessionRequest,
     OpenSessionResponse,
+    PatchSessionRequest,
+    SessionSummary,
     TurnRequest,
 )
 from app.services.agent import (
     ActorContext,
     SessionOutcome,
     TurnOutcome,
+    list_sessions,
     list_turns,
     open_or_reuse_session,
+    patch_session,
     stream_turn,
 )
 
@@ -123,6 +127,7 @@ async def create_session_endpoint(
         itinerary_id=payload.itinerary_id,
         seeded_opener=payload.seeded_opener,
         audience=payload.audience,
+        force_new=payload.force_new,
     )
     if outcome is not SessionOutcome.OK or agent_session is None:
         # Collapsed 404 shape (D015) — FORBIDDEN and CLIENT_NOT_FOUND both
@@ -135,6 +140,81 @@ async def create_session_endpoint(
         itinerary_id=itinerary_id,
         seeded_opener=agent_session.seeded_opener,
         audience=agent_session.audience,
+    )
+
+
+# ── GET /sessions · PATCH /sessions/{id} (M006/PS2) ─────────────────────────
+
+
+@router.get(
+    "",
+    response_model=list[SessionSummary],
+    responses={
+        404: {"description": "No client with this id accessible to the caller."},
+    },
+    summary="List the scoped, resumable sessions for a client.",
+)
+async def list_sessions_endpoint(
+    client_id: uuid.UUID,
+    audience: SessionAudience = SessionAudience.traveler,
+    itinerary_id: uuid.UUID | None = None,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[SessionSummary]:
+    actor = await _actor_for_user(user, session)
+    outcome, rows = await list_sessions(
+        session,
+        actor=actor,
+        client_id=client_id,
+        itinerary_id=itinerary_id,
+        audience=audience,
+    )
+    if outcome is not SessionOutcome.OK:
+        # Collapsed 404 (D015) — a traveler probing the advisor audience, a
+        # cross-tenant client_id, and a missing client all look identical.
+        raise HTTPException(status_code=404, detail="client_not_found")
+    return [
+        SessionSummary(
+            session_id=row.id,
+            title=row.title,
+            itinerary_id=row.itinerary_id,
+            audience=row.audience,
+            started_at=row.started_at,
+        )
+        for row in rows
+    ]
+
+
+@router.patch(
+    "/{session_id}",
+    response_model=SessionSummary,
+    responses={
+        404: {"description": "No session with this id accessible to the caller."},
+    },
+    summary="Rename or (un)archive a session.",
+)
+async def patch_session_endpoint(
+    session_id: uuid.UUID,
+    payload: PatchSessionRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> SessionSummary:
+    actor = await _actor_for_user(user, session)
+    outcome, agent_session = await patch_session(
+        session,
+        actor=actor,
+        session_id=session_id,
+        title=payload.title,
+        archived=payload.archived,
+    )
+    if outcome is not SessionOutcome.OK or agent_session is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return SessionSummary(
+        session_id=agent_session.id,
+        title=agent_session.title,
+        itinerary_id=agent_session.itinerary_id,
+        audience=agent_session.audience,
+        started_at=agent_session.started_at,
     )
 
 

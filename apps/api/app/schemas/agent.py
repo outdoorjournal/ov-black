@@ -51,6 +51,9 @@ class OpenSessionRequest(BaseModel):
     # are unaffected. ``advisor`` opens a private advisor<->AI workspace the
     # traveler never sees; only an advisor actor may request it.
     audience: SessionAudience = SessionAudience.traveler
+    # M006/PS2: the explicit "＋ new session" path. False (default) reuses the
+    # most-recent live session for the scope; True always opens a fresh one.
+    force_new: bool = False
 
 
 class OpenSessionResponse(BaseModel):
@@ -100,3 +103,33 @@ class AgentTurnSummary(BaseModel):
     retried: int
     error_reason: str | None
     created_at: datetime
+
+
+class SessionSummary(BaseModel):
+    """Row shape for ``GET /sessions`` — one scoped, resumable session (PS2).
+
+    The list is scope-filtered (client + audience + itinerary) and excludes
+    archived sessions, so this carries just what the concierge column needs to
+    render the list and resume: an id, a label, and when it started.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: uuid.UUID
+    title: str | None = None
+    itinerary_id: uuid.UUID | None = None
+    audience: SessionAudience = SessionAudience.traveler
+    started_at: datetime
+
+
+class PatchSessionRequest(BaseModel):
+    """Body of ``PATCH /sessions/{session_id}`` — rename and/or (un)archive.
+
+    Both fields are optional; an omitted field means "leave as is". An empty
+    ``title`` clears it (falls back to the auto-derived label on the next turn).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: Annotated[str, Field(max_length=200)] | None = None
+    archived: bool | None = None

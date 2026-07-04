@@ -113,6 +113,15 @@ class AgentSession(Base):
         nullable=False,
         server_default=text("'traveler'"),
     )
+    # A short label for the session — set explicitly (advisor rename) or
+    # auto-derived from the first user message. NULL until the first turn.
+    title: Mapped[str | None] = mapped_column(nullable=True)
+    # Soft-archive marker: a non-NULL value hides the session from the list and
+    # excludes it from reuse, without deleting its turns (0036).
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
 
 class AgentTurn(Base):

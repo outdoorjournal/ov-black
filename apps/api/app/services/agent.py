@@ -133,6 +133,19 @@ def _arn_tail(arn: str) -> str | None:
     return arn.rsplit("/", 1)[-1][-8:] or None
 
 
+def _derive_session_title(content: str, *, max_length: int = 60) -> str:
+    """A short session label from the first user message (M006/PS2).
+
+    Collapse whitespace, then truncate on a word boundary near ``max_length``
+    with an ellipsis when cut. Never logged — it's derived from user content.
+    """
+    stripped = " ".join(content.split()).strip()
+    if len(stripped) <= max_length:
+        return stripped
+    head = stripped[:max_length].rsplit(" ", 1)[0].rstrip()
+    return f"{head or stripped[:max_length].rstrip()}…"
+
+
 # ── open_or_reuse_session ──────────────────────────────────────────────────
 
 
@@ -313,21 +326,23 @@ async def open_or_reuse_session(
     itinerary_id: uuid.UUID | None = None,
     seeded_opener: str | None = None,
     audience: SessionAudience = SessionAudience.traveler,
+    force_new: bool = False,
 ) -> tuple[SessionOutcome, AgentSession | None, uuid.UUID | None]:
-    """Idempotently open an AgentSession for a client.
+    """Open — or reuse the most-recent live — AgentSession for a scope.
 
-    If an open session exists (``ended_at IS NULL``), return it; else INSERT
-    one with a fresh ``agentcore_session_id``. Caller cannot distinguish
-    reuse from create from the HTTP surface — both return 201 above.
+    Reuse honours SCOPE (M006/PS2): the newest LIVE session (``ended_at IS
+    NULL`` and ``archived_at IS NULL``) for the exact
+    ``(client_id, audience, itinerary_id)`` is returned; else INSERT one with a
+    fresh ``agentcore_session_id``. A session's scope is fixed at creation —
+    it is **never re-pinned** — so opening a different itinerary opens a
+    different session (this is the fix for the old single-re-pinned-session
+    bug). ``force_new`` skips reuse entirely for the explicit "＋ new session"
+    path. Caller cannot distinguish reuse from create from the HTTP surface.
 
     ``itinerary_id``:
-      - **Omitted**: open a general (unpinned) session. The returned
-        itinerary_id is whatever the session currently carries (possibly
-        None — the agent auto-pins on its first write in planning mode).
-      - **Provided**: pin the session to this specific itinerary. The
-        itinerary must belong to ``client_id`` or the call is rejected
-        with ``FORBIDDEN``. If the session is being reused and was
-        unpinned, we update its pin to this value.
+      - **Omitted / None**: basecamp scope (unpinned) — onboarding / Q&A.
+      - **Provided**: itinerary scope. The itinerary must belong to
+        ``client_id`` or the call is rejected with ``FORBIDDEN``.
     """
     async with session_factory() as session:
         client = (
@@ -372,19 +387,34 @@ async def open_or_reuse_session(
             if owner_cid is None or owner_cid != client_id:
                 return SessionOutcome.FORBIDDEN, None, None
 
-        existing = (
-            await session.execute(
-                select(AgentSession).where(
-                    AgentSession.client_id == client_id,
-                    AgentSession.audience == audience,
-                    AgentSession.ended_at.is_(None),
-                )
+        # Reuse the most-recent LIVE session for this EXACT scope — never
+        # re-pinned. `force_new` opts out for the "＋ new session" path.
+        existing: AgentSession | None = None
+        if not force_new:
+            scope_match = (
+                AgentSession.itinerary_id.is_(None)
+                if itinerary_id is None
+                else AgentSession.itinerary_id == itinerary_id
             )
-        ).scalar_one_or_none()
+            existing = (
+                (
+                    await session.execute(
+                        select(AgentSession)
+                        .where(
+                            AgentSession.client_id == client_id,
+                            AgentSession.audience == audience,
+                            scope_match,
+                            AgentSession.ended_at.is_(None),
+                            AgentSession.archived_at.is_(None),
+                        )
+                        .order_by(AgentSession.started_at.desc())
+                        .limit(1)
+                    )
+                )
+                .scalars()
+                .first()
+            )
         if existing is not None:
-            if itinerary_id is not None and existing.itinerary_id != itinerary_id:
-                existing.itinerary_id = itinerary_id
-                await session.commit()
             if backfilled:
                 logger.info(
                     "agent.auth.client_backfilled",
@@ -448,6 +478,99 @@ async def open_or_reuse_session(
             },
         )
         return SessionOutcome.OK, new, new.itinerary_id
+
+
+# ── list_sessions / patch_session (M006/PS2) ───────────────────────────────
+
+
+async def list_sessions(
+    session: AsyncSession,
+    *,
+    actor: ActorContext,
+    client_id: uuid.UUID,
+    itinerary_id: uuid.UUID | None = None,
+    audience: SessionAudience = SessionAudience.traveler,
+) -> tuple[SessionOutcome, list[AgentSession]]:
+    """The non-archived sessions for a scope, newest first (M006/PS2).
+
+    Scope = ``(client_id, audience, itinerary_id)`` — the same key reuse
+    honours. Access mirrors :func:`open_or_reuse_session`: the client must be
+    accessible to the actor, and a traveler may never list the private advisor
+    audience (collapsed to FORBIDDEN → 404 so its existence stays hidden).
+    """
+    access = await _enforce_client_access(session, actor=actor, client_id=client_id)
+    if access is not SessionOutcome.OK:
+        return access, []
+    if audience == SessionAudience.advisor and actor.actor_kind == "user":
+        return SessionOutcome.FORBIDDEN, []
+
+    scope_match = (
+        AgentSession.itinerary_id.is_(None)
+        if itinerary_id is None
+        else AgentSession.itinerary_id == itinerary_id
+    )
+    rows = (
+        (
+            await session.execute(
+                select(AgentSession)
+                .where(
+                    AgentSession.client_id == client_id,
+                    AgentSession.audience == audience,
+                    scope_match,
+                    AgentSession.archived_at.is_(None),
+                )
+                .order_by(AgentSession.started_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return SessionOutcome.OK, list(rows)
+
+
+async def patch_session(
+    session: AsyncSession,
+    *,
+    actor: ActorContext,
+    session_id: uuid.UUID,
+    title: str | None = None,
+    archived: bool | None = None,
+) -> tuple[SessionOutcome, AgentSession | None]:
+    """Rename and/or (un)archive a session (M006/PS2).
+
+    Access is checked against the session's owning client. A traveler may never
+    touch a private advisor-audience session (collapsed to FORBIDDEN → 404).
+    ``title``/``archived`` are each optional — omitted means "leave as is".
+    """
+    row = (
+        await session.execute(
+            select(AgentSession, Client)
+            .join(Client, Client.id == AgentSession.client_id)
+            .where(AgentSession.id == session_id)
+        )
+    ).first()
+    if row is None:
+        # Collapse a missing session to CLIENT_NOT_FOUND → 404 (existence-hiding).
+        return SessionOutcome.CLIENT_NOT_FOUND, None
+    agent_session, client = row
+
+    if actor.actor_kind == "advisor":
+        if actor.user_id is None or client.owner_id != actor.user_id:
+            return SessionOutcome.FORBIDDEN, None
+    elif actor.actor_kind == "user" and (
+        actor.user_id is None or client.auth_user_id != actor.user_id
+    ):
+        return SessionOutcome.FORBIDDEN, None
+    if agent_session.audience == SessionAudience.advisor and actor.actor_kind == "user":
+        return SessionOutcome.FORBIDDEN, None
+
+    if title is not None:
+        agent_session.title = title.strip() or None
+    if archived is not None:
+        agent_session.archived_at = datetime.now(UTC) if archived else None
+    await session.commit()
+    await session.refresh(agent_session)
+    return SessionOutcome.OK, agent_session
 
 
 # ── list_turns ─────────────────────────────────────────────────────────────
@@ -1066,6 +1189,13 @@ async def stream_turn(
         # Mode + prior turns — both cheap SELECTs, same transaction.
         mode = await _detect_mode(db, itinerary_id=pinned_itinerary_id, client_id=client_id)
         prior_turns = await _load_prior_turns(db, session_id=session_id)
+
+        # Auto-title from the first user message (M006/PS2) — only when the
+        # session has no title yet, so an explicit rename (PATCH) is preserved.
+        # `agent_session` is attached to `db`, so the set persists on the commit
+        # below alongside the user turn.
+        if not agent_session.title:
+            agent_session.title = _derive_session_title(content)
 
         user_turn = AgentTurn(
             session_id=session_id,

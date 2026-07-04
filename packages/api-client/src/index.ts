@@ -82,7 +82,9 @@ import {
   listMyInvoicesEndpointMeInvoicesGet,
   listMyItinerariesEndpointMeItinerariesGet,
   listMyPartyMembersEndpointMePartyMembersGet,
+  listSessionsEndpointSessionsGet,
   listTurnsEndpointSessionsSessionIdTurnsGet,
+  patchSessionEndpointSessionsSessionIdPatch,
   lockItineraryEndpointItineraryItineraryIdLockPost,
   loginEndpointAuthLoginPost,
   randomOpenerEndpointOnboardingOpenersRandomGet,
@@ -161,6 +163,8 @@ import type {
   OnboardingOpenerResponse,
   OpenSessionRequest,
   OpenSessionResponse,
+  PatchSessionRequest,
+  SessionSummary,
   AttachPartyMemberRequest,
   DocumentCompleteRequest,
   DocumentDetail,
@@ -380,6 +384,8 @@ export type AccessStatus = "pending" | "active";
 export type {
   OpenSessionRequest,
   OpenSessionResponse,
+  PatchSessionRequest,
+  SessionSummary,
   TurnRequest,
   AgentTurnSummary,
   TurnRole,
@@ -752,6 +758,101 @@ export async function listTurns(
 function parseListTurnsDetail(status: number): ListTurnsDetail {
   if (status === 404) return "session_not_found";
   return "unknown";
+}
+
+export type ListSessionsDetail =
+  | "client_not_found"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for GET /sessions — the scoped, resumable Artemis
+ * session list (M006/PS2).
+ */
+export type ListSessionsResult =
+  | { ok: true; sessions: SessionSummary[] }
+  | { ok: false; status: number; detail: ListSessionsDetail };
+
+/**
+ * Typed wrapper for GET /sessions. Scope = (client + audience + itinerary);
+ * archived sessions are excluded and the list is newest-first. A traveler
+ * probing the advisor audience collapses to 404 (existence-hiding).
+ */
+export async function listSessions(
+  client: Client,
+  query: {
+    clientId: string;
+    audience?: OpenSessionRequest["audience"];
+    itineraryId?: string | null;
+  },
+): Promise<ListSessionsResult> {
+  try {
+    const { data, error, response } = await listSessionsEndpointSessionsGet({
+      client,
+      query: {
+        client_id: query.clientId,
+        ...(query.audience ? { audience: query.audience } : {}),
+        ...(query.itineraryId != null ? { itinerary_id: query.itineraryId } : {}),
+      },
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, sessions: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 404 ? "client_not_found" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type PatchSessionDetail =
+  | "session_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+/**
+ * Discriminated result for PATCH /sessions/{id}.
+ */
+export type PatchSessionResult =
+  | { ok: true; session: SessionSummary }
+  | { ok: false; status: number; detail: PatchSessionDetail };
+
+/**
+ * Typed wrapper for PATCH /sessions/{id} — rename and/or (un)archive a
+ * session (M006/PS2). Both fields optional; omitted means "leave as is".
+ */
+export async function patchSession(
+  client: Client,
+  sessionId: string,
+  body: PatchSessionRequest,
+): Promise<PatchSessionResult> {
+  try {
+    const { data, error, response } =
+      await patchSessionEndpointSessionsSessionIdPatch({
+        client,
+        path: { session_id: sessionId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, session: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail:
+        response.status === 404
+          ? "session_not_found"
+          : response.status === 422
+            ? "validation_error"
+            : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }
 
 export type GetItineraryDetail =

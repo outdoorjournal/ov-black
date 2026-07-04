@@ -205,6 +205,7 @@ def test_post_sessions_advisor_owned_client_returns_201(
         itinerary_id: uuid.UUID | None = None,  # noqa: ARG001
         seeded_opener: str | None = None,  # noqa: ARG001
         audience: SessionAudience = SessionAudience.traveler,  # noqa: ARG001
+        force_new: bool = False,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         assert actor.actor_kind == "advisor"
         assert actor.user_id == advisor
@@ -249,6 +250,7 @@ def test_post_sessions_advisor_audience_is_plumbed_and_returned(
         itinerary_id: uuid.UUID | None = None,  # noqa: ARG001
         seeded_opener: str | None = None,  # noqa: ARG001
         audience: SessionAudience = SessionAudience.traveler,
+        force_new: bool = False,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         seen["audience"] = audience
         return SessionOutcome.OK, agent_sess, None
@@ -284,6 +286,7 @@ def test_post_sessions_cross_advisor_returns_404(
         itinerary_id: uuid.UUID | None = None,
         seeded_opener: str | None = None,  # noqa: ARG001
         audience: SessionAudience = SessionAudience.traveler,  # noqa: ARG001
+        force_new: bool = False,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         return SessionOutcome.FORBIDDEN, None, None
 
@@ -326,6 +329,7 @@ def test_post_sessions_is_idempotent_on_reopen(
         itinerary_id: uuid.UUID | None = None,
         seeded_opener: str | None = None,  # noqa: ARG001
         audience: SessionAudience = SessionAudience.traveler,  # noqa: ARG001
+        force_new: bool = False,  # noqa: ARG001
     ) -> tuple[SessionOutcome, Any, uuid.UUID | None]:
         call_count["n"] += 1
         return SessionOutcome.OK, agent_sess, itinerary_id
