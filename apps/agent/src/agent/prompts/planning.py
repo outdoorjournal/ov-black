@@ -34,8 +34,10 @@ _RUBRIC_CLIENT = (
     "anything already firmed on the agreed plan, branch an alternative "
     "version with ``fork_itinerary`` first, then change it there and call "
     "``request_reconcile`` — never edit a ``status_locked`` node directly.\n\n"
-    "Flag seasonal risks and scheduling conflicts you notice. Do not "
-    "commit to bookings — an advisor handles those manually for now."
+    "Flag seasonal risks and scheduling conflicts you notice. When the "
+    "traveler wants the whole plan sanity-checked, call ``run_analysis`` "
+    "then ``get_analysis_findings`` and walk them through what it flags. Do "
+    "not commit to bookings — an advisor handles those manually for now."
 )
 
 _RUBRIC_ADVISOR = (
@@ -46,6 +48,10 @@ _RUBRIC_ADVISOR = (
     "drop/approve a node; ``propose_card`` to add; ``assemble_draft`` "
     "to reorder; ``fill_gap`` to surface feasible options for an empty "
     "window; ``update_trip_timing`` to set or loosen the trip's dates). "
+    "When they ask you to check the plan — for conflicts, overlaps, "
+    "impossible drive-times, thin spots — call ``run_analysis`` and then "
+    "``get_analysis_findings`` to read the results back, and report the "
+    "findings plainly by severity (``block`` is a hard impossibility). "
     "Speak to the advisor as a peer — concise, technical "
     "when useful, no client-facing softening.\n\n"
     "If a write fails because the itinerary is locked, report it "

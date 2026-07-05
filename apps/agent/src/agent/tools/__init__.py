@@ -10,6 +10,7 @@ them to instantiate each turn's ``Agent``.
 from __future__ import annotations
 
 from agent.schemas import Mode
+from agent.tools.analyze import get_analysis_findings, run_analysis
 from agent.tools.collection import (
     add_collection_note,
     get_collection,
@@ -64,6 +65,9 @@ _TOOLS_PLANNING = [
     list_alternatives,
     search_inventory,
     get_inventory_detail,
+    # Feasibility: check the plan for problems, then rank fixes for a gap.
+    run_analysis,
+    get_analysis_findings,
     fill_gap,
     propose_card,
     propose_flight,

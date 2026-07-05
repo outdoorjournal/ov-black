@@ -31,7 +31,7 @@ mutation and a traveler mutation are the same write path with a different
 | [ADV-3](#adv-3--advisor-builds-the-itinerary-by-conversation-on-the-travelers-behalf) | Build the itinerary by conversation, on the traveler's behalf | 🟡 Partial | P3 search→propose→approve + full-loop build (API) + advisor-project browser turn loop (`e2e/advisor/concierge.spec.ts`); grounded *semantic* turn still agent-gated |
 | [ADV-4](#adv-4--advisor-hand-authors-a-node-in-a-card-like-editor) | Hand-author a node in a Card-like editor (type, links, price) | ✅ Automated | summonable `CardComposer` (Studio / Collection / timeline-slot) + live preview + create-at-slot scheduling via `authorNode`; `node-editor.spec.ts` (browser) + P3 write paths |
 | [ADV-5](#adv-5--advisor-picks-flights-via-duffel) | Pick flights via Duffel | 🟡 Partial | Duffel provider + `search_inventory(flight)` + `propose_flight` (API, P3 flight lane); **flight-picker UI missing**; live creds-gated |
-| [ADV-6](#adv-6--advisor-works-with-the-agent-to-analyze-the-itinerary) | Work with the agent to Analyze the itinerary | 🟡 Partial | Analyze/Fill engine (P3); **no agent tool to run Analyze conversationally**; UI trigger to confirm |
+| [ADV-6](#adv-6--advisor-works-with-the-agent-to-analyze-the-itinerary) | Work with the agent to Analyze the itinerary | ✅ Automated | Analyze/Fill engine (P3) + board **Analyze** button + `run_analysis`/`get_analysis_findings` planning-mode tools (`test_analyze_tools`/`test_modes`); live turn Bedrock-gated |
 | [ADV-7](#adv-7--advisor-sends-the-itinerary-to-the-traveler-with-a-message) | Send the itinerary to the traveler with a message | 🟡 Partial | human thread `POST /threads/{id}/messages` + `HumanThread` UI; **email delivery 🔍 SMTP**; no e2e pillar yet |
 | [ADV-8](#adv-8--traveler-reviews-and-chats-with-the-advisor-requesting-changes) | Traveler reviews & chats with the advisor, requesting changes | 🟡 Partial | P5 `request_reconcile` fork loop + human thread (API); @Artemis summon newer, thin coverage |
 | [ADV-9](#adv-9--advisor-makes-changes-via-the-agent-respecting-locked-nodes) | Make changes via the agent, respecting locked nodes | ✅ Automated | P5 booked-node immutability + status×actor gate + reconcile (API) |
@@ -391,8 +391,10 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-6 · Advisor works with the agent to Analyze the itinerary
 
-- **Status:** 🟡 Partial — the Analyze/Fill engine is built + API-tested; **the agent has no
-  tool to run Analyze or read findings**, so it isn't yet a *conversational* step.
+- **Status:** ✅ Automated — the Analyze/Fill engine is built + API-tested, **and** Analyze is
+  now a conversational step: a board **Analyze** button plus `run_analysis` /
+  `get_analysis_findings` agent tools (planning mode) over the engine (G-ANALYZE-AGENT closed).
+  The live turn (a real agent invoking the tool) is Bedrock-gated per §4.
 - **Personas:** Advisor ↔ Agent
 - **Surface:** API seam (pytest) + agent
 - **Preconditions:** A built itinerary with timed/located nodes.
@@ -400,7 +402,9 @@ mutation and a traveler mutation are the same write path with a different
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_standard_analyze_completes_with_findings` — a standard Analyze reaches `completed` and yields a structured findings list.
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_fill_proposes_feasible_options_for_a_gap` — Fill returns ranked, physically-feasible (or explicitly `feasibility_unknown`) options for an open window.
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_analyze_flags_an_impossible_drive` — **skipped** scaffold: needs a PATCH to inject timed/geo nodes; the flux finding itself is covered by the backend B5 suite.
-  - Agent-driven Analyze (`run_analysis` / `get_findings` tools) — **no tool; no test.**
+  - `apps/agent/tests/test_analyze_tools.py` — the `run_analysis` / `get_analysis_findings` tools build the right requests (depth + `force_rerun`, latest-run default, empty-history, unpinned guard) and return the shaped `{status, summary, findings}`.
+  - `apps/agent/tests/test_modes.py::test_tool_bundles_are_mode_appropriate` — both tools are in the **planning** bundle (advisor + client), absent from onboarding / read-mostly Q&A.
+  - Live-agent conversational turn (agent actually fires the tool) — Bedrock-gated; belongs alongside ADV-3's `concierge.spec.ts`, asserted at the API seam.
 
 **Given** an advisor with a fleshed-but-imperfect itinerary,
 
@@ -420,11 +424,14 @@ mutation and a traveler mutation are the same write path with a different
 
 **Notes / gaps**
 - ✅ The Analyze **engine** and Fill are solid at the API seam.
-- 🔎 **"Works *with the agent*" is the gap.** There is no agent tool to kick off Analyze or
-  read its findings, and no confirmed UI trigger button — the advisor runs it via the API
-  today. Add a `run_analysis` + `get_analysis_findings` tool (planning/advisor mode) so the
-  concierge can "check this for me and tell me what's wrong," plus an Analyze button on the
-  advisor board. Tracked as **G-ANALYZE-AGENT** in [advisor-plan.md](./advisor-plan.md).
+- ✅ **"Works *with the agent*" is now closed (G-ANALYZE-AGENT).** The board carries an
+  **Analyze** button (`itinerary-graph-tool-analyze` → the `AnalyzeSection` modal: run, poll,
+  findings by severity), and the concierge has `run_analysis` + `get_analysis_findings`
+  planning-mode tools — taught in both planning rubrics — so "check this for me and tell me
+  what's wrong" fires the engine conversationally. See [advisor-plan.md](./advisor-plan.md).
+- 🔎 The remaining boundary is the **live turn**: a real agent invoking the tool and narrating
+  findings is Bedrock-gated (asserted at the API seam against a real agent, never on browser
+  wording — §4), same posture as ADV-3.
 
 ---
 

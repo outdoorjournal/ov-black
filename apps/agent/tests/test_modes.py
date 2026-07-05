@@ -118,6 +118,13 @@ def test_tool_bundles_are_mode_appropriate() -> None:
     assert "move_node" in planning_names
     assert "add_note" in planning_names
 
+    # Feasibility (Analyze) is a planning-mode step — the advisor/traveler can
+    # ask the concierge to check the plan (ADV-6). Not in onboarding (no plan to
+    # analyse yet) or read-mostly Q&A.
+    assert {"run_analysis", "get_analysis_findings"} <= planning_names
+    assert "run_analysis" not in onboarding_names
+    assert "run_analysis" not in qa_names
+
     # Q&A is read-mostly: a narrow traveler write surface (note / fork / move /
     # request_reconcile) but never the full authoring toolkit.
     assert {"add_note", "fork_itinerary", "move_node", "request_reconcile"} <= qa_names

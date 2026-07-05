@@ -10,12 +10,14 @@
 > **Bottom line (handoff):** ~two-thirds of the advisor loop is already **green at the
 > API seam** via the pillar suite (P1–P6). Wave 1 (advisor-project Playwright over the
 > built spine) is shipped, and of the original **six product gaps**, **G-INVITE-LATER**
-> (ADV-1), **G-NODE-EDITOR** (ADV-4, the card composer) and **G-APPROVE-TOTAL** (ADV-10,
+> (ADV-1), **G-NODE-EDITOR** (ADV-4, the card composer), **G-APPROVE-TOTAL** (ADV-10,
 > now a full `draft → proposed → approved` state machine — advisor proposes, traveler
-> approves node-by-node or all-at-once, with surfaced totals) are **closed**. Outstanding:
-> **G-ANALYZE-AGENT** (ADV-6), **G-TESTCARD** (ADV-11), **G-COVER** (ADV-2A), plus the
-> deferred **advisor-private Collection** slice. Nothing here is a rewrite; it's finishing
-> UI + a few tools on top of a built spine.
+> approves node-by-node or all-at-once, with surfaced totals) and **G-ANALYZE-AGENT**
+> (ADV-6, Analyze as a conversational step — a board **Analyze** button plus `run_analysis`
+> / `get_analysis_findings` agent tools over the built engine) are **closed**. Outstanding:
+> **G-TESTCARD** (ADV-11) and **G-COVER** (ADV-2A), plus the deferred **advisor-private
+> Collection** slice. Nothing here is a rewrite; it's finishing UI + a few tools on top of
+> a built spine.
 
 ## §0. Method
 
@@ -38,7 +40,7 @@ seam missing), or **gap** (no code path — a product decision precedes the test
 | 3 | Build by conversation | **partial** | search→propose→approve (P3, full-loop); `propose_card`; `concierge.spec.ts` | ✅ advisor browser turn-loop shipped; live grounding still agent-gated |
 | 4 | Hand-author a node | **built** | `POST /nodes`, `/from-inventory` (P3), `/from-link` OG preview; summonable `CardComposer` (Studio / Collection / timeline-slot) + live preview; `authorNode`; `node-editor.spec.ts` (ADV-4) | ✅ composer shipped (G-NODE-EDITOR closed): typed+priced, paste-link, create-at-slot scheduling; advisor-private Collection + link-card pricing are follow-ups |
 | 5 | Duffel flights | **partial** | `inventory/providers/duffel.py`; `search_inventory`+`propose_flight`; P3 flight lane | **no flight-picker UI**; live creds-gated |
-| 6 | Analyze w/ the agent | **partial** | `routers/analyze.py` (P3 analyze+fill) | **no agent tool** to run Analyze / read findings; UI trigger unconfirmed |
+| 6 | Analyze w/ the agent | **built** | `routers/analyze.py` (P3 analyze+fill); board **Analyze** button (`itinerary-graph-tool-analyze` → `AnalyzeSection` modal); `run_analysis`+`get_analysis_findings` planning-mode tools; `test_analyze_tools`/`test_modes` | ✅ Analyze is now a conversational step (G-ANALYZE-AGENT closed); live turn Bedrock-gated per §4 |
 | 7 | Send + message (email+chat) | **partial** | `routers/messaging.py` `/threads`; `HumanThread.tsx`; `test_agent_summon.py` | **no e2e**; email 🔍; "send" as first-class action undecided |
 | 8 | Traveler requests changes | **partial** | `request_reconcile` (P5); human thread + @Artemis | conversational-request e2e; @Artemis thin |
 | 9 | Advisor changes, locked nodes | **built** | status×actor gate, `demote_before_edit`, reconcile (P5) | — (optional lock-affordance browser test) |
@@ -54,8 +56,8 @@ server-side.
 ## §2. Product gaps (decision precedes test)
 
 Originally six gaps blocked a scenario being asserted *as written*; **G-INVITE-LATER,
-G-NODE-EDITOR, and G-APPROVE-TOTAL are now closed** (the last as a full `draft → proposed →
-approved` state machine — see below). That leaves **G-COVER**, **G-ANALYZE-AGENT**, and
+G-NODE-EDITOR, G-APPROVE-TOTAL, and G-ANALYZE-AGENT are now closed** (G-APPROVE-TOTAL as a
+full `draft → proposed → approved` state machine — see below). That leaves **G-COVER** and
 **G-TESTCARD**. Each is small and isolated.
 
 ### ✅ Closed: G-INVITE-LATER — silent client create (ADV-1)
@@ -112,15 +114,26 @@ approved` state machine — see below). That leaves **G-COVER**, **G-ANALYZE-AGE
   Collection affordance → `web` node; empty timeline-slot click → **scheduled** node with
   `starts_at`), each API-seam-backstopped. `actor_kind=advisor` is Pillar 3's job.
 
-### G-ANALYZE-AGENT — Analyze as a conversational step (ADV-6)
+### ✅ Closed: G-ANALYZE-AGENT — Analyze as a conversational step (ADV-6)
 - **Goal:** the advisor can ask the concierge to analyze the plan and hear what's wrong.
-- **Today:** the Analyze/Fill **engine** is built + P3-tested, but only reachable by the
-  advisor calling `POST /itinerary/{id}/analyses` directly; the agent has **no** tool for it.
-- **Plan:** add `run_analysis` + `get_analysis_findings` tools (planning/advisor mode) that
-  wrap the existing endpoints, plus an Analyze button on the advisor board.
-- **Size:** S–M. **Touches:** `agent/tools/` (new tools + registry), advisor board button.
-- **Test to add:** agent-mode unit that the tool bundle includes Analyze in advisor/planning;
-  API path already covered by P3.
+- **Shipped (two halves, both now green):**
+  - **Board button:** the horizontal board's **Analyze** tool button
+    (`itinerary-graph-tool-analyze`) opens an `AuthoringModal` hosting `AnalyzeSection` —
+    it runs the analysis, polls until terminal, and lists findings by severity. (Landed in the
+    authoring-harmonization commit alongside the unified **Add** composer.)
+  - **Agent tools:** `run_analysis` (queues `POST …/analyses` with depth + `force_rerun`) and
+    `get_analysis_findings` (reads a run — defaulting to the latest — and returns
+    `{status, summary, findings}`, dropping the noisy `result`/`external_calls`) in
+    [`agent/tools/analyze.py`](../../apps/agent/src/agent/tools/analyze.py), registered in the
+    **planning** bundle and taught in both planning rubrics (advisor + client) so "check this
+    plan for conflicts" actually fires the tools. Both are read-only over the graph, gated by
+    the same itinerary-read authorization as `get_itinerary`.
+- **Tested:** agent — `test_analyze_tools.py` (request shape, latest-run default, empty-history,
+  unpinned guard) + `test_modes.py` (the planning bundle includes both tools; onboarding/Q&A
+  don't). API path already covered by P3.
+- **Boundary:** the *live conversational turn* (a real agent invoking the tool and narrating
+  findings) is Bedrock-gated and asserted against a real agent, never on browser wording — same
+  posture as ADV-3 / §4.
 
 ### ✅ Closed: G-APPROVE-TOTAL — propose → approve + surfaced price (ADV-10)
 - **Goal:** the advisor presents a finished plan; the traveler approves it (node-by-node or all
@@ -222,7 +235,10 @@ per-trip party-attach UI ADV-2B needed.
 - ✅ **G-APPROVE-TOTAL → ADV-10** — shipped (see §2): `draft → proposed → approved` state
   machine (advisor Propose/Reopen, traveler Approve-all + per-node derive, surfaced `totals`);
   `approve.spec.ts` drives both the advisor and traveler halves in the browser.
-- Remaining: **G-ANALYZE-AGENT → ADV-6** and **G-TESTCARD → ADV-11 browser**.
+- ✅ **G-ANALYZE-AGENT → ADV-6** — shipped (see §2): board **Analyze** button + `run_analysis`
+  / `get_analysis_findings` planning-mode tools; `test_analyze_tools` + `test_modes` cover the
+  tool shape + bundle; the live conversational turn stays Bedrock-gated per §4.
+- Remaining: **G-TESTCARD → ADV-11 browser**.
 - **G-COVER → ADV-2A** is the largest; sequence it after the decision in §2.
 
 **Wave 3 — messaging + boundary-limited.**
@@ -234,22 +250,24 @@ per-trip party-attach UI ADV-2B needed.
 
 ### Next up (recommended order for the next hand)
 
-With G-INVITE-LATER, G-NODE-EDITOR and G-APPROVE-TOTAL closed, three product gaps + one
-deferred slice remain. Suggested sequence by leverage-per-effort:
+With G-INVITE-LATER, G-NODE-EDITOR, G-APPROVE-TOTAL and G-ANALYZE-AGENT closed, **two product
+gaps + one deferred slice remain**. Suggested sequence by leverage-per-effort:
 
 1. **G-TESTCARD → ADV-11** (S, self-contained UI) — a dev/demo-only "pay with test card"
    affordance in the Braintree Drop-in behind an env flag; the payment contract is already
    green, so this is pure UI + one browser spec. Unblocks a clean end-to-end demo.
-2. **G-ANALYZE-AGENT → ADV-6** (S–M) — add `run_analysis` + `get_analysis_findings` agent
-   tools (planning/advisor mode) wrapping the built engine, plus an Analyze button; agent-mode
-   unit that the bundle includes Analyze. Makes ADV-6 a conversational step.
-3. **G-COVER → ADV-2A** (M, decision-gated) — decide curated-picker vs. generative first
+2. **G-COVER → ADV-2A** (M, decision-gated) — decide curated-picker vs. generative first
    (§2 recommends the curated Unsplash-style picker), then `itineraries.cover_image` +
    service + hero UI. Largest; sequence last.
-4. **Advisor-private Collection** (deferred from G-NODE-EDITOR) — a node `audience`/visibility
+3. **Advisor-private Collection** (deferred from G-NODE-EDITOR) — a node `audience`/visibility
    column filtered out of every traveler-facing read (graph API, Collection, agent context).
-   Bigger than the three above (touches every read path); do it when an advisor-only scratch
+   Bigger than the two above (touches every read path); do it when an advisor-only scratch
    space is actually needed.
+
+A follow-up worth noting for ADV-6: a **live-agent conversational spec** (the advisor asks the
+concierge to check the plan → the agent fires `run_analysis`/`get_analysis_findings` → findings
+narrated) belongs alongside ADV-3's `concierge.spec.ts` (run isolated / `--workers=1`), asserted
+at the API seam not on wording — the tool wiring is now in place for it.
 
 Optional thin browser adds noted inline: **ADV-9** (locked-node affordance), **ADV-2C** (private
 aside absent from the traveler view). Boundary-limited items (email, live Duffel, gateway) stay
