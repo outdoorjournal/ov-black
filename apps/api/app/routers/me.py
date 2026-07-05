@@ -284,6 +284,12 @@ async def get_my_onboarding_session_endpoint(
     session opened about this client (Command Center) must never leak into
     basecamp, or the traveler's chat would POST turns to a session the
     existence-hiding authz collapses to 404.
+
+    Scope is ALSO ``itinerary_id IS NULL`` — the basecamp (unpinned) session.
+    Since PS2 made session reuse itinerary-scoped, a traveler's itinerary-pinned
+    Artemis chat is a *different, newer* session; without this filter the newest
+    traveler session (an itinerary chat) would surface on basecamp, so the rail
+    would show "your chat from the itinerary" instead of the basecamp thread.
     """
     empty = MyOnboardingSessionResponse(
         session_id=None,
@@ -327,6 +333,7 @@ async def get_my_onboarding_session_endpoint(
                 select(func.count(AgentSession.id)).where(
                     AgentSession.client_id == client.id,
                     AgentSession.audience == SessionAudience.traveler,
+                    AgentSession.itinerary_id.is_(None),
                 )
             )
         ).scalar_one()
@@ -338,6 +345,7 @@ async def get_my_onboarding_session_endpoint(
             .where(
                 AgentSession.client_id == client.id,
                 AgentSession.audience == SessionAudience.traveler,
+                AgentSession.itinerary_id.is_(None),
                 AgentSession.ended_at.is_(None),
             )
             .order_by(AgentSession.started_at.desc())

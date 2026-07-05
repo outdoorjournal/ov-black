@@ -13,6 +13,7 @@ import {
 } from "@ov-black/api-client";
 
 import { publicEnv } from "@/lib/env";
+import { headerUserFromSupabase } from "@/lib/appHeader";
 import { resolveClientIdForUser } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -50,7 +51,7 @@ export default async function InvoicesPage() {
   const invoices: MyInvoiceSummary[] = result.ok ? result.invoices : [];
 
   return (
-    <BasecampChrome>
+    <BasecampChrome user={headerUserFromSupabase(user)}>
       <InvoiceList invoices={invoices} />
     </BasecampChrome>
   );

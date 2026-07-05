@@ -13,7 +13,7 @@
 // its own positioned container) — the basecamp chrome stays intact.
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createApiClient,
@@ -21,7 +21,6 @@ import {
   type AgentTurnSummary,
 } from "@ov-black/api-client";
 
-import { Eyebrow } from "@/components/ui/eyebrow";
 import { AtmosFrame } from "@/app/chat/[client_id]/_components/AtmosFrame";
 import { ConversationStream } from "@/app/chat/[client_id]/_components/ConversationStream";
 import { Composer } from "@/app/chat/[client_id]/_components/Composer";
@@ -34,6 +33,11 @@ import {
 } from "@/lib/agentStream";
 import { DEFAULT_MOOD, type MoodId } from "@/lib/atmos/moods";
 import { createBrowserSupabase } from "@/lib/supabase/client";
+import { HumanThread } from "@/app/itinerary/[id]/_shell/HumanThread";
+import {
+  PeopleCircles,
+  type ConciergeChannel,
+} from "@/app/_components/concierge/PeopleCircles";
 
 import { basecampChatStore, nextTurnIndex } from "./basecampChatStore";
 
@@ -92,6 +96,12 @@ function RightRailChatInner({
   const streaming = basecampChatStore.useStore((s) => s.streaming);
   const currentMood = basecampChatStore.useStore((s) => s.currentMood);
   const storeApi = basecampChatStore.useStoreApi();
+
+  // PS7 unify: the basecamp rail carries both channels — Artemis (this AI
+  // onboarding stream) and Advisor (the human "you ↔ advisor" thread, basecamp
+  // scope = itinerary_id NULL). The agent stream hook stays mounted below
+  // regardless, so switching to Advisor never interrupts an in-flight turn.
+  const [channel, setChannel] = useState<ConciergeChannel>("artemis");
 
   const router = useRouter();
   const sessionIdRef = useRef<string | null>(existingSessionId);
@@ -209,16 +219,41 @@ function RightRailChatInner({
     <aside className="relative flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-sm bg-paper text-ink shadow-float lg:sticky lg:top-24">
       <AtmosFrame mood={currentMood ?? DEFAULT_MOOD} phaseCounter={moodPhaseRef.current} />
       <div className="relative z-10 flex min-h-0 flex-1 flex-col bg-paper/95 backdrop-blur-sm">
-        <header className="border-b border-ink/10 px-6 pb-4 pt-5">
-          <Eyebrow>Concierge</Eyebrow>
-          <h2 className="mt-2 font-serif text-xl text-ink">
-            {turns.length > 0 ? "Continue your conversation" : "Reach the concierge"}
-          </h2>
-        </header>
-        <div className="min-h-0 flex-1 [&>section]:h-full">
-          <ConversationStream turns={turns} streaming={streaming} />
+        {/* Same top nav as the itinerary concierge — the people-circles channel
+            switch (Artemis ↔ Advisor). The basecamp Advisor thread is basecamp-
+            scoped (you ↔ advisor, itinerary_id NULL) — a separate conversation
+            from any trip's thread. */}
+        <PeopleCircles
+          channel={channel}
+          onSelect={setChannel}
+          advisorTitle="Message your advisor"
+        />
+        {/* Both channels share the space below the top nav. The Artemis stream
+            body stays mounted (the useAgentStream hook lives at the top of this
+            component, so a hidden body never drops an in-flight turn); the
+            streamless human body mounts on demand. */}
+        <div className="relative min-h-0 flex-1">
+          <div
+            className={
+              channel === "artemis" ? "absolute inset-0 flex flex-col" : "hidden"
+            }
+          >
+            <div className="min-h-0 flex-1 [&>section]:h-full">
+              <ConversationStream turns={turns} streaming={streaming} />
+            </div>
+            <Composer disabled={streaming !== null} onSend={onSend} />
+          </div>
+          {channel === "human" ? (
+            <div className="absolute inset-0 flex flex-col">
+              <HumanThread
+                clientId={clientId}
+                apiBaseUrl={apiBaseUrl}
+                accessToken={accessToken}
+                viewerKind="traveler"
+              />
+            </div>
+          ) : null}
         </div>
-        <Composer disabled={streaming !== null} onSend={onSend} />
       </div>
     </aside>
   );

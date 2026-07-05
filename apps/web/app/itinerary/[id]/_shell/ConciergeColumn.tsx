@@ -16,6 +16,7 @@ import { useState } from "react";
 
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
+import { PeopleCircles } from "@/app/_components/concierge/PeopleCircles";
 
 import { HumanThread } from "./HumanThread";
 import { SessionThread } from "./SessionThread";
@@ -64,33 +65,24 @@ export function ConciergeColumn({
       </div>
 
       {/* People circles — the channel switch (Artemis session list ↔ human chat). */}
-      <div
-        data-testid="people-circles"
-        className="flex shrink-0 items-center gap-2 border-b border-ink/10 px-3 py-2"
-      >
-        <PersonCircle
-          label="Artemis"
-          active={channel === "artemis"}
-          onSelect={() => setChannel("artemis")}
-        />
-        <PersonCircle
-          label="Advisor"
-          active={channel === "human"}
-          onSelect={() => setChannel("human")}
-          title={canEdit ? "The client conversation" : "Message your advisor & party"}
-        />
-        {onCollapse ? (
-          <button
-            type="button"
-            onClick={onCollapse}
-            data-testid="concierge-collapse"
-            aria-label="Collapse the concierge"
-            className="ml-auto hidden h-7 items-center rounded-md px-2 font-sans text-base text-ink/45 transition-colors hover:bg-ink/5 hover:text-ink min-[1100px]:flex"
-          >
-            ‹
-          </button>
-        ) : null}
-      </div>
+      <PeopleCircles
+        channel={channel}
+        onSelect={setChannel}
+        advisorTitle={canEdit ? "The client conversation" : "Message your advisor & party"}
+        trailing={
+          onCollapse ? (
+            <button
+              type="button"
+              onClick={onCollapse}
+              data-testid="concierge-collapse"
+              aria-label="Collapse the concierge"
+              className="ml-auto hidden h-7 items-center rounded-md px-2 font-sans text-base text-ink/45 transition-colors hover:bg-ink/5 hover:text-ink min-[1100px]:flex"
+            >
+              ‹
+            </button>
+          ) : null
+        }
+      />
 
       {/* The two channel bodies share the remaining space. Artemis stays mounted
           (live streams + both audience sub-threads); the human body mounts on
@@ -201,50 +193,5 @@ export function ConciergeColumn({
         ) : null}
       </div>
     </div>
-  );
-}
-
-function PersonCircle({
-  label,
-  active = false,
-  onSelect,
-  title,
-}: {
-  label: string;
-  active?: boolean;
-  onSelect?: () => void;
-  title?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={!onSelect}
-      className="flex flex-col items-center gap-1"
-      data-testid={`person-${label.toLowerCase()}`}
-      data-active={active ? "true" : undefined}
-      aria-pressed={active}
-      {...(title ? { title } : {})}
-    >
-      <span
-        aria-hidden
-        className={
-          "flex h-8 w-8 items-center justify-center rounded-full border font-serif text-sm transition-colors " +
-          (active
-            ? "border-ink/30 bg-ink/10 text-ink"
-            : "border-ink/15 text-ink/40 hover:border-ink/25 hover:text-ink/60")
-        }
-      >
-        {label.charAt(0)}
-      </span>
-      <span
-        className={
-          "font-sans text-[9px] uppercase tracking-[0.14em] " +
-          (active ? "text-ink/70" : "text-ink/40")
-        }
-      >
-        {label}
-      </span>
-    </button>
   );
 }

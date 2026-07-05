@@ -26,13 +26,15 @@ type ViewerKind = "advisor" | "traveler";
 
 export function HumanThread({
   clientId,
-  itineraryId,
+  itineraryId = null,
   apiBaseUrl,
   accessToken,
   viewerKind,
 }: {
   clientId: string | null;
-  itineraryId: string;
+  /** Omit / null for the basecamp channel (you ↔ advisor); a trip id scopes it
+   *  to that itinerary's thread (you ↔ advisor ↔ party). */
+  itineraryId?: string | null;
   apiBaseUrl: string | null;
   accessToken: string | null;
   viewerKind: ViewerKind;
@@ -59,6 +61,8 @@ export function HumanThread({
       const client = api();
       if (!client || !clientId) return;
       const resolved = await openThread(client, { clientId, itineraryId });
+      // itineraryId=null → the basecamp thread (you ↔ advisor); openThread omits
+      // it from the request body so the backend resolves the basecamp scope.
       if (!resolved.ok) {
         setStatus("error");
         return;

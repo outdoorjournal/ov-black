@@ -8,9 +8,10 @@
 > concierge prose.
 >
 > **Status (handoff):** **PS0–PS5 are landed on `dev`; PS6 is landing incrementally (Q5 collapse · mobile
-> Schedule gating · overlay summon + a11y done; the in-canvas aside teardown consciously deferred); PS7's
-> messaging substrate + the itinerary-side human channel are implemented (the `basecamp` chat unify is the
-> remaining PS7 frontend follow-up).** See §0 below for exactly what's done, what was deferred within those
+> Schedule gating · overlay summon + a11y done; the in-canvas aside teardown consciously deferred); **PS7's
+> human messaging channel is landed** — the messaging substrate + the itinerary-side human channel **and** the
+> basecamp Artemis↔Advisor unify (only the `agent_sessions`→threads backfill + an advisor↔traveler e2e remain,
+> both non-blocking).** See §0 below for exactly what's done, what was deferred within those
 > slices, verification, and what's next. Q13 is **resolved (UNIFY, endorsed)** and now **built** (migration
 > `0037`); Q3 (card takeover → PS4), Q4 (keep both homes → PS3), and Q6 (place-mode is state, not a URL → PS5)
 > shipped as their defaults. On milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx)
@@ -35,11 +36,15 @@ to local `:54322`); ORM models (`Thread`/`Message`/`ThreadParticipant`); a `mess
 one human thread per `(client, itinerary?, audience='traveler')` scope · participant seeding · **no agent turn** ·
 D015-collapsed cross-tenant access reusing the agent JIT client↔auth backfill) + **router** (`POST /threads`,
 `GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); a
-`HumanThread` component + the **Advisor people-circle** in `ConciergeColumn` now summons it (was the disabled PS7
-placeholder). **Deferred within PS7:** the `basecamp` chat **unify** (`RightRailChat`/`basecampChatStore` → the
-basecamp-scoped human thread — the backend already supports `itinerary_id=NULL`), the `agent_sessions`→threads
-**backfill** (moved to PS8), and a Playwright advisor↔traveler **e2e**. **Next up: finish PS7 (basecamp unify),
-then PS8** (@-mention bridge).
+`HumanThread` component + the **Advisor people-circle** in `ConciergeColumn` now summons it. **Basecamp unify
+(follow-up, done):** a shared `_components/concierge/PeopleCircles` (same circles on both surfaces) drives the
+`RightRailChat` channel switch (Artemis onboarding stream ↔ the basecamp-scoped human `HumanThread`,
+`itinerary_id=NULL`); basecamp's bespoke header was replaced with the shared **`AppHeader`** ("start a new
+itinerary" moved to its `secondary` slot) so the top nav matches the itinerary. **Bug fixed en route:**
+`GET /me/onboarding_session` wasn't scoped to `itinerary_id IS NULL`, so after PS2's itinerary-scoped sessions the
+basecamp rail surfaced *the itinerary's* Artemis chat — now filtered to the basecamp (unpinned) session
+(`test_onboarding_session_ignores_itinerary_pinned`). **Deferred within PS7:** the `agent_sessions`→threads
+**backfill** (moved to PS8) and a Playwright advisor↔traveler **e2e**. **Next up: PS8** (@-mention bridge).
 
 | Slice | State | Notes |
 | --- | --- | --- |
@@ -50,7 +55,7 @@ then PS8** (@-mention bridge).
 | **PS6** | **partial** | Shell polish. **Done:** Q5 **concierge collapse** (open by default ≥1100px → slim edge tab, in `ItineraryShell`/`ConciergeColumn`); place-mode **Schedule desktop-only** (`hidden md:block`, closes the mobile dead-end); Collection **overlay summon** (`CollectionOverlay` — a summonable drawer in the md–xl band, auto-closes on hold) with a11y (focus-into-drawer, Esc, `motion-reduce` on the tap targets). **Deferred (by human call):** the leftover in-canvas **aside teardown** — it's still consumed by the retired `ItineraryGraphView` (prototype-only), so removing it is a separate refactor; the broad a11y sweep continues there. |
 | **PS5** | **done** | Place mode (pick-then-place, a11y path over drag): store slice `heldItem` + `lastPlacement` with `holdItem`/`placeHeldItem`/`clearHeldItem`/`undoPlacement` (`placeHeldItem` reuses `moveNode`; gated `selectCanSchedule` = editable ∨ traveler-fork, so a draft-mine traveler keeps drag→lazy-fork). **Schedule** button on `CollectionCard` → `holdItem`; `HorizontalCanvas` renders pulsing per-day **tap targets** when holding, mapping the tapped `clientY` → minute via the drag path's `mapYToMinute`; a shell-level **`PlaceModeLayer`** floats the holding chip + undo toast, handles Esc, and slides to the timeline when you pick from elsewhere (the held state survives the nav because the store is shell-hosted). `CollectionRail` gained a `variant="overlay"`. **No backend.** |
 | **PS3** | **done** | Per-trip Dashboard: `dashboard/page.tsx` + `DashboardView` (index now redirects here; rail/tab **Home** entry + `DashboardIcon`). Sections — **hero** (mood-splash via `MOODS[timeline.mood]` + title/brief/timing; edit reuses `ItineraryIntake` prefilled → `router.refresh()`), one derived **next best action** (`deriveNextAction`, pure), the **money roll-up** (`listInvoices` → `rollupInvoices` owed-per-currency/issued/paid; per-invoice **pay** → existing `/invoices/[id]`; charge lines with `node_id` deep-link **down** to the PS4 card money facet), and **travel party** (advisor → `PartyPanel`; traveler → read-only `listItineraryParty` glance + link to `/basecamp/party`). Advisor-only **Trip management** tabs (Vault · Invoices · Booking) **rehomed out of Studio** — `StudioPlanningSpace` is now Build/Diff only. **No backend** (client-side roll-up over existing reads). |
-| **PS7** | **partial** | Human messaging channel (Q13 = UNIFY, built). **Done:** migration `0037` (`threads`/`messages`/`thread_participants` + defense-in-depth **RLS** — participant/client-ownership `SELECT`, non-recursive; `agent_sessions.thread_id` forward hook, backfill deferred to PS8); ORM `Thread`/`Message`/`ThreadParticipant`; `services/messaging.py` (get-or-create the one human thread per `(client, itinerary?, audience='traveler')`, participant seeding = traveler auth-user + advisor owner, **no agent turn**, cross-tenant → D015 404, reuses the agent JIT client↔auth backfill); `routers/messaging.py` (`POST /threads` · `GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); `HumanThread` (transcript + composer + light poll) wired to the **Advisor people-circle** in `ConciergeColumn` (`channel` state; Artemis body stays mounted, human body mounts on demand). **Deferred:** `basecamp` chat **unify** (backend supports `itinerary_id=NULL` already), `agent_sessions`→threads backfill (→ PS8), advisor↔traveler **e2e**. |
+| **PS7** | **partial** | Human messaging channel (Q13 = UNIFY, built). **Done:** migration `0037` (`threads`/`messages`/`thread_participants` + defense-in-depth **RLS** — participant/client-ownership `SELECT`, non-recursive; `agent_sessions.thread_id` forward hook, backfill deferred to PS8); ORM `Thread`/`Message`/`ThreadParticipant`; `services/messaging.py` (get-or-create the one human thread per `(client, itinerary?, audience='traveler')`, participant seeding = traveler auth-user + advisor owner, **no agent turn**, cross-tenant → D015 404, reuses the agent JIT client↔auth backfill); `routers/messaging.py` (`POST /threads` · `GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); `HumanThread` (transcript + composer + light poll) wired to the **Advisor people-circle** in `ConciergeColumn` (`channel` state; Artemis body stays mounted, human body mounts on demand). **Basecamp unify (done):** shared `PeopleCircles` on both surfaces, `RightRailChat` Artemis↔Advisor switch (basecamp `HumanThread`, `itinerary_id=NULL`), basecamp header → shared `AppHeader`; fixed `GET /me/onboarding_session` to scope `itinerary_id IS NULL` (was leaking the itinerary Artemis chat onto basecamp). **Deferred:** `agent_sessions`→threads backfill (→ PS8), advisor↔traveler **e2e**. |
 
 **Verified (current, incl. PS3–PS6):** web — **44 files / 267 vitest pass**, **typecheck + lint clean**. New
 coverage this session: `dashboardModel.test.ts` (roll-up nets payments / excludes draft+void · next-action

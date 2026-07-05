@@ -28,6 +28,7 @@ import {
 } from "@ov-black/api-client";
 
 import { publicEnv } from "@/lib/env";
+import { headerUserFromSupabase } from "@/lib/appHeader";
 import { resolveClientIdForUser } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -111,6 +112,7 @@ export default async function BasecampPage() {
   return (
     <BasecampShell
       variant={variant}
+      user={headerUserFromSupabase(user)}
       clientId={clientId}
       accessToken={accessToken}
       apiBaseUrl={apiBaseUrl}

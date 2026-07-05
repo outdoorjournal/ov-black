@@ -172,6 +172,25 @@ describe("HumanThread", () => {
     expect(composer.value).toBe("");
   });
 
+  test("basecamp scope (no itineraryId) resolves the you-↔-advisor thread", async () => {
+    render(
+      <HumanThread
+        clientId="c-1"
+        apiBaseUrl="http://api.test"
+        accessToken="tok"
+        viewerKind="traveler"
+      />,
+    );
+    // No itineraryId passed → the backend resolves the basecamp thread; the
+    // wrapper is called with a null itinerary scope.
+    await waitFor(() =>
+      expect(openThread).toHaveBeenCalledWith(expect.anything(), {
+        clientId: "c-1",
+        itineraryId: null,
+      }),
+    );
+  });
+
   test("a resolve failure shows the unavailable state and disables the composer", async () => {
     openThread.mockResolvedValue({
       ok: false,

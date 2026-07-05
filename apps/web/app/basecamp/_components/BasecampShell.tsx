@@ -21,6 +21,7 @@ import type {
 } from "@ov-black/api-client";
 
 import { Eyebrow } from "@/components/ui/eyebrow";
+import type { AppHeaderUser } from "@/lib/appHeader";
 
 import { BasecampChrome } from "./BasecampChrome";
 import { ItineraryGrid } from "./ItineraryGrid";
@@ -31,6 +32,8 @@ export type BasecampVariant = "first_prompt" | "post_first_touch" | "with_itiner
 
 export type BasecampShellProps = {
   variant: BasecampVariant;
+  // The resolved viewer, for the shared AppHeader masthead (PS7).
+  user: AppHeaderUser;
   clientId: string;
   accessToken: string;
   apiBaseUrl: string;
@@ -52,6 +55,7 @@ export type BasecampShellProps = {
 
 export function BasecampShell({
   variant,
+  user,
   clientId,
   accessToken,
   apiBaseUrl,
@@ -62,7 +66,7 @@ export function BasecampShell({
   onboardingComplete,
 }: BasecampShellProps) {
   return (
-    <BasecampChrome>
+    <BasecampChrome user={user}>
       {variant === "first_prompt" && opener !== null ? (
         <SinglePromptCard
           opener={opener}
