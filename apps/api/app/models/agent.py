@@ -122,6 +122,14 @@ class AgentSession(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # M006/PS7 forward hook (Q13 = UNIFY): an AI-session thread binds exactly one
+    # agent_session (the engine). Nullable + additive — PS2 sessions run with
+    # thread_id NULL until PS8 backfills them into kind='ai_session' threads.
+    thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("threads.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class AgentTurn(Base):

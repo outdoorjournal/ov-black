@@ -8,11 +8,13 @@
 > concierge prose.
 >
 > **Status (handoff):** **PS0–PS5 are landed on `dev`; PS6 is landing incrementally (Q5 collapse · mobile
-> Schedule gating · overlay summon + a11y done; the in-canvas aside teardown consciously deferred).**
-> See §0 below for exactly what's done, what was deferred within those slices, verification, and what's next.
-> Q13 is **resolved (UNIFY, endorsed)**; Q3 (card takeover → PS4), Q4 (keep both homes → PS3), and Q6
-> (place-mode is state, not a URL → PS5) shipped as their defaults. On milestone green-light the §1 decisions
-> graduate to `doc/decisions.md` (D0xx) and this slots into `mvp-plan.md` as M006.
+> Schedule gating · overlay summon + a11y done; the in-canvas aside teardown consciously deferred); PS7's
+> messaging substrate + the itinerary-side human channel are implemented (the `basecamp` chat unify is the
+> remaining PS7 frontend follow-up).** See §0 below for exactly what's done, what was deferred within those
+> slices, verification, and what's next. Q13 is **resolved (UNIFY, endorsed)** and now **built** (migration
+> `0037`); Q3 (card takeover → PS4), Q4 (keep both homes → PS3), and Q6 (place-mode is state, not a URL → PS5)
+> shipped as their defaults. On milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx)
+> and this slots into `mvp-plan.md` as M006.
 
 ---
 
@@ -25,7 +27,19 @@ slice); **PS5** `f2d56bd` (place-mode: `heldItem`/`lastPlacement` slice + Schedu
 targets + holding-chip/undo-toast); **PS6** across `962bd49` (Q5 concierge collapse) · `1481fc6` (place-mode
 Schedule desktop-only — no mobile dead-end) · `98b4a48` (Collection **overlay** summon + a11y: focus-into-drawer,
 Esc, `motion-reduce`). **Remaining PS6:** the in-canvas **aside teardown** (deferred by human call — needs
-retiring `ItineraryGraphView`). **Next up: PS7.**
+retiring `ItineraryGraphView`).
+
+**PS7 (this session):** the unified human-messaging substrate + the itinerary-side human channel. Migration
+`0037` (`threads` / `messages` / `thread_participants` + RLS + `agent_sessions.thread_id` forward hook, applied
+to local `:54322`); ORM models (`Thread`/`Message`/`ThreadParticipant`); a `messaging` **service** (get-or-create
+one human thread per `(client, itinerary?, audience='traveler')` scope · participant seeding · **no agent turn** ·
+D015-collapsed cross-tenant access reusing the agent JIT client↔auth backfill) + **router** (`POST /threads`,
+`GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); a
+`HumanThread` component + the **Advisor people-circle** in `ConciergeColumn` now summons it (was the disabled PS7
+placeholder). **Deferred within PS7:** the `basecamp` chat **unify** (`RightRailChat`/`basecampChatStore` → the
+basecamp-scoped human thread — the backend already supports `itinerary_id=NULL`), the `agent_sessions`→threads
+**backfill** (moved to PS8), and a Playwright advisor↔traveler **e2e**. **Next up: finish PS7 (basecamp unify),
+then PS8** (@-mention bridge).
 
 | Slice | State | Notes |
 | --- | --- | --- |
@@ -36,6 +50,7 @@ retiring `ItineraryGraphView`). **Next up: PS7.**
 | **PS6** | **partial** | Shell polish. **Done:** Q5 **concierge collapse** (open by default ≥1100px → slim edge tab, in `ItineraryShell`/`ConciergeColumn`); place-mode **Schedule desktop-only** (`hidden md:block`, closes the mobile dead-end); Collection **overlay summon** (`CollectionOverlay` — a summonable drawer in the md–xl band, auto-closes on hold) with a11y (focus-into-drawer, Esc, `motion-reduce` on the tap targets). **Deferred (by human call):** the leftover in-canvas **aside teardown** — it's still consumed by the retired `ItineraryGraphView` (prototype-only), so removing it is a separate refactor; the broad a11y sweep continues there. |
 | **PS5** | **done** | Place mode (pick-then-place, a11y path over drag): store slice `heldItem` + `lastPlacement` with `holdItem`/`placeHeldItem`/`clearHeldItem`/`undoPlacement` (`placeHeldItem` reuses `moveNode`; gated `selectCanSchedule` = editable ∨ traveler-fork, so a draft-mine traveler keeps drag→lazy-fork). **Schedule** button on `CollectionCard` → `holdItem`; `HorizontalCanvas` renders pulsing per-day **tap targets** when holding, mapping the tapped `clientY` → minute via the drag path's `mapYToMinute`; a shell-level **`PlaceModeLayer`** floats the holding chip + undo toast, handles Esc, and slides to the timeline when you pick from elsewhere (the held state survives the nav because the store is shell-hosted). `CollectionRail` gained a `variant="overlay"`. **No backend.** |
 | **PS3** | **done** | Per-trip Dashboard: `dashboard/page.tsx` + `DashboardView` (index now redirects here; rail/tab **Home** entry + `DashboardIcon`). Sections — **hero** (mood-splash via `MOODS[timeline.mood]` + title/brief/timing; edit reuses `ItineraryIntake` prefilled → `router.refresh()`), one derived **next best action** (`deriveNextAction`, pure), the **money roll-up** (`listInvoices` → `rollupInvoices` owed-per-currency/issued/paid; per-invoice **pay** → existing `/invoices/[id]`; charge lines with `node_id` deep-link **down** to the PS4 card money facet), and **travel party** (advisor → `PartyPanel`; traveler → read-only `listItineraryParty` glance + link to `/basecamp/party`). Advisor-only **Trip management** tabs (Vault · Invoices · Booking) **rehomed out of Studio** — `StudioPlanningSpace` is now Build/Diff only. **No backend** (client-side roll-up over existing reads). |
+| **PS7** | **partial** | Human messaging channel (Q13 = UNIFY, built). **Done:** migration `0037` (`threads`/`messages`/`thread_participants` + defense-in-depth **RLS** — participant/client-ownership `SELECT`, non-recursive; `agent_sessions.thread_id` forward hook, backfill deferred to PS8); ORM `Thread`/`Message`/`ThreadParticipant`; `services/messaging.py` (get-or-create the one human thread per `(client, itinerary?, audience='traveler')`, participant seeding = traveler auth-user + advisor owner, **no agent turn**, cross-tenant → D015 404, reuses the agent JIT client↔auth backfill); `routers/messaging.py` (`POST /threads` · `GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); `HumanThread` (transcript + composer + light poll) wired to the **Advisor people-circle** in `ConciergeColumn` (`channel` state; Artemis body stays mounted, human body mounts on demand). **Deferred:** `basecamp` chat **unify** (backend supports `itinerary_id=NULL` already), `agent_sessions`→threads backfill (→ PS8), advisor↔traveler **e2e**. |
 
 **Verified (current, incl. PS3–PS6):** web — **44 files / 267 vitest pass**, **typecheck + lint clean**. New
 coverage this session: `dashboardModel.test.ts` (roll-up nets payments / excludes draft+void · next-action
@@ -381,6 +396,15 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1, PS3 · **size:** M.
 
 ### PS7 — General (human) chat channel  ·  *gated on PS0 (Q13)*
+> **PARTIAL** (this session, see §0). Migration `0037` (unified `threads`/`messages`/`thread_participants` +
+> RLS + `agent_sessions.thread_id`), `models/messaging.py`, `services/messaging.py` (get-or-create one human
+> thread per scope · participant seed · **no agent turn** · D015 access), `routers/messaging.py`
+> (`POST /threads` · `GET`/`POST /threads/{id}/messages`), api-client wrappers, and `HumanThread` wired to the
+> `ConciergeColumn` **Advisor** people-circle. pytest = `apps/api/tests/test_messaging.py` (7: get-or-create per
+> scope, send/list round-trip + no-agent-turn invariant, participant seed, cross-tenant gate, foreign-itinerary
+> hide, and the **RLS** participant-sees / non-member-blind policy check); web = `humanChannel.test.tsx` (4).
+> **Deferred:** basecamp chat **unify** (`RightRailChat`/`basecampChatStore` → basecamp human thread — backend
+> already supports `itinerary_id=NULL`); `agent_sessions`→threads **backfill** (→ PS8); advisor↔traveler e2e.
 - **goal:** a pure human channel (traveler ↔ advisor ↔ party), scoped, with **no agent turn**.
 - **deliverables:** the messaging backend per the PS0 decision (`threads` / `messages` / `thread_participants`
   + service + endpoints + RLS); the general-chat surface behind the Advisor/party circles; itinerary general =
@@ -421,9 +445,9 @@ and can run late without blocking the traveler-facing shell.
 | **none** ✱ | PS4 | **done** — `GET /itinerary/{id}/nodes/{node_id}/charges` (no schema change): sums `invoice_line_items.node_id` across non-void invoices (billed/paid/owed) + attaches the live `bookings` row |
 | **none** | PS3 | **done** — no backend: the Dashboard money roll-up is a **client-side** `rollupInvoices` over the existing `listInvoices` read; next-action is a client-side derivation; pay reuses the existing `/invoices/[id]` page |
 | **none** | PS5 | **done** — no backend: place mode is a transient `heldItem`/`lastPlacement` **UI slice** over the existing `moveNode`/`unscheduleNode`; not a route (refresh mid-place returns clean) |
-| next avail. | PS7 | `threads` / `messages` / `thread_participants` (+ RLS) — shape in **PS0/Q13 = UNIFY**; see `scratchpad/00NN_messaging_threads.draft.sql` |
+| **0037** ✱ | PS7 | **done** — `threads` / `messages` / `thread_participants` (+ defense-in-depth **RLS**: participant/client-ownership `SELECT`, deliberately non-recursive) per **PS0/Q13 = UNIFY**; `agent_sessions += thread_id` (forward hook — the `agent_sessions`→`ai_session` thread backfill is deferred to PS8) |
 
-✱ Next free migration number after this is **0037**. Every schema change re-runs
+✱ Next free migration number after this is **0038**. Every schema change re-runs
 `pnpm -C packages/api-client generate` and adds a wrapper in `packages/api-client/src/index.ts` (generated
 output is gitignored — not committed).
 

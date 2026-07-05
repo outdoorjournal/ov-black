@@ -67,6 +67,13 @@ from app.models.itinerary import (  # noqa: E402,F401  (re-exported)
     NodeStatus,
     NodeType,
 )
+from app.models.messaging import (  # noqa: E402,F401  (re-exported)
+    Message,
+    Thread,
+    ThreadActorKind,
+    ThreadKind,
+    ThreadParticipant,
+)
 from app.models.onboarding import OnboardingOpener  # noqa: E402,F401  (re-exported)
 from app.models.osint_fact import (  # noqa: E402,F401  (re-exported)
     OsintFact,
@@ -125,6 +132,7 @@ __all__ = [
     "Itinerary",
     "ItineraryStatus",
     "ItineraryTimingKind",
+    "Message",
     "Node",
     "NodeHistory",
     "NodeOffer",
@@ -146,6 +154,10 @@ __all__ = [
     "ProfileFactKind",
     "TemplateEdge",
     "TemplateNode",
+    "Thread",
+    "ThreadActorKind",
+    "ThreadKind",
+    "ThreadParticipant",
     "Traveler",
     "TurnRole",
     "UserRole",

@@ -36,6 +36,9 @@ import {
   createOsintFactEndpointClientsClientIdOsintFactsPost,
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
+  openThreadEndpointThreadsPost,
+  listMessagesEndpointThreadsThreadIdMessagesGet,
+  sendMessageEndpointThreadsThreadIdMessagesPost,
   deleteClientContactEndpointClientsClientIdContactsContactIdDelete,
   deleteEdgeEndpointItineraryItineraryIdEdgesEdgeIdDelete,
   deleteNodeEndpointItineraryItineraryIdNodesNodeIdDelete,
@@ -167,6 +170,10 @@ import type {
   OpenSessionResponse,
   PatchSessionRequest,
   SessionSummary,
+  OpenThreadRequest,
+  ThreadSummary,
+  SendMessageRequest,
+  MessageSummary,
   AttachPartyMemberRequest,
   DocumentCompleteRequest,
   DocumentDetail,
@@ -392,6 +399,17 @@ export type {
   TurnRequest,
   AgentTurnSummary,
   TurnRole,
+} from "./generated/types.gen.js";
+
+// Human messaging channel (M006/PS7): the /threads surface — get-or-create a
+// scoped human thread, list its messages, and post one human message (no agent
+// turn). Artemis-in-thread is the later PS8 bridge.
+export type {
+  OpenThreadRequest,
+  ThreadSummary,
+  SendMessageRequest,
+  MessageSummary,
+  ThreadActorKind,
 } from "./generated/types.gen.js";
 
 // /me/* — self-scoped client surfaces. Powers the basecamp page's empty/
@@ -761,6 +779,128 @@ export async function listTurns(
 function parseListTurnsDetail(status: number): ListTurnsDetail {
   if (status === 404) return "session_not_found";
   return "unknown";
+}
+
+// ── Human messaging channel (M006/PS7) ──────────────────────────────────────
+
+export type OpenThreadDetail = "thread_not_found" | "network_error" | "unknown";
+
+/** Discriminated result for POST /threads — get-or-create the human thread. */
+export type OpenThreadResult =
+  | { ok: true; thread: ThreadSummary }
+  | { ok: false; status: number; detail: OpenThreadDetail };
+
+/**
+ * Typed wrapper for POST /threads. Get-or-creates the single human thread for a
+ * scope: omit `itineraryId` for the basecamp channel (you ↔ advisor), pass it
+ * for that trip's thread (you ↔ advisor ↔ party). Idempotent — create vs reuse
+ * is indistinguishable. A cross-tenant / foreign scope collapses to 404.
+ */
+export async function openThread(
+  client: Client,
+  body: { clientId: string; itineraryId?: string | null },
+): Promise<OpenThreadResult> {
+  try {
+    const { data, error, response } = await openThreadEndpointThreadsPost({
+      client,
+      body: {
+        client_id: body.clientId,
+        ...(body.itineraryId != null ? { itinerary_id: body.itineraryId } : {}),
+      },
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, thread: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 404 ? "thread_not_found" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListMessagesDetail =
+  | "thread_not_found"
+  | "network_error"
+  | "unknown";
+
+/** Discriminated result for GET /threads/{id}/messages. */
+export type ListMessagesResult =
+  | { ok: true; messages: MessageSummary[] }
+  | { ok: false; status: number; detail: ListMessagesDetail };
+
+/**
+ * Typed wrapper for GET /threads/{id}/messages — the thread's human messages,
+ * oldest first. A thread not accessible to the caller collapses to 404.
+ */
+export async function listMessages(
+  client: Client,
+  threadId: string,
+): Promise<ListMessagesResult> {
+  try {
+    const { data, error, response } =
+      await listMessagesEndpointThreadsThreadIdMessagesGet({
+        client,
+        path: { thread_id: threadId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, messages: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 404 ? "thread_not_found" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type SendMessageDetail =
+  | "thread_not_found"
+  | "validation_error"
+  | "network_error"
+  | "unknown";
+
+/** Discriminated result for POST /threads/{id}/messages. */
+export type SendMessageResult =
+  | { ok: true; message: MessageSummary }
+  | { ok: false; status: number; detail: SendMessageDetail };
+
+/**
+ * Typed wrapper for POST /threads/{id}/messages — post one HUMAN message. No
+ * agent turn: this is the human channel (Artemis is summoned only in PS8).
+ */
+export async function sendMessage(
+  client: Client,
+  threadId: string,
+  body: SendMessageRequest,
+): Promise<SendMessageResult> {
+  try {
+    const { data, error, response } =
+      await sendMessageEndpointThreadsThreadIdMessagesPost({
+        client,
+        path: { thread_id: threadId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, message: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail:
+        response.status === 404
+          ? "thread_not_found"
+          : response.status === 422
+            ? "validation_error"
+            : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }
 
 export type ListSessionsDetail =
