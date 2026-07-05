@@ -157,11 +157,41 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
             updated_at=now,
         )
 
+    async def _fake_update_party_member(*_args: Any, **kwargs: Any):
+        from app.models import PartyMember, PartyMemberActor
+
+        payload = kwargs["payload"]
+        now = _now()
+        # Model an existing member (authored earlier by an advisor) getting
+        # patched by the agent: only set fields change; the rest hold.
+        return PartyMember(
+            id=kwargs["member_id"],
+            client_id=kwargs["client_id"],
+            full_name=payload.full_name or "Youngest child",
+            date_of_birth=payload.date_of_birth,
+            nationality=payload.nationality,
+            dietary=payload.dietary,
+            medical=payload.medical,
+            mobility=payload.mobility,
+            loyalty_programs=[],
+            emergency_contact={},
+            relationship_to_primary=payload.relationship_to_primary,
+            is_primary=bool(payload.is_primary),
+            notes=payload.notes,
+            created_by_actor=PartyMemberActor.advisor,
+            updated_by_actor=kwargs["actor"],
+            recorded_by=None,
+            archived_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+
     monkeypatch.setattr(agent_internal_module, "record_agent_profile_fact", _fake_record_profile)
     monkeypatch.setattr(
         agent_internal_module, "record_agent_dossier_inference", _fake_record_dossier
     )
     monkeypatch.setattr(agent_internal_module, "create_party_member", _fake_create_party_member)
+    monkeypatch.setattr(agent_internal_module, "update_party_member", _fake_update_party_member)
 
 
 @pytest.fixture(autouse=True)
@@ -375,4 +405,46 @@ def test_post_party_member_with_valid_token_stamps_agent_actor(client: TestClien
 
 def test_post_party_member_without_token_returns_401(client: TestClient) -> None:
     resp = client.post("/agent/party-members", json={"full_name": "Sarah"})
+    assert resp.status_code == 401
+
+
+# ── PATCH /agent/party-members/{member_id} ────────────────────────────────
+
+
+def test_patch_party_member_updates_and_stamps_agent_actor(client: TestClient) -> None:
+    """Naming an existing child patches it (actor=agent) rather than duplicating."""
+    member_id = uuid.uuid4()
+    resp = client.patch(
+        f"/agent/party-members/{member_id}",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"full_name": "Quinn"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == str(member_id)
+    assert body["full_name"] == "Quinn"
+    # actor is fixed server-side: the edit is attributed to the agent…
+    assert body["updated_by_actor"] == "agent"
+    # …while a pre-existing member keeps its original author.
+    assert body["created_by_actor"] == "advisor"
+
+
+def test_patch_party_member_unknown_id_returns_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _missing(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(agent_internal_module, "update_party_member", _missing)
+    resp = client.patch(
+        f"/agent/party-members/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"full_name": "Quinn"},
+    )
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "party_member_not_found"}
+
+
+def test_patch_party_member_without_token_returns_401(client: TestClient) -> None:
+    resp = client.patch(f"/agent/party-members/{uuid.uuid4()}", json={"full_name": "Quinn"})
     assert resp.status_code == 401

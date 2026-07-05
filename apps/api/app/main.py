@@ -234,6 +234,9 @@ app.add_middleware(
         # instead of the Supabase JWT. See routers/integrations/google_places.
         "/integrations/google-places/photo",
     },
+    # Whitelisted agent routes with a path parameter can't be listed as exact
+    # strings — PATCH /agent/party-members/{id} self-gates on the agent token.
+    public_prefixes={"/agent/party-members/"},
 )
 
 # Starlette stacks middleware LIFO — CORS is added *after* the JWT middleware

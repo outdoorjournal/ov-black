@@ -165,6 +165,17 @@ async def agent_post_json(path: str, *, json: dict | None = None) -> Any:
     return _unwrap(resp)
 
 
+async def agent_patch_json(path: str, *, json: dict | None = None) -> Any:
+    """PATCH JSON to an ``/agent/*`` route using the per-session agent token."""
+    try:
+        resp = await _client().patch(
+            path, json=json or {}, headers=_agent_auth_headers()
+        )
+    except httpx.HTTPError as exc:
+        raise BackendError(status=None, reason=exc.__class__.__name__) from exc
+    return _unwrap(resp)
+
+
 def _unwrap(resp: httpx.Response) -> Any:
     if 200 <= resp.status_code < 300:
         if not resp.content:

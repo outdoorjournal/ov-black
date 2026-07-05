@@ -40,7 +40,11 @@ from app.schemas.facts import (
     OsintFactDetail,
     ProfileFactDetail,
 )
-from app.schemas.party_members import PartyMemberCreate, PartyMemberDetail
+from app.schemas.party_members import (
+    PartyMemberCreate,
+    PartyMemberDetail,
+    PartyMemberUpdate,
+)
 from app.services.agent import trip_brief_for_itinerary
 from app.services.agent_token import (
     AgentTokenClaims,
@@ -53,7 +57,7 @@ from app.services.facts import (
     record_agent_dossier_inference,
     record_agent_profile_fact,
 )
-from app.services.party_members import create_party_member
+from app.services.party_members import create_party_member, update_party_member
 
 logger = logging.getLogger("ov_black.routers.agent_internal")
 
@@ -257,4 +261,35 @@ async def record_party_member_endpoint(
         actor=PartyMemberActor.agent,
         recorded_by=_agent_recorded_by(claims.agentcore_session_id),
     )
+    return PartyMemberDetail.model_validate(member, from_attributes=True)
+
+
+@router.patch(
+    "/party-members/{member_id}",
+    response_model=PartyMemberDetail,
+    summary="Update a party member the traveler already has on file (actor=agent).",
+)
+async def update_party_member_endpoint(
+    member_id: uuid.UUID,
+    payload: PartyMemberUpdate,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> PartyMemberDetail:
+    """Patch a durable member the traveler already has, instead of duplicating.
+
+    The agent uses this to reconcile new detail onto an existing member — name
+    a child it only had as "youngest daughter", add a dietary need — rather than
+    calling ``create_party_member`` and producing a second row for the same
+    person. ``actor`` is fixed to ``agent`` server-side. 404 if ``member_id``
+    is not one of this client's members (a leaked id can't cross households).
+    """
+    member = await update_party_member(
+        session,
+        client_id=claims.client_id,
+        member_id=member_id,
+        payload=payload,
+        actor=PartyMemberActor.agent,
+    )
+    if member is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="party_member_not_found")
     return PartyMemberDetail.model_validate(member, from_attributes=True)

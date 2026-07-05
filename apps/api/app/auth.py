@@ -213,8 +213,10 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
     Whitelisted paths in ``public_paths`` are served without a token — the
     default set covers the ALB health probe and the OpenAPI/Docs surfaces
-    needed for T07 client generation. Every other route requires a bearer
-    token; on success the principal is attached to ``request.state.user``.
+    needed for T07 client generation. ``public_prefixes`` covers whitelisted
+    routes that carry a path parameter (e.g. ``/agent/party-members/{id}``),
+    which can't be enumerated as an exact string. Every other route requires a
+    bearer token; on success the principal is attached to ``request.state.user``.
     """
 
     def __init__(
@@ -222,16 +224,19 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         app: Any,
         *,
         public_paths: Iterable[str] = PUBLIC_PATHS,
+        public_prefixes: Iterable[str] = (),
     ) -> None:
         super().__init__(app)
         self._public_paths = frozenset(public_paths)
+        self._public_prefixes = tuple(public_prefixes)
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Any]],
     ) -> Any:
-        if request.url.path in self._public_paths:
+        path = request.url.path
+        if path in self._public_paths or path.startswith(self._public_prefixes):
             return await call_next(request)
         try:
             user = verify_jwt_from_request(request)

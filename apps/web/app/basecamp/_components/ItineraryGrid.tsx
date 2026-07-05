@@ -22,7 +22,6 @@ export function ItineraryGrid({ itineraries }: ItineraryGridProps) {
     <section className="flex min-h-[60vh] flex-col gap-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-3">
-          <Eyebrow rule>Your atelier</Eyebrow>
           <h2 className="font-serif text-4xl leading-[1.1] tracking-tight text-ink sm:text-5xl">
             Your itineraries
           </h2>

@@ -56,7 +56,12 @@ export default async function PartyPage() {
 
   return (
     <BasecampChrome user={headerUserFromSupabase(user)}>
-      <PartyManager members={members} />
+      {/* The paper-on-ink manager owns its dark mood surface — the shell around
+          it stays light (see BasecampChrome). Without this, near-white text on
+          the light shell renders invisible. */}
+      <div className="min-h-full bg-ink text-paper">
+        <PartyManager members={members} />
+      </div>
     </BasecampChrome>
   );
 }

@@ -32,6 +32,7 @@ from agent.tools.traveler import (
     record_dossier_inference,
     record_party_member,
     record_profile_fact,
+    update_party_member,
 )
 
 
@@ -40,6 +41,7 @@ _TOOLS_ONBOARDING = [
     record_profile_fact,
     record_dossier_inference,
     record_party_member,
+    update_party_member,
     search_inventory,
     get_inventory_detail,
     propose_card,
@@ -57,6 +59,7 @@ _TOOLS_PLANNING = [
     record_profile_fact,
     record_dossier_inference,
     record_party_member,
+    update_party_member,
     get_itinerary,
     list_alternatives,
     search_inventory,
