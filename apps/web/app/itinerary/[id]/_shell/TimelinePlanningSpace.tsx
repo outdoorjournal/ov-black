@@ -8,6 +8,7 @@
 import { HorizontalView } from "@/app/_components/itinerary-graph/views/horizontal/HorizontalView";
 import { MobileItineraryLayout } from "@/app/_components/itinerary-graph/views/mobile/MobileItineraryLayout";
 
+import { CollectionOverlay } from "./CollectionOverlay";
 import { useOpenNode } from "./useOpenNode";
 
 export function TimelinePlanningSpace() {
@@ -24,6 +25,9 @@ export function TimelinePlanningSpace() {
       <div className="contents md:hidden">
         <MobileItineraryLayout embedded showConciergeSheet={false} onOpenNode={openNode} />
       </div>
+      {/* The Collection as a summonable layer for pick-then-place (md–xl band,
+          where it isn't already a rail beside the timeline). */}
+      <CollectionOverlay />
     </>
   );
 }

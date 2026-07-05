@@ -7,8 +7,9 @@
 > [mvp-plan.md](../mvp-plan.md) house style. Holds the craft line (R014): no emoji, no spinners, serif
 > concierge prose.
 >
-> **Status (handoff):** **PS0–PS4 are landed on `dev`; PS5 is implemented + verified (commit pending)** —
-> see §0 below for exactly what's done, what was deferred within those slices, verification, and what's next.
+> **Status (handoff):** **PS0–PS5 are landed on `dev`; PS6 is landing incrementally (Q5 collapse · mobile
+> Schedule gating · overlay summon + a11y done; the in-canvas aside teardown consciously deferred).**
+> See §0 below for exactly what's done, what was deferred within those slices, verification, and what's next.
 > Q13 is **resolved (UNIFY, endorsed)**; Q3 (card takeover → PS4), Q4 (keep both homes → PS3), and Q6
 > (place-mode is state, not a URL → PS5) shipped as their defaults. On milestone green-light the §1 decisions
 > graduate to `doc/decisions.md` (D0xx) and this slots into `mvp-plan.md` as M006.
@@ -19,8 +20,11 @@
 
 **Landed on `dev`:** PS0/PS1/PS2 in `a61c1dc` (docs) · `98f50bc` (PS2 agent + client) · `07146b3` (PS1 shell +
 PS2 UI); **PS4 in `59bed60`** (card detail + charges read); **PS3 in `ce28581`** (Dashboard view + rail Home);
-**PS5 in this commit** (place-mode: `heldItem`/`lastPlacement` store slice + Collection Schedule affordance +
-timeline tap targets + shell holding-chip/undo-toast + unit tests + this ledger — **no backend**). Next up: **PS6**.
+**PS5 in `f2d56bd`** (place-mode: `heldItem`/`lastPlacement` slice + Schedule affordance + timeline tap targets +
+holding-chip/undo-toast); **PS6 landing across `962bd49`** (Q5 concierge collapse), **`1481fc6`** (place-mode
+Schedule desktop-only — no mobile dead-end), **this commit** (Collection **overlay** summon + a11y: focus-into-
+drawer, `motion-reduce`). Remaining PS6: the in-canvas **aside teardown** (deferred — needs retiring
+`ItineraryGraphView`). Next up: **PS7**.
 
 | Slice | State | Notes |
 | --- | --- | --- |
@@ -28,13 +32,13 @@ timeline tap targets + shell holding-chip/undo-toast + unit tests + this ledger 
 | **PS1** | **done** | Two-axis shell: `itinerary/[id]/layout.tsx` (Provider lift), routed `timeline` / `collection` / advisor-only `studio` (+ index→`/timeline` redirect), `_shell/*` (ItineraryShell · Rail · ConciergeColumn · MobileTabBar · the three planning-space views), and `TimelineDataContext`. |
 | **PS2** | **done** | Scoped Artemis session list: migration `0036`, scope-aware reuse (no re-pin) + `force_new` + `list`/`patch` + auto-title, endpoints, api-client wrappers (`listSessions`/`patchSession`), `SessionThread` + `ConciergeColumn` UI, `ConciergeChat` `sessionId`/`onSessionOpened`. |
 | **PS4** | **done** | Card detail as a route: `item/[nodeId]/page.tsx` + `CardDetailView` (full-bleed takeover; back affordance) with the six facets — (a) Maps/directions, (b) the data-driven `NodeZoomCard` (not the prototype fixtures), (c) `NotesPanel`, (d) "Ask Artemis about this" → concierge **context chip** (new `askContext` store slice + `ConciergeControl` context), (e) reschedule/unschedule/title via the store's `moveNode`/`unscheduleNode`/`editNodeField`, (f) money — new **`GET /itinerary/{id}/nodes/{node_id}/charges`** (billed/paid/owed + booking) + `getNodeCharges` wrapper. Card clicks everywhere route via a shared `useOpenNode` (timeline/mobile/collection); the old in-place modal stays as the fallback for non-shell hosts. |
+| **PS6** | **partial** | Shell polish. **Done:** Q5 **concierge collapse** (open by default ≥1100px → slim edge tab, in `ItineraryShell`/`ConciergeColumn`); place-mode **Schedule desktop-only** (`hidden md:block`, closes the mobile dead-end); Collection **overlay summon** (`CollectionOverlay` — a summonable drawer in the md–xl band, auto-closes on hold) with a11y (focus-into-drawer, Esc, `motion-reduce` on the tap targets). **Deferred (by human call):** the leftover in-canvas **aside teardown** — it's still consumed by the retired `ItineraryGraphView` (prototype-only), so removing it is a separate refactor; the broad a11y sweep continues there. |
 | **PS5** | **done** | Place mode (pick-then-place, a11y path over drag): store slice `heldItem` + `lastPlacement` with `holdItem`/`placeHeldItem`/`clearHeldItem`/`undoPlacement` (`placeHeldItem` reuses `moveNode`; gated `selectCanSchedule` = editable ∨ traveler-fork, so a draft-mine traveler keeps drag→lazy-fork). **Schedule** button on `CollectionCard` → `holdItem`; `HorizontalCanvas` renders pulsing per-day **tap targets** when holding, mapping the tapped `clientY` → minute via the drag path's `mapYToMinute`; a shell-level **`PlaceModeLayer`** floats the holding chip + undo toast, handles Esc, and slides to the timeline when you pick from elsewhere (the held state survives the nav because the store is shell-hosted). `CollectionRail` gained a `variant="overlay"`. **No backend.** |
 | **PS3** | **done** | Per-trip Dashboard: `dashboard/page.tsx` + `DashboardView` (index now redirects here; rail/tab **Home** entry + `DashboardIcon`). Sections — **hero** (mood-splash via `MOODS[timeline.mood]` + title/brief/timing; edit reuses `ItineraryIntake` prefilled → `router.refresh()`), one derived **next best action** (`deriveNextAction`, pure), the **money roll-up** (`listInvoices` → `rollupInvoices` owed-per-currency/issued/paid; per-invoice **pay** → existing `/invoices/[id]`; charge lines with `node_id` deep-link **down** to the PS4 card money facet), and **travel party** (advisor → `PartyPanel`; traveler → read-only `listItineraryParty` glance + link to `/basecamp/party`). Advisor-only **Trip management** tabs (Vault · Invoices · Booking) **rehomed out of Studio** — `StudioPlanningSpace` is now Build/Diff only. **No backend** (client-side roll-up over existing reads). |
 
-**Verified (incl. PS5):** web — **43 files / 264 vitest pass** (+`placeMode.test.tsx`: hold/place/undo store
-slice · Schedule affordance gating · PlaceModeLayer chip/Esc/toast/undo + slide-to-timeline), **typecheck + lint
-clean**; the timeline/collection/dashboard route segments **compile on the live dev server** (307 → auth
-redirect). Place mode is web-only — no api change. **Prior (PS3):** web — **42 files / 254 vitest pass** (+`dashboardModel.test.ts`: roll-up nets
+**Verified (incl. PS6):** web — **44 files / 267 vitest pass** (+`placeMode.test.tsx`, +`collectionOverlay.test.tsx`;
+plannerShell now covers the collapse + rail Home), **typecheck + lint clean**; the timeline/collection/dashboard
+route segments **compile on the live dev server** (307 → auth redirect). PS3–PS6 are all web-only — no api change. (+`dashboardModel.test.ts`: roll-up nets
 payments/excludes draft+void · next-action priority · timing format; +`dashboard.test.tsx`: hero+edit gate ·
 money owed/pay-link/line-deep-link · next-action · role split), **typecheck + lint clean**; the new
 `dashboard`/`timeline` route segments **compile on the live dev server** (307 → auth redirect, no 500). PS3 is
@@ -107,10 +111,9 @@ the itinerary agent path (which is green via ITB-4 + CARD-3). Fix ONB-2 as its o
   mobile scheduling flows through the **PS4 card-detail schedule facet** (which sets day/time and works on a
   phone). A *native* mobile place UI (the pager is a card feed with no time axis, so "tap a minute" needs a
   discrete-slot design) is a proper design-later item, not this slice.
-- **`CollectionRail variant="overlay"`** exists (styling + non-droppable) but no host **summons** it yet — the
-  pick-then-place flow instead relies on the store surviving route nav (pick on `/collection` → `PlaceModeLayer`
-  slides to `/timeline`, held state intact) and the xl rail-beside-timeline. A floating "Collection" drawer
-  summon on the timeline is a small **PS6** follow-up.
+- ~~**`CollectionRail variant="overlay"`** exists but no host summons it~~ — **done in PS6**: `CollectionOverlay`
+  is a summonable drawer on the timeline (md–xl band, where the Collection isn't already a side rail), auto-closing
+  on hold so the tap targets show. Pick-then-place also still works cross-route (the store survives nav).
 - **Draft-mine travelers** get no Schedule button (`selectCanSchedule` excludes them); they reschedule via drag,
   which lazily forks (`forkAndMove`) — exact parity with the PS4 card scheduling facet. Wiring place-mode to
   trigger the lazy fork too is a later nicety.
@@ -132,12 +135,12 @@ fail on `dev` independently — `evaluate_onboarding` is `profile_fact_count >= 
 - A running web `next dev` holds `.next`; a concurrent `next build` will `MODULE_NOT_FOUND` in the prerender
   worker *after* "Compiled successfully" — that's the collision, not a real build failure.
 
-**Next:** PS1 → PS2 → PS4 → PS3 → PS5 are done. The front is now **PS6** (advisor Studio finalize + concierge
-collapse + a11y sweep — PS3's panel rehome is already done, so PS6 now only needs to finish Build/Diff, remove
-the leftover in-canvas aside, and land the Q5 collapse). **PS7/PS8** (human channel + @-mention bridge) are
-unblocked by Q13=unify but remain the late second track. Cleanup still owed regardless: the pre-existing
-`chat.spec ONB-2` (basecamp onboarding opener) + the two stale `test_me` onboarding assertions; and place-mode's
-**mobile tap targets** + the **overlay-drawer summon** (see PS5 deferrals) are follow-ups.
+**Next:** PS1 → PS2 → PS4 → PS3 → PS5 are done; **PS6 is landing incrementally** (collapse · mobile Schedule
+gating · overlay summon + a11y done; only the in-canvas **aside teardown** remains, deferred by human call — it
+needs retiring `ItineraryGraphView`). The front is now **PS7** (general human chat channel — traveler ↔ advisor
+↔ party, gated on Q13=unify + PS2; the larger second track, backend + RLS), with **PS8** (@-mention bridge)
+after it. Cleanup still owed regardless: the pre-existing `chat.spec ONB-2` (basecamp onboarding opener) + the
+two stale `test_me` onboarding assertions.
 
 ---
 
@@ -334,6 +337,13 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1 · **size:** M.
 
 ### PS6 — Advisor Studio + shell polish
+> **PARTIAL** (commits `962bd49` · `1481fc6` · pending, see §0). **Done:** Q5 concierge collapse
+> (`ItineraryShell` `conciergeCollapsed` + `ConciergeColumn` collapse chevron + edge reopen tab); place-mode
+> Schedule button gated `hidden md:block` (mobile scheduling → PS4 card-detail facet, no dead-end); Collection
+> `CollectionOverlay` summon drawer (md–xl) with focus-into-drawer + Esc + `motion-reduce` targets. Studio was
+> already trimmed to Build/Diff by PS3. **Deferred (human call):** the leftover in-canvas aside teardown — it's
+> still consumed by the retired `ItineraryGraphView` (prototype-only), a separate refactor; the broad a11y sweep
+> continues there.
 - **goal:** Build/Diff move to an advisor-only **Studio** destination; retire the transitional aside; finalize
   concierge collapse (Q5) + a responsive/a11y sweep.
 - **deliverables:** `StudioView` (`AuthoringPanel` + `DiffPanel`), advisor-only rail entry below the divider;

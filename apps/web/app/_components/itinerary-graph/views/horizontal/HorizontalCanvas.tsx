@@ -228,7 +228,7 @@ export function HorizontalCanvas({
                 data-day={d.date}
                 aria-label={`Place on ${d.label}`}
                 onClick={(e) => onPlaceTap(d.date, e.clientY)}
-                className="absolute z-30 rounded-lg border-2 border-dashed border-brand/50 bg-brand/[0.06] transition-colors animate-pulse hover:animate-none hover:bg-brand/[0.12]"
+                className="absolute z-30 animate-pulse rounded-lg border-2 border-dashed border-brand/50 bg-brand/[0.06] transition-colors hover:animate-none hover:bg-brand/[0.12] motion-reduce:animate-none"
                 style={{
                   left: colXOf(d) - 4,
                   top: 0,
