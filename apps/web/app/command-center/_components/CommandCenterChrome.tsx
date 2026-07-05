@@ -1,43 +1,28 @@
 "use client";
 
 // Advisor-section chrome: the shared black AppHeader (wordmark + breadcrumbs +
-// avatar menu) plus the command-center's primary nav tabs on the same ink
-// masthead. Replaces the old bespoke Navbar so command-center matches the
-// itinerary builder and correspondence exactly.
+// avatar menu). The primary nav now lives in the shared left rail
+// (CommandCenterRail) rather than horizontal masthead tabs, so command-center
+// navigates identically to the itinerary builder and basecamp.
 //
-// Crumbs + the active tab are derived from the pathname here (a client
-// component) so the server layout can render this once and every /command-center
-// page lands in the right place without prop-drilling.
+// Crumbs are derived from the pathname here (a client component) so the server
+// layout can render this once and every /command-center page lands in the right
+// place without prop-drilling.
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { AppHeader, type Crumb } from "@/app/_components/app-header/AppHeader";
 import type { AppHeaderUser } from "@/lib/appHeader";
 
-type NavItem = {
-  label: string;
-  href: string;
-  isActive: (pathname: string) => boolean;
-};
+import { useCommandCenterCrumb } from "./CommandCenterCrumb";
 
-const NAV: readonly NavItem[] = [
-  {
-    label: "Overview",
-    href: "/command-center",
-    isActive: (p) => p === "/command-center",
-  },
-  {
-    label: "Clients",
-    href: "/command-center/clients",
-    isActive: (p) =>
-      p.startsWith("/command-center/clients") ||
-      p.startsWith("/command-center/new-client"),
-  },
-];
-
-/** Location breadcrumbs for the advisor section, derived from the pathname. */
-function crumbsFor(pathname: string): Crumb[] {
+/**
+ * Location breadcrumbs for the advisor section, derived from the pathname.
+ * `clientLabel` is the current client's name, fed up from the detail page — the
+ * pathname alone only knows the id, so without it the trailing crumb would be a
+ * meaningless "Client".
+ */
+function crumbsFor(pathname: string, clientLabel: string | null): Crumb[] {
   if (pathname === "/command-center") return [{ label: "Overview" }];
 
   if (
@@ -54,7 +39,9 @@ function crumbsFor(pathname: string): Crumb[] {
         .replace("/command-center/clients", "")
         .split("/")
         .filter(Boolean);
-      if (rest.length > 0) crumbs.push({ label: "Client" });
+      // On a specific client, show its name; until the page registers it, leave
+      // the trailing crumb off rather than showing a generic placeholder.
+      if (rest.length > 0 && clientLabel) crumbs.push({ label: clientLabel });
     }
     return crumbs;
   }
@@ -70,42 +57,13 @@ export function CommandCenterChrome({
   homeHref: string;
 }) {
   const pathname = usePathname() ?? "";
-
-  const tabs = (
-    <div className="border-t border-paper/10">
-      <div className="flex items-center gap-8 px-6 sm:px-10">
-        {NAV.map((item) => {
-          const active = item.isActive(pathname);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={
-                "relative py-3 font-sans text-[10px] uppercase tracking-label transition-colors " +
-                (active ? "text-paper" : "text-paper/55 hover:text-paper")
-              }
-            >
-              {item.label}
-              {active ? (
-                <span
-                  aria-hidden
-                  className="absolute inset-x-0 bottom-0 h-0.5 bg-brand"
-                />
-              ) : null}
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
+  const { clientLabel } = useCommandCenterCrumb();
 
   return (
     <AppHeader
       user={user}
       homeHref={homeHref}
-      crumbs={crumbsFor(pathname)}
-      secondary={tabs}
+      crumbs={crumbsFor(pathname, clientLabel)}
     />
   );
 }

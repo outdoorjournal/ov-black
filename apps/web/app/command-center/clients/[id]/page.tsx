@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
 
+import { SetClientCrumb } from "@/app/command-center/_components/CommandCenterCrumb";
+
 import { ClientContactsSection } from "./_components/ClientContactsSection";
 import { ClientDocumentsSection } from "./_components/ClientDocumentsSection";
 import { ClientFactColumns } from "./_components/ClientFactColumns";
@@ -106,6 +108,7 @@ export default async function ClientDetailPage({
 
   return (
     <main className="flex w-full flex-1 flex-col gap-12 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
+      <SetClientCrumb name={client.full_name} />
       <header className="flex flex-col gap-6 border-b border-paper/10 pb-8 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <Link

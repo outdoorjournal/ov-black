@@ -75,22 +75,20 @@ export function AppRail({
 }
 
 function RailLink({ href, label, active, icon }: RailItem) {
+  // Selected destination reads as an inverse fill — paper type on an ink chip —
+  // rather than a thin edge indicator, so the active surface is unmistakable.
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
       data-testid={`rail-${label.toLowerCase()}`}
       className={
-        "relative flex flex-col items-center gap-1 py-2.5 font-sans text-[9px] uppercase tracking-[0.14em] transition-colors " +
-        (active ? "text-ink" : "text-ink/50 hover:text-ink")
+        "flex flex-col items-center gap-1 py-2.5 font-sans text-[9px] uppercase tracking-[0.14em] transition-colors " +
+        (active
+          ? "bg-ink text-paper"
+          : "text-ink/50 hover:bg-ink/5 hover:text-ink")
       }
     >
-      {active ? (
-        <span
-          className="absolute left-0 top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r bg-ink"
-          aria-hidden
-        />
-      ) : null}
       {icon}
       {label}
     </Link>
