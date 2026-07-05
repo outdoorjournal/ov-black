@@ -40,7 +40,12 @@ class Client(Base):
     the client). ``auth_user_id`` is the client's own ``auth.users`` id,
     backfilled on their first magic-link login (see
     ``resolve_client_for_auth_user``). NULL means the client hasn't signed in
-    yet — the advisor UI renders that as "pending" vs "active".
+    yet.
+
+    ``invited_at`` is stamped when the welcome sign-in link is first issued
+    (NULL = never invited). Together with ``auth_user_id`` it yields the
+    three-state access status the advisor UI renders: ``uninvited`` (created,
+    never notified) → ``pending`` (invited, awaiting first login) → ``active``.
     """
 
     __tablename__ = "clients"
@@ -62,8 +67,14 @@ class Client(Base):
         nullable=True,
     )
     # Stamped on first magic-link login (when auth_user_id is backfilled).
-    # NULL == hasn't signed in yet → the advisor UI renders "pending".
+    # NULL == hasn't signed in yet.
     accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # Stamped when the welcome sign-in link is first issued. NULL == the client
+    # was created silently and never invited → the UI renders "uninvited".
+    invited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

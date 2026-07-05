@@ -401,15 +401,15 @@ async def test_onboarding_session_ignores_itinerary_pinned(
 def test_evaluate_onboarding_rule() -> None:
     """The one swappable onboarding rule, in isolation (ONB-2A).
 
-    Today: satisfied by a single profile fact. When the bar rises (e.g. two
-    facts plus a known age) this test moves with the rule — and it's the only
-    place besides the rule body that needs to; the nudge + milestone callers
-    read the bool and don't change.
+    Today: satisfied by two profile facts. When the bar moves again this test
+    moves with the rule — and it's the only place besides the rule body that
+    needs to; the nudge + milestone callers read the bool and don't change.
     """
     from app.routers.me import evaluate_onboarding
 
     assert evaluate_onboarding(profile_fact_count=0) is False
-    assert evaluate_onboarding(profile_fact_count=1) is True
+    assert evaluate_onboarding(profile_fact_count=1) is False
+    assert evaluate_onboarding(profile_fact_count=2) is True
     assert evaluate_onboarding(profile_fact_count=3) is True
 
 
@@ -420,8 +420,8 @@ async def test_onboarding_session_reports_onboarding_complete(
 ) -> None:
     """``onboarding_complete`` drives the nudge + milestone card (ONB-2A).
 
-    False until the onboarding rule is satisfied — today, one non-redacted
-    ``profile_facts`` row. A redacted (soft-deleted) fact must not count,
+    False until the onboarding rule is satisfied — today, two non-redacted
+    ``profile_facts`` rows. A redacted (soft-deleted) fact must not count,
     matching the active-fact filter used elsewhere.
     """
     from app.auth import AuthenticatedUser
@@ -458,7 +458,14 @@ async def test_onboarding_session_reports_onboarding_complete(
         resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
         assert resp.onboarding_complete is False
 
-        # A live fact satisfies today's rule.
+        # One live fact is not enough — today's rule needs two.
+        await _insert_profile_fact(
+            db_session, client_id=client_id, recorded_by=traveler, redacted=False
+        )
+        resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
+        assert resp.onboarding_complete is False
+
+        # A second live fact satisfies today's rule.
         await _insert_profile_fact(
             db_session, client_id=client_id, recorded_by=traveler, redacted=False
         )

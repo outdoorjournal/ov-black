@@ -103,11 +103,11 @@ class MyInvoicesResponse(BaseModel):
 def evaluate_onboarding(*, profile_fact_count: int) -> bool:
     """The single, swappable "do we know enough about this traveler?" rule.
 
-    Today it's satisfied by one thing the traveler told us about themselves
-    (one non-redacted ``profile_facts`` row). This is deliberately the ONLY
+    Today it's satisfied by two things the traveler told us about themselves
+    (two non-redacted ``profile_facts`` rows). This is deliberately the ONLY
     place the criterion lives: the basecamp reminder and the in-chat milestone
     card both key off its result (exposed as ``onboarding_complete``), so
-    raising the bar — e.g. two facts plus a known age — is a change to this
+    moving the bar — e.g. adding a known-age requirement — is a change to this
     function alone, with no caller or UI edits. Keep the *inputs* explicit
     (add parameters like ``age_known`` as the rule grows) rather than reaching
     into globals, so the rule stays unit-testable in isolation.

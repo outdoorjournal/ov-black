@@ -19,13 +19,21 @@ function uniqueEmail(tag: string): string {
 }
 
 // Fill + submit the New Client form (assumes we're already on /new-client).
+// `notify` defaults true (the atomic invite path); pass false to uncheck
+// "Send a welcome email now" and create the client silently (ADV-1).
 async function submitNewClient(
   page: Page,
   fullName: string,
   email: string,
+  opts: { notify?: boolean } = {},
 ): Promise<void> {
   await page.getByLabel("Full name").fill(fullName);
-  await page.getByLabel("Email").fill(email);
+  // Exact match: the "Send a welcome email now" checkbox label also contains
+  // "email", which a substring getByLabel would ambiguously match.
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  if (opts.notify === false) {
+    await page.getByLabel("Send a welcome email now").uncheck();
+  }
   await page.getByRole("button", { name: "Add client" }).click();
 }
 
@@ -107,6 +115,44 @@ test("ONB-1A: inviting an already-registered email tells the advisor it exists",
     page.getByText("A client with this email already exists."),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/command-center\/new-client/);
+});
+
+// ADV-1 — an advisor creates a client WITHOUT inviting them (unchecks the
+// welcome email), builds for them privately, then invites later from the
+// roster. The silent create reads as "Uninvited" (no auth row, no mail); the
+// roster's "Send invite" flips the same row to "Pending". Browser drives both;
+// the API seam confirms invited_at goes from null → set.
+test("ADV-1: advisor creates a client silently, then invites later from the roster", async ({
+  page,
+}) => {
+  const email = uniqueEmail("silent");
+
+  await page.goto("/command-center/new-client");
+  await submitNewClient(page, "E2E Silent Client", email, { notify: false });
+  await page.waitForURL(/\/command-center\/clients/);
+
+  // The fresh row reads Uninvited — created, never notified.
+  const row = clientRow(page, email);
+  await expect(row.getByText("Uninvited")).toBeVisible();
+
+  // State backstop: uninvited, never invited, never accepted.
+  await expect
+    .poll(async () => (await findClientByEmail(email))?.access_status)
+    .toBe("uninvited");
+  expect((await findClientByEmail(email))?.invited_at ?? null).toBeNull();
+  expect((await findClientByEmail(email))?.accepted_at ?? null).toBeNull();
+
+  // "Send invite" is offered on an uninvited row; clicking it issues the first
+  // welcome link and confirms.
+  await row.getByRole("button", { name: "Send invite" }).click();
+  await expect(page.getByText("Invite sent.")).toBeVisible();
+
+  // The row flips to Pending, and the API seam shows invited_at now stamped.
+  await expect(clientRow(page, email).getByText("Pending")).toBeVisible();
+  await expect
+    .poll(async () => (await findClientByEmail(email))?.access_status)
+    .toBe("pending");
+  expect((await findClientByEmail(email))?.invited_at ?? null).not.toBeNull();
 });
 
 // ONB-1B — an advisor whose invitee never got the email can re-send the welcome

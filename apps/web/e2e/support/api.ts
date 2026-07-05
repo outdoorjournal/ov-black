@@ -29,7 +29,8 @@ export interface ClientRow {
   id: string;
   full_name?: string | null;
   email?: string | null;
-  access_status?: "pending" | "active" | null;
+  access_status?: "uninvited" | "pending" | "active" | null;
+  invited_at?: string | null;
   accepted_at?: string | null;
 }
 

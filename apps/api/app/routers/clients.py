@@ -123,12 +123,18 @@ def _advisor_id(user: AuthenticatedUser) -> uuid.UUID:
 
 
 def _access_status(client: Client) -> AccessStatus:
-    """Render a client's sign-in state from ``auth_user_id``.
+    """Render a client's place on the invite → sign-in path.
 
-    ``pending`` until the client signs in for the first time (which backfills
-    ``auth_user_id`` via ``resolve_client_for_auth_user``), ``active`` after.
+    ``active`` once the client signs in for the first time (which backfills
+    ``auth_user_id`` via ``resolve_client_for_auth_user``); otherwise
+    ``pending`` if the welcome link has been issued (``invited_at`` set), or
+    ``uninvited`` if the client was created silently and never notified.
     """
-    return "active" if client.auth_user_id is not None else "pending"
+    if client.auth_user_id is not None:
+        return "active"
+    if client.invited_at is not None:
+        return "pending"
+    return "uninvited"
 
 
 @router.post(
@@ -136,12 +142,17 @@ def _access_status(client: Client) -> AccessStatus:
     status_code=status.HTTP_201_CREATED,
     response_model=ClientCreateResponse,
     responses={
-        201: {"description": "Client + Dossier created, welcome email sent."},
+        201: {
+            "description": (
+                "Client + Dossier created. A welcome sign-in link is emailed "
+                "unless ``notify=false`` (silent create — invite later)."
+            )
+        },
         403: {"description": "Caller is not an advisor."},
         409: {"description": "Email already exists — a client, or an already-registered account."},
         502: {"description": "Supabase Auth admin API is unavailable."},
     },
-    summary="Create a new client + Dossier and email them a welcome sign-in link.",
+    summary="Create a new client + Dossier; email a welcome link unless notify=false.",
 )
 async def create_client_endpoint(
     payload: ClientCreatePayload,
@@ -195,6 +206,7 @@ async def list_clients_endpoint(
                 email=client.email,
                 has_dossier=dossier_id is not None,
                 access_status=_access_status(client),
+                invited_at=client.invited_at,
                 accepted_at=client.accepted_at,
                 created_at=client.created_at,
             )
@@ -260,6 +272,7 @@ async def get_client_endpoint(
         full_name=client.full_name,
         email=client.email,
         access_status=_access_status(client),
+        invited_at=client.invited_at,
         accepted_at=client.accepted_at,
         created_at=client.created_at,
         updated_at=client.updated_at,

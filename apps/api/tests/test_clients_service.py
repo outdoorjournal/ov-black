@@ -63,10 +63,11 @@ class FakeSession:
         self.rollbacks += 1
 
 
-def _payload(*, email: str = "new@example.com") -> ClientCreatePayload:
+def _payload(*, email: str = "new@example.com", notify: bool = True) -> ClientCreatePayload:
     return ClientCreatePayload(
         full_name="Jane Doe",
         email=email,
+        notify=notify,
         dossier=DossierPayload(
             typed=DossierTyped(
                 contact_preference="email",
@@ -179,6 +180,41 @@ async def test_ok_path_inserts_client_dossier_facts_with_one_commit(
     assert stub_admin_ok == [
         ("fresh@example.com", "http://localhost:3000/auth/callback?next=/basecamp"),
     ]
+    # The invite went out, so invited_at is stamped → the client reads as
+    # "pending" (invited, awaiting first login), not "uninvited".
+    assert client_rows[0].invited_at is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_false_creates_silently_without_invite(
+    stub_admin_ok: list[tuple[str, str]],
+) -> None:
+    """Invite-later (ADV-1): notify=false persists the client but mints no auth
+    row and sends no welcome email — the invite is deferred to resend-welcome."""
+    advisor_id = uuid.uuid4()
+    session = FakeSession()
+
+    result = await create_client_with_dossier(
+        session,
+        advisor_id=advisor_id,
+        payload=_payload(email="silent@example.com", notify=False),
+    )
+
+    assert result.outcome is ClientCreateOutcome.OK
+    assert result.client_id is not None
+    # No welcome link issued — no auth row minted, no email sent.
+    assert result.issued is None
+    assert stub_admin_ok == []
+
+    # Client + Dossier still persisted atomically (one commit, no rollback).
+    assert session.commits == 1
+    assert session.rollbacks == 0
+    client_rows = [o for o in session.added if isinstance(o, Client)]
+    dossier_rows = [o for o in session.added if isinstance(o, Dossier)]
+    assert len(client_rows) == 1
+    assert len(dossier_rows) == 1
+    # invited_at stays NULL → the client reads as "uninvited" until invited.
+    assert client_rows[0].invited_at is None
 
 
 @pytest.mark.asyncio

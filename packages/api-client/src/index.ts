@@ -383,9 +383,10 @@ export type {
 
 // Pydantic inlines this Literal union into ClientSummary / ClientDetail
 // rather than emitting it as a named type; expose it so apps/web can match
-// on string values without re-typing. "pending" until the client signs in
-// for the first time (which stamps accepted_at), "active" after.
-export type AccessStatus = "pending" | "active";
+// on string values without re-typing. "uninvited" while created silently
+// (no welcome link issued), "pending" once invited and awaiting first login
+// (which stamps accepted_at), "active" after.
+export type AccessStatus = "uninvited" | "pending" | "active";
 
 // Agent sessions (S04): POST /sessions request/response + the replay shape
 // for GET /sessions/{id}/turns. The SSE stream for /turn is consumed by a

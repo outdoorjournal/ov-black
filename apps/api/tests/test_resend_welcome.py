@@ -9,8 +9,11 @@ Two layers, mirroring the rest of the clients suite:
   (status codes, advisor-only enforcement, collapsed 404 for cross-advisor
   reads).
 
-There is no DB write on this path — resend is a pure email action — so the
-fakes only need to answer the single advisor-scoped client lookup.
+Resend doubles as the invite-later action (ADV-1): the *first* send to a
+silently-created (``uninvited``) client stamps ``invited_at`` — one DB write
+that flips it to ``pending`` — while a re-send to an already-invited client
+does no write. The fakes answer the single advisor-scoped client lookup and
+count commits so both facets are distinguishable.
 """
 
 from __future__ import annotations
@@ -57,6 +60,7 @@ class FakeServiceSession:
     """Answers the single ``select(Client).where(id, owner_id)`` lookup."""
 
     clients: list[Client] = field(default_factory=list)
+    commits: int = 0
 
     async def execute(self, stmt: Any) -> _ExecResult:
         compiled = stmt.compile()
@@ -69,17 +73,25 @@ class FakeServiceSession:
                 return _ExecResult([c])
         return _ExecResult([])
 
+    async def commit(self) -> None:
+        self.commits += 1
+
 
 def _client_row(
     advisor_id: uuid.UUID,
     *,
     email: str = "client@example.com",
     accepted: bool = False,
+    invited: bool = False,
 ) -> Client:
     row = Client(owner_id=advisor_id, full_name="Jane Traveler", email=email)
     row.id = uuid.uuid4()
     row.created_at = datetime.now(UTC)
     row.updated_at = row.created_at
+    # invited_at set == a welcome link was already issued ("pending"); left
+    # None models a silently-created ("uninvited") client whose first invite
+    # this send is. ``accepted`` implies invited.
+    row.invited_at = datetime.now(UTC) if (invited or accepted) else None
     row.auth_user_id = uuid.uuid4() if accepted else None
     row.accepted_at = datetime.now(UTC) if accepted else None
     return row
@@ -109,11 +121,13 @@ def stub_admin_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resend_pending_client_emails_welcome_link(
+async def test_first_invite_of_uninvited_client_stamps_invited_at(
     stub_admin_ok: list[tuple[str, str]],
 ) -> None:
+    """Invite-later (ADV-1): the first send to a silent client stamps invited_at."""
     advisor_id = uuid.uuid4()
-    client = _client_row(advisor_id, email="resend@example.com")
+    client = _client_row(advisor_id, email="silent@example.com", invited=False)
+    assert client.invited_at is None
     session = FakeServiceSession(clients=[client])
 
     result = await resend_welcome_email(session, advisor_id=advisor_id, client_id=client.id)
@@ -124,6 +138,32 @@ async def test_resend_pending_client_emails_welcome_link(
     assert stub_admin_ok == [
         (client.email, "http://localhost:3000/auth/callback?next=/basecamp"),
     ]
+    # uninvited → pending: invited_at now stamped, in exactly one commit.
+    assert client.invited_at is not None
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_resend_to_pending_client_keeps_stamp_and_writes_nothing(
+    stub_admin_ok: list[tuple[str, str]],
+) -> None:
+    """A re-send to an already-invited client re-emails but does no DB write."""
+    advisor_id = uuid.uuid4()
+    client = _client_row(advisor_id, email="resend@example.com", invited=True)
+    original_invited_at = client.invited_at
+    assert original_invited_at is not None
+    session = FakeServiceSession(clients=[client])
+
+    result = await resend_welcome_email(session, advisor_id=advisor_id, client_id=client.id)
+
+    assert result.outcome is ResendWelcomeOutcome.OK
+    assert result.issued is not None
+    assert stub_admin_ok == [
+        (client.email, "http://localhost:3000/auth/callback?next=/basecamp"),
+    ]
+    # Re-send preserves the original invite time and touches no rows.
+    assert client.invited_at == original_invited_at
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio

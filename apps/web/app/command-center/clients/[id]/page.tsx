@@ -404,11 +404,15 @@ function InvitePill({
       ? signedInOn
         ? `Signed in · ${signedInOn}`
         : "Signed in"
-      : "Invite pending";
+      : status === "pending"
+        ? "Invite pending"
+        : "Not invited";
   const tone =
     status === "active"
       ? "border-paper/40 text-paper"
-      : "border-amber-300/40 text-amber-200/90";
+      : status === "pending"
+        ? "border-amber-300/40 text-amber-200/90"
+        : "border-paper/20 text-paper/50";
   return (
     <span
       className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}

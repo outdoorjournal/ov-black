@@ -261,6 +261,7 @@ def _client_row(
     client_id: uuid.UUID | None = None,
     created_at: datetime | None = None,
     accepted: bool = False,
+    invited: bool = True,
 ) -> Client:
     row = Client(
         owner_id=owner_id,
@@ -270,6 +271,9 @@ def _client_row(
     row.id = client_id or uuid.uuid4()
     row.created_at = created_at or datetime.now(UTC)
     row.updated_at = row.created_at
+    # invited_at set == a welcome link was issued → "pending" (or "active" once
+    # signed in). Left None models a silently-created client → "uninvited".
+    row.invited_at = datetime.now(UTC) if (invited or accepted) else None
     # auth_user_id set == the client has signed in at least once → "active",
     # with accepted_at stamped at that first login.
     row.auth_user_id = uuid.uuid4() if accepted else None
@@ -438,6 +442,32 @@ def test_get_clients_returns_only_own_clients(
     assert c_row["has_dossier"] is False
     assert c_row["access_status"] == "pending"
     assert c_row["accepted_at"] is None  # pending → no first-login timestamp
+    assert c_row["invited_at"] is not None  # a welcome link was issued
+
+
+def test_get_clients_renders_uninvited_status(
+    client: TestClient,
+    fake_session: FakeSession,
+    override_require_advisor: uuid.UUID,
+    auth_headers: dict[str, str],
+) -> None:
+    """A silently-created client (invited_at NULL) reads as ``uninvited``."""
+    advisor = override_require_advisor
+    silent = _client_row(
+        owner_id=advisor,
+        email="silent@example.com",
+        full_name="Sam Silent",
+        invited=False,  # created without inviting (ADV-1)
+    )
+    fake_session.clients_by_id[silent.id] = silent
+
+    resp = client.get("/clients", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    row = next(r for r in body if r["email"] == "silent@example.com")
+    assert row["access_status"] == "uninvited"
+    assert row["invited_at"] is None
+    assert row["accepted_at"] is None
 
 
 # ── GET /clients/{id} ───────────────────────────────────────────────────────

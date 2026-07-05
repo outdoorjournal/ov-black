@@ -23,7 +23,7 @@ mutation and a traveler mutation are the same write path with a different
 
 | Scenario | Title | Status | Automated by (layer) |
 | --- | --- | --- | --- |
-| [ADV-1](#adv-1--advisor-creates-a-client-without-inviting-them-yet) | Create a client without inviting them yet | 🟡 Partial | build-before-sign-in via P1/full-loop (API); *silent create* (invite-later) is a product gap |
+| [ADV-1](#adv-1--advisor-creates-a-client-without-inviting-them-yet) | Create a client without inviting them yet | ✅ Automated | silent-create + invite-later via `notify`/`uninvited` (API `test_clients_service`/`test_resend_welcome`) + `onboarding-invite.spec.ts` (browser) |
 | [ADV-2](#adv-2--advisor-stands-up-the-itinerary-shell-brief--rough-timing) | Stand up the itinerary shell (brief + rough timing) | ✅ Automated | `POST /itinerary` brief+timing (API, ITB-1/1B) + advisor-project browser intake (`e2e/advisor/itinerary-intake.spec.ts`) |
 | [ADV-2A](#adv-2a--ai-proposes-and-refines-the-cover-image) | AI proposes & refines the cover image | 🚧 Planned | — (no AI image generation exists; cover is provider/OG/manual only) |
 | [ADV-2B](#adv-2b--build-the-travel-party-existing-or-new-with-the-agent) | Build the travel party (existing or new, with the agent) | ✅ Automated | P4 party CRUD + cross-trip reuse (API) + advisor-project browser: durable add + trip-attach (`e2e/advisor/travel-party.spec.ts`); concierge-add agent-gated |
@@ -42,15 +42,16 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-1 · Advisor creates a client without inviting them yet
 
-- **Status:** 🟡 Partial — the "build before the traveler is in" half works; the "don't
-  notify yet" half is a product gap (create currently always emails a sign-in link).
+- **Status:** ✅ Automated (silent-create + invite-later shipped; API + advisor-project browser).
 - **Personas:** Advisor
 - **Surface:** Web UI (Playwright) + API seam (CLI/pytest)
 - **Preconditions:** Advisor is signed in. The target person has no account yet.
 - **Automated by:**
   - `apps/cli/tests/e2e/test_pillar1_invite_e2e.py::test_advisor_adds_client_and_welcome_is_sent` — client + Dossier created atomically, `access_status == "pending"`, `accepted_at is None` (the advisor owns the client before any sign-in).
   - `apps/cli/tests/e2e/test_full_loop_e2e.py::test_loop_invite_to_approved` — the advisor builds, analyzes, fills, and **approves** an itinerary for a still-`pending` client, proving the whole build can precede the traveler engaging.
-  - Silent-create (create with **no** welcome sent) — **no test; no code path.**
+  - `apps/web/e2e/advisor/onboarding-invite.spec.ts` (ADV-1) — the advisor unchecks "Send a welcome email now", the row reads **Uninvited** (`access_status == "uninvited"`, `invited_at is None`), then "Send invite" flips it to **Pending** (`invited_at` set) — silent create then invite-later, in the browser.
+  - `apps/api/tests/test_clients_service.py::test_notify_false_creates_silently_without_invite` — `notify=false` persists the client in one commit, mints **no** auth row / sends **no** welcome, `invited_at` stays NULL.
+  - `apps/api/tests/test_resend_welcome.py::test_first_invite_of_uninvited_client_stamps_invited_at` — the invite-later action stamps `invited_at` (uninvited → pending); a re-send writes nothing.
 
 **Given** an advisor who wants a workspace for a not-yet-contacted client,
 
@@ -63,22 +64,23 @@ mutation and a traveler mutation are the same write path with a different
 - the client exists and is owned by the advisor, in a pre-engagement state (`pending`,
   `accepted_at is None`);
 - the advisor can create/edit/approve an itinerary for that client while they are still
-  `pending` — nothing about the build requires the traveler to have signed in;
-- **(target, not yet true)** creating the client does **not** send an invitation:
-  no Supabase auth row is minted and no welcome email goes out until the advisor takes
-  an explicit, separate "invite" action.
+  pre-sign-in — nothing about the build requires the traveler to have signed in;
+- creating the client with the welcome email **off** does **not** send an invitation:
+  no Supabase auth row is minted and no welcome email goes out (the client reads as
+  `uninvited`) until the advisor takes the explicit "Send invite" action on the roster.
 
 **Notes / gaps**
-- ⛔ **Product gap — create and invite are atomic today.** `POST /clients`
-  (`apps/api/app/routers/clients.py`, `create_client_with_dossier`) always mints the
-  auth identity and sends the welcome sign-in link; there is no "draft client / invite
-  later" toggle. The scenario's third `Then` bullet fails as written. Closing it is a
-  small, isolated slice: a `notify=false` create path (or a distinct `POST
-  /clients/{id}/invite`) plus a "Send invite" affordance on the roster. Tracked in
-  [advisor-plan.md](./advisor-plan.md) as **G-INVITE-LATER**.
-- ✅ **The build-before-engagement half is real and covered** — `pending` clients are
-  fully buildable (full-loop), so an advisor can absolutely "make the itinerary first";
-  they just can't currently do it *quietly*.
+- ✅ **Shipped — create and invite are now separable.** `POST /clients` carries
+  `notify: bool = true`; when false, `create_client_with_dossier`
+  (`apps/api/app/routers/clients.py`) persists the client + Dossier but mints no auth
+  identity and sends no welcome link. A new `clients.invited_at` (migration `0038`)
+  yields the third `access_status` state **`uninvited`**; `POST /clients/{id}/resend-welcome`
+  is the invite-later action (stamps `invited_at`, flipping `uninvited` → `pending`). UI:
+  a "Send a welcome email now" checkbox on the New Client form + a "Send invite" roster
+  action. Was tracked in [advisor-plan.md](./advisor-plan.md) as **G-INVITE-LATER** (now closed).
+- ✅ **The build-before-engagement half is real and covered** — `pending` (and now
+  `uninvited`) clients are fully buildable (full-loop), so an advisor can "make the
+  itinerary first" — and now do it *quietly*.
 - Re-sending to a client who never got the mail is [ONB-1B](./onboarding.md#onb-1b--invitee-never-receives-the-email); the deliberate invite itself is [ONB-1](./onboarding.md#onb-1--advisor-invites-a-new-user).
 
 ---

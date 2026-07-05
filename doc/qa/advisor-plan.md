@@ -26,7 +26,7 @@ seam missing), or **gap** (no code path — a product decision precedes the test
 
 | # | Workflow (ADV-#) | Status | Where it lives | The gap |
 | --- | --- | --- | --- | --- |
-| 1 | Create client w/o inviting | **partial** | `POST /clients` → `create_client_with_dossier` (`apps/api/app/routers/clients.py`); P1 | create + welcome are **atomic** — no silent-create / invite-later |
+| 1 | Create client w/o inviting | **built** | `POST /clients` `notify` flag → `create_client_with_dossier`; roster "Send invite" (`resend-welcome`); P1; `onboarding-invite.spec.ts` (ADV-1) | ✅ silent-create + invite-later shipped (G-INVITE-LATER closed) |
 | 2 | Itinerary shell (brief+timing) | **built** | `POST /itinerary` (`routers/itineraries.py`), timing 0033; ITB-1/1B/1C; `itinerary-intake.spec.ts` | ✅ advisor browser intake **and** "New itinerary for this client" affordance shipped (G-ITIN-FOR-CLIENT closed) |
 | 2A | AI cover image | **gap** | `cover_image` only from provider photos / OG scrape / manual paste | **no image generation/curation anywhere** |
 | 2B | Travel party (existing/new) | **built** | `party_members` routes + agent `record_/update_party_member`; dashboard `PartyPanel` trip-attach; P4; `travel-party.spec.ts` | ✅ advisor browser (add + trip-attach) shipped; concierge-add agent-gated |
@@ -49,20 +49,27 @@ server-side.
 
 ## §2. Product gaps (decision precedes test)
 
-Six gaps block a scenario being asserted *as written*. Each is small and isolated; the
-first four each unlock one ADV scenario, the last two are demo-polish.
+Originally six gaps blocked a scenario being asserted *as written*; **G-INVITE-LATER is
+now closed** (below), leaving five. Each is small and isolated; the remaining
+scenario-unlockers each open one ADV scenario, and two are demo-polish.
 
-### G-INVITE-LATER — silent client create (ADV-1)
-- **Goal:** an advisor can create a client and build for them **without** notifying them.
-- **Today:** `create_client_with_dossier` always mints the Supabase identity + emails a
-  welcome link; `access_status` starts `pending`. No opt-out.
-- **Plan:** add `notify: bool = true` to `POST /clients` (or split a `POST
-  /clients/{id}/invite`); when false, create the client + Dossier but defer the auth-row
-  mint + email. Roster gains a "Send invite" action on not-yet-invited rows. Keep the
-  atomic path the default so ONB-1/P1 stay green.
-- **Size:** S. **Touches:** `services/clients.py`, `routers/clients.py`, command-center roster.
-- **Test to add:** API — create with `notify=false` mints **no** auth row / sends **no**
-  welcome (assert the enqueue count is 0), then explicit invite flips to `pending` + sends.
+### ✅ Closed: G-INVITE-LATER — silent client create (ADV-1)
+- **Shipped:** `POST /clients` now carries `notify: bool = true`. When false the create
+  persists the client + Dossier but mints **no** Supabase auth row and sends **no** welcome
+  email — a new `clients.invited_at` (migration `0038`) stays NULL, so `access_status`
+  derives a third state, **`uninvited`** (→ `pending` once invited → `active` once signed
+  in). The invite-later action reuses `POST /clients/{id}/resend-welcome`, which now stamps
+  `invited_at` on first send (flipping `uninvited` → `pending`); a re-send is idempotent.
+  The atomic path stays the default, so ONB-1/P1 are un-regressed.
+- **Browser:** the New Client form gained a "Send a welcome email now" checkbox (on by
+  default; uncheck = silent create); the roster's `InviteActions` shows **Send invite** on
+  `uninvited` rows and **Nudge** on `pending`, and all three `InvitePill`s render the
+  `uninvited` state.
+- **Tested:** API — `test_clients_service.py` (notify=false mints no auth row, one commit,
+  `invited_at` NULL) + `test_resend_welcome.py` (first-invite stamps `invited_at`; re-send
+  writes nothing) + `test_clients_router.py` (`uninvited` renders). Browser —
+  `onboarding-invite.spec.ts` ADV-1 drives silent create → **Uninvited** → **Send invite**
+  → **Pending**, backstopped at the API seam (`invited_at` null → set).
 
 ### G-COVER — AI (or curated) cover image (ADV-2A)
 - **Goal:** a cover image lands on an itinerary from its brief, ~80% hands-off, refinable.
@@ -167,7 +174,9 @@ trip-party, trip-management — not the traveler's "blank canvas" timeline), and
 per-trip party-attach UI ADV-2B needed.
 
 **Wave 2 — close a small gap, then assert the scenario.** One product slice each, then its test:
-- **G-INVITE-LATER → ADV-1**, **G-NODE-EDITOR → ADV-4**, **G-ANALYZE-AGENT → ADV-6**,
+- ✅ **G-INVITE-LATER → ADV-1** — shipped (see §2): `notify` opt-out + `uninvited` state +
+  roster "Send invite"; `onboarding-invite.spec.ts` ADV-1 drives it in the browser.
+- Remaining: **G-NODE-EDITOR → ADV-4**, **G-ANALYZE-AGENT → ADV-6**,
   **G-APPROVE-TOTAL → ADV-10**, **G-TESTCARD → ADV-11 browser**.
 - **G-COVER → ADV-2A** is the largest; sequence it after the decision in §2.
 

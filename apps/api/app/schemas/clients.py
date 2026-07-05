@@ -51,6 +51,11 @@ class ClientCreatePayload(BaseModel):
     profile_facts: list[ProfileFactCreate] = Field(default_factory=list)
     osint_facts: list[OsintFactCreate] = Field(default_factory=list)
     contacts: list[ClientContactCreate] = Field(default_factory=list)
+    # When true (default, the atomic path) the create also mints the Supabase
+    # auth row and emails a welcome sign-in link. When false the advisor is
+    # standing the client up silently to build for them first — no auth row, no
+    # email — and invites later via ``POST /clients/{id}/resend-welcome``.
+    notify: bool = True
 
 
 class ClientCreateResponse(BaseModel):
@@ -66,9 +71,12 @@ class ClientCreateResponse(BaseModel):
     email: EmailStr
 
 
-# Whether the client has signed in yet. Derived from ``clients.auth_user_id``:
-# ``pending`` until first magic-link login backfills the id, ``active`` after.
-AccessStatus = Literal["pending", "active"]
+# Where the client sits on the invite → sign-in path. Derived server-side from
+# ``clients.invited_at`` + ``clients.auth_user_id``:
+#   ``uninvited`` — created silently, never notified (invited_at IS NULL);
+#   ``pending``   — welcome link issued, awaiting first login;
+#   ``active``    — signed in (auth_user_id backfilled).
+AccessStatus = Literal["uninvited", "pending", "active"]
 
 
 class ClientSummary(BaseModel):
@@ -81,8 +89,9 @@ class ClientSummary(BaseModel):
     email: EmailStr
     has_dossier: bool
     access_status: AccessStatus
-    # When the client first signed in (None while pending). `created_at` is
-    # when they were invited, so the advisor sees both "invited" and "joined".
+    # When the welcome link was first issued (None while ``uninvited``).
+    invited_at: datetime | None
+    # When the client first signed in (None until ``active``).
     accepted_at: datetime | None
     created_at: datetime
 
@@ -101,6 +110,7 @@ class ClientDetail(BaseModel):
     full_name: str
     email: EmailStr
     access_status: AccessStatus
+    invited_at: datetime | None
     accepted_at: datetime | None
     created_at: datetime
     updated_at: datetime

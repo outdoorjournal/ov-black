@@ -158,11 +158,18 @@ function Td({
 }
 
 function InvitePill({ status }: { status: AccessStatus }) {
-  const copy = status === "active" ? "Active" : "Pending";
+  const copy =
+    status === "active"
+      ? "Active"
+      : status === "pending"
+        ? "Pending"
+        : "Uninvited";
   const tone =
     status === "active"
       ? "border-paper/40 text-paper"
-      : "border-brand/40 text-brand";
+      : status === "pending"
+        ? "border-brand/40 text-brand"
+        : "border-paper/20 text-paper/50";
   return (
     <span
       className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}

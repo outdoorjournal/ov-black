@@ -18,10 +18,14 @@ interface InviteActionsProps {
 }
 
 /**
- * "Nudge" button for a single client row — re-sends the welcome sign-in link.
+ * Invite action for a single client row — issues the welcome sign-in link.
  *
- * Shown only while the client is ``pending`` (hasn't signed in yet). Once
- * they're ``active`` there's nothing to resend, so this renders nothing.
+ * Doubles as the ADV-1 invite-later affordance: for an ``uninvited`` client
+ * (created silently) it sends the *first* invite ("Send invite"); for a
+ * ``pending`` client (invited, not yet signed in) it re-sends ("Nudge"). Once
+ * they're ``active`` there's nothing to send, so this renders nothing. Both
+ * paths hit the same ``resend-welcome`` endpoint, which stamps the invite on
+ * first send.
  *
  * The server action is invoked through ``useTransition`` so the surrounding
  * row stays interactive while the request is in flight; the parent page is
@@ -31,9 +35,13 @@ export function InviteActions({ clientId, accessStatus }: InviteActionsProps) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [isPending, startTransition] = useTransition();
 
-  if (accessStatus !== "pending") {
+  if (accessStatus === "active") {
     return null;
   }
+
+  const firstInvite = accessStatus === "uninvited";
+  const idleLabel = firstInvite ? "Send invite" : "Nudge";
+  const successCopy = firstInvite ? "Invite sent." : "Welcome link re-sent.";
 
   const onResend = () => {
     setStatus({ kind: "working" });
@@ -41,7 +49,7 @@ export function InviteActions({ clientId, accessStatus }: InviteActionsProps) {
       const result = await resendWelcomeAction(clientId);
       setStatus(
         result.ok
-          ? { kind: "success", message: "Welcome link re-sent." }
+          ? { kind: "success", message: successCopy }
           : { kind: "error", message: result.error },
       );
     });
@@ -55,7 +63,7 @@ export function InviteActions({ clientId, accessStatus }: InviteActionsProps) {
         disabled={isPending}
         className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-paper disabled:opacity-50"
       >
-        {status.kind === "working" ? "Sending…" : "Nudge"}
+        {status.kind === "working" ? "Sending…" : idleLabel}
       </button>
       {status.kind === "success" && (
         <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/60">

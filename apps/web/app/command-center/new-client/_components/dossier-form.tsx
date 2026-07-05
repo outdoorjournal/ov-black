@@ -149,6 +149,9 @@ const formSchema = z.object({
   estimated_net_worth_usd: z.string().trim().max(32).default(""),
   contacts: z.array(contactSchema).default([]),
   facts: z.array(factSchema).default([]),
+  // When true (default) the create emails a welcome sign-in link now; when
+  // false the client is stood up silently to build for first — invite later.
+  notify: z.boolean().default(true),
 });
 
 type FormInput = z.input<typeof formSchema>;
@@ -163,6 +166,7 @@ const DEFAULT_VALUES: FormInput = {
   estimated_net_worth_usd: "",
   contacts: [],
   facts: [],
+  notify: true,
 };
 
 function parseAges(raw: string): number[] {
@@ -251,6 +255,7 @@ function toPayload(values: FormValues): ClientCreatePayload {
     profile_facts,
     osint_facts,
     contacts,
+    notify: values.notify,
   };
 }
 
@@ -343,6 +348,31 @@ export function DossierForm() {
               )}
             />
           </div>
+
+          <FormField
+            control={form.control}
+            name="notify"
+            render={({ field }) => (
+              <FormItem className="flex flex-row items-start gap-3 rounded-md border border-border p-4">
+                <FormControl>
+                  <input
+                    type="checkbox"
+                    checked={field.value ?? true}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
+                  />
+                </FormControl>
+                <div className="space-y-1 leading-none">
+                  <FormLabel>Send a welcome email now</FormLabel>
+                  <FormDescription>
+                    On by default. Uncheck to create the client silently and
+                    build for them first — you can send the invite later from
+                    the roster.
+                  </FormDescription>
+                </div>
+              </FormItem>
+            )}
+          />
         </Section>
 
         <Section

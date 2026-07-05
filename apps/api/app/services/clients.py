@@ -184,6 +184,22 @@ async def create_client_with_dossier(
             )
         )
 
+    if not payload.notify:
+        # Silent create (ADV-1 / invite-later): persist the client + Dossier
+        # but mint NO auth row and send NO welcome email. ``invited_at`` stays
+        # NULL, so the client reads as ``uninvited`` until the advisor invites
+        # them later via ``resend_welcome_email`` (which stamps it then).
+        await session.commit()
+        logger.info(
+            "clients.create.ok_silent",
+            extra={
+                "email": email,
+                "advisor_id": str(advisor_id),
+                "client_id": str(client.id),
+            },
+        )
+        return ClientCreateResult(ClientCreateOutcome.OK, client_id=client.id)
+
     redirect_to = f"{settings.web_origin.rstrip('/')}/auth/callback?next=/basecamp"
     try:
         issued = await generate_invite_link(email, redirect_to)
@@ -212,6 +228,9 @@ async def create_client_with_dossier(
         )
         return ClientCreateResult(ClientCreateOutcome.UPSTREAM_UNAVAILABLE)
 
+    # The welcome link went out — stamp the invite time so the client reads as
+    # ``pending`` (invited, awaiting first login) rather than ``uninvited``.
+    client.invited_at = now
     await session.commit()
     logger.info(
         "clients.create.ok",
@@ -329,14 +348,20 @@ async def resend_welcome_email(
     client_id: uuid.UUID,
     settings: Settings | None = None,
 ) -> ResendWelcomeResult:
-    """Re-send the welcome sign-in link to a client who hasn't logged in yet.
+    """Issue (or re-issue) the welcome sign-in link to a not-yet-signed-in client.
 
-    Pure email action — no DB writes. Loads the advisor-scoped client and,
-    while they are still ``pending`` (``auth_user_id IS NULL``), asks Supabase
-    to re-send the invite/welcome link via :func:`generate_invite_link`. Once
-    a client has accepted (``auth_user_id`` set on first login), there is
-    nothing to resend — they use the normal ``/auth/login`` magic-link flow —
-    so we refuse with ``ALREADY_ACCEPTED``.
+    Doubles as the **invite-later** action (ADV-1): it sends the *first*
+    welcome link to an ``uninvited`` client (created silently) as well as
+    *re-sending* it to a ``pending`` one. Loads the advisor-scoped client and,
+    while they haven't accepted (``auth_user_id IS NULL``), asks Supabase to
+    issue the invite/welcome link via :func:`generate_invite_link`. Once a
+    client has accepted (``auth_user_id`` set on first login) there is nothing
+    to send — they use the normal ``/auth/login`` magic-link flow — so we
+    refuse with ``ALREADY_ACCEPTED``.
+
+    On success, stamps ``invited_at`` the first time (flipping ``uninvited`` →
+    ``pending``); a re-send to an already-invited client keeps its original
+    ``invited_at`` and does no DB write.
     """
     settings = settings or get_settings()
 
@@ -365,6 +390,12 @@ async def resend_welcome_email(
             },
         )
         return ResendWelcomeResult(ResendWelcomeOutcome.UPSTREAM_UNAVAILABLE)
+
+    # First invite of a silently-created client → stamp the invite time so it
+    # flips ``uninvited`` → ``pending``. A re-send keeps the original stamp.
+    if client.invited_at is None:
+        client.invited_at = datetime.now(UTC)
+        await session.commit()
 
     logger.info(
         "clients.resend_welcome.ok",
