@@ -27,6 +27,7 @@ import { BasecampChrome } from "./BasecampChrome";
 import { ItineraryGrid } from "./ItineraryGrid";
 import { RightRailChat } from "./RightRailChat";
 import { SinglePromptCard } from "./SinglePromptCard";
+import { StartItineraryButton } from "./StartItineraryButton";
 
 export type BasecampVariant = "first_prompt" | "post_first_touch" | "with_itineraries";
 
@@ -148,6 +149,7 @@ function EmptyItinerariesHint() {
       <p className="max-w-md text-base leading-relaxed text-ink/70">
         Reach the concierge any time — a thread to your right is always open.
       </p>
+      <StartItineraryButton />
     </div>
   );
 }
