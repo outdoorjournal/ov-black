@@ -273,7 +273,9 @@ function HumanMessage({
   const mine = message.author_kind === viewerKind;
   const isArtemis = message.author_kind === "artemis";
   // Explicit AI attribution (PS8): the concierge reply is unmistakably Artemis,
-  // distinct from the human "Advisor" — and tinted below.
+  // distinct from the human "Advisor" — and tinted below. The traveler's own
+  // messages read as "Client" to the advisor (whose surface speaks of the
+  // client), and "Traveler" otherwise.
   const label =
     message.author_kind === "advisor"
       ? "Advisor"
@@ -281,7 +283,9 @@ function HumanMessage({
         ? "Artemis · concierge"
         : message.author_kind === "system"
           ? "Update"
-          : "Traveler";
+          : viewerKind === "advisor"
+            ? "Client"
+            : "Traveler";
 
   return (
     <div

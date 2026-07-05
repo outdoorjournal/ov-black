@@ -1,5 +1,6 @@
 // M006/PS7 — the human messaging channel: the HumanThread transcript/composer
-// and the ConciergeColumn "Advisor" people-circle that summons it. The network
+// and the human people-circle that summons it (labelled "Client" advisor-side,
+// "Advisor" traveler-side — the other party in the conversation). The network
 // wrappers (openThread / listMessages / sendMessage) are stubbed so these assert
 // the UI behaviour; the service + RLS have their own pytest suite.
 
@@ -308,8 +309,8 @@ describe("HumanThread · @Artemis summon (PS8)", () => {
   });
 });
 
-describe("ConciergeColumn · Advisor people-circle summons the human channel", () => {
-  test("clicking Advisor mounts the human thread; Artemis switches back", async () => {
+describe("ConciergeColumn · Client people-circle summons the human channel", () => {
+  test("clicking Client mounts the human thread; Artemis switches back", async () => {
     render(withProviders("advisor", <ConciergeColumn onClose={() => {}} />));
 
     // Defaults to Artemis — no human thread yet.
@@ -318,9 +319,10 @@ describe("ConciergeColumn · Advisor people-circle summons the human channel", (
       "true",
     );
 
-    fireEvent.click(screen.getByTestId("person-advisor"));
+    // The advisor's human channel is labelled by the other party — the Client.
+    fireEvent.click(screen.getByTestId("person-client"));
     await waitFor(() => expect(screen.getByTestId("human-thread")).toBeTruthy());
-    expect(screen.getByTestId("person-advisor").getAttribute("data-active")).toBe(
+    expect(screen.getByTestId("person-client").getAttribute("data-active")).toBe(
       "true",
     );
 

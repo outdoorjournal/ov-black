@@ -15,6 +15,7 @@ import { usePathname } from "next/navigation";
 
 import { AppRail, type RailItem } from "@/app/_components/shell/AppRail";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
+import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
 
 import {
   CollectionIcon,
@@ -27,8 +28,14 @@ import {
 export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
   const id = itineraryGraphStore.useStore((s) => s.itineraryId);
   const role = itineraryGraphStore.useStore((s) => s.role);
+  const { timeline } = useTimelineData();
   const pathname = usePathname();
   const activeSeg = lastSegment(pathname);
+
+  // Studio is Diff-only now (M006) — the authoring tools moved to the Timeline
+  // toolbar. So the advisor-only Studio noun only earns a slot when there's
+  // something to reconcile: an alternative version (a fork with a baseline).
+  const isAlternative = Boolean(timeline.itinerary.forked_from_id);
 
   const backItem =
     role === "advisor"
@@ -54,7 +61,7 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
       active: activeSeg === "collection",
       icon: <CollectionIcon />,
     },
-    ...(role === "advisor"
+    ...(role === "advisor" && isAlternative
       ? [
           {
             href: `/itinerary/${id}/studio` as Route,

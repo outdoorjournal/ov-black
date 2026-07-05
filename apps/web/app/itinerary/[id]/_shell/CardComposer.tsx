@@ -23,8 +23,21 @@ import {
   itineraryGraphStore,
   selectEditable,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
+import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
+import { FillSection } from "@/app/_components/itinerary-graph/views/horizontal/authoring/FillSection";
+import { SearchSection } from "@/app/_components/itinerary-graph/views/horizontal/authoring/SearchSection";
 
 import type { ComposerPrefill } from "./ComposerControl";
+
+// The four ways to get a card onto the board (M006 harmonization). Details/Link
+// hand-author; Find searches live inventory; Fill ranks candidates for a gap.
+type ComposerMode = "details" | "link" | "find" | "fill";
+const MODE_LABEL: Record<ComposerMode, string> = {
+  details: "Details",
+  link: "Link",
+  find: "Find",
+  fill: "Fill",
+};
 
 const NODE_TYPE_OPTIONS: ReadonlyArray<{ value: NodeType; label: string }> = [
   { value: "experience", label: "Experience" },
@@ -66,9 +79,12 @@ export function CardComposer({
   const savingLink = itineraryGraphStore.useStore((s) => s.savingLink);
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
   const storeApi = itineraryGraphStore.useStoreApi();
+  // Find/Fill source the trip's timezone + day scaffold from the server-fresh
+  // timeline (the composer is inside TimelineDataProvider).
+  const { timeline } = useTimelineData();
 
   const scheduled = prefill != null;
-  const [mode, setMode] = useState<"details" | "link">("details");
+  const [mode, setMode] = useState<ComposerMode>("details");
   const [type, setType] = useState<NodeType>("experience");
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
@@ -170,7 +186,9 @@ export function CardComposer({
       <div
         role="dialog"
         aria-label="Add a card"
-        className="relative z-10 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-ink/10 bg-paper shadow-2xl"
+        className={`relative z-10 flex max-h-[90vh] w-full flex-col overflow-hidden rounded-xl border border-ink/10 bg-paper shadow-2xl ${
+          mode === "find" || mode === "fill" ? "max-w-3xl" : "max-w-2xl"
+        }`}
       >
         <header className="flex items-center justify-between border-b border-ink/10 px-5 py-4">
           <div className="flex flex-col gap-1">
@@ -184,7 +202,11 @@ export function CardComposer({
               </p>
             ) : (
               <p className="font-sans text-[11px] text-ink/50">
-                Lands in the Collection — schedule it later.
+                {mode === "find"
+                  ? "Search live inventory — add a result to the Collection."
+                  : mode === "fill"
+                    ? "Find candidates for a gap — accept one onto the timeline."
+                    : "Lands in the Collection — schedule it later."}
               </p>
             )}
           </div>
@@ -198,30 +220,43 @@ export function CardComposer({
           </button>
         </header>
 
+        {/* Mode switch — the four ways to get a card on the board. Hidden when
+            placing at a specific slot (that path always authors in Details). */}
+        {!scheduled ? (
+          <div className="flex gap-1 border-b border-ink/10 px-5 pt-3">
+            {(["details", "link", "find", "fill"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                data-testid={`composer-mode-${m}`}
+                className={`h-8 rounded-t-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
+                  mode === m ? "bg-ink/10 text-ink" : "text-ink/50 hover:bg-ink/5"
+                }`}
+              >
+                {MODE_LABEL[m]}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {mode === "find" || mode === "fill" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {mode === "find" ? (
+              <SearchSection heading={false} />
+            ) : (
+              <FillSection
+                heading={false}
+                tzOffsetHours={timeline.timezoneOffsetHours}
+                days={timeline.days}
+              />
+            )}
+          </div>
+        ) : (
         <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 sm:grid-cols-[1fr_16rem]">
           {/* ── Form ── */}
           <div className="flex flex-col gap-3">
-            {!scheduled ? (
-              <div className="flex gap-1 rounded-md border border-ink/15 bg-paper p-0.5">
-                {(["details", "link"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    aria-pressed={mode === m}
-                    data-testid={`composer-mode-${m}`}
-                    className={`h-7 flex-1 rounded px-2 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
-                      mode === m
-                        ? "bg-ink/10 text-ink"
-                        : "text-ink/50 hover:bg-ink/5"
-                    }`}
-                  >
-                    {m === "details" ? "Details" : "Link"}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
             <label className="flex flex-col gap-1">
               <span className={label}>Type</span>
               <select
@@ -346,7 +381,12 @@ export function CardComposer({
             </div>
           </div>
         </div>
+        )}
 
+        {/* Footer carries the single-submit for the authoring modes; Find/Fill
+            self-add via each candidate's own Add/Accept, so it only shows there
+            to explain a disabled action when the lock isn't held. */}
+        {mode === "details" || mode === "link" || !editable ? (
         <footer className="flex items-center justify-end gap-3 border-t border-ink/10 px-5 py-4">
           {!editable ? (
             <p className="mr-auto font-sans text-[11px] text-ink/50">
@@ -354,6 +394,7 @@ export function CardComposer({
               the Timeline to add cards.
             </p>
           ) : null}
+          {mode === "details" || mode === "link" ? (
           <button
             type="button"
             onClick={submit}
@@ -367,7 +408,9 @@ export function CardComposer({
                 ? "Add to timeline"
                 : "Add to Collection"}
           </button>
+          ) : null}
         </footer>
+        ) : null}
       </div>
     </div>
   );

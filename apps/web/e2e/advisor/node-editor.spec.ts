@@ -55,9 +55,12 @@ test("ADV-4: advisor composes a typed + priced card (with live preview) into the
   const title = `Kaiseki dinner ${randomUUID().slice(0, 8)}`;
 
   await acquireLock(page, itineraryId);
-  // Summon the composer from Studio (lock carries across the rail nav).
-  await page.locator('[data-testid="rail-studio"]').click();
-  await page.locator('[data-testid="add-card-open"]').click();
+  // Summon the unified Add composer straight from the Timeline toolbar — the
+  // authoring tools live here now, not on a separate Studio route.
+  await page
+    .locator('[data-testid="itinerary-graph-add-card"]:visible')
+    .first()
+    .click();
   await expect(page.locator('[data-testid="card-composer"]')).toBeVisible();
 
   // Details is the default. Fill type + name + price.
@@ -77,8 +80,12 @@ test("ADV-4: advisor composes a typed + priced card (with live preview) into the
   await page.locator('[data-testid="composer-submit"]').click();
   await expect(page.locator('[data-testid="card-composer"]')).toBeHidden();
 
-  // Lands in the Collection (unscheduled proposed node).
+  // Lands in the Collection (unscheduled proposed node). Wait for the route to
+  // settle before asserting — mid-transition the outgoing timeline (which shows
+  // the collection-dominant board when nothing is scheduled) and the incoming
+  // Collection route are briefly both mounted.
   await page.locator('[data-testid="rail-collection"]').click();
+  await page.waitForURL(`**/itinerary/${itineraryId}/collection`);
   await expect(
     page.locator('[data-testid="collection-card"]').filter({ hasText: title }),
   ).toBeVisible();

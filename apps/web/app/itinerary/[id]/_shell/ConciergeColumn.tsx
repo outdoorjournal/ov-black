@@ -39,8 +39,6 @@ export function ConciergeColumn({
 
   // Which people-circle is open: the AI session list, or the human channel (PS7).
   const [channel, setChannel] = useState<"artemis" | "human">("artemis");
-  // Advisor-only: which Artemis audience (private workspace vs shared client thread).
-  const [audience, setAudience] = useState<"advisor" | "traveler">("advisor");
 
   // PS4 "ask about this" scopes the concierge to a card; the next turn is
   // prefixed with it (see ConciergeChat) and then it clears.
@@ -68,6 +66,7 @@ export function ConciergeColumn({
       <PeopleCircles
         channel={channel}
         onSelect={setChannel}
+        humanLabel={canEdit ? "Client" : "Advisor"}
         advisorTitle={canEdit ? "The client conversation" : "Message your advisor & party"}
         trailing={
           onCollapse ? (
@@ -119,64 +118,26 @@ export function ConciergeColumn({
             </div>
           ) : null}
 
-          {canEdit ? (
-            <>
-              <div
-                data-testid="concierge-thread-tabs"
-                role="tablist"
-                className="flex shrink-0 gap-1 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs"
-              >
-                {(["advisor", "traveler"] as const).map((a) => (
-                  <button
-                    key={a}
-                    type="button"
-                    role="tab"
-                    aria-selected={audience === a}
-                    onClick={() => setAudience(a)}
-                    data-testid={`concierge-tab-${a}`}
-                    className={`h-8 rounded-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
-                      audience === a ? "bg-ink/10 text-ink" : "text-ink/55 hover:bg-ink/5"
-                    }`}
-                  >
-                    {a === "advisor" ? "Concierge" : "Client thread"}
-                  </button>
-                ))}
-              </div>
-              {/* Both audiences stay mounted so a switch never drops a list/thread. */}
-              <div className="relative min-h-0 flex-1">
-                <div className={audience === "advisor" ? "h-full" : "hidden"}>
-                  <SessionThread
-                    audience="advisor"
-                    clientId={clientId}
-                    itineraryId={itineraryId}
-                    apiBaseUrl={apiBaseUrl}
-                    accessToken={accessToken}
-                    intro="Private workspace — just you and the concierge. The traveler never sees this conversation."
-                  />
-                </div>
-                <div className={audience === "traveler" ? "h-full" : "hidden"}>
-                  <SessionThread
-                    audience="traveler"
-                    clientId={clientId}
-                    itineraryId={itineraryId}
-                    apiBaseUrl={apiBaseUrl}
-                    accessToken={accessToken}
-                    intro="The client conversation — what you send here is visible to the traveler."
-                  />
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="min-h-0 flex-1">
-              <SessionThread
-                audience="traveler"
-                clientId={clientId}
-                itineraryId={itineraryId}
-                apiBaseUrl={apiBaseUrl}
-                accessToken={accessToken}
-              />
-            </div>
-          )}
+          {/* Artemis is one conversation per viewer: the advisor's PRIVATE
+              workspace (the traveler never sees it), or the traveler's own shared
+              thread. The client-facing conversation for an advisor is the human
+              "Client" people-circle, not a second AI tab — so there's no
+              private/shared audience switch here anymore, just the two circles. */}
+          <div className="min-h-0 flex-1">
+            <SessionThread
+              audience={canEdit ? "advisor" : "traveler"}
+              clientId={clientId}
+              itineraryId={itineraryId}
+              apiBaseUrl={apiBaseUrl}
+              accessToken={accessToken}
+              {...(canEdit
+                ? {
+                    intro:
+                      "Private workspace — just you and the concierge. The traveler never sees this conversation.",
+                  }
+                : {})}
+            />
+          </div>
         </div>
 
         {/* ── Human channel (PS7) — mounted on demand ── */}

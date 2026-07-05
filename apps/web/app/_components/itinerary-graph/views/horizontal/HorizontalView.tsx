@@ -31,6 +31,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
+import { Pencil, Plus, RotateCcw, Send, Sparkles, Unlock } from "lucide-react";
 import {
   type UIEvent,
   useCallback,
@@ -73,6 +74,8 @@ import {
 import { CollectionRail } from "../../collection/CollectionRail";
 
 import { AuthoringPanel } from "./AuthoringPanel";
+import { AnalyzeSection } from "./authoring/AnalyzeSection";
+import { AuthoringModal } from "./authoring/AuthoringModal";
 import { ConciergeChat } from "./ConciergeChat";
 import { BookingPanel } from "./BookingPanel";
 import { DiffPanel } from "./DiffPanel";
@@ -202,6 +205,11 @@ export function HorizontalView({
     () => new Map(),
   );
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Analyze feasibility (M006): a summonable modal on the routed timeline, so the
+  // advisor validates the plan without leaving the board. Only wired when the
+  // in-canvas aside is suppressed (the routed shell); the prototype keeps Analyze
+  // in its aside's Build tab.
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [scrollHints, setScrollHints] = useState({ left: false, right: false });
   // Which half of the staff aside is showing: the authoring tools ("build") or
   // the agent conversation ("concierge"). Advisors default to Build; travelers
@@ -672,19 +680,41 @@ export function HorizontalView({
         data-timeline-visible={showTimeline ? "true" : "false"}
         className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-xs"
       >
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
-            {canEdit ? "OV Black · Staff" : "OV Black · Itinerary"}
+        {/* Embedded in the routed shell, the app masthead already prints the trip
+            title above this bar — repeating it here (with an "OV Black · Staff"
+            eyebrow) is dead space. The standalone prototype has no masthead, so it
+            keeps the title as its own identity. */}
+        {embedded ? (
+          // The masthead already prints the title, so the left slot is free —
+          // anchor the staff Edit/Release mode toggle here (left-justified),
+          // leaving the tool cluster + zoom on the right.
+          canEdit ? (
+            <LockToggle
+              lockStatus={lockStatus}
+              lockPending={lockPending}
+              releasePending={releasePending}
+              isApproved={status === "approved"}
+              onEdit={() => storeApi.getState().acquireLock()}
+              onRelease={() => storeApi.getState().releaseLock()}
+            />
+          ) : (
+            <div />
+          )
+        ) : (
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
+              {canEdit ? "OV Black · Staff" : "OV Black · Itinerary"}
+            </div>
+            <div className="font-serif text-lg text-ink">
+              {timeline.label}
+              {timeline.subtitle ? (
+                <span className="ml-2 text-[12px] italic text-ink/60">
+                  {timeline.subtitle}
+                </span>
+              ) : null}
+            </div>
           </div>
-          <div className="font-serif text-lg text-ink">
-            {timeline.label}
-            {timeline.subtitle ? (
-              <span className="ml-2 text-[12px] italic text-ink/60">
-                {timeline.subtitle}
-              </span>
-            ) : null}
-          </div>
-        </div>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           {canEdit ? (
             <StaffToolbar
@@ -697,11 +727,22 @@ export function HorizontalView({
               canPropose={canPropose}
               canReopen={canReopen}
               editable={editable}
+              // Embedded: the Edit/Release toggle lives on the far left of the
+              // header (empty title slot). Standalone prototype keeps its title
+              // there, so the toggle rides inline with the tools instead.
+              showLockToggle={!embedded}
               onEdit={() => storeApi.getState().acquireLock()}
               onRelease={() => storeApi.getState().releaseLock()}
               onPropose={() => storeApi.getState().propose()}
               onReopen={() => storeApi.getState().reopen()}
               onAddNode={handleAddNode}
+              // Routed timeline (no in-canvas aside): the toolbar IS the authoring
+              // surface — Add opens the unified composer (Details/Link/Find/Fill)
+              // and Analyze pops a modal. The prototype keeps its aside, so there
+              // Add stays the plain note quick-drop and Analyze lives in the aside.
+              authoringInToolbar={!showConciergeAside}
+              onAddCard={() => openComposer()}
+              onAnalyze={() => setAnalyzeOpen(true)}
             />
           ) : null}
           <VersionSwitcher />
@@ -840,7 +881,10 @@ export function HorizontalView({
               </>
             ) : null}
             {collectionDominant ? (
-              <CollectionRail variant="board" />
+              <CollectionRail
+                variant="board"
+                {...(onOpenNode ? { onOpenNode } : {})}
+              />
             ) : nodes.length === 0 && pendingProposals.length === 0 ? (
               <BuilderEmptyState hint="aside" />
             ) : null}
@@ -854,7 +898,10 @@ export function HorizontalView({
               data-testid="collection-rail-aside"
               className="hidden w-[320px] shrink-0 xl:flex"
             >
-              <CollectionRail variant="rail" />
+              <CollectionRail
+                variant="rail"
+                {...(onOpenNode ? { onOpenNode } : {})}
+              />
             </aside>
           ) : null}
 
@@ -1088,6 +1135,19 @@ export function HorizontalView({
         ) : null}
       </AnimatePresence>
 
+      {/* Analyze feasibility (M006): summoned from the toolbar so the advisor
+          validates the plan without leaving the board. Routed timeline only —
+          the prototype keeps Analyze in its aside. */}
+      {!showConciergeAside && analyzeOpen ? (
+        <AuthoringModal
+          title="Analyze feasibility"
+          onClose={() => setAnalyzeOpen(false)}
+          testId="analyze-modal"
+        >
+          <AnalyzeSection heading={false} />
+        </AuthoringModal>
+      ) : null}
+
       {/* DragOverlay portals a clone of the dragged card so it can follow the
           cursor without disturbing the canvas's absolute layout (which is busy
           opening up a ghost slot in the target day). */}
@@ -1116,6 +1176,77 @@ export function HorizontalView({
 // the advisor hands the plan to the traveler, who approves it. Once proposed the
 // button becomes Reopen (proposed → draft) to resume building. Craft-feel: no
 // spinners/icons — `disabled` is the only in-flight affordance.
+// Edit/Release as a connected segmented toggle: Edit lights up (filled ink)
+// while you hold the lock, Release is the enabled exit. It's one conceptual
+// mode switch, so it reads as a two-segment toggle rather than two loose
+// buttons. Left-anchored in the header on the routed shell; inline with the
+// tools on the standalone prototype.
+function LockToggle({
+  lockStatus,
+  lockPending,
+  releasePending,
+  isApproved,
+  onEdit,
+  onRelease,
+}: {
+  lockStatus: "unlocked" | "locked-by-me" | "locked-by-other";
+  lockPending: boolean;
+  releasePending: boolean;
+  isApproved: boolean;
+  onEdit: () => void;
+  onRelease: () => void;
+}) {
+  const lockedBySelf = lockStatus === "locked-by-me";
+  const lockedByOther = lockStatus === "locked-by-other";
+  const seg =
+    "inline-flex h-8 items-center gap-1.5 px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors disabled:cursor-default disabled:opacity-40";
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        role="group"
+        aria-label="Edit mode"
+        data-testid="itinerary-graph-lock-toggle"
+        className="inline-flex overflow-hidden rounded-md border border-ink/20 bg-paper"
+      >
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={lockPending || lockedBySelf || lockedByOther || isApproved}
+          aria-pressed={lockedBySelf}
+          data-testid="itinerary-graph-edit"
+          className={
+            seg +
+            (lockedBySelf
+              ? " bg-ink text-paper"
+              : " text-ink hover:bg-ink/5")
+          }
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={onRelease}
+          disabled={releasePending || !lockedBySelf}
+          data-testid="itinerary-graph-release"
+          className={seg + " border-l border-ink/20 text-ink hover:bg-ink/5"}
+        >
+          <Unlock className="h-3.5 w-3.5" />
+          Release
+        </button>
+      </div>
+      {lockedByOther ? (
+        <span
+          data-testid="itinerary-graph-locked-notice"
+          className="font-sans text-[11px] text-ink/60"
+        >
+          Locked by another advisor
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function StaffToolbar({
   status,
   lockStatus,
@@ -1126,11 +1257,15 @@ function StaffToolbar({
   canPropose,
   canReopen,
   editable,
+  showLockToggle,
   onEdit,
   onRelease,
   onPropose,
   onReopen,
   onAddNode,
+  authoringInToolbar,
+  onAddCard,
+  onAnalyze,
 }: {
   status: string;
   lockStatus: "unlocked" | "locked-by-me" | "locked-by-other";
@@ -1141,45 +1276,72 @@ function StaffToolbar({
   canPropose: boolean;
   canReopen: boolean;
   editable: boolean;
+  /** Standalone prototype keeps its title on the left, so the Edit/Release
+   *  toggle rides here with the tools. The routed shell renders it in the
+   *  (otherwise empty) left header slot instead and passes false. */
+  showLockToggle: boolean;
   onEdit: () => void;
   onRelease: () => void;
   onPropose: () => void;
   onReopen: () => void;
   onAddNode: () => void;
+  /** Routed timeline: the toolbar hosts the authoring surface (Add composer +
+   *  Analyze modal). The prototype aside carries them instead, so it passes false
+   *  and Add stays the plain note quick-drop. */
+  authoringInToolbar: boolean;
+  onAddCard: () => void;
+  onAnalyze: () => void;
 }) {
-  const lockedBySelf = lockStatus === "locked-by-me";
-  const isApproved = status === "approved";
   const btn =
-    "h-8 rounded-md border border-ink/20 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-40";
+    "inline-flex h-8 items-center gap-1.5 rounded-md border border-ink/20 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-40";
   return (
     <div className="flex items-center gap-2" data-testid="itinerary-graph-staff-toolbar">
-      <button
-        type="button"
-        onClick={onEdit}
-        disabled={lockPending || lockedBySelf || lockStatus === "locked-by-other" || isApproved}
-        data-testid="itinerary-graph-edit"
-        className={btn}
-      >
-        Edit
-      </button>
-      <button
-        type="button"
-        onClick={onRelease}
-        disabled={releasePending || !lockedBySelf}
-        data-testid="itinerary-graph-release"
-        className={btn}
-      >
-        Release
-      </button>
-      <button
-        type="button"
-        onClick={onAddNode}
-        disabled={!editable}
-        data-testid="itinerary-graph-add-node"
-        className={btn}
-      >
-        Add
-      </button>
+      {showLockToggle ? (
+        <LockToggle
+          lockStatus={lockStatus}
+          lockPending={lockPending}
+          releasePending={releasePending}
+          isApproved={status === "approved"}
+          onEdit={onEdit}
+          onRelease={onRelease}
+        />
+      ) : null}
+      {authoringInToolbar ? (
+        <>
+          {/* Add is the single card-acquisition hub (Details/Link/Find/Fill).
+              Opens without the lock so the advisor can browse Find/Fill; the
+              composer gates the writes. */}
+          <button
+            type="button"
+            onClick={onAddCard}
+            data-testid="itinerary-graph-add-card"
+            className={btn}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </button>
+          <button
+            type="button"
+            onClick={onAnalyze}
+            data-testid="itinerary-graph-tool-analyze"
+            className={btn}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Analyze
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={onAddNode}
+          disabled={!editable}
+          data-testid="itinerary-graph-add-node"
+          className={btn}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add
+        </button>
+      )}
       {status === "proposed" ? (
         <button
           type="button"
@@ -1188,6 +1350,7 @@ function StaffToolbar({
           data-testid="itinerary-graph-reopen"
           className={btn}
         >
+          <RotateCcw className="h-3.5 w-3.5" />
           Reopen
         </button>
       ) : (
@@ -1198,17 +1361,10 @@ function StaffToolbar({
           data-testid="itinerary-graph-propose"
           className={btn}
         >
-          Propose
+          <Send className="h-3.5 w-3.5" />
+          Propose to Client
         </button>
       )}
-      {lockStatus === "locked-by-other" ? (
-        <span
-          data-testid="itinerary-graph-locked-notice"
-          className="font-sans text-[11px] text-ink/60"
-        >
-          Locked by another advisor
-        </span>
-      ) : null}
     </div>
   );
 }

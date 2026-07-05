@@ -153,15 +153,15 @@ test("COL-4: a traveler saves a pasted link", async ({ page, baseURL }) => {
 });
 
 // COL-5 — dragging a collection card onto a day gives it a real time and lays
-// it out on the timeline. Placing does NOT remove it from the Collection (the
-// wish list is the whole mood board); dragging it back off the timeline clears
-// the time again. Only discarding removes a node from the Collection.
+// it out on the timeline. Once placed it drops out of the wish list by default
+// (revealed again behind the "Scheduled" toggle); dragging it back off the
+// timeline clears the time and returns it to the wish list.
 //
 // Marked fixme: the schedule/un-schedule DATA outcome is fully covered at the
 // unit/integration layer —
 //   apps/api/tests/test_notes.py::test_metadata_patch_schedules_then_unschedules_non_note
 //   apps/api/tests/test_notes.py::test_unschedule_note_returns_to_collection
-//   apps/web/tests/itineraryGraph/collectionRail.test.tsx (placed node stays)
+//   apps/web/tests/itineraryGraph/collectionRail.test.tsx (placed node hidden by default)
 // — but the BROWSER drag rides dnd-kit's PointerSensor, which isn't reliably
 // automatable through Playwright's synthetic pointer here (the day droppable is
 // absolutely-positioned with pointer-events gated on an in-flight drag). Kept as

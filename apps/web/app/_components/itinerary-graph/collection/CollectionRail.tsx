@@ -29,6 +29,7 @@ import { useComposerControl } from "@/app/itinerary/[id]/_shell/ComposerControl"
 import {
   collectionDragId,
   collectionItemsOf,
+  isNodeScheduled,
   itineraryGraphStore,
   selectCanLeaveNote,
   selectCanSchedule,
@@ -51,12 +52,41 @@ export function CollectionRail({
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const pending = itineraryGraphStore.useStore((s) => s.pendingProposals);
   const canAdd = itineraryGraphStore.useStore(selectCanLeaveNote);
+  // The advisor sees a *client's* wish list; the traveler sees their own — the
+  // whole surface speaks in the viewer's voice (heading, empty state).
+  const canEdit = itineraryGraphStore.useStore((s) => s.canEdit);
   const [axis, setAxis] = useState<GroupAxis>("type");
+  // Whether already-placed cards are revealed. Off by default: the wish list is
+  // for the unscheduled "maybes", and showing everything you've already put on
+  // the timeline just clutters it. A deliberate toggle brings them back.
+  const [showScheduled, setShowScheduled] = useState(false);
+
   const items = useMemo(
     () => collectionItemsOf(nodes, pending),
     [nodes, pending],
   );
-  const lanes = useMemo(() => groupCollection(items, axis), [items, axis]);
+  // Split the pile: unscheduled maybes (the wish list proper) vs cards that
+  // already carry a real time (on the timeline). `scheduledIds` lets a card
+  // know it's a placed one so it can wear the quiet "On timeline" marker.
+  const { unscheduled, scheduledIds } = useMemo(() => {
+    const unscheduled: NodeResponse[] = [];
+    const scheduledIds = new Set<string>();
+    for (const node of items) {
+      if (isNodeScheduled(node)) scheduledIds.add(node.id);
+      else unscheduled.push(node);
+    }
+    return { unscheduled, scheduledIds };
+  }, [items]);
+  const scheduledCount = scheduledIds.size;
+
+  const visibleItems = useMemo(
+    () => (showScheduled ? items : unscheduled),
+    [showScheduled, items, unscheduled],
+  );
+  const lanes = useMemo(
+    () => groupCollection(visibleItems, axis),
+    [visibleItems, axis],
+  );
 
   // Rail mode is a drop target: dragging a scheduled timeline card onto it
   // un-schedules it (the parent view's handleDragEnd calls `unscheduleNode`),
@@ -84,9 +114,31 @@ export function CollectionRail({
           <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
             Collection
           </div>
-          <div className="font-serif text-lg text-ink">Your wish list</div>
+          <div className="font-serif text-lg text-ink">
+            {canEdit ? "Client's wish list" : "Your wish list"}
+          </div>
         </div>
-        <GroupByToggle axis={axis} onChange={setAxis} />
+        <div className="flex items-center gap-2">
+          {/* Reveal the already-placed cards. Hidden by default so the wish list
+              stays the pile of unscheduled maybes; a click brings the timeline's
+              items back into view (dimmed, marked "On timeline"). */}
+          {scheduledCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowScheduled((v) => !v)}
+              aria-pressed={showScheduled}
+              data-testid="collection-show-scheduled"
+              className={`h-6 rounded-md border px-2 font-sans text-[10px] uppercase tracking-[0.16em] transition-colors ${
+                showScheduled
+                  ? "border-ink/25 bg-ink/10 text-ink"
+                  : "border-ink/15 text-ink/50 hover:bg-ink/5"
+              }`}
+            >
+              {showScheduled ? "Hide scheduled" : `Scheduled · ${scheduledCount}`}
+            </button>
+          ) : null}
+          <GroupByToggle axis={axis} onChange={setAxis} />
+        </div>
       </header>
 
       {canAdd ? <AddAffordances /> : null}
@@ -104,9 +156,20 @@ export function CollectionRail({
             data-testid="collection-empty"
             className="font-serif text-sm italic text-ink/50"
           >
-            Nothing saved yet. As you and the concierge find places to eat, stay,
-            and things to do, they&rsquo;ll gather here — ready to place on the
-            timeline when the shape is right.
+            {canEdit
+              ? "Nothing here yet. As you and the concierge gather places to eat, stay, and things to do, they’ll collect here — ready to place on the timeline when the shape is right."
+              : "Nothing saved yet. As you and the concierge find places to eat, stay, and things to do, they’ll gather here — ready to place on the timeline when the shape is right."}
+          </p>
+        ) : visibleItems.length === 0 ? (
+          <p
+            data-testid="collection-all-scheduled"
+            className="font-serif text-sm italic text-ink/50"
+          >
+            Everything here is on the timeline. Use{" "}
+            <span className="not-italic font-sans text-[11px] uppercase tracking-[0.16em]">
+              Scheduled
+            </span>{" "}
+            above to see the placed cards.
           </p>
         ) : (
           <AnimatePresence initial={false}>
@@ -128,6 +191,7 @@ export function CollectionRail({
                       <CollectionCard
                         key={node.id}
                         node={node}
+                        scheduled={scheduledIds.has(node.id)}
                         {...(onOpenNode ? { onOpen: onOpenNode } : {})}
                       />
                     ))}
@@ -249,17 +313,23 @@ function AddAffordances() {
 
 function CollectionCard({
   node,
+  scheduled = false,
   onOpen,
 }: {
   node: NodeResponse;
+  /** This card already has a real time (it's on the timeline). Only shown when
+   *  the "Scheduled" toggle is on — dimmed + marked so it reads as placed. */
+  scheduled?: boolean;
   onOpen?: (nodeId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: collectionDragId(node.id),
   });
   const storeApi = itineraryGraphStore.useStoreApi();
-  // Place mode (PS5): a tap-not-drag path for scheduling. Only a real editable
-  // surface offers it (a draft-mine traveler keeps the drag→lazy-fork path).
+  // Pick-then-place (PS5): the primary, no-drag way to schedule. Click "Place"
+  // to lift the card, then click a slot on the timeline — no held mouse. Only a
+  // real editable surface offers it (a draft-mine traveler keeps the drag→lazy-
+  // fork path). The card body click stays free for opening the card's detail.
   const canSchedule = itineraryGraphStore.useStore(selectCanSchedule);
   // A Collection card is the SAME card as the timeline glance of this node
   // (M006 harmonization): shared CardShell substrate + shared CardBody. The
@@ -278,31 +348,45 @@ function CollectionCard({
       data-testid="collection-card"
       data-node-id={node.id}
       data-node-type={node.type}
-      className="relative"
+      data-scheduled={scheduled ? "true" : "false"}
+      className={"relative " + (scheduled ? "opacity-60" : "")}
     >
-      {/* Place mode: lift into the holding chip (sibling of the draggable card
-          button — nesting buttons is invalid, and this must not start a drag).
-          Desktop-only: place mode targets live on the ≥md timeline canvas; on a
-          phone the card-detail schedule facet (PS4) sets the day/time instead,
-          so we don't hold a card with nowhere to drop it. */}
+      {/* A placed card wears a quiet marker so, when revealed, it reads as
+          already on the timeline rather than another loose maybe. */}
+      {scheduled ? (
+        <span
+          data-testid="collection-scheduled-tag"
+          className="absolute left-2 top-2 z-10 rounded-full border border-ink/15 bg-paper/95 px-2 py-0.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/55 shadow-xs"
+        >
+          On timeline
+        </span>
+      ) : null}
+      {/* Pick-then-place: "Place" lifts the card into the holding chip (a sibling
+          of the card button — nesting buttons is invalid, and this must not start
+          a drag). Click a slot on the timeline to drop it — no held mouse.
+          Desktop-only: place targets live on the ≥md timeline canvas; on a phone
+          the card-detail schedule facet (PS4) sets the day/time instead. */}
       {canSchedule ? (
         <button
           type="button"
           onClick={() => storeApi.getState().holdItem(node.id)}
           data-testid="collection-schedule"
-          aria-label={`Schedule ${node.title || "this"}`}
+          aria-label={`Place ${node.title || "this"} on the timeline`}
           className="absolute right-2 top-2 z-10 hidden rounded-full border border-ink/15 bg-paper/95 px-2.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 shadow-xs transition-colors hover:bg-ink hover:text-paper md:block"
         >
-          Schedule
+          {scheduled ? "Move" : "Place"}
         </button>
       ) : null}
+      {/* The card body is a plain click target: it opens the card's detail
+          (explore). Dragging still works (the fork path leans on it), but click —
+          not drag — is the advertised gesture, so it reads as a pointer. */}
       <button
         ref={setNodeRef}
         type="button"
         {...listeners}
         {...attributes}
         onClick={onOpen ? () => onOpen(node.id) : undefined}
-        className="block w-full cursor-grab rounded-lg text-left transition active:cursor-grabbing focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand"
+        className="block w-full cursor-pointer rounded-lg text-left transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand"
       >
         <CardShell
           kind={kind}

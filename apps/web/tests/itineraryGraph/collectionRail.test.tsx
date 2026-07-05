@@ -1,6 +1,7 @@
-// The Collection rail: shows every non-discarded node (a placed node stays in
-// the wish list — the timeline is an extra surface, not a move out), groups
-// them along a switchable axis, and offers link/note add affordances.
+// The Collection rail: shows the unscheduled "maybes" by default (a placed node
+// is hidden until the "Scheduled" toggle reveals it — the timeline is where it
+// lives now), drops discarded nodes, groups the rest along a switchable axis,
+// and offers link/note add affordances.
 // The api-client wrappers are mocked so writes are asserted without a backend.
 
 import { DndContext } from "@dnd-kit/core";
@@ -100,7 +101,12 @@ function renderRail(nodes: NodeResponse[], partial: Partial<ItineraryGraphInit> 
 beforeEach(() => vi.clearAllMocks());
 
 describe("CollectionRail · filtering", () => {
-  test("keeps placed nodes and drops only discarded ones", () => {
+  const cardIds = () =>
+    screen
+      .getAllByTestId("collection-card")
+      .map((c) => c.getAttribute("data-node-id"));
+
+  test("hides placed nodes by default; the Scheduled toggle reveals them", () => {
     renderRail([
       node("wish", { type: "experience" }),
       node("scheduled", {
@@ -109,14 +115,26 @@ describe("CollectionRail · filtering", () => {
       }),
       node("gone", { type: "hotel", status: "discarded" }),
     ]);
-    const ids = screen
-      .getAllByTestId("collection-card")
-      .map((c) => c.getAttribute("data-node-id"));
-    // The placed (scheduled) node STAYS in the wish list; only discarded leaves.
-    expect(ids).toHaveLength(2);
+    // Default: only the unscheduled maybe; the placed card is out of the way and
+    // the discarded one is gone entirely.
+    expect(cardIds()).toEqual(["wish"]);
+
+    // The toggle counts the hidden placed cards; clicking it brings them back.
+    fireEvent.click(screen.getByTestId("collection-show-scheduled"));
+    const ids = cardIds();
     expect(ids).toContain("wish");
     expect(ids).toContain("scheduled");
     expect(ids).not.toContain("gone");
+    // The revealed card is marked as already on the timeline.
+    const placed = screen
+      .getAllByTestId("collection-card")
+      .find((c) => c.getAttribute("data-node-id") === "scheduled");
+    expect(placed?.getAttribute("data-scheduled")).toBe("true");
+  });
+
+  test("no Scheduled toggle when nothing is placed", () => {
+    renderRail([node("wish", { type: "experience" })]);
+    expect(screen.queryByTestId("collection-show-scheduled")).toBeNull();
   });
 
   test("renders the empty state only when every node is discarded", () => {

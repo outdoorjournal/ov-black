@@ -2,7 +2,9 @@
 
 // The concierge's "who you talk to" top nav — the people-circles (M006/PS7).
 // Shared so the itinerary ConciergeColumn and the basecamp RightRailChat present
-// the SAME channel switch: Artemis (the AI) and Advisor (the human channel).
+// the SAME channel switch: Artemis (the AI) and the human channel. The human
+// circle is labelled by the OTHER party — "Client" for an advisor, "Advisor" for
+// a traveler (the default) — via `humanLabel`.
 
 import type { ReactNode } from "react";
 
@@ -12,12 +14,17 @@ export type ConciergeChannel = "artemis" | "human";
 export function PeopleCircles({
   channel,
   onSelect,
+  humanLabel = "Advisor",
   advisorTitle,
   trailing,
 }: {
   channel: ConciergeChannel;
   onSelect: (channel: ConciergeChannel) => void;
-  /** Tooltip on the Advisor circle (differs advisor-side vs traveler-side). */
+  /** Label on the human-channel circle. It names the OTHER party in the
+   *  conversation, so it flips by viewer: an advisor is talking to the "Client",
+   *  the traveler is talking to their "Advisor" (the default). */
+  humanLabel?: string;
+  /** Tooltip on the human circle (differs advisor-side vs traveler-side). */
   advisorTitle?: string;
   /** Right-aligned extra (e.g. the itinerary column's collapse chevron). */
   trailing?: ReactNode;
@@ -33,7 +40,7 @@ export function PeopleCircles({
         onSelect={() => onSelect("artemis")}
       />
       <PersonCircle
-        label="Advisor"
+        label={humanLabel}
         active={channel === "human"}
         onSelect={() => onSelect("human")}
         {...(advisorTitle ? { title: advisorTitle } : {})}

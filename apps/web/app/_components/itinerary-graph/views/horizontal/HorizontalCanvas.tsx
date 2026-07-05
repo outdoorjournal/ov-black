@@ -141,6 +141,35 @@ export function HorizontalCanvas({
     [pendingProposals],
   );
 
+  // Subtle horizontal time grid: a hair-line at every hour boundary, plus
+  // lighter lines at half/quarter-hour subdivisions once the zoom gives an hour
+  // enough room. Built from the LIVE segments only — an elided (collapsed) night
+  // band has no real vertical distance, so its hours would pile onto one y; we
+  // skip those. Deduped by rounded y so a card-aligned hour never double-draws.
+  const gridLines = useMemo(() => {
+    const lines: Array<{ y: number; hour: boolean }> = [];
+    const seen = new Set<number>();
+    for (const seg of layout.segments) {
+      if (seg.type !== "live") continue;
+      const spanMin = seg.endMin - seg.startMin;
+      if (spanMin <= 0) continue;
+      const pxPerMin = (seg.yEnd - seg.yStart) / spanMin;
+      const hourPx = 60 * pxPerMin;
+      // Finer subdivisions only when there's room for them: half-hour lines at
+      // normal zoom, quarter-hour lines only once an hour is genuinely tall, and
+      // hours-only if a live band is ever drawn very short.
+      const step = hourPx >= 240 ? 15 : hourPx >= 90 ? 30 : 60;
+      const first = Math.ceil(seg.startMin / step) * step;
+      for (let m = first; m < seg.endMin; m += step) {
+        const y = Math.round(seg.yStart + (m - seg.startMin) * pxPerMin);
+        if (seen.has(y)) continue;
+        seen.add(y);
+        lines.push({ y, hour: m % 60 === 0 });
+      }
+    }
+    return lines;
+  }, [layout.segments]);
+
   // Cards are positioned in the canvas's coordinate system, which subtracts
   // the axis width from layout.x (layout.x includes the axis gutter).
   const xOf = (p: PositionedHNode) => p.x - axisWidth;
@@ -233,6 +262,25 @@ export function HorizontalCanvas({
               width: 1,
               height: layout.totalHeight,
               backgroundColor: "rgba(10,10,10,0.10)",
+            }}
+          />
+        ))}
+
+        {/* Horizontal time grid — a subtle hair-line at each hour, lighter at
+            subdivisions. Runs the full body width as a time ruler behind the
+            rails and cards; purely decorative (pointer-events-none). */}
+        {gridLines.map((ln) => (
+          <div
+            key={`grid-${ln.y}`}
+            aria-hidden
+            className="pointer-events-none absolute left-0"
+            style={{
+              top: ln.y,
+              width: innerWidth,
+              height: 1,
+              backgroundColor: ln.hour
+                ? "rgba(10,10,10,0.06)"
+                : "rgba(10,10,10,0.03)",
             }}
           />
         ))}

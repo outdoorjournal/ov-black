@@ -463,8 +463,13 @@ export function selectCanSchedule(s: ItineraryGraphState): boolean {
  * out undated nodes so the timeline can draw them, stamping
  * `start_synthesized`) does NOT count: those nodes still belong to the
  * Collection until someone gives them a time.
+ *
+ * Exported so the Collection rail can split its pile into the unscheduled
+ * "maybes" (shown by default) and the already-placed cards (hidden behind a
+ * deliberate "show scheduled" toggle so the timeline's items don't clutter the
+ * wish list).
  */
-function isScheduled(node: NodeResponse): boolean {
+export function isNodeScheduled(node: NodeResponse): boolean {
   const meta = node.metadata as { start_time?: string; start_synthesized?: boolean };
   if (meta.start_synthesized === true) return false;
   return typeof meta.start_time === "string" && meta.start_time.length > 0;
@@ -524,8 +529,8 @@ export function scheduledCountOf(
   pending: NodeResponse[],
 ): number {
   let n = 0;
-  for (const node of nodes) if (node.status !== "discarded" && isScheduled(node)) n += 1;
-  for (const node of pending) if (isScheduled(node)) n += 1;
+  for (const node of nodes) if (node.status !== "discarded" && isNodeScheduled(node)) n += 1;
+  for (const node of pending) if (isNodeScheduled(node)) n += 1;
   return n;
 }
 

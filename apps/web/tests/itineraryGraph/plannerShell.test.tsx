@@ -72,7 +72,7 @@ const ITINERARY: ItineraryResponse = {
   status: "draft",
 };
 
-function timeline(): ItineraryTimeline {
+function timeline(forkedFromId?: string): ItineraryTimeline {
   return {
     id: "it-1",
     label: "Trip",
@@ -82,15 +82,17 @@ function timeline(): ItineraryTimeline {
     windowStart: "2024-06-20T00:00:00+09:00",
     windowEnd: "2024-06-20T23:59:00+09:00",
     days: [{ date: "2024-06-20", label: "Day 1" }],
-    itinerary: ITINERARY,
+    itinerary: forkedFromId
+      ? { ...ITINERARY, forked_from_id: forkedFromId }
+      : ITINERARY,
     nodes: [] as NodeResponse[],
     edges: [],
   };
 }
 
-function init(role: UserRole): ItineraryGraphInit {
+function init(role: UserRole, forkedFromId?: string): ItineraryGraphInit {
   return {
-    timeline: timeline(),
+    timeline: timeline(forkedFromId),
     itineraryId: "it-1",
     status: "draft",
     role,
@@ -99,11 +101,14 @@ function init(role: UserRole): ItineraryGraphInit {
   };
 }
 
-/** Wrap a shell child in the same two providers the shell mounts. */
-function withProviders(role: UserRole, ui: ReactNode) {
+/** Wrap a shell child in the same two providers the shell mounts. Pass a
+ *  `forkedFromId` to make the trip an alternative version (surfaces Studio). */
+function withProviders(role: UserRole, ui: ReactNode, forkedFromId?: string) {
   return (
-    <itineraryGraphStore.Provider initial={init(role)}>
-      <TimelineDataProvider value={{ timeline: timeline(), baselineTitle: null }}>
+    <itineraryGraphStore.Provider initial={init(role, forkedFromId)}>
+      <TimelineDataProvider
+        value={{ timeline: timeline(forkedFromId), baselineTitle: null }}
+      >
         {ui}
       </TimelineDataProvider>
     </itineraryGraphStore.Provider>
@@ -200,7 +205,7 @@ describe("ItineraryShell · concierge collapse (Q5)", () => {
 });
 
 describe("Rail · places axis", () => {
-  test("advisor sees Home, Timeline, Collection, and the advisor-only Studio", () => {
+  test("advisor on a normal trip sees Home, Timeline, Collection — but no Studio (Diff-only now)", () => {
     render(withProviders("advisor", <Rail onOpenConcierge={() => {}} />));
     const rail = screen.getByTestId("planner-rail");
     expect(within(rail).getByTestId("rail-home").getAttribute("href")).toBe(
@@ -212,13 +217,20 @@ describe("Rail · places axis", () => {
     expect(
       within(rail).getByTestId("rail-collection").getAttribute("href"),
     ).toBe("/itinerary/it-1/collection");
+    // Studio is Diff-only — nothing to reconcile on a non-alternative trip.
+    expect(within(rail).queryByTestId("rail-studio")).toBeNull();
+  });
+
+  test("advisor on an alternative version sees the Studio (reconcile) noun", () => {
+    render(withProviders("advisor", <Rail onOpenConcierge={() => {}} />, "base-1"));
+    const rail = screen.getByTestId("planner-rail");
     expect(within(rail).getByTestId("rail-studio").getAttribute("href")).toBe(
       "/itinerary/it-1/studio",
     );
   });
 
-  test("a traveler never sees Studio", () => {
-    render(withProviders("client", <Rail onOpenConcierge={() => {}} />));
+  test("a traveler never sees Studio, even on an alternative", () => {
+    render(withProviders("client", <Rail onOpenConcierge={() => {}} />, "base-1"));
     expect(screen.queryByTestId("rail-studio")).toBeNull();
     expect(screen.getByTestId("rail-timeline")).toBeTruthy();
   });
@@ -250,16 +262,15 @@ describe("Rail · places axis", () => {
 });
 
 describe("ConciergeColumn · people axis", () => {
-  test("an advisor gets the private + client threads (both mounted) + people circles", () => {
+  test("an advisor gets a single PRIVATE Artemis thread + people circles (no audience tabs)", () => {
     render(withProviders("advisor", <ConciergeColumn onClose={() => {}} />));
     expect(screen.getByTestId("people-circles")).toBeTruthy();
     expect(screen.getByTestId("person-artemis")).toBeTruthy();
-    expect(screen.getByTestId("concierge-thread-tabs")).toBeTruthy();
-    expect(screen.getByTestId("concierge-tab-advisor")).toBeTruthy();
-    expect(screen.getByTestId("concierge-tab-traveler")).toBeTruthy();
-    // Both audiences' session threads are mounted so a switch never drops one.
+    // The private/shared audience split is gone — the client-facing conversation
+    // is the human "Client" circle, not a second AI tab.
+    expect(screen.queryByTestId("concierge-thread-tabs")).toBeNull();
     expect(screen.getByTestId("thread-advisor")).toBeTruthy();
-    expect(screen.getByTestId("thread-traveler")).toBeTruthy();
+    expect(screen.queryByTestId("thread-traveler")).toBeNull();
   });
 
   test("a traveler gets a single shared thread, no audience tabs", () => {

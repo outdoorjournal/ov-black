@@ -51,15 +51,9 @@ test("ADV-3: advisor drives a concierge build turn from the private aside", asyn
   await page.goto(`/itinerary/${itineraryId}`);
 
   // The concierge is an in-flow column at desktop width; for an advisor its
-  // Artemis channel defaults to the private "Concierge" tab. Make that explicit
-  // and prove it IS the private aside (the intro copy the traveler never sees).
-  // Scope to :visible — the builder can mount desktop + mobile copies.
-  const privateTab = page.locator(
-    '[data-testid="concierge-tab-advisor"]:visible',
-  );
-  await expect(privateTab).toBeVisible();
-  await privateTab.click();
-  await expect(privateTab).toHaveAttribute("aria-selected", "true");
+  // Artemis channel IS the private "Concierge" workspace (no audience tabs — the
+  // client-facing conversation lives on the human "Client" circle). Prove it's
+  // the private aside via the intro copy the traveler never sees.
   await expect(
     page.getByText(/Private workspace — just you and the concierge/).first(),
   ).toBeVisible();
