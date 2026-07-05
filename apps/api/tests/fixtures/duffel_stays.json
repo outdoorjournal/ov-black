@@ -1,0 +1,78 @@
+{
+  "data": {
+    "id": "ssr_0000TestStaysSearch",
+    "results": [
+      {
+        "id": "res_0000RitzLondon",
+        "cheapest_rate_total_amount": "1840.00",
+        "cheapest_rate_currency": "GBP",
+        "cheapest_rate_public_amount": "1920.00",
+        "cheapest_rate_public_currency": "GBP",
+        "check_in_date": "2026-07-10",
+        "check_out_date": "2026-07-12",
+        "rooms": 1,
+        "expires_at": "2026-06-21T18:30:00Z",
+        "accommodation": {
+          "id": "acc_0000TheRitzLondon",
+          "name": "The Ritz London",
+          "rating": 5,
+          "review_score": 9.4,
+          "review_count": 2871,
+          "description": "A Grade II listed landmark on Piccadilly overlooking Green Park.",
+          "phone_number": "+442074938181",
+          "email": "enquire@theritzlondon.com",
+          "photos": [
+            { "url": "https://assets.duffel.com/stays/ritz-1.jpg" },
+            { "url": "https://assets.duffel.com/stays/ritz-2.jpg" }
+          ],
+          "amenities": [
+            { "type": "24_hour_front_desk", "description": "24-hour front desk" },
+            { "type": "spa", "description": "Spa" },
+            { "type": "wifi", "description": "Free WiFi" }
+          ],
+          "location": {
+            "address": {
+              "line_one": "150 Piccadilly, St. James's",
+              "city_name": "London",
+              "region": "Greater London",
+              "postal_code": "W1J 9BR",
+              "country_code": "GB"
+            },
+            "geographic_coordinates": {
+              "latitude": 51.507273,
+              "longitude": -0.142425
+            }
+          }
+        }
+      },
+      {
+        "id": "res_0000ClaridgesLondon",
+        "cheapest_rate_total_amount": "2100.00",
+        "cheapest_rate_currency": "GBP",
+        "check_in_date": "2026-07-10",
+        "check_out_date": "2026-07-12",
+        "rooms": 1,
+        "accommodation": {
+          "id": "acc_0000Claridges",
+          "name": "Claridge's",
+          "rating": 5,
+          "review_score": 9.6,
+          "review_count": 3540,
+          "photos": [{ "url": "https://assets.duffel.com/stays/claridges-1.jpg" }],
+          "amenities": [{ "type": "wifi", "description": "Free WiFi" }],
+          "location": {
+            "address": {
+              "line_one": "Brook Street, Mayfair",
+              "city_name": "London",
+              "country_code": "GB"
+            },
+            "geographic_coordinates": {
+              "latitude": 51.512843,
+              "longitude": -0.147578
+            }
+          }
+        }
+      }
+    ]
+  }
+}

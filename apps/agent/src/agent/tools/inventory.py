@@ -37,8 +37,9 @@ async def search_inventory(
             OV adapter's keyword index. Optional — omit to browse.
         kinds: Filter by ``InventoryItem.kind`` (e.g. ``experience``,
             ``hotel``, ``flight``). Repeatable.
-        source: Scope to one provider (``ov``, ``mock``, ``duffel``,
-            ``ratehawk``). Omit to fan out across every enabled provider.
+        source: Scope to one provider (``ov``, ``mock``, ``duffel`` for
+            flights, ``duffel_stays`` or ``ratehawk`` for hotels). Omit to fan
+            out across every enabled provider.
         limit: Maximum items to return. Capped at 50 server-side.
         origin: Flight origin IATA code (e.g. ``LHR``). For a flight search
             pass origin + destination + departure_date together.
@@ -63,9 +64,10 @@ async def search_inventory(
 
     For flights, set ``source='duffel'`` (or ``kinds=['flight']``) and supply
     the route + date params; ``keyword`` does not drive flight search. For
-    hotels, set ``source='ratehawk'`` (or ``kinds=['hotel']``) and supply
-    (region_id | latitude+longitude) + checkin + checkout; ``keyword`` does
-    not drive hotel search. For restaurants / things to do, set
+    hotels, set ``kinds=['hotel']`` (or pick a source: ``duffel_stays`` needs
+    latitude+longitude, ``ratehawk`` takes region_id | latitude+longitude) and
+    supply checkin + checkout; ``keyword`` does not drive hotel search. For
+    restaurants / things to do, set
     ``kinds=['meal']`` and/or ``kinds=['experience']`` (Google Places) with a
     descriptive ``keyword`` (which drives the search, e.g. "omakase sushi in
     Roppongi"); optionally pass near_lat + near_lng to bias by location.

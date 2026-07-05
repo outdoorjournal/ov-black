@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.db import dispose_engine
 from app.inventory.providers.bokun import BokunProvider
 from app.inventory.providers.duffel import DuffelProvider
+from app.inventory.providers.duffel_stays import DuffelStaysProvider
 from app.inventory.providers.google_places import GooglePlacesProvider
 from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
@@ -94,6 +95,9 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         elif name == "duffel":
             registry.register(DuffelProvider(settings=settings))
             registered.append("duffel")
+        elif name == "duffel_stays":
+            registry.register(DuffelStaysProvider(settings=settings))
+            registered.append("duffel_stays")
         elif name == "ratehawk":
             registry.register(RatehawkProvider(settings=settings))
             registered.append("ratehawk")

@@ -118,20 +118,21 @@ class Settings(BaseSettings):
 
     duffel_base_url: str = Field(
         default="https://api.duffel.com",
-        description="Base URL for the Duffel flights API.",
+        description="Base URL for the Duffel API (shared by flights + Stays hotels).",
     )
     duffel_api_key: str = Field(
         default="",
         description=(
             "Duffel access token, forwarded as the Authorization: Bearer "
-            "header. When empty the Duffel provider stays registered but "
-            "every search returns []. NEVER log this value."
+            "header by both the flights ('duffel') and hotels ('duffel_stays') "
+            "providers. When empty those providers stay registered but every "
+            "search returns []. NEVER log this value."
         ),
         repr=False,
     )
     duffel_api_version: str = Field(
         default="v2",
-        description="Duffel API version sent as the Duffel-Version header.",
+        description="Duffel API version sent as the Duffel-Version header (flights + Stays).",
     )
 
     ratehawk_base_url: str = Field(
@@ -260,9 +261,10 @@ class Settings(BaseSettings):
         default="ov,mock",
         description=(
             "Comma-separated list of inventory provider sources to register at "
-            "startup. Known values: 'ov', 'mock', 'duffel', 'ratehawk', "
-            "'google_places', 'bokun'. Unknown names are skipped with a warning "
-            "so a typo doesn't crash the boot."
+            "startup. Known values: 'ov', 'mock', 'duffel' (flights), "
+            "'duffel_stays' (hotels), 'ratehawk' (hotels), 'google_places', "
+            "'bokun'. Unknown names are skipped with a warning so a typo "
+            "doesn't crash the boot."
         ),
     )
 
