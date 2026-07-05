@@ -102,10 +102,11 @@ the itinerary agent path (which is green via ITB-4 + CARD-3). Fix ONB-2 as its o
   a live route-compile probe stood in. Run the UAT before M006 "done."
 
 **Deferred *within* PS5 — carry into the noted slice (not lost, but not done):**
-- **Tap targets are desktop-only** (`HorizontalCanvas`/`HorizontalView`). The mobile pager
-  (`MobileItineraryLayout`) doesn't yet render place targets, so below md a held card can't be dropped by tap
-  (the Schedule button + chip + Esc + toast all still work; drag is the mobile fallback). Add mobile targets in
-  **PS6**'s a11y sweep. Logged, not silent.
+- **Place mode is desktop-only** (tap targets live on the ≥md `HorizontalCanvas`). PS6 resolved the mobile edge:
+  the **Schedule** button is now `hidden md:block` so a phone never holds a card with nowhere to drop it —
+  mobile scheduling flows through the **PS4 card-detail schedule facet** (which sets day/time and works on a
+  phone). A *native* mobile place UI (the pager is a card feed with no time axis, so "tap a minute" needs a
+  discrete-slot design) is a proper design-later item, not this slice.
 - **`CollectionRail variant="overlay"`** exists (styling + non-droppable) but no host **summons** it yet — the
   pick-then-place flow instead relies on the store surviving route nav (pick on `/collection` → `PlaceModeLayer`
   slides to `/timeline`, held state intact) and the xl rail-beside-timeline. A floating "Collection" drawer

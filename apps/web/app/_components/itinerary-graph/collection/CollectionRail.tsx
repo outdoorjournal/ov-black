@@ -264,14 +264,17 @@ function CollectionCard({
       className="relative"
     >
       {/* Place mode: lift into the holding chip (sibling of the draggable card
-          button — nesting buttons is invalid, and this must not start a drag). */}
+          button — nesting buttons is invalid, and this must not start a drag).
+          Desktop-only: place mode targets live on the ≥md timeline canvas; on a
+          phone the card-detail schedule facet (PS4) sets the day/time instead,
+          so we don't hold a card with nowhere to drop it. */}
       {canSchedule ? (
         <button
           type="button"
           onClick={() => storeApi.getState().holdItem(node.id)}
           data-testid="collection-schedule"
           aria-label={`Schedule ${node.title || "this"}`}
-          className="absolute right-2 top-2 z-10 rounded-full border border-ink/15 bg-paper/95 px-2.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 shadow-sm transition-colors hover:bg-ink hover:text-paper"
+          className="absolute right-2 top-2 z-10 hidden rounded-full border border-ink/15 bg-paper/95 px-2.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 shadow-sm transition-colors hover:bg-ink hover:text-paper md:block"
         >
           Schedule
         </button>
