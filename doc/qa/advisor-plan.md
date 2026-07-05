@@ -210,8 +210,9 @@ Collection slice).
   remainder math, reversed-line fallthrough, supplemental gating), `invoicePanel.test.tsx` (strip,
   bill-all seeds+charges, supplemental seeds the delta), `payInvoiceView.test.tsx` (test-card off
   by default; on → sandbox nonce → paid, no drop-in tokenizer). Browser —
-  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → hold lock → Invoices aside → reconcile
-  glance → bill-all → issue, API-seam-backstopped; demo pay driven when the flag is on).
+  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → hold lock on the Timeline → dashboard
+  Invoices panel via the Rail so the shell store keeps the lock → reconcile glance → bill-all →
+  issue, API-seam-backstopped; demo pay driven when the flag is on) — **green against the live stack**.
 - **Boundary:** the live Braintree drop-in / real settlement stays gateway-gated per §4 — the
   browser drives the *demo* nonce path; the drop-in tokenizer is never exercised headless.
 

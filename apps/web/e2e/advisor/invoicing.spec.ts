@@ -13,12 +13,15 @@ import {
 // ADV-11 (advisor half) — the billing COCKPIT. Before payment can happen the
 // advisor has to get to an issued invoice, and know what it covers. Driven as a
 // QA person would: seed a client + itinerary with two approved, priced cards, hold
-// the edit lock, open the Invoices aside, and use the reconciliation glance + "Bill
-// all uninvoiced" + Issue to stand up the first invoice. The API seam backstops
-// what the browser actions actually persisted.
+// the edit lock, open the dashboard's Invoices panel, and use the reconciliation
+// glance + "Bill all uninvoiced" + Issue to stand up the first invoice. The API
+// seam backstops what the browser actions actually persisted.
 //
 // Nodes are approved individually (a node can be `approved` while the itinerary
-// stays `draft`) so the advisor keeps the edit lock invoicing needs.
+// stays `draft`) so the advisor keeps the edit lock invoicing needs. The lock is
+// claimed on the Timeline (where the toolbar lives), then we reach the dashboard
+// via the Rail (client-side nav) so the shared shell store keeps the lock — a hard
+// page load would reset it to unlocked.
 //
 // The traveler pay half (Braintree drop-in / sandbox test-card) is gateway-gated
 // per advisor-plan.md §4 — the env-flagged "pay with test card" affordance is unit-
@@ -72,8 +75,10 @@ test("ADV-11: advisor stands up the first invoice from the billing cockpit", asy
 
   await acquireLock(page, itineraryId);
 
-  // Open the Invoices aside (the advisor billing surface).
-  await page.locator('[data-testid="itinerary-graph-tab-invoices"]:visible').first().click();
+  // Reach the dashboard via the Rail (client-side) so the shell store keeps the
+  // lock, then open its Invoices panel (the advisor billing surface).
+  await page.getByTestId("rail-home").click();
+  await page.getByTestId("dashboard-manage-tab-invoices").click();
 
   // The reconciliation glance renders, grouped by currency, with the uninvoiced
   // remainder — the "am I done billing?" truth. Everything is still uninvoiced.
