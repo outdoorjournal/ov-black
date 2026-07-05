@@ -62,7 +62,10 @@ import {
   itineraryGraphStore,
   nodeIdFromDragId,
   scheduledCountOf,
+  selectCanApprove,
   selectCanLeaveNote,
+  selectCanPropose,
+  selectCanReopen,
   selectEditable,
   selectIsDraftMine,
   selectTravelerEditable,
@@ -166,8 +169,17 @@ export function HorizontalView({
   const lockStatus = itineraryGraphStore.useStore((s) => s.lockStatus);
   const lockPending = itineraryGraphStore.useStore((s) => s.lockPending);
   const releasePending = itineraryGraphStore.useStore((s) => s.releasePending);
-  const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
   const editable = itineraryGraphStore.useStore(selectEditable);
+  // ADV-10 propose → approve. The advisor's timeline action is Propose (draft →
+  // proposed) / Reopen (proposed → draft); the traveler approves elsewhere.
+  const proposePending = itineraryGraphStore.useStore((s) => s.proposePending);
+  const reopenPending = itineraryGraphStore.useStore((s) => s.reopenPending);
+  const canPropose = itineraryGraphStore.useStore(selectCanPropose);
+  const canReopen = itineraryGraphStore.useStore(selectCanReopen);
+  // ADV-10 node-by-node approve: the traveler firms up a single proposed card
+  // from its expanded detail; clearing the last one derives the plan to approved.
+  const canApprove = itineraryGraphStore.useStore(selectCanApprove);
+  const approvingNodeId = itineraryGraphStore.useStore((s) => s.approvingNodeId);
   // Travelers may drag-move on their OWN version: an existing fork
   // (`travelerEditable`) or the draft-mine preview on Official (`draftMine`),
   // where the first drag lazily forks. Cards become draggable when staff hold
@@ -680,11 +692,15 @@ export function HorizontalView({
               lockStatus={lockStatus}
               lockPending={lockPending}
               releasePending={releasePending}
-              approvePending={approvePending}
+              proposePending={proposePending}
+              reopenPending={reopenPending}
+              canPropose={canPropose}
+              canReopen={canReopen}
               editable={editable}
               onEdit={() => storeApi.getState().acquireLock()}
               onRelease={() => storeApi.getState().releaseLock()}
-              onApprove={() => storeApi.getState().approve()}
+              onPropose={() => storeApi.getState().propose()}
+              onReopen={() => storeApi.getState().reopen()}
               onAddNode={handleAddNode}
             />
           ) : null}
@@ -1036,6 +1052,22 @@ export function HorizontalView({
                       onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
                     />
                   ) : null}
+                  {/* ADV-10 node-by-node approve: firm up this single proposed
+                      card (the traveler's card-at-a-time path to the same
+                      approved end state as "Approve all"). */}
+                  {canApprove && expandedNode.status === "proposed" ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        storeApi.getState().approveNode(expandedNode.id)
+                      }
+                      disabled={approvingNodeId === expandedNode.id}
+                      data-testid="itinerary-graph-approve-node"
+                      className="h-9 rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+                    >
+                      Approve this
+                    </button>
+                  ) : null}
                   {editable ? (
                     <NodeEditPanel
                       key={expandedNode.id}
@@ -1079,31 +1111,40 @@ export function HorizontalView({
   );
 }
 
-// Staff-only lock/approve toolbar. Mirrors the S08 advisor editor contract
-// (Edit acquires the lock, Release frees it, Approve flips draft→approved)
-// plus an Add control. Craft-feel: no spinners/icons — `disabled` is the only
-// in-flight affordance.
+// Staff-only lock/propose toolbar. Edit acquires the lock, Release frees it, Add
+// creates a node; the finalize action is Propose (draft → proposed, ADV-10) —
+// the advisor hands the plan to the traveler, who approves it. Once proposed the
+// button becomes Reopen (proposed → draft) to resume building. Craft-feel: no
+// spinners/icons — `disabled` is the only in-flight affordance.
 function StaffToolbar({
   status,
   lockStatus,
   lockPending,
   releasePending,
-  approvePending,
+  proposePending,
+  reopenPending,
+  canPropose,
+  canReopen,
   editable,
   onEdit,
   onRelease,
-  onApprove,
+  onPropose,
+  onReopen,
   onAddNode,
 }: {
   status: string;
   lockStatus: "unlocked" | "locked-by-me" | "locked-by-other";
   lockPending: boolean;
   releasePending: boolean;
-  approvePending: boolean;
+  proposePending: boolean;
+  reopenPending: boolean;
+  canPropose: boolean;
+  canReopen: boolean;
   editable: boolean;
   onEdit: () => void;
   onRelease: () => void;
-  onApprove: () => void;
+  onPropose: () => void;
+  onReopen: () => void;
   onAddNode: () => void;
 }) {
   const lockedBySelf = lockStatus === "locked-by-me";
@@ -1139,15 +1180,27 @@ function StaffToolbar({
       >
         Add
       </button>
-      <button
-        type="button"
-        onClick={onApprove}
-        disabled={approvePending || isApproved}
-        data-testid="itinerary-graph-approve"
-        className={btn}
-      >
-        Approve
-      </button>
+      {status === "proposed" ? (
+        <button
+          type="button"
+          onClick={onReopen}
+          disabled={reopenPending || !canReopen}
+          data-testid="itinerary-graph-reopen"
+          className={btn}
+        >
+          Reopen
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onPropose}
+          disabled={proposePending || !canPropose}
+          data-testid="itinerary-graph-propose"
+          className={btn}
+        >
+          Propose
+        </button>
+      )}
       {lockStatus === "locked-by-other" ? (
         <span
           data-testid="itinerary-graph-locked-notice"

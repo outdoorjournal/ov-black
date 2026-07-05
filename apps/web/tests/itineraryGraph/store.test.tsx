@@ -15,7 +15,10 @@ import type {
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/types";
 import {
   itineraryGraphStore,
+  selectCanApprove,
   selectCanLeaveNote,
+  selectCanPropose,
+  selectCanReopen,
   selectEditable,
   selectIsDraftMine,
   selectTravelerEditable,
@@ -97,6 +100,133 @@ describe("selectEditable", () => {
   });
   test("true only when staff + locked-by-me + draft", () => {
     expect(selectEditable({ ...base, canEdit: true } as ItineraryGraphState)).toBe(true);
+  });
+  test("proposed freezes the build (not editable — ADV-10)", () => {
+    expect(
+      selectEditable({ ...base, canEdit: true, status: "proposed" } as ItineraryGraphState),
+    ).toBe(false);
+  });
+});
+
+// ── ADV-10 propose → approve gates ─────────────────────────────────────────
+
+describe("selectCanPropose", () => {
+  const base = {
+    canEdit: true,
+    status: "draft",
+    apiBaseUrl: "x",
+    accessToken: "t",
+    sample: { itinerary: { forked_from_id: null } },
+  } as unknown as ItineraryGraphState;
+
+  test("advisor on a draft baseline with creds", () => {
+    expect(selectCanPropose(base)).toBe(true);
+  });
+  test("false for a traveler", () => {
+    expect(selectCanPropose({ ...base, canEdit: false })).toBe(false);
+  });
+  test("false unless it's a draft", () => {
+    expect(selectCanPropose({ ...base, status: "proposed" })).toBe(false);
+    expect(selectCanPropose({ ...base, status: "approved" })).toBe(false);
+  });
+  test("false on a fork (propose is a baseline gesture)", () => {
+    expect(
+      selectCanPropose({
+        ...base,
+        sample: { itinerary: { forked_from_id: "b" } },
+      } as unknown as ItineraryGraphState),
+    ).toBe(false);
+  });
+  test("false without creds", () => {
+    expect(selectCanPropose({ ...base, accessToken: null })).toBe(false);
+  });
+});
+
+describe("selectCanReopen", () => {
+  const base = {
+    canEdit: true,
+    status: "proposed",
+    apiBaseUrl: "x",
+    accessToken: "t",
+  } as ItineraryGraphState;
+
+  test("advisor on a proposed plan with creds", () => {
+    expect(selectCanReopen(base)).toBe(true);
+  });
+  test("false for a traveler", () => {
+    expect(selectCanReopen({ ...base, canEdit: false })).toBe(false);
+  });
+  test("false unless it's proposed", () => {
+    expect(selectCanReopen({ ...base, status: "draft" })).toBe(false);
+    expect(selectCanReopen({ ...base, status: "approved" })).toBe(false);
+  });
+  test("false without creds", () => {
+    expect(selectCanReopen({ ...base, accessToken: null })).toBe(false);
+  });
+});
+
+describe("selectCanApprove", () => {
+  const traveler = {
+    canEdit: false,
+    status: "proposed",
+    apiBaseUrl: "x",
+    accessToken: "t",
+    sample: { itinerary: { forked_from_id: null } },
+  } as unknown as ItineraryGraphState;
+
+  test("traveler may approve a proposed baseline", () => {
+    expect(selectCanApprove(traveler)).toBe(true);
+  });
+  test("traveler may NOT approve a draft (advisor still building)", () => {
+    expect(selectCanApprove({ ...traveler, status: "draft" })).toBe(false);
+  });
+  test("advisor may approve-all from draft or proposed (on a client's behalf)", () => {
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "draft" })).toBe(true);
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "proposed" })).toBe(true);
+  });
+  test("false once approved", () => {
+    expect(selectCanApprove({ ...traveler, status: "approved" })).toBe(false);
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "approved" })).toBe(false);
+  });
+  test("false on a fork (approval is on the baseline)", () => {
+    expect(
+      selectCanApprove({
+        ...traveler,
+        sample: { itinerary: { forked_from_id: "b" } },
+      } as unknown as ItineraryGraphState),
+    ).toBe(false);
+  });
+  test("false without creds", () => {
+    expect(selectCanApprove({ ...traveler, accessToken: null })).toBe(false);
+  });
+});
+
+describe("approval actions are inert without credentials (ADV-10)", () => {
+  test("propose / approve / approveNode are no-ops with null creds", () => {
+    const { result } = renderStore({
+      role: "advisor",
+      status: "draft",
+      startLocked: true,
+    });
+    act(() => {
+      result.current.getState().propose();
+      result.current.getState().approve();
+      result.current.getState().approveNode("n1");
+    });
+    // No credentials → guarded before any optimistic mutation; nothing changed.
+    expect(result.current.getState().status).toBe("draft");
+    expect(result.current.getState().nodes[0]!.status).toBe("approved");
+  });
+});
+
+describe("totals thread through init (ADV-10)", () => {
+  test("the graph read's per-currency totals are exposed on the store", () => {
+    const { result } = renderStore({ totals: { USD: "1234.00", EUR: "50.00" } });
+    expect(result.current.getState().totals).toEqual({ USD: "1234.00", EUR: "50.00" });
+  });
+  test("defaults to an empty map when omitted", () => {
+    const { result } = renderStore();
+    expect(result.current.getState().totals).toEqual({});
   });
 });
 

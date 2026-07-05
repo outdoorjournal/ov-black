@@ -26,7 +26,9 @@ from app.services.itineraries import (
     add_node,
     approve_itinerary,
     create_itinerary,
+    propose_itinerary,
     release_lock,
+    reopen_itinerary,
     update_node,
 )
 from sqlalchemy import select, text
@@ -311,6 +313,210 @@ async def test_approve_cascades_proposed_nodes_to_approved(
                 }
             assert statuses[proposed_id] is NodeStatus.approved  # cascaded
             assert statuses[idea_id] is NodeStatus.idea  # untouched
+        finally:
+            await verify_engine.dispose()
+    finally:
+        await _cleanup(itinerary_id, [advisor_id])
+
+
+# ── (e3) propose flips draft → proposed; second propose rejected (ADV-10) ──
+
+
+@integration
+@pytest.mark.asyncio
+async def test_propose_flips_draft_to_proposed_and_rejects_second(
+    db_session: AsyncSession,
+) -> None:
+    advisor_id = await _seed_user(db_session, uuid.uuid4())
+    itinerary = await create_itinerary(db_session, _system(), title="lock-e3")
+    itinerary_id = itinerary.id
+    try:
+        first = await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
+        assert isinstance(first, Itinerary)
+        assert first.status == ItineraryStatus.proposed
+        assert first.proposed_by == advisor_id
+        assert first.proposed_at is not None
+
+        # A second propose on an already-proposed plan is refused (not a draft).
+        second = await propose_itinerary(
+            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
+        )
+        assert isinstance(second, ItineraryError)
+        assert second.outcome is ItineraryOutcome.VALIDATION_ERROR
+        assert second.detail == "not_draft"
+    finally:
+        await _cleanup(itinerary_id, [advisor_id])
+
+
+# ── (e4) reopen flips proposed → draft (clears proposed_*); else rejected ───
+
+
+@integration
+@pytest.mark.asyncio
+async def test_reopen_flips_proposed_to_draft_and_rejects_when_not_proposed(
+    db_session: AsyncSession,
+) -> None:
+    advisor_id = await _seed_user(db_session, uuid.uuid4())
+    itinerary = await create_itinerary(db_session, _system(), title="lock-e4")
+    itinerary_id = itinerary.id
+    try:
+        # Reopen before propose is a no-op error (still a draft).
+        early = await reopen_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
+        assert isinstance(early, ItineraryError)
+        assert early.detail == "not_proposed"
+
+        await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
+        reopened = await reopen_itinerary(
+            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
+        )
+        assert isinstance(reopened, Itinerary)
+        assert reopened.status == ItineraryStatus.draft
+        assert reopened.proposed_by is None
+        assert reopened.proposed_at is None
+    finally:
+        await _cleanup(itinerary_id, [advisor_id])
+
+
+# ── (e5) approve accepts a proposed itinerary (the traveler path, ADV-10) ───
+
+
+@integration
+@pytest.mark.asyncio
+async def test_approve_from_proposed_state(db_session: AsyncSession) -> None:
+    advisor_id = await _seed_user(db_session, uuid.uuid4())
+    traveler_id = await _seed_user(db_session, uuid.uuid4())
+    itinerary = await create_itinerary(db_session, _system(), title="lock-e5")
+    itinerary_id = itinerary.id
+    try:
+        await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
+        # The owning traveler approves all-at-once from the proposed state.
+        result = await approve_itinerary(db_session, _user(traveler_id), itinerary_id=itinerary_id)
+        assert isinstance(result, Itinerary)
+        assert result.status == ItineraryStatus.approved
+        assert result.approved_by == traveler_id
+    finally:
+        await _cleanup(itinerary_id, [advisor_id, traveler_id])
+
+
+# ── (e6) per-node approve derives itinerary approved once proposed drains ───
+
+
+@integration
+@pytest.mark.asyncio
+async def test_per_node_approve_derives_itinerary_approved(
+    db_session: AsyncSession,
+) -> None:
+    """A traveler approving nodes one-by-one reaches the same ``approved`` end
+    state as the all-at-once cascade: the itinerary derives to ``approved`` only
+    once the last remaining ``proposed`` node has been actioned."""
+    advisor_id = await _seed_user(db_session, uuid.uuid4())
+    traveler_id = await _seed_user(db_session, uuid.uuid4())
+    itinerary = await create_itinerary(db_session, _system(), title="lock-e6")
+    itinerary_id = itinerary.id
+    try:
+        n1 = await add_node(
+            db_session,
+            _advisor(advisor_id),
+            itinerary_id=itinerary_id,
+            type=NodeType.experience,
+            title="card-1",
+            status=NodeStatus.proposed,
+        )
+        n2 = await add_node(
+            db_session,
+            _advisor(advisor_id),
+            itinerary_id=itinerary_id,
+            type=NodeType.meal,
+            title="card-2",
+            status=NodeStatus.proposed,
+        )
+        assert isinstance(n1, Node) and isinstance(n2, Node)
+        n1_id, n2_id = n1.id, n2.id
+        await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
+
+        # Approve the first node — one proposed node still remains, so the
+        # itinerary stays ``proposed`` (not yet fully approved).
+        r1 = await update_node(
+            db_session,
+            _user(traveler_id),
+            itinerary_id=itinerary_id,
+            node_id=n1_id,
+            status=NodeStatus.approved,
+        )
+        assert isinstance(r1, Node)
+
+        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            vmaker = async_sessionmaker(
+                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
+            )
+            async with vmaker() as vs:
+                mid = (
+                    await vs.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
+                ).scalar_one()
+                assert mid is ItineraryStatus.proposed  # not yet — one card open
+
+            # Approve the last node — the itinerary now derives to ``approved``.
+            r2 = await update_node(
+                db_session,
+                _user(traveler_id),
+                itinerary_id=itinerary_id,
+                node_id=n2_id,
+                status=NodeStatus.approved,
+            )
+            assert isinstance(r2, Node)
+            async with vmaker() as vs:
+                fresh = (
+                    await vs.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
+                ).scalar_one()
+                assert fresh.status is ItineraryStatus.approved  # derived
+                assert fresh.approved_by == traveler_id
+        finally:
+            await verify_engine.dispose()
+    finally:
+        await _cleanup(itinerary_id, [advisor_id, traveler_id])
+
+
+# ── (e7) derive does NOT fire while the itinerary is still a draft ──────────
+
+
+@integration
+@pytest.mark.asyncio
+async def test_node_approve_on_draft_does_not_derive(db_session: AsyncSession) -> None:
+    advisor_id = await _seed_user(db_session, uuid.uuid4())
+    itinerary = await create_itinerary(db_session, _system(), title="lock-e7")
+    itinerary_id = itinerary.id
+    try:
+        node = await add_node(
+            db_session,
+            _advisor(advisor_id),
+            itinerary_id=itinerary_id,
+            type=NodeType.experience,
+            title="only-card",
+            status=NodeStatus.proposed,
+        )
+        assert isinstance(node, Node)
+        # Approve the only node while the itinerary is still a DRAFT (advisor has
+        # not proposed it). The itinerary must stay draft — approval is derived
+        # only during the proposed/review phase.
+        result = await update_node(
+            db_session,
+            _advisor(advisor_id),
+            itinerary_id=itinerary_id,
+            node_id=node.id,
+            status=NodeStatus.approved,
+        )
+        assert isinstance(result, Node)
+        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            vmaker = async_sessionmaker(
+                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
+            )
+            async with vmaker() as vs:
+                status = (
+                    await vs.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
+                ).scalar_one()
+                assert status is ItineraryStatus.draft  # unchanged
         finally:
             await verify_engine.dispose()
     finally:

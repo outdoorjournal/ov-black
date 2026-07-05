@@ -35,7 +35,7 @@ mutation and a traveler mutation are the same write path with a different
 | [ADV-7](#adv-7--advisor-sends-the-itinerary-to-the-traveler-with-a-message) | Send the itinerary to the traveler with a message | 🟡 Partial | human thread `POST /threads/{id}/messages` + `HumanThread` UI; **email delivery 🔍 SMTP**; no e2e pillar yet |
 | [ADV-8](#adv-8--traveler-reviews-and-chats-with-the-advisor-requesting-changes) | Traveler reviews & chats with the advisor, requesting changes | 🟡 Partial | P5 `request_reconcile` fork loop + human thread (API); @Artemis summon newer, thin coverage |
 | [ADV-9](#adv-9--advisor-makes-changes-via-the-agent-respecting-locked-nodes) | Make changes via the agent, respecting locked nodes | ✅ Automated | P5 booked-node immutability + status×actor gate + reconcile (API) |
-| [ADV-10](#adv-10--traveler-approves-the-itinerary-at-once-and-sees-the-price) | Traveler approves the itinerary at once, sees the price | 🟡 Partial | **backend shipped** — approve **cascades** `proposed`→`approved` + graph read carries per-currency `totals` (API-tested); the **traveler UI** (one-action approve + shown price) is the remaining half |
+| [ADV-10](#adv-10--traveler-approves-the-itinerary-at-once-and-sees-the-price) | Traveler approves the itinerary at once, sees the price | ✅ Automated | propose → approve state machine: advisor **proposes** (draft→proposed), traveler **approves** node-by-node or all-at-once (cascade + derived approval) + per-currency `totals` (API `test_itinerary_lock`/`test_itineraries`) + browser (`e2e/advisor/approve.spec.ts` advisor propose, `e2e/traveler-flows/approve.spec.ts` traveler approve-all + card-by-card) |
 | [ADV-11](#adv-11--advisor-invoices-the-trip-traveler-pays-via-braintree) | Advisor invoices the trip; traveler pays via Braintree | ✅ Automated | P6 assemble/pay/money-gate + M005 discount/void + full-loop (API); pre-filled test-card **UI affordance** to add; gateway-unwired 🔍 |
 
 ---
@@ -553,43 +553,51 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-10 · Traveler approves the itinerary at once, and sees the price
 
-- **Status:** 🟡 Partial — **backend shipped** (approve cascade + surfaced per-currency
-  totals, API-tested); the **traveler UI** (one-action approve + shown price) is the last half.
-- **Personas:** Traveler
+- **Status:** ✅ Automated — the **propose → approve** state machine is shipped end-to-end
+  (advisor proposes; traveler approves node-by-node or all-at-once) with per-currency totals,
+  API- and browser-tested.
+- **Personas:** Advisor (proposes) → Traveler (approves)
 - **Surface:** Web UI (Playwright) + API seam (CLI/pytest)
-- **Preconditions:** A shared itinerary with several `proposed` nodes and per-node costs.
+- **Preconditions:** An itinerary with several `proposed`, priced nodes.
 - **Automated by:**
-  - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_advisor_approves_built_itinerary` — approval flips the itinerary `status → approved` (the gate that makes it client-visible).
-  - `apps/cli/tests/e2e/test_full_loop_e2e.py::test_loop_client_sees_approved_itinerary` — the traveler sees the approved itinerary on their own surface (`GET /me/itineraries`, `status == approved`).
-  - `apps/api/tests/test_itinerary_lock.py::test_approve_cascades_proposed_nodes_to_approved` — a single approval flips every remaining `proposed` node to `approved` (ideas untouched).
+  - `apps/api/tests/test_itinerary_lock.py::test_propose_flips_draft_to_proposed_and_rejects_second` — advisor propose (draft → proposed); a second propose is refused `not_draft`.
+  - `apps/api/tests/test_itinerary_lock.py::test_reopen_flips_proposed_to_draft_and_rejects_when_not_proposed` — advisor reopen (proposed → draft) — the escape hatch.
+  - `apps/api/tests/test_itinerary_lock.py::test_approve_from_proposed_state` — the owning traveler approves-all from `proposed` (attributed as USER).
+  - `apps/api/tests/test_itinerary_lock.py::test_per_node_approve_derives_itinerary_approved` — approving nodes one-by-one derives the itinerary to `approved` once the last `proposed` node clears.
+  - `apps/api/tests/test_itinerary_lock.py::test_approve_cascades_proposed_nodes_to_approved` — "Approve all" flips every remaining `proposed` node to `approved` (ideas untouched).
+  - `apps/api/tests/test_itinerary_lock_routes.py::test_approve_owner_traveler_200` / `::test_approve_non_writer_gets_403` — approve is writability-gated (owner/advisor 200; a non-writer 403).
   - `apps/api/tests/test_itineraries.py::test_get_itinerary_surfaces_per_currency_totals` — `GET /itinerary/{id}` carries `totals: {currency: amount}` (Σ via `sum_node_costs`); default `{}` when nothing is priced.
-  - The **traveler UI** — a one-action approve + the shown per-currency price — **to write once built.**
+  - `apps/web/e2e/advisor/approve.spec.ts` (ADV-10) — the advisor proposes on the dashboard (Propose → proposed, Reopen → draft), with the per-currency total shown.
+  - `apps/web/e2e/traveler-flows/approve.spec.ts` (ADV-10) — the traveler approves the whole plan in one action **and** card-by-card, sees the per-currency total, and the API seam confirms the itinerary + nodes read `approved`.
 
-**Given** a traveler happy with the whole plan,
+**Given** an advisor with a finished, priced plan and a traveler ready to review it,
 
 **When**
-1. the traveler approves the itinerary in one action;
-2. the remaining `proposed` nodes move to `approved`;
+1. the advisor **proposes** the itinerary to the traveler (draft → proposed), freezing the build;
+2. the traveler approves — the whole plan in one action, **or** card-by-card;
 3. the traveler views the trip's total price.
 
 **Then**
-- the itinerary is `approved` and visible on the traveler's own surface;
-- every still-`proposed` node flips to `approved` in that single action (no node left
-  behind) — **shipped** as a cascade on `approve_itinerary`;
+- proposing flips the itinerary to `proposed` and hands it to the traveler (the advisor can
+  `reopen` it back to draft to resume building);
+- the traveler's approval is **their** action (writability-gated), and the itinerary reaches
+  `approved` either by the all-at-once cascade or, node-by-node, by **deriving** to approved
+  once the last remaining `proposed` node is actioned — a "stateless" rollup of the nodes;
 - the traveler sees a clear per-currency total (Σ of node costs), computed from the same
-  first-class cost the invoicing later charges — the graph read now **carries** `totals`;
-  the UI that shows it is the remaining half.
+  first-class cost the invoicing later charges — the graph read **carries** `totals`.
 
 **Notes / gaps**
-- ✅ **Backend shipped** (**G-APPROVE-TOTAL**, decision = cascade): `approve_itinerary`
-  cascades every remaining `proposed` node to `approved` in one transaction (idea/booked/
-  confirmed/discarded untouched), and `GET /itinerary/{id}` surfaces `totals: {currency:
-  amount}` (Σ via `sum_node_costs`, `per_person` expanded by party size, Decimal → str),
-  regenerated into the api-client `GraphResponse`. API-tested (cascade + totals).
-- 🔎 **Remaining: the traveler UI** — a one-action approve affordance + the shown per-currency
-  price, reading `totals` off the graph the store already loads. Small (UI only) now that the
-  decision + backend are done; the browser assertion (approve once → nodes `approved` + price
-  shows) pairs with it. Tracked in [advisor-plan.md](./advisor-plan.md).
+- ✅ **Shipped — propose → approve (G-APPROVE-TOTAL).** `ItineraryStatus` gained `proposed`
+  (migration `0039`): `draft` → `proposed` (advisor `POST …/propose`, advisor-only) → `approved`.
+  Approval is the traveler's — `POST …/approve` is now writability-gated (owner/creator/advisor,
+  not advisor-only), accepts a draft **or** proposed itinerary, and cascades remaining `proposed`
+  nodes to `approved`; per-node approval (`update_node`) derives the itinerary to `approved` once
+  the last `proposed` node clears. The advisor retains approve-all (the pending-client / full-loop
+  path stays green). `GET /itinerary/{id}` surfaces per-currency `totals`. Regenerated into the
+  api-client (`propose`/`reopen`/`approve` + `GraphResponse.totals`).
+- **Naming:** the advisor's finalize gesture is **"propose"** (not "lock" — the codebase already
+  uses "lock" for the editor concurrency mutex and node status-locks; a third would collide). The
+  whole itinerary follows the same `proposed → approved` arc as its individual nodes.
 
 ---
 

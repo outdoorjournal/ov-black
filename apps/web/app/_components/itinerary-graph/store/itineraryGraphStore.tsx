@@ -36,11 +36,14 @@ import {
   fillGap,
   forkItinerary,
   getAnalysis,
+  proposeItinerary,
   releaseItineraryLock,
+  reopenItinerary,
   requestReconcile,
   searchInventory,
   startAnalysis,
   updateNode,
+  updateNodeStatus,
   type AnalysisStatus,
   type CostKind,
   type FillProposalResponse,
@@ -153,6 +156,15 @@ export type ItineraryGraphState = {
   lockPending: boolean;
   releasePending: boolean;
   approvePending: boolean;
+  // ADV-10 propose → approve. The advisor *proposes* (draft→proposed), which
+  // freezes the build; the traveler *approves* (node-by-node or all-at-once).
+  proposePending: boolean;
+  reopenPending: boolean;
+  /** id of the node whose per-node approve is in flight (disables its button). */
+  approvingNodeId: string | null;
+  /** Per-currency price of the plan (ADV-10), `{ currency: amount }` from the
+   *  GraphResponse — amounts are strings; empty when nothing is priced. */
+  totals: Record<string, string>;
 
   // ── two-version (Official ↔ My version) lifecycle, traveler-facing ──
   /** The viewer's own OPEN fork of this baseline, if any (from the API). Null
@@ -209,7 +221,15 @@ export type ItineraryGraphState = {
   // ── staff editing actions (no-op unless editable) ──
   acquireLock: () => void;
   releaseLock: () => void;
+  // ADV-10. `propose` (advisor): draft→proposed, hands the plan to the traveler.
+  // `reopen` (advisor): proposed→draft, resume building. `approve` (traveler, or
+  // advisor on a client's behalf): the all-at-once "Approve all" — cascades
+  // remaining `proposed` nodes to `approved`. `approveNode` (traveler): approve a
+  // single proposed card; clearing the last one derives the itinerary to approved.
+  propose: () => void;
+  reopen: () => void;
   approve: () => void;
+  approveNode: (id: string) => void;
   setNodes: (nodes: NodeResponse[]) => void;
   editNodeField: (
     id: string,
@@ -327,6 +347,8 @@ export type ItineraryGraphInit = {
   /** The viewer's own OPEN fork of this baseline (from `GraphResponse`), so the
    *  two-version toggle resolves to it instead of spawning a duplicate. */
   viewerOpenForkId?: string | null;
+  /** Per-currency plan price from the `GraphResponse` (ADV-10). Empty by default. */
+  totals?: Record<string, string>;
   // Demo/sandbox escape hatch: start already locked-by-me so the prototype
   // (which has no API to acquire a real lock against) can exercise the editing
   // affordances. Production leaves this false — staff must click Edit to lock.
@@ -335,13 +357,53 @@ export type ItineraryGraphInit = {
 
 /**
  * A node is editable only when the viewer is staff (`canEdit`), holds the
- * lock, and the itinerary is still a draft. Centralised so views and actions
- * agree on the gate.
+ * lock, and the itinerary is still a **draft**. Centralised so views and
+ * actions agree on the gate. Once the advisor *proposes* the plan (ADV-10) the
+ * build freezes for the traveler's review — the advisor must `reopen` it (back
+ * to draft) to resume editing — so `proposed` (like `approved`) is not editable.
  */
 export function selectEditable(s: ItineraryGraphState): boolean {
+  return s.canEdit && s.lockStatus === "locked-by-me" && s.status === "draft";
+}
+
+function hasCredentials(s: ItineraryGraphState): boolean {
+  return Boolean(s.apiBaseUrl && s.accessToken);
+}
+
+/**
+ * The advisor may *propose* the plan to the traveler (draft → proposed) — the
+ * finish-and-hand-over step (ADV-10). Only on the official baseline (not a
+ * fork) while it's still a draft.
+ */
+export function selectCanPropose(s: ItineraryGraphState): boolean {
   return (
-    s.canEdit && s.lockStatus === "locked-by-me" && s.status !== "approved"
+    s.canEdit &&
+    s.status === "draft" &&
+    !s.sample.itinerary?.forked_from_id &&
+    hasCredentials(s)
   );
+}
+
+/**
+ * The advisor may *reopen* a proposed plan back to draft (the escape hatch to
+ * resume building). Advisor-only, only while proposed.
+ */
+export function selectCanReopen(s: ItineraryGraphState): boolean {
+  return s.canEdit && s.status === "proposed" && hasCredentials(s);
+}
+
+/**
+ * Whether the viewer may approve — the all-at-once "Approve all" and the
+ * per-node approve (ADV-10). The traveler approves a plan the advisor has
+ * *proposed* to them; an advisor may also approve-all (on behalf of a client
+ * who hasn't signed in yet) from either draft or proposed. Never on a fork
+ * (approval is on the official baseline) or an already-approved plan.
+ */
+export function selectCanApprove(s: ItineraryGraphState): boolean {
+  if (!hasCredentials(s) || s.status === "approved") return false;
+  if (s.sample.itinerary?.forked_from_id) return false;
+  // Advisor: approve-all from draft or proposed. Traveler: only a proposed plan.
+  return s.canEdit || s.status === "proposed";
 }
 
 /**
@@ -562,6 +624,7 @@ export const itineraryGraphStore = createStoreContext<
     apiBaseUrl,
     accessToken,
     viewerOpenForkId = null,
+    totals = {},
     startLocked = false,
   }) =>
     (set, get) => {
@@ -613,6 +676,10 @@ export const itineraryGraphStore = createStoreContext<
         lockPending: false,
         releasePending: false,
         approvePending: false,
+        proposePending: false,
+        reopenPending: false,
+        approvingNodeId: null,
+        totals,
 
         viewerOpenForkId,
         draftMine: false,
@@ -777,18 +844,90 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ releasePending: false }));
         },
-        approve: () => {
+        // ADV-10: the advisor proposes the plan to the traveler (draft →
+        // proposed), freezing the build. Optimistic; reverts on failure.
+        propose: () => {
           const s = get();
-          if (!s.canEdit || s.approvePending || s.status === "approved") return;
+          if (!selectCanPropose(s) || s.proposePending) return;
           const c = client();
           if (!c) return;
           const previousStatus = s.status;
-          set({ approvePending: true, status: "approved" });
-          void approveItinerary(c, s.itineraryId)
+          set({ proposePending: true, status: "proposed" });
+          void proposeItinerary(c, s.itineraryId)
             .then((result) => {
               if (!result.ok) set({ status: previousStatus });
             })
+            .finally(() => set({ proposePending: false }));
+        },
+        // ADV-10: the advisor reopens a proposed plan back to draft to resume
+        // building (the escape hatch out of the frozen review state).
+        reopen: () => {
+          const s = get();
+          if (!selectCanReopen(s) || s.reopenPending) return;
+          const c = client();
+          if (!c) return;
+          const previousStatus = s.status;
+          set({ reopenPending: true, status: "draft" });
+          void reopenItinerary(c, s.itineraryId)
+            .then((result) => {
+              if (!result.ok) set({ status: previousStatus });
+            })
+            .finally(() => set({ reopenPending: false }));
+        },
+        // ADV-10 "Approve all": approve the whole plan in one action. Optimistic
+        // — the itinerary flips to approved and every remaining `proposed` node
+        // cascades to `approved` (mirroring the backend); reverts on failure.
+        approve: () => {
+          const s = get();
+          if (!selectCanApprove(s) || s.approvePending) return;
+          const c = client();
+          if (!c) return;
+          const previousStatus = s.status;
+          const previousNodes = s.nodes;
+          set({
+            approvePending: true,
+            status: "approved",
+            nodes: s.nodes.map((n) =>
+              n.status === "proposed" ? { ...n, status: "approved" } : n,
+            ),
+          });
+          void approveItinerary(c, s.itineraryId)
+            .then((result) => {
+              if (!result.ok) set({ status: previousStatus, nodes: previousNodes });
+            })
             .finally(() => set({ approvePending: false }));
+        },
+        // ADV-10 node-by-node approve: the traveler approves a single proposed
+        // card. Optimistic; when this clears the LAST remaining proposed node,
+        // the itinerary derives to `approved` (the same rollup the backend does).
+        approveNode: (id) => {
+          const s = get();
+          if (!selectCanApprove(s) || s.approvingNodeId) return;
+          const target = s.nodes.find((n) => n.id === id);
+          if (!target || target.status !== "proposed") return;
+          const c = client();
+          if (!c) return;
+          const previousStatus = s.status;
+          const previousNodes = s.nodes;
+          const nextNodes = s.nodes.map((n) =>
+            n.id === id ? { ...n, status: "approved" as const } : n,
+          );
+          const anyProposedLeft = nextNodes.some((n) => n.status === "proposed");
+          set({
+            approvingNodeId: id,
+            nodes: nextNodes,
+            status:
+              !anyProposedLeft && s.status === "proposed" ? "approved" : s.status,
+          });
+          void updateNodeStatus(c, {
+            itineraryId: s.itineraryId,
+            nodeId: id,
+            status: "approved",
+          })
+            .then((result) => {
+              if (!result.ok) set({ status: previousStatus, nodes: previousNodes });
+            })
+            .finally(() => set({ approvingNodeId: null }));
         },
         setNodes: (nodes) => set({ nodes }),
         editNodeField: (id, field, value) => {

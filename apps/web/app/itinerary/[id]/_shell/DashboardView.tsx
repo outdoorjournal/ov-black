@@ -26,6 +26,9 @@ import {
 import { ItineraryIntake } from "@/app/_components/itinerary-graph/intake/ItineraryIntake";
 import {
   itineraryGraphStore,
+  selectCanApprove,
+  selectCanPropose,
+  selectCanReopen,
   selectEditable,
   selectScheduledCount,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
@@ -151,6 +154,7 @@ export function DashboardView() {
 
       <div className="mx-auto flex max-w-5xl flex-col gap-6 p-4 sm:p-6">
         <NextActionCard action={nextAction} onConcierge={openConcierge} />
+        <ApprovalSection />
         <MoneySection state={money} role={isAdvisor ? "advisor" : "client"} itineraryId={itineraryId} />
         <PartySection
           isAdvisor={isAdvisor}
@@ -271,6 +275,130 @@ function NextActionCard({
 }
 
 // ── Money roll-up ────────────────────────────────────────────────────────────
+// ── Approval — propose → approve, per-currency total (ADV-10) ────────────────
+//
+// The itinerary's proposed → approved arc lives here. The advisor *proposes*
+// the finished plan (draft → proposed), which freezes the build for review; the
+// traveler *approves* it — the all-at-once "Approve all" here, or card-by-card
+// on the timeline (both derive the itinerary to `approved`). The plan's
+// per-currency price (from the graph read's `totals`) shows alongside, so the
+// traveler sees what they're approving. Craft-feel: no spinners/icons — a
+// disabled button is the only in-flight affordance.
+function ApprovalSection() {
+  const role = itineraryGraphStore.useStore((s) => s.role);
+  const status = itineraryGraphStore.useStore((s) => s.status);
+  const totals = itineraryGraphStore.useStore((s) => s.totals);
+  const canPropose = itineraryGraphStore.useStore(selectCanPropose);
+  const canReopen = itineraryGraphStore.useStore(selectCanReopen);
+  const canApprove = itineraryGraphStore.useStore(selectCanApprove);
+  const proposePending = itineraryGraphStore.useStore((s) => s.proposePending);
+  const reopenPending = itineraryGraphStore.useStore((s) => s.reopenPending);
+  const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
+  const propose = itineraryGraphStore.useStore((s) => s.propose);
+  const reopen = itineraryGraphStore.useStore((s) => s.reopen);
+  const approve = itineraryGraphStore.useStore((s) => s.approve);
+
+  const isAdvisor = role === "advisor";
+  const totalEntries = Object.entries(totals);
+  const hasTotals = totalEntries.length > 0;
+
+  // Nothing to show on a plain draft with no price and no advisor propose action
+  // (e.g. a traveler looking at a draft the advisor is still building).
+  if (status === "draft" && !canPropose && !hasTotals) return null;
+
+  const primaryBtn =
+    "shrink-0 self-start rounded-full bg-ink px-5 py-2 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50";
+  const secondaryBtn =
+    "shrink-0 self-start rounded-full border border-ink/20 bg-transparent px-5 py-2 font-sans text-[11px] uppercase tracking-[0.18em] text-ink/80 transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-50";
+
+  return (
+    <SectionCard label="Approval" testid="dashboard-approval">
+      <div
+        className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+        data-itinerary-status={status}
+      >
+        <div className="min-w-0">
+          <p className="font-serif text-xl text-ink">
+            {status === "approved"
+              ? "Approved"
+              : status === "proposed"
+                ? isAdvisor
+                  ? "Proposed — awaiting the traveler"
+                  : "Ready for your approval"
+                : "Ready to send"}
+          </p>
+          <p className="mt-0.5 font-sans text-[13px] text-ink/55">
+            {status === "approved"
+              ? "The whole plan is approved."
+              : status === "proposed"
+                ? isAdvisor
+                  ? "The traveler can approve the plan, or firm up cards one at a time."
+                  : "Approve the whole plan, or approve cards one at a time on the timeline."
+                : "Send the finished plan to the traveler for approval."}
+          </p>
+          {hasTotals ? (
+            <div
+              data-testid="dashboard-trip-total"
+              className="mt-3 flex flex-col gap-0.5"
+            >
+              <span className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
+                Trip total
+              </span>
+              {totalEntries.map(([currency, amount]) => (
+                <span
+                  key={currency}
+                  data-testid="dashboard-trip-total-row"
+                  data-currency={currency}
+                  className="font-serif text-lg text-ink"
+                >
+                  {money(currency, Number(amount))}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {canPropose ? (
+            <button
+              type="button"
+              onClick={propose}
+              disabled={proposePending}
+              data-testid="dashboard-propose"
+              className={primaryBtn}
+            >
+              Propose to traveler
+            </button>
+          ) : null}
+          {canReopen ? (
+            <button
+              type="button"
+              onClick={reopen}
+              disabled={reopenPending}
+              data-testid="dashboard-reopen"
+              className={secondaryBtn}
+            >
+              Reopen to edit
+            </button>
+          ) : null}
+          {/* Traveler's one-action "Approve all" (advisor uses propose/reopen). */}
+          {canApprove && !isAdvisor ? (
+            <button
+              type="button"
+              onClick={approve}
+              disabled={approvePending}
+              data-testid="dashboard-approve-all"
+              className={primaryBtn}
+            >
+              Approve all
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 function MoneySection({
   state,
   role,

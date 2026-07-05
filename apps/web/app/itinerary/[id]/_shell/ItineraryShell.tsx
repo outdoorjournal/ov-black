@@ -42,6 +42,8 @@ export type ItineraryShellProps = {
   apiBaseUrl: string | null;
   accessToken: string | null;
   viewerOpenForkId: string | null;
+  /** Per-currency plan price from the graph read (ADV-10) — `{}` when unpriced. */
+  totals?: Record<string, string>;
   /** True when the trip has no brief yet — gate on the first-run intake. */
   needsBrief: boolean;
   audience: "advisor" | "traveler";
@@ -58,6 +60,7 @@ export function ItineraryShell({
   apiBaseUrl,
   accessToken,
   viewerOpenForkId,
+  totals = {},
   needsBrief,
   audience,
   children,
@@ -98,6 +101,7 @@ export function ItineraryShell({
         apiBaseUrl,
         accessToken,
         viewerOpenForkId,
+        totals,
       }}
     >
       <TimelineDataProvider value={{ timeline, baselineTitle }}>

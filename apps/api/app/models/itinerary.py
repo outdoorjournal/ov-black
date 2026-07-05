@@ -86,9 +86,17 @@ class EdgeType(str, enum.Enum):
 
 
 class ItineraryStatus(str, enum.Enum):
-    """Mirrors the public.itinerary_status Postgres enum (0006)."""
+    """Mirrors the public.itinerary_status Postgres enum (0006, `proposed` 0039).
+
+    Lifecycle: ``draft`` (advisor building) → ``proposed`` (advisor finished and
+    handed the plan to the traveler for review, freezing the build) → ``approved``
+    (the traveler has approved — the itinerary-level ``approved`` is *derived*:
+    it is set once every remaining ``proposed`` node has been actioned). The
+    whole itinerary follows the same ``proposed → approved`` arc as its nodes.
+    """
 
     draft = "draft"
+    proposed = "proposed"
     approved = "approved"
 
 
@@ -231,6 +239,17 @@ class Itinerary(Base):
         nullable=True,
     )
     approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # 0039 — ADV-10 propose step. Siblings of approved_by/at: set when the advisor
+    # *proposes* the plan to the traveler (status draft → proposed), cleared on
+    # reopen (proposed → draft). NULL until first proposed.
+    proposed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    proposed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

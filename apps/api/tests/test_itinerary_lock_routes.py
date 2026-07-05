@@ -84,10 +84,13 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         "acquire_lock": [],
         "release_lock": [],
         "approve_itinerary": [],
+        "propose_itinerary": [],
+        "reopen_itinerary": [],
         "assemble_initial_draft": [],
         "drain_queue": [],
         "get_itinerary_graph": [],
         "is_requester_advisor": [],
+        "load_itinerary": [],
     }
     returns: dict[str, Any] = {}
 
@@ -102,6 +105,21 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     async def _approve(_s: Any, actor: ActorContext, **kw: Any) -> Any:
         calls["approve_itinerary"].append({"actor": actor, **kw})
         return returns["approve_itinerary"]
+
+    async def _propose(_s: Any, actor: ActorContext, **kw: Any) -> Any:
+        calls["propose_itinerary"].append({"actor": actor, **kw})
+        return returns["propose_itinerary"]
+
+    async def _reopen(_s: Any, actor: ActorContext, **kw: Any) -> Any:
+        calls["reopen_itinerary"].append({"actor": actor, **kw})
+        return returns["reopen_itinerary"]
+
+    # /approve loads the itinerary before its writability gate (unlike advisor-
+    # only lock/release/propose/reopen). Stub it so these DB-less tests stay
+    # hermetic; default to a bare draft owned by nobody unless a test overrides.
+    async def _load(_s: Any, itinerary_id: uuid.UUID) -> Any:
+        calls["load_itinerary"].append({"itinerary_id": itinerary_id})
+        return returns.get("load_itinerary", _new_itinerary())
 
     async def _assemble(_s: Any, actor: ActorContext, **kw: Any) -> Any:
         calls["assemble_initial_draft"].append({"actor": actor, **kw})
@@ -126,11 +144,14 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(routers_itineraries, "acquire_lock", _acquire)
     monkeypatch.setattr(routers_itineraries, "release_lock", _release)
     monkeypatch.setattr(routers_itineraries, "approve_itinerary", _approve)
+    monkeypatch.setattr(routers_itineraries, "propose_itinerary", _propose)
+    monkeypatch.setattr(routers_itineraries, "reopen_itinerary", _reopen)
     monkeypatch.setattr(routers_itineraries, "assemble_initial_draft", _assemble)
     monkeypatch.setattr(routers_itineraries, "drain_queue", _drain)
     monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _graph)
     monkeypatch.setattr(routers_itineraries, "_is_requester_advisor", _is_advisor)
     monkeypatch.setattr(routers_itineraries, "_resolve_client_auth_user_id", _resolve_auth)
+    monkeypatch.setattr(routers_itineraries, "_load_itinerary", _load)
 
     # GET resolves the caller's own open fork with a real query — stub it here so
     # these DB-less router tests don't touch the placeholder session.
@@ -293,36 +314,143 @@ def test_release_non_advisor_gets_403(
     assert resp.status_code == 403
 
 
-# ── POST /itinerary/{id}/approve ───────────────────────────────────────────
+# ── POST /itinerary/{id}/propose (advisor-only) ────────────────────────────
 
 
-def test_approve_happy_path_200(
+def test_propose_happy_path_200(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    advisor_headers: dict[str, str],
+    as_advisor: None,
+) -> None:
+    iid = uuid.uuid4()
+    proposed = _new_itinerary(status=ItineraryStatus.proposed)
+    proposed.id = iid
+    stub_routes["returns"]["propose_itinerary"] = proposed
+    resp = client.post(f"/itinerary/{iid}/propose", headers=advisor_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "proposed"
+    assert stub_routes["calls"]["propose_itinerary"][0]["actor"].kind is ActorKind.ADVISOR
+
+
+def test_propose_not_draft_409(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    advisor_headers: dict[str, str],
+    as_advisor: None,
+) -> None:
+    stub_routes["returns"]["propose_itinerary"] = ItineraryError(
+        outcome=ItineraryOutcome.VALIDATION_ERROR,
+        detail="not_draft",
+    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/propose", headers=advisor_headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "not_draft"
+
+
+def test_propose_non_advisor_gets_403(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    advisor_headers: dict[str, str],
+    as_non_advisor: None,
+) -> None:
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/propose", headers=advisor_headers)
+    assert resp.status_code == 403
+
+
+# ── POST /itinerary/{id}/reopen (advisor-only) ─────────────────────────────
+
+
+def test_reopen_happy_path_200(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    advisor_headers: dict[str, str],
+    as_advisor: None,
+) -> None:
+    iid = uuid.uuid4()
+    draft = _new_itinerary(status=ItineraryStatus.draft)
+    draft.id = iid
+    stub_routes["returns"]["reopen_itinerary"] = draft
+    resp = client.post(f"/itinerary/{iid}/reopen", headers=advisor_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "draft"
+    assert stub_routes["calls"]["reopen_itinerary"][0]["actor"].kind is ActorKind.ADVISOR
+
+
+def test_reopen_not_proposed_409(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    advisor_headers: dict[str, str],
+    as_advisor: None,
+) -> None:
+    stub_routes["returns"]["reopen_itinerary"] = ItineraryError(
+        outcome=ItineraryOutcome.VALIDATION_ERROR,
+        detail="not_proposed",
+    )
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/reopen", headers=advisor_headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "not_proposed"
+
+
+def test_reopen_non_advisor_gets_403(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    advisor_headers: dict[str, str],
+    as_non_advisor: None,
+) -> None:
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/reopen", headers=advisor_headers)
+    assert resp.status_code == 403
+
+
+# ── POST /itinerary/{id}/approve (traveler or advisor — writability-gated) ──
+
+
+def test_approve_happy_path_advisor_200(
     client: TestClient,
     stub_routes: dict[str, Any],
     advisor_headers: dict[str, str],
     advisor_sub: str,
-    as_advisor: None,
 ) -> None:
+    # An advisor is admitted by the writability gate's advisor branch and the
+    # approval attributes as ADVISOR (the pending-client / full-loop path).
     iid = uuid.uuid4()
-    approved = _new_itinerary(
-        status=ItineraryStatus.approved,
-        approved_by=uuid.UUID(advisor_sub),
-    )
+    stub_routes["returns"]["is_requester_advisor"] = True
+    approved = _new_itinerary(status=ItineraryStatus.approved, approved_by=uuid.UUID(advisor_sub))
     approved.id = iid
     stub_routes["returns"]["approve_itinerary"] = approved
-
     resp = client.post(f"/itinerary/{iid}/approve", headers=advisor_headers)
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "approved"
+    assert resp.json()["status"] == "approved"
+    assert stub_routes["calls"]["approve_itinerary"][0]["actor"].kind is ActorKind.ADVISOR
+
+
+def test_approve_owner_traveler_200(
+    client: TestClient,
+    stub_routes: dict[str, Any],
+    client_headers: dict[str, str],
+    client_sub: str,
+) -> None:
+    # The owning traveler (not an advisor) can approve their own proposed plan;
+    # the approval attributes as USER (ADV-10 — approval is the traveler's).
+    iid = uuid.uuid4()
+    stub_routes["returns"]["is_requester_advisor"] = False
+    stub_routes["returns"]["load_itinerary"] = _new_itinerary(client_id=uuid.uuid4())
+    stub_routes["returns"]["resolve_client_auth_user_id"] = uuid.UUID(client_sub)  # caller owns it
+    approved = _new_itinerary(status=ItineraryStatus.approved)
+    approved.id = iid
+    stub_routes["returns"]["approve_itinerary"] = approved
+    resp = client.post(f"/itinerary/{iid}/approve", headers=client_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+    assert stub_routes["calls"]["approve_itinerary"][0]["actor"].kind is ActorKind.USER
 
 
 def test_approve_already_approved_409(
     client: TestClient,
     stub_routes: dict[str, Any],
     advisor_headers: dict[str, str],
-    as_advisor: None,
 ) -> None:
+    stub_routes["returns"]["is_requester_advisor"] = True
     stub_routes["returns"]["approve_itinerary"] = ItineraryError(
         outcome=ItineraryOutcome.VALIDATION_ERROR,
         detail="already_approved",
@@ -332,14 +460,19 @@ def test_approve_already_approved_409(
     assert resp.json()["detail"] == "already_approved"
 
 
-def test_approve_non_advisor_gets_403(
+def test_approve_non_writer_gets_403(
     client: TestClient,
     stub_routes: dict[str, Any],
-    advisor_headers: dict[str, str],
-    as_non_advisor: None,
+    client_headers: dict[str, str],
 ) -> None:
-    resp = client.post(f"/itinerary/{uuid.uuid4()}/approve", headers=advisor_headers)
+    # A caller who is neither the owner nor an advisor cannot approve someone
+    # else's itinerary — the writability gate 403s before the service is reached.
+    stub_routes["returns"]["is_requester_advisor"] = False
+    stub_routes["returns"]["load_itinerary"] = _new_itinerary(client_id=uuid.uuid4())
+    stub_routes["returns"]["resolve_client_auth_user_id"] = uuid.uuid4()  # a DIFFERENT user
+    resp = client.post(f"/itinerary/{uuid.uuid4()}/approve", headers=client_headers)
     assert resp.status_code == 403
+    assert stub_routes["calls"]["approve_itinerary"] == []
 
 
 # ── POST /itinerary/{id}/assemble ──────────────────────────────────────────

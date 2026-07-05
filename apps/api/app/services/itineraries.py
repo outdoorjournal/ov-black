@@ -1101,6 +1101,12 @@ async def update_node(
         before=before,
         after=_snapshot_node(node),
     )
+    # ADV-10: a node status change on a *proposed* itinerary can complete the
+    # traveler's approval (the last remaining proposed node just got actioned),
+    # deriving the itinerary itself to `approved`. Same transaction as the node
+    # write so the two land atomically. No-op unless the itinerary is proposed.
+    if "status" in updates:
+        await _maybe_derive_itinerary_approved(session, itinerary_id, actor)
     await session.commit()
     logger.info(
         "itinerary.mutate",
@@ -1494,16 +1500,22 @@ async def approve_itinerary(
     *,
     itinerary_id: uuid.UUID,
 ) -> Itinerary | ItineraryError:
-    """Flip an itinerary from ``draft`` to ``approved``.
+    """Approve an itinerary all-at-once — the traveler's "Approve all".
 
-    Returns ``VALIDATION_ERROR`` (detail ``already_approved``) if the row is
-    not currently in ``draft`` state.
+    Accepts a ``draft`` **or** ``proposed`` itinerary and flips it to
+    ``approved`` (idempotency guard: ``VALIDATION_ERROR`` / ``already_approved``
+    if it is already approved). ``proposed`` is the normal traveler path (the
+    advisor proposed it first, ADV-10); ``draft`` is retained so an advisor can
+    still approve on behalf of a client who has not signed in yet (the full-loop
+    path). The caller's entitlement to the itinerary is enforced by the route's
+    writability gate. Per-node approval (``update_node``) reaches the same
+    ``approved`` end state incrementally via :func:`_maybe_derive_itinerary_approved`.
     """
     stmt = (
         update(Itinerary)
         .where(
             Itinerary.id == itinerary_id,
-            Itinerary.status == ItineraryStatus.draft,
+            Itinerary.status.in_((ItineraryStatus.draft, ItineraryStatus.proposed)),
         )
         .values(
             status=ItineraryStatus.approved,
@@ -1554,6 +1566,160 @@ async def approve_itinerary(
         },
     )
     return row
+
+
+async def propose_itinerary(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+) -> Itinerary | ItineraryError:
+    """Propose an itinerary — the advisor's finish-and-hand-over step (ADV-10).
+
+    Flips ``draft`` → ``proposed`` and stamps ``proposed_by`` / ``proposed_at``.
+    ``proposed`` is the "over to the traveler" state: the traveler can now approve
+    (node-by-node or all-at-once) and the advisor's build UI steps back. Advisor-
+    only (the route enforces ``require_advisor``). Returns ``VALIDATION_ERROR``
+    (``not_draft``) if the row is not currently ``draft`` — you can't propose an
+    already-proposed or approved plan (reopen it first).
+    """
+    stmt = (
+        update(Itinerary)
+        .where(
+            Itinerary.id == itinerary_id,
+            Itinerary.status == ItineraryStatus.draft,
+        )
+        .values(
+            status=ItineraryStatus.proposed,
+            proposed_by=actor.user_id,
+            proposed_at=func.now(),
+        )
+        .returning(Itinerary)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="not_draft",
+        )
+    await session.commit()
+    await session.refresh(row)
+    logger.info(
+        "itinerary.proposed",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "user_id": str(actor.user_id) if actor.user_id else None,
+        },
+    )
+    return row
+
+
+async def reopen_itinerary(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+) -> Itinerary | ItineraryError:
+    """Reopen a proposed itinerary back to ``draft`` — the advisor escape hatch.
+
+    Flips ``proposed`` → ``draft`` and clears ``proposed_by`` / ``proposed_at`` so
+    the advisor can resume building (the "frozen for review" state is reversible).
+    Advisor-only. Returns ``VALIDATION_ERROR`` (``not_proposed``) if the row is not
+    currently ``proposed`` — an approved plan is not reopened here (approval is the
+    traveler's, and un-approving is out of scope).
+    """
+    stmt = (
+        update(Itinerary)
+        .where(
+            Itinerary.id == itinerary_id,
+            Itinerary.status == ItineraryStatus.proposed,
+        )
+        .values(
+            status=ItineraryStatus.draft,
+            proposed_by=None,
+            proposed_at=None,
+        )
+        .returning(Itinerary)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="not_proposed",
+        )
+    await session.commit()
+    await session.refresh(row)
+    logger.info(
+        "itinerary.reopened",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "user_id": str(actor.user_id) if actor.user_id else None,
+        },
+    )
+    return row
+
+
+async def _maybe_derive_itinerary_approved(
+    session: AsyncSession,
+    itinerary_id: uuid.UUID,
+    actor: ActorContext,
+) -> None:
+    """Derive itinerary ``approved`` from its nodes (ADV-10 — "stateless" rollup).
+
+    The itinerary's approval is a reflection of its nodes, not a separate gesture:
+    once the advisor has *proposed* the plan and the traveler has actioned every
+    remaining ``proposed`` node (approving them, or discarding the odd one), the
+    itinerary itself is ``approved``. Called from ``update_node`` after a node
+    status change so a traveler who approves cards one-by-one reaches the same
+    ``approved`` end state as the all-at-once :func:`approve_itinerary` cascade.
+
+    Only fires while the itinerary is ``proposed`` (never auto-approves a ``draft``
+    the advisor is still building), and requires ≥1 node to have been approved (so
+    an all-discarded plan doesn't count as approved). Does **not** commit — it runs
+    inside the caller's transaction so the node change + derived approval are atomic.
+    """
+    status = (
+        await session.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
+    if status is not ItineraryStatus.proposed:
+        return
+    counts = (
+        await session.execute(
+            select(
+                func.count(Node.id).filter(Node.status == NodeStatus.proposed),
+                func.count(Node.id).filter(Node.status == NodeStatus.approved),
+            ).where(Node.itinerary_id == itinerary_id)
+        )
+    ).one()
+    remaining_proposed, approved_count = int(counts[0]), int(counts[1])
+    if remaining_proposed > 0 or approved_count == 0:
+        return
+    await session.execute(
+        update(Itinerary)
+        .where(
+            Itinerary.id == itinerary_id,
+            Itinerary.status == ItineraryStatus.proposed,
+        )
+        .values(
+            status=ItineraryStatus.approved,
+            approved_by=actor.user_id,
+            approved_at=func.now(),
+        )
+    )
+    logger.info(
+        "itinerary.approved_derived",
+        extra={
+            "itinerary_id": str(itinerary_id),
+            "user_id": str(actor.user_id) if actor.user_id else None,
+            "approved_count": approved_count,
+        },
+    )
 
 
 def _integrity_detail(exc: IntegrityError) -> str:

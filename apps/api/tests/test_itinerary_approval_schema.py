@@ -38,9 +38,13 @@ def _supabase_running() -> bool:
 
 
 def test_itinerary_status_enum_values() -> None:
-    """Python enum values must be byte-identical to the Postgres enum."""
-    assert {m.value for m in ItineraryStatus} == {"draft", "approved"}
+    """Python enum values must be byte-identical to the Postgres enum.
+
+    Lifecycle draft → proposed (advisor proposes, 0039) → approved.
+    """
+    assert {m.value for m in ItineraryStatus} == {"draft", "proposed", "approved"}
     assert ItineraryStatus.draft == "draft"
+    assert ItineraryStatus.proposed == "proposed"
     assert ItineraryStatus.approved == "approved"
 
 

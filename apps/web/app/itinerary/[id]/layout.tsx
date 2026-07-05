@@ -111,6 +111,7 @@ export default async function ItineraryLayout({
         apiBaseUrl={apiBaseUrl}
         accessToken={accessToken}
         viewerOpenForkId={result.viewer_open_fork_id ?? null}
+        totals={result.totals}
         needsBrief={needsBrief}
         audience={role === "advisor" ? "advisor" : "traveler"}
       >

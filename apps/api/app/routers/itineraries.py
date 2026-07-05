@@ -79,7 +79,9 @@ from app.services.itineraries import (
     delete_edge,
     delete_node,
     get_itinerary_graph,
+    propose_itinerary,
     release_lock,
+    reopen_itinerary,
     update_itinerary_details,
     update_node,
 )
@@ -151,6 +153,10 @@ class ItineraryResponse(BaseModel):
     status: ItineraryStatus = ItineraryStatus.draft
     approved_by: uuid.UUID | None = None
     approved_at: datetime | None = None
+    # Propose step (ADV-10, 0039). Set when the advisor proposes the plan to the
+    # traveler (status draft → proposed); cleared on reopen. None until proposed.
+    proposed_by: uuid.UUID | None = None
+    proposed_at: datetime | None = None
     # Fork lineage (G2). ``forked_from_id`` is the baseline this itinerary was
     # cloned from (None on a normal itinerary); ``fork_status`` tracks the
     # reconcile lifecycle and is None unless this row is a fork.
@@ -1166,6 +1172,8 @@ def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
         status=itinerary.status or ItineraryStatus.draft,
         approved_by=itinerary.approved_by,
         approved_at=itinerary.approved_at,
+        proposed_by=getattr(itinerary, "proposed_by", None),
+        proposed_at=getattr(itinerary, "proposed_at", None),
         forked_from_id=getattr(itinerary, "forked_from_id", None),
         fork_status=getattr(itinerary, "fork_status", None),
         reconcile_requested_at=getattr(itinerary, "reconcile_requested_at", None),
@@ -1221,16 +1229,80 @@ async def release_itinerary_endpoint(
 
 
 @router.post(
-    "/{itinerary_id}/approve",
+    "/{itinerary_id}/propose",
     response_model=ItineraryResponse,
-    summary="Approve the itinerary — flips status draft→approved.",
+    summary="Propose the itinerary to the traveler — flips status draft→proposed.",
 )
-async def approve_itinerary_endpoint(
+async def propose_itinerary_endpoint(
     itinerary_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_advisor),
     session: AsyncSession = Depends(get_session),
 ) -> ItineraryResponse:
+    """Advisor finishes building and hands the plan to the traveler (ADV-10).
+
+    Advisor-only (like lock/release). ``draft`` → ``proposed`` freezes the build
+    for the traveler's review; the traveler then approves. 409 ``not_draft`` if
+    the plan isn't a draft (already proposed/approved — reopen it first).
+    """
     actor = _advisor_actor_from_user(user)
+    result = await propose_itinerary(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        if result.outcome is ItineraryOutcome.VALIDATION_ERROR and result.detail == "not_draft":
+            raise HTTPException(status_code=409, detail="not_draft")
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{itinerary_id}/reopen",
+    response_model=ItineraryResponse,
+    summary="Reopen a proposed itinerary — flips status proposed→draft.",
+)
+async def reopen_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+) -> ItineraryResponse:
+    """Advisor escape hatch — resume building a proposed plan (ADV-10).
+
+    Advisor-only. ``proposed`` → ``draft`` (clears proposed_by/at). 409
+    ``not_proposed`` if the plan isn't currently proposed.
+    """
+    actor = _advisor_actor_from_user(user)
+    result = await reopen_itinerary(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        if result.outcome is ItineraryOutcome.VALIDATION_ERROR and result.detail == "not_proposed":
+            raise HTTPException(status_code=409, detail="not_proposed")
+        _raise_for_error(result)
+    return _itinerary_to_response(result)
+
+
+@router.post(
+    "/{itinerary_id}/approve",
+    response_model=ItineraryResponse,
+    summary="Approve the itinerary all-at-once — flips proposed/draft→approved.",
+)
+async def approve_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ItineraryResponse:
+    """Approve the whole plan in one action (ADV-10 — the traveler's "Approve all").
+
+    Unlike propose/reopen (advisor-only), approval is the *traveler's*: gated by
+    the same writability relationship as node writes (owner / creator / advisor),
+    so the owning traveler can approve their own proposed plan and an advisor can
+    still approve on behalf of a not-yet-signed-in client. Any authenticated
+    non-writer gets 403. ``actor_kind`` is resolved from the caller's role so the
+    approval attributes correctly.
+    """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
+    actor = _actor_from_user(user)
+    if await _is_requester_advisor(session, actor.user_id):
+        actor = _advisor_actor_from_user(user)
     result = await approve_itinerary(session, actor, itinerary_id=itinerary_id)
     if isinstance(result, ItineraryError):
         # VALIDATION_ERROR with detail='already_approved' should surface as 409

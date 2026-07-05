@@ -30,6 +30,7 @@ import { NodeZoomCard } from "@/app/_components/itinerary-graph/shared/cards/Nod
 import { NotesPanel } from "@/app/_components/itinerary-graph/shared/NotesPanel";
 import {
   itineraryGraphStore,
+  selectCanApprove,
   selectCanLeaveNote,
   selectEditable,
   selectTravelerEditable,
@@ -70,6 +71,9 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
   const editable = itineraryGraphStore.useStore(
     (s) => selectEditable(s) || selectTravelerEditable(s),
   );
+  // ADV-10 node-by-node approve: the traveler firms up this single proposed card.
+  const canApprove = itineraryGraphStore.useStore(selectCanApprove);
+  const approvingNodeId = itineraryGraphStore.useStore((s) => s.approvingNodeId);
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
@@ -126,6 +130,14 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
 
           {/* The facet rail: aside on desktop, stacked below on mobile. */}
           <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-[320px]">
+            {/* (ADV-10) node-by-node approve — the traveler firms up this one
+                card; clearing the last proposed card derives the plan to approved. */}
+            {canApprove && node.status === "proposed" ? (
+              <ApprovalFacet
+                pending={approvingNodeId === node.id}
+                onApprove={() => storeApi.getState().approveNode(node.id)}
+              />
+            ) : null}
             <ActionsFacet node={node} />
             <AskFacet onAsk={onAsk} />
             {node.type !== "note" ? (
@@ -155,6 +167,33 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Approval — node-by-node "Approve this" (ADV-10) ─────────────────────────────
+function ApprovalFacet({
+  pending,
+  onApprove,
+}: {
+  pending: boolean;
+  onApprove: () => void;
+}) {
+  return (
+    <FacetCard label="Approval" testid="card-detail-approval">
+      <p className="font-serif text-[13px] text-ink/70">
+        Happy with this one? Approve it now, or approve the whole plan at once
+        from the dashboard.
+      </p>
+      <button
+        type="button"
+        onClick={onApprove}
+        disabled={pending}
+        data-testid="card-detail-approve-node"
+        className="mt-2 h-9 rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+      >
+        Approve this
+      </button>
+    </FacetCard>
   );
 }
 

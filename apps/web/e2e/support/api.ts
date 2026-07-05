@@ -250,6 +250,69 @@ export async function seedScheduledItemAsAdvisor(
   return ((await resp.json()) as GraphNode).id;
 }
 
+/** Seed a PRICED node (advisor), so the itinerary carries per-currency totals
+ *  (ADV-10). Both-or-neither cost fields; `startsAt` schedules it (else Collection). */
+export async function seedPricedItemAsAdvisor(
+  itineraryId: string,
+  body: {
+    type?: string;
+    title: string;
+    amount: string;
+    currency: string;
+    kind?: "per_person" | "total";
+    startsAt?: string;
+  },
+): Promise<string> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/nodes`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: body.type ?? "experience",
+      status: "proposed",
+      title: body.title,
+      cost_amount: body.amount,
+      cost_currency: body.currency,
+      cost_kind: body.kind ?? "total",
+      ...(body.startsAt
+        ? { starts_at: body.startsAt, duration_minutes: 60 }
+        : {}),
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`seed priced node failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as GraphNode).id;
+}
+
+/** Propose an itinerary (advisor, ADV-10) — flips draft → proposed. */
+export async function proposeItineraryAsAdvisor(itineraryId: string): Promise<void> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/propose`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    throw new Error(`propose failed (${resp.status}): ${await resp.text()}`);
+  }
+}
+
+/** The itinerary's status (advisor read) — draft | proposed | approved. */
+export async function getItineraryStatusAsAdvisor(itineraryId: string): Promise<string> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}`);
+  if (!resp.ok) {
+    throw new Error(`GET /itinerary/${itineraryId} failed (${resp.status})`);
+  }
+  return ((await resp.json()) as { itinerary: { status: string } }).itinerary.status;
+}
+
+/** The itinerary's per-currency totals (advisor read, ADV-10). */
+export async function getItineraryTotalsAsAdvisor(
+  itineraryId: string,
+): Promise<Record<string, string>> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}`);
+  if (!resp.ok) {
+    throw new Error(`GET /itinerary/${itineraryId} failed (${resp.status})`);
+  }
+  return ((await resp.json()) as { totals?: Record<string, string> }).totals ?? {};
+}
+
 /** Mark a node discarded (advisor), to prove the Collection filter excludes it. */
 export async function discardNodeAsAdvisor(
   itineraryId: string,
