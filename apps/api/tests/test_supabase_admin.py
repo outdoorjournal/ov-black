@@ -142,6 +142,34 @@ async def test_generate_invite_link_maps_4xx_to_supabase_admin_rejected() -> Non
             )
     assert exc_info.value.reason == "supabase_admin_rejected"
     assert exc_info.value.status_code == 422
+    # No ``error_code`` field in the body → falls back to None.
+    assert exc_info.value.error_code is None
+
+
+@pytest.mark.asyncio
+async def test_generate_invite_link_captures_email_exists_error_code() -> None:
+    # GoTrue rejects an already-registered address with this shape; the code
+    # is what lets the caller tell a duplicate apart from an outage.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            422,
+            json={
+                "code": 422,
+                "error_code": "email_exists",
+                "msg": "A user with this email address has already been registered",
+            },
+        )
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(SupabaseAdminError) as exc_info:
+            await generate_invite_link(
+                "taken@example.com",
+                "https://app/callback",
+                settings=_settings(),
+                client=client,
+            )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.error_code == "email_exists"
 
 
 @pytest.mark.asyncio
