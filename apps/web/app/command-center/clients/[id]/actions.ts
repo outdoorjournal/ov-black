@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import {
   type ClientContactCreate,
@@ -23,6 +24,7 @@ import {
   createClientContact,
   createClientPartyMember,
   createDossierFact,
+  createItinerary,
   createOsintFact,
   createProfileFact,
   deleteClientContact,
@@ -335,4 +337,23 @@ export async function getClientDocumentDownloadAction(
   const result = await getClientDocumentDownload(api, clientId, documentId);
   if (!result.ok) return { error: ERROR_COPY[result.detail] ?? "Something went wrong. Try again." };
   return { ok: true, url: result.url };
+}
+
+// ── Itineraries (G-ITIN-FOR-CLIENT) ────────────────────────────────────────
+//
+// Advisor-side counterpart to the traveler's `startNewItinerary`: spin up an
+// itinerary bound to *this specific client* and drop the advisor into its
+// first-run intake. The API already takes `client_id`; this closes the
+// missing browser affordance (the roster/client page previously listed
+// itineraries read-only, and "Start a new itinerary" only ever bound to the
+// caller's own client row). On success we `redirect` — the returned error
+// shape is only reached when the create fails.
+
+export async function startItineraryForClientAction(
+  clientId: string,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await createItinerary(api, { title: "", client_id: clientId });
+  if (!result.ok) return _shape(result.detail);
+  redirect(`/itinerary/${result.itinerary.id}`);
 }

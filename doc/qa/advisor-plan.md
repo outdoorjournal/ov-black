@@ -27,11 +27,11 @@ seam missing), or **gap** (no code path — a product decision precedes the test
 | # | Workflow (ADV-#) | Status | Where it lives | The gap |
 | --- | --- | --- | --- | --- |
 | 1 | Create client w/o inviting | **partial** | `POST /clients` → `create_client_with_dossier` (`apps/api/app/routers/clients.py`); P1 | create + welcome are **atomic** — no silent-create / invite-later |
-| 2 | Itinerary shell (brief+timing) | **built** | `POST /itinerary` (`routers/itineraries.py`), timing 0033; ITB-1/1B/1C | advisor-project browser run of the intake |
+| 2 | Itinerary shell (brief+timing) | **built** | `POST /itinerary` (`routers/itineraries.py`), timing 0033; ITB-1/1B/1C; `itinerary-intake.spec.ts` | ✅ advisor browser intake **and** "New itinerary for this client" affordance shipped (G-ITIN-FOR-CLIENT closed) |
 | 2A | AI cover image | **gap** | `cover_image` only from provider photos / OG scrape / manual paste | **no image generation/curation anywhere** |
-| 2B | Travel party (existing/new) | **built** | `party_members` routes + agent `record_/update_party_member` (`agent/tools/traveler.py`); P4 | advisor-project browser run |
+| 2B | Travel party (existing/new) | **built** | `party_members` routes + agent `record_/update_party_member`; dashboard `PartyPanel` trip-attach; P4; `travel-party.spec.ts` | ✅ advisor browser (add + trip-attach) shipped; concierge-add agent-gated |
 | 2C | Advisor≠traveler agent access | **built** | audience isolation (`open_or_reuse_session`); `agent/tools/__init__.py` mode bundles; P3 + `test_modes` | — (optional visibility browser test) |
-| 3 | Build by conversation | **partial** | search→propose→approve (P3, full-loop); `propose_card` | advisor browser turn; live grounding agent-gated |
+| 3 | Build by conversation | **partial** | search→propose→approve (P3, full-loop); `propose_card`; `concierge.spec.ts` | ✅ advisor browser turn-loop shipped; live grounding still agent-gated |
 | 4 | Hand-author a node | **partial** | `POST /nodes`, `/from-inventory` (P3), `/from-link` OG preview | **no card-editor UI component** |
 | 5 | Duffel flights | **partial** | `inventory/providers/duffel.py`; `search_inventory`+`propose_flight`; P3 flight lane | **no flight-picker UI**; live creds-gated |
 | 6 | Analyze w/ the agent | **partial** | `routers/analyze.py` (P3 analyze+fill) | **no agent tool** to run Analyze / read findings; UI trigger unconfirmed |
@@ -123,9 +123,17 @@ first four each unlock one ADV scenario, the last two are demo-polish.
 
 **Also flagged, not gating:** **G-SEND** (is "send the itinerary" a first-class action that
 flips visibility + fires email, or just the first advisor message on an approved trip? —
-settles ADV-7's shape) and **G-FLIGHT-UI** (a dedicated advisor flight-picker screen vs.
+settles ADV-7's shape); and **G-FLIGHT-UI** (a dedicated advisor flight-picker screen vs.
 picking via the concierge — ADV-5 is drivable conversationally without it). Both are product
 calls, not blockers.
+
+**✅ Closed: G-ITIN-FOR-CLIENT** — the command-center client detail page's Itineraries panel
+now carries a **"New itinerary"** action (`NewItineraryButton` →
+`startItineraryForClientAction`) that creates a `client_id`-bound itinerary via the existing
+`POST /itinerary` and drops the advisor into its first-run intake — the advisor-side
+counterpart to the traveler's `startNewItinerary`. `itinerary-intake.spec.ts` now drives the
+whole flow (create + intake) in the browser and seeds only the client, so the binding is the
+affordance under test rather than seeded state.
 
 ## §3. Coverage plan (waves)
 
@@ -133,16 +141,30 @@ Ordered by leverage: prove what's built in the browser first (cheap, high-signal
 scenarios that need a small product gap closed, then the boundary-limited ones.
 
 **Wave 1 — advisor-project browser specs over already-built spine (no product work).**
-New specs under `apps/web/e2e/advisor/` (an advisor Playwright project already exists —
-`command-center.spec.ts`, `onboarding-invite.spec.ts`):
-- **ADV-2** — own a client → new itinerary → brief + rough window → saved (reuses the ITB intake).
-- **ADV-2B** — attach a remembered party member + add one via the concierge → trip roster updates.
-- **ADV-3** — drive a concierge build turn from the advisor aside (loop asserted structurally).
-- **ADV-9** (optional) — a booked node shows non-editable; an attempted edit surfaces the crafted reason.
-- **ADV-2C** (optional) — the advisor's private aside is absent from the traveler's itinerary view.
+Specs live under `apps/web/e2e/advisor/` (an advisor Playwright project already exists —
+`command-center.spec.ts`, `onboarding-invite.spec.ts`). Seed helpers for the advisor path
+(create a client, create a client-bound itinerary, seed/read party) are in
+`e2e/support/api.ts`. **Status: the three core specs are shipped and green locally.**
+- ✅ **ADV-2** — `itinerary-intake.spec.ts`: own a client → **New itinerary for this client**
+  → brief + rough window → saved. Fully browser-driven now that **G-ITIN-FOR-CLIENT** is
+  closed: seeds only the client, clicks the client page's "New itinerary" affordance, drives
+  the advisor-audience intake, and backstops brief + window + the client binding the browser
+  action created.
+- ✅ **ADV-2B** — `travel-party.spec.ts` (two facets): advisor **adds** a durable member on
+  the client page (stamped advisor) **and attaches** a remembered member to the trip via the
+  dashboard's "Add from household" → "On this trip". (Correction to the map: a per-trip attach
+  UI **does** exist — the itinerary dashboard's `PartyPanel`. Concierge-add stays agent-gated.)
+- ✅ **ADV-3** — `concierge.spec.ts`: a real build turn from the advisor's **private**
+  "Concierge" tab; the turn loop asserted structurally (live agent required — run live-agent
+  specs isolated / `--workers=1` so they don't contend with the traveler chat turns).
+- **ADV-9** (optional, not yet written) — a booked node shows non-editable; an attempted edit surfaces the crafted reason.
+- **ADV-2C** (optional, not yet written) — the advisor's private aside is absent from the traveler's itinerary view.
 
 These lean on P1/P3/P4/P5 as the API-seam backstop and add the *experience* proof the
-headless pillars can't give.
+headless pillars can't give. **Two map corrections surfaced while automating** (both folded
+into §1/§2): the advisor itinerary "home" is the **`DashboardView`** (trip title, money,
+trip-party, trip-management — not the traveler's "blank canvas" timeline), and it carries the
+per-trip party-attach UI ADV-2B needed.
 
 **Wave 2 — close a small gap, then assert the scenario.** One product slice each, then its test:
 - **G-INVITE-LATER → ADV-1**, **G-NODE-EDITOR → ADV-4**, **G-ANALYZE-AGENT → ADV-6**,

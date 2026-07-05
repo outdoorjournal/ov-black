@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { freshTravelerCallbackUrl } from "../support/auth";
+import { withAgentTurnLock } from "../support/agentLock";
 
 // Live concierge chat, driven in the browser. Both surfaces that let a traveler
 // talk to the agent — the basecamp onboarding opener (ONB-2) and the itinerary
@@ -11,10 +12,13 @@ import { freshTravelerCallbackUrl } from "../support/auth";
 // genuinely non-deterministic — grounded-not-generic replies, profile facts
 // recorded — is the semantic bit verified at the API seam by the pillar suite.
 //
-// Both live turns share ONE local agent, so they live in ONE file: the
-// traveler-flows project is fullyParallel:false, so tests within a file run
-// serially in a single worker — no two concurrent turns contending for the
-// agent (which surfaces as a turn error under load).
+// Both live turns share ONE local agent. Within this file the traveler-flows
+// project (fullyParallel:false) already runs them serially; the turns are also
+// wrapped in `withAgentTurnLock` (support/agentLock.ts) so they never contend
+// with the advisor concierge turn either — a cross-process file mutex serialises
+// every live turn regardless of which Playwright project/worker runs it. This is
+// a LOCAL single-process concern only; prod's managed AgentCore fields concurrent
+// sessions by design.
 
 // ONB-2 — a never-onboarded traveler converses with the concierge from the
 // opener: types a self-disclosure, sends it, and a reply streams back.
@@ -33,23 +37,27 @@ test("ONB-2: a traveler converses with the concierge from the opener", async ({
   await opener.fill(
     "I love slow mornings, good coffee, and quiet coastal villages.",
   );
-  await page.getByRole("button", { name: "Reply" }).click();
-
-  // The conversation view takes over and records the user's turn verbatim.
-  await expect(page.getByTestId("conversation-stream")).toBeVisible();
-  await expect(
-    page
-      .locator('[data-role="user"]', { hasText: "quiet coastal villages" })
-      .first(),
-  ).toBeVisible();
 
   // The engaged composer is disabled while the reply streams and re-enables once
   // it settles — the robust "a reply came back" signal (counting turns is
   // fragile: the seeded opener and the agent's echoed first line can dedupe to
-  // one). Real turns take time — give them room.
+  // one). Real turns take time — give them room. The turn is held under the
+  // shared agent lock so it never contends with another live turn.
   const composer = page.getByTestId("chat-composer-textarea");
-  await expect(composer).toBeVisible();
-  await expect(composer).toBeEnabled({ timeout: 150_000 });
+  await withAgentTurnLock(async () => {
+    await page.getByRole("button", { name: "Reply" }).click();
+
+    // The conversation view takes over and records the user's turn verbatim.
+    await expect(page.getByTestId("conversation-stream")).toBeVisible();
+    await expect(
+      page
+        .locator('[data-role="user"]', { hasText: "quiet coastal villages" })
+        .first(),
+    ).toBeVisible();
+
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeEnabled({ timeout: 150_000 });
+  });
 
   // The turn must not have fallen back to the D015 error row.
   await expect(page.locator('[data-role="error"]')).toHaveCount(0);
@@ -85,18 +93,23 @@ test("ITB-4: the concierge takes a turn from an empty builder", async ({
   );
   await expect(composer).toBeVisible();
   await composer.fill("Can you suggest a boutique hotel to start?");
-  await page.locator("button:visible", { hasText: "Send" }).click();
 
-  // The message registers (the composer clears + disables while the turn
-  // streams), and the thread shows what we sent.
-  await expect(composer).toHaveValue("");
-  await expect(
-    page.getByText("Can you suggest a boutique hotel to start?").first(),
-  ).toBeVisible();
+  // The turn runs under the shared agent lock so it never contends with another
+  // live turn on the single local agent.
+  await withAgentTurnLock(async () => {
+    await page.locator("button:visible", { hasText: "Send" }).click();
 
-  // The turn runs end-to-end: the composer re-enables once the reply has
-  // streamed in, and it must have reached the concierge (not the local
-  // "couldn't reach" fallback).
-  await expect(composer).toBeEnabled({ timeout: 150_000 });
+    // The message registers (the composer clears + disables while the turn
+    // streams), and the thread shows what we sent.
+    await expect(composer).toHaveValue("");
+    await expect(
+      page.getByText("Can you suggest a boutique hotel to start?").first(),
+    ).toBeVisible();
+
+    // The composer re-enables once the reply has streamed in.
+    await expect(composer).toBeEnabled({ timeout: 150_000 });
+  });
+
+  // It must have reached the concierge (not the local "couldn't reach" fallback).
   await expect(page.getByText(/Couldn.t reach the concierge/)).toHaveCount(0);
 });

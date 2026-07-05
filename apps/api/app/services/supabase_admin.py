@@ -27,12 +27,40 @@ logger = logging.getLogger("ov_black.supabase_admin")
 
 
 class SupabaseAdminError(Exception):
-    """Raised when the Supabase admin API is unreachable or rejects a call."""
+    """Raised when the Supabase admin API is unreachable or rejects a call.
 
-    def __init__(self, reason: str, *, status_code: int | None = None) -> None:
+    ``error_code`` carries GoTrue's machine-readable reason (e.g.
+    ``email_exists``) when the call was *rejected* (a 4xx), so callers can
+    tell a duplicate apart from a genuine outage. It is ``None`` for network
+    failures and for bodies that don't carry the field.
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.status_code = status_code
+        self.error_code = error_code
+
+
+def _extract_error_code(resp: httpx.Response) -> str | None:
+    """Pull GoTrue's ``error_code`` from a rejected response.
+
+    GoTrue error bodies look like ``{"code":422,"error_code":"email_exists",
+    "msg":"…"}``. Returns ``None`` when the body isn't JSON or lacks the field
+    — callers fall back to the HTTP status.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    code = body.get("error_code")
+    return code if isinstance(code, str) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,13 +138,15 @@ async def generate_magic_link(
             await client.aclose()
 
     if resp.status_code >= 400:
+        error_code = _extract_error_code(resp)
         logger.warning(
             "supabase_admin.rejected",
-            extra={"email": email, "status": resp.status_code},
+            extra={"email": email, "status": resp.status_code, "error_code": error_code},
         )
         raise SupabaseAdminError(
             "supabase_admin_rejected",
             status_code=resp.status_code,
+            error_code=error_code,
         )
 
     logger.info("supabase_admin.magic_link_issued", extra={"email": email})
@@ -176,13 +206,15 @@ async def generate_invite_link(
             await client.aclose()
 
     if resp.status_code >= 400:
+        error_code = _extract_error_code(resp)
         logger.warning(
             "supabase_admin.rejected",
-            extra={"email": email, "status": resp.status_code},
+            extra={"email": email, "status": resp.status_code, "error_code": error_code},
         )
         raise SupabaseAdminError(
             "supabase_admin_rejected",
             status_code=resp.status_code,
+            error_code=error_code,
         )
 
     try:

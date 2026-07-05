@@ -24,11 +24,11 @@ mutation and a traveler mutation are the same write path with a different
 | Scenario | Title | Status | Automated by (layer) |
 | --- | --- | --- | --- |
 | [ADV-1](#adv-1--advisor-creates-a-client-without-inviting-them-yet) | Create a client without inviting them yet | 🟡 Partial | build-before-sign-in via P1/full-loop (API); *silent create* (invite-later) is a product gap |
-| [ADV-2](#adv-2--advisor-stands-up-the-itinerary-shell-brief--rough-timing) | Stand up the itinerary shell (brief + rough timing) | ✅ Automated | `POST /itinerary` brief+timing (API, ITB-1/1B); advisor-driven browser flow to write |
+| [ADV-2](#adv-2--advisor-stands-up-the-itinerary-shell-brief--rough-timing) | Stand up the itinerary shell (brief + rough timing) | ✅ Automated | `POST /itinerary` brief+timing (API, ITB-1/1B) + advisor-project browser intake (`e2e/advisor/itinerary-intake.spec.ts`) |
 | [ADV-2A](#adv-2a--ai-proposes-and-refines-the-cover-image) | AI proposes & refines the cover image | 🚧 Planned | — (no AI image generation exists; cover is provider/OG/manual only) |
-| [ADV-2B](#adv-2b--build-the-travel-party-existing-or-new-with-the-agent) | Build the travel party (existing or new, with the agent) | ✅ Automated | P4 party CRUD + cross-trip reuse + agent `record_party_member` (API); advisor browser to write |
+| [ADV-2B](#adv-2b--build-the-travel-party-existing-or-new-with-the-agent) | Build the travel party (existing or new, with the agent) | ✅ Automated | P4 party CRUD + cross-trip reuse (API) + advisor-project browser: durable add + trip-attach (`e2e/advisor/travel-party.spec.ts`); concierge-add agent-gated |
 | [ADV-2C](#adv-2c--the-advisors-agent-workspace-has-different-tools--access) | The advisor's agent workspace has different tools + access | ✅ Automated | P3 advisor/traveler audience isolation + `test_modes` tool bundles (API/agent) |
-| [ADV-3](#adv-3--advisor-builds-the-itinerary-by-conversation-on-the-travelers-behalf) | Build the itinerary by conversation, on the traveler's behalf | 🟡 Partial | P3 search→propose→approve + full-loop build (API); live grounded turn agent-gated; advisor browser to write |
+| [ADV-3](#adv-3--advisor-builds-the-itinerary-by-conversation-on-the-travelers-behalf) | Build the itinerary by conversation, on the traveler's behalf | 🟡 Partial | P3 search→propose→approve + full-loop build (API) + advisor-project browser turn loop (`e2e/advisor/concierge.spec.ts`); grounded *semantic* turn still agent-gated |
 | [ADV-4](#adv-4--advisor-hand-authors-a-node-in-a-card-like-editor) | Hand-author a node in a Card-like editor (type, links, price) | 🟡 Partial | `POST /nodes` + `/from-inventory` (P3) + `/from-link` OG preview (API); **card-editor UI missing** |
 | [ADV-5](#adv-5--advisor-picks-flights-via-duffel) | Pick flights via Duffel | 🟡 Partial | Duffel provider + `search_inventory(flight)` + `propose_flight` (API, P3 flight lane); **flight-picker UI missing**; live creds-gated |
 | [ADV-6](#adv-6--advisor-works-with-the-agent-to-analyze-the-itinerary) | Work with the agent to Analyze the itinerary | 🟡 Partial | Analyze/Fill engine (P3); **no agent tool to run Analyze conversationally**; UI trigger to confirm |
@@ -85,23 +85,28 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-2 · Advisor stands up the itinerary shell (brief + rough timing)
 
-- **Status:** ✅ Automated (API + shared intake); advisor-driven browser flow still to write.
+- **Status:** ✅ Automated (API + advisor-project browser intake).
 - **Personas:** Advisor (on a client's behalf)
 - **Surface:** Web UI (Playwright) + API seam (pytest)
 - **Preconditions:** Advisor owns a client (ADV-1). No itinerary yet, or a fresh empty one.
 - **Automated by:**
+  - `apps/web/e2e/advisor/itinerary-intake.spec.ts::ADV-2` — an advisor drives the
+    audience-aware intake ("What are we planning?"), writes the brief + a rough window,
+    and saves into the shell; the gate lifts to the advisor **dashboard** (not the
+    traveler's "blank canvas"), and the API seam confirms `brief` + `timing_kind=window`
+    + bounds + `duration_nights` + the client binding persisted.
   - `apps/api/tests/test_itineraries.py::test_create_itinerary_forwards_brief_and_timing` — `POST /itinerary` accepts + echoes `brief` + timing.
   - `apps/api/tests/test_itineraries.py::test_create_itinerary_persists_brief_and_timing` — brief + timing round-trip through the serializer.
   - The intake experience is the **same surface** as the traveler's, already specced +
     browser-tested under [ITB-1](./itinerary-builder.md#itb-1--first-run-intake-captures-brief--timing)
     (brief), [ITB-1B](./itinerary-builder.md#itb-1b--fuzzy-window--target-duration) (rough
     window + duration), [ITB-1C](./itinerary-builder.md#itb-1c--flexible-with-a-constraints-note) (flexible note).
-  - Advisor-project browser run of the intake (`apps/web/e2e/advisor/…`) — **to write.**
 
 **Given** an advisor with a client but no plan yet,
 
 **When**
-1. the advisor creates an itinerary for the client with a title;
+1. the advisor creates an itinerary *for the client* from the client page's "New itinerary"
+   action, landing in the first-run intake;
 2. the advisor writes the free-text brief ("7 days in Italy, anniversary, slow and
    food-forward");
 3. the advisor sets rough timing — a *window* ("late September, ~7 nights") rather than
@@ -118,10 +123,14 @@ mutation and a traveler mutation are the same write path with a different
 **Notes / gaps**
 - The three timing modes and their validation are fully specced under ITB; ADV-2 exists
   to assert the **advisor** drives the same intake on a client's behalf (personas differ,
-  surface does not — see the ITB-1 note).
-- 🔎 The browser half is currently traveler-project only; the advisor-project spec that
-  drives the intake as an advisor (own a client → new itinerary → brief + window → saved)
-  is the net-new test here.
+  surface does not — see the ITB-1 note). The advisor-project spec now proves this.
+- ✅ **G-ITIN-FOR-CLIENT closed.** The command-center client detail page's Itineraries panel
+  carries a **"New itinerary"** action (`NewItineraryButton` → `startItineraryForClientAction`)
+  that creates a `client_id`-bound itinerary via `POST /itinerary` and drops the advisor into
+  its intake — the advisor-side counterpart to the traveler's `startNewItinerary` (which only
+  ever binds to the caller's own client row). `itinerary-intake.spec.ts` now drives creation +
+  intake entirely in the browser and seeds only the client, so the client binding is the
+  affordance under test. Tracked in [advisor-plan.md](./advisor-plan.md) as **G-ITIN-FOR-CLIENT**.
 
 ---
 
@@ -164,11 +173,16 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-2B · Build the travel party (existing or new, with the agent)
 
-- **Status:** ✅ Automated (API); advisor-project browser run to write.
+- **Status:** ✅ Automated (API + advisor-project browser: durable add + trip-attach).
 - **Personas:** Advisor ↔ Agent (with traveler self-service overlap)
 - **Surface:** Web UI (Playwright) + API seam (CLI/pytest)
 - **Preconditions:** Advisor owns a client with (maybe) an existing party roster.
 - **Automated by:**
+  - `apps/web/e2e/advisor/travel-party.spec.ts::ADV-2B` — two facets: (1) the advisor
+    **adds** a durable member on the client page (`created_by_actor == advisor`, shown as
+    "via advisor" + at the API seam); (2) the advisor **attaches** a remembered member to a
+    trip via the dashboard's "Add from household" → "On this trip", and the itinerary's
+    party roster (`GET /itineraries/{id}/party`) then carries it.
   - `apps/cli/tests/e2e/test_pillar4_details_vault_e2e.py::test_advisor_party_member_crud_and_attach_to_trip` — advisor creates a durable member (`created_by_actor == "advisor"`), edits a constraint, attaches it to the trip; the per-trip row resolves back to the member.
   - `apps/cli/tests/e2e/test_pillar4_details_vault_e2e.py::test_party_member_is_remembered_across_trips` — the same saved member attaches to a second itinerary without re-entry ("select from existing").
   - Agent path (efficient add via conversation): `record_party_member` / `update_party_member`
@@ -194,9 +208,14 @@ mutation and a traveler mutation are the same write path with a different
   advisor and (their own) the traveler.
 
 **Notes / gaps**
-- ✅ Both "select existing" and "agent adds new" are covered at the API seam (P4 + the
-  traveler tools). The net-new test is the **advisor browser** flow: open a client, attach
-  a remembered member + add one via the concierge, see the trip roster update.
+- ✅ "Select existing" (attach) and "add new" are now **browser-covered** on the advisor
+  project, plus "agent adds new" at the API seam (the traveler tools). The per-trip attach
+  UI is the itinerary **dashboard**'s travel-party panel (`PartyPanel` — "Add from
+  household" → "On this trip"); a durable member is added on the client-detail page.
+- 🔎 Correction to the earlier plan note: there **is** a per-trip party-attach affordance
+  (the dashboard PartyPanel) — the client roster isn't the only surface. What stays out of
+  the browser is adding a member by **telling the concierge** (`record_party_member` is
+  Bedrock-gated/semantic, asserted against a real agent).
 - The vault/passport half of P4 is out of scope for the advisor party scenario (it's
   traveler-driven, [ONB-3](./onboarding.md#onb-3--user-adjusts-preferences-after-onboarding)).
 
@@ -242,16 +261,21 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-3 · Advisor builds the itinerary by conversation, on the traveler's behalf
 
-- **Status:** 🟡 Partial — build spine ✅ at API seam; the live *grounded* turn is agent-gated; advisor browser flow to write.
+- **Status:** 🟡 Partial — build spine ✅ + the turn **loop** now browser-covered on the advisor project; the grounded *semantic* turn stays agent-gated.
 - **Personas:** Advisor ↔ Agent
 - **Surface:** Web UI (Playwright) + agent (SSE) + API seam
 - **Preconditions:** An itinerary shell with a brief (ADV-2).
 - **Automated by:**
+  - `apps/web/e2e/advisor/concierge.spec.ts::ADV-3` — the advisor drives a real turn from
+    their **private** concierge aside (`audience="advisor"`, the "Concierge" tab the
+    traveler never sees): the composer takes the message, the reply streams, the composer
+    re-enables, no "couldn't reach" fallback / D015 error. Asserted **structurally** (never
+    on wording); a live agent (`apps/agent` on :8080) is required — run the live-agent specs
+    in isolation / `--workers=1` so they don't contend with the traveler chat turns.
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_search_inventory_returns_normalized_items` — search dispatches across live provider lanes with provenance (self-skips dark lanes).
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_proposing_an_inventory_node_carries_provenance_and_cost` — a searched item becomes a `proposed` node with source + cost (`POST /nodes/from-inventory`).
   - `apps/cli/tests/e2e/test_full_loop_e2e.py::test_loop_invite_to_approved` — the advisor drives dream → build (drop card, analyze, fill) → approve as one narrative.
   - `apps/cli/tests/e2e/test_smoke_e2e.py::test_chat_turn_persists_and_keeps_graph_sound` — an advisor turn persists and the graph stays sound (invariant, not wording).
-  - A live, *grounded-in-the-brief* build turn needs a real tool-using agent — asserted at the API seam / real Bedrock, never on wording. Advisor-project browser turn — **to write.**
 
 **Given** an advisor at the concierge aside of an itinerary with a stated brief,
 
@@ -270,8 +294,8 @@ mutation and a traveler mutation are the same write path with a different
 **Notes / gaps**
 - ✅ The build **data spine** (search → propose → graph integrity → cost) is thoroughly
   covered by P3 + full-loop. The **turn loop** itself (composer re-enables, reply streams,
-  no error row) is the browser assertion to add under the advisor project, mirroring the
-  traveler `chat.spec.ts`.
+  no error row) is now browser-asserted under the advisor project (`concierge.spec.ts`),
+  mirroring the traveler `chat.spec.ts` but on the advisor's private "Concierge" tab.
 - ⚠️ *Semantic* build quality (the right cards for the brief) is Bedrock-gated and lives at
   the API seam / F3 craft-feel UAT — out of scope for a wording-free browser test.
 

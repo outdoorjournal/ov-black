@@ -81,6 +81,18 @@ pnpm -C infra/cdk cdk deploy OvBlackApi-staging -c imageTag=<sha>   # needs cred
 
 Three complementary tools exist for exercising real workflows end-to-end (vs. unit/integration tests). Use them when verifying a feature actually works in the running stack — not as a substitute for pytest/vitest, which remain the fast default. **`ovb` (below) is the default for API-level work** — it wraps the JWT minting + every route in one typed CLI.
 
+### The local stack & restarting the agent
+
+`scripts/dev.sh` brings up the whole local stack in [mprocs](mprocs.yaml) — API (`:8000`), the real concierge **agent** (`:8080`, under `AWS_PROFILE=tov-sso`), and web (`:3000`), each in its own pane with `autorestart: true`; Supabase (DB/Auth/Studio/Mailpit) comes up as a preflight. `scripts/dev.sh --mock` swaps the real agent for the in-process canned mock (no agent pane, **no AWS**). The status pane shows every URL + health.
+
+**The agent does not hot-reload.** The API (`uvicorn --reload`) and web (`next dev`) restart themselves on a code change; the agent pane runs `uv run python -m agent` **without `--reload`**, so after you edit anything under [apps/agent](apps/agent/) — a prompt, a tool, the turn loop — the running agent keeps serving the **old** code until it is restarted. **You must restart it to test a change** (and it's also the fix for a wedged turn).
+
+```bash
+scripts/restart-agent.sh    # stop the :8080 agent, bring a fresh one up, wait for /ping
+```
+
+The script is the reliable, scriptable restart — use it (not a manual kill). It works both ways: under mprocs it stops the agent and lets `autorestart` relaunch it with the pane's env; standalone (no mprocs) it starts a fresh detached process itself. It blocks until `http://localhost:8080/ping` answers `Healthy` (~1–2s), so a follow-up e2e run won't race a half-started agent; it exits non-zero (with the likely cause — usually an expired `aws sso login --profile tov-sso`) if the agent never comes healthy. Interactive alternative when you're sitting in mprocs: focus the `agent` pane and press `r`.
+
 ### `ovb` — operator CLI + e2e harness ([apps/cli](apps/cli/))
 
 A uv-managed Python CLI (package `ovb`) that drives a live/local stack the same way the UI does — view/mutate the itinerary graph, search inventory, run Analyze/Fill, and **chat with the agent as a traveler or staff** (the SSE turn loop). It's a thin layer over a generated SDK ([apps/cli/src/ovb/_generated](apps/cli/src/ovb/_generated/), regenerate with `apps/cli/scripts/generate.sh` after an apps/api schema change) that the pytest e2e suite also uses, so a manual flow and a test are the same scenario. Full docs: [apps/cli/README.md](apps/cli/README.md).

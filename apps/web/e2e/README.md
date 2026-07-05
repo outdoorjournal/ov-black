@@ -39,9 +39,15 @@ The **`traveler-flows`** project is `fullyParallel: false` and depends on
 the shared advisor token is cached to a tmp file (`support/auth.ts`) so the
 project's several spec files, spread across worker processes, mint the advisor
 link exactly **once** (concurrent magic-link generation for one email invalidates
-itself). Local-only: it provisions fresh users on demand. The live-agent chat
-turns (`chat.spec.ts`) share one file so they run serially against the single
-local agent rather than contending.
+itself). Local-only: it provisions fresh users on demand.
+
+**Live-agent turns serialise through a shared lock.** The dev stack runs ONE
+local agent (`apps/agent` on :8080); two live turns at once contend on it. Every
+live turn — the traveler `chat.spec` opener/builder turns AND the advisor
+`concierge.spec` turn — is wrapped in `withAgentTurnLock` (`support/agentLock.ts`),
+a cross-process file mutex, so they serialise no matter which Playwright
+project/worker runs them. This is a LOCAL single-process concern only; production
+runs on managed AgentCore, which fields concurrent sessions by design.
 
 ## How login works here
 

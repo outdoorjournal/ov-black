@@ -122,6 +122,20 @@ def stub_admin_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clients_service, "generate_invite_link", _boom)
 
 
+@pytest.fixture()
+def stub_admin_email_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub generate_invite_link to reject with GoTrue's 422 ``email_exists`` —
+    the address is already a registered auth user (so the invite can't create
+    it), even though it isn't one of *this* advisor's clients."""
+
+    async def _rejected(email: str, redirect_to: str, **_kwargs: Any) -> MagicLinkIssued:
+        raise SupabaseAdminError(
+            "supabase_admin_rejected", status_code=422, error_code="email_exists"
+        )
+
+    monkeypatch.setattr(clients_service, "generate_invite_link", _rejected)
+
+
 @pytest.mark.asyncio
 async def test_ok_path_inserts_client_dossier_facts_with_one_commit(
     stub_admin_ok: list[tuple[str, str]],
@@ -207,4 +221,31 @@ async def test_upstream_failure_rolls_back_and_returns_unavailable(
     assert session.commits == 0
     # Service MUST rollback so the client + dossier + facts rows do not
     # persist when the welcome email could not be issued.
+    assert session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_already_registered_email_is_duplicate_not_outage(
+    stub_admin_email_exists: None,
+) -> None:
+    # Regression: an email that isn't THIS advisor's client (so the per-advisor
+    # unique index doesn't fire and the flush succeeds) but IS an already-
+    # registered auth user — another advisor's client, or any account. GoTrue
+    # rejects the invite with 422 ``email_exists``; that is a DUPLICATE, and it
+    # must surface on the 409 path, not as a 502 "auth unreachable" outage.
+    advisor_id = uuid.uuid4()
+    session = FakeSession()
+
+    result = await create_client_with_dossier(
+        session,
+        advisor_id=advisor_id,
+        payload=_payload(email="taken@example.com"),
+    )
+
+    assert result.outcome is ClientCreateOutcome.DUPLICATE_EMAIL
+    assert result.client_id is None
+    assert result.issued is None
+    assert session.commits == 0
+    # The client + dossier inserts must roll back — no orphan row for an email
+    # we could never have invited.
     assert session.rollbacks == 1

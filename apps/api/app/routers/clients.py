@@ -138,7 +138,7 @@ def _access_status(client: Client) -> AccessStatus:
     responses={
         201: {"description": "Client + Dossier created, welcome email sent."},
         403: {"description": "Caller is not an advisor."},
-        409: {"description": "Email is already tied to one of this advisor's clients."},
+        409: {"description": "Email already exists — this advisor's client, or an already-registered account."},
         502: {"description": "Supabase Auth admin API is unavailable."},
     },
     summary="Create a new client + Dossier and email them a welcome sign-in link.",

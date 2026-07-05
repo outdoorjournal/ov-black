@@ -64,7 +64,7 @@ export function ChatPanel({
       )}
       {/* min-h-0 lets this flex child shrink below its content so overflow-y-auto
           actually scrolls, instead of growing the panel past the viewport. */}
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 bg-white">
         <AnimatePresence initial={false}>
           {messages.map((m) => (
             <MessageBubble key={m.id} message={m} />

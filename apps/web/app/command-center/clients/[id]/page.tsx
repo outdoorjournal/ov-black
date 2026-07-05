@@ -25,6 +25,7 @@ import { ClientContactsSection } from "./_components/ClientContactsSection";
 import { ClientDocumentsSection } from "./_components/ClientDocumentsSection";
 import { ClientFactColumns } from "./_components/ClientFactColumns";
 import { ClientPartySection } from "./_components/ClientPartySection";
+import { NewItineraryButton } from "./_components/NewItineraryButton";
 
 // Auth-gated per request. Single-page workspace: header + dossier basics
 // (typed core), itineraries roster filtered to this client, recent sessions,
@@ -200,6 +201,7 @@ export default async function ClientDetailPage({
           id="itineraries-heading"
           title="Itineraries"
           eyebrow={`${itineraries.length}`}
+          action={<NewItineraryButton clientId={client.id} />}
         />
         {itineraries.length === 0 ? (
           <p className="font-sans text-sm italic text-paper/45">
@@ -266,21 +268,26 @@ function SectionHeader({
   id,
   title,
   eyebrow,
+  action,
 }: {
   id: string;
   title: string;
   eyebrow?: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-paper/10 pb-2">
       <h2 id={id} className="font-serif text-2xl tracking-tight text-paper">
         {title}
       </h2>
-      {eyebrow ? (
-        <span className="font-sans text-[10px] uppercase tracking-label text-paper/55">
-          {eyebrow}
-        </span>
-      ) : null}
+      <div className="flex items-center gap-3">
+        {eyebrow ? (
+          <span className="font-sans text-[10px] uppercase tracking-label text-paper/55">
+            {eyebrow}
+          </span>
+        ) : null}
+        {action}
+      </div>
     </div>
   );
 }

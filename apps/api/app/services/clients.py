@@ -189,6 +189,18 @@ async def create_client_with_dossier(
         issued = await generate_invite_link(email, redirect_to)
     except SupabaseAdminError as exc:
         await session.rollback()
+        # An already-registered email is a DUPLICATE, not an outage. The
+        # per-advisor unique index (above) catches "this advisor's client";
+        # this catches the wider case — another advisor's client, or any
+        # existing auth user — where GoTrue rejects the invite with 422
+        # ``email_exists``. Surface it on the duplicate path so the advisor
+        # sees "already exists" rather than a misleading "auth unreachable".
+        if exc.error_code == "email_exists" or exc.status_code == 422:
+            logger.info(
+                "clients.create.duplicate_email_registered",
+                extra={"email": email, "advisor_id": str(advisor_id)},
+            )
+            return ClientCreateResult(ClientCreateOutcome.DUPLICATE_EMAIL)
         logger.warning(
             "clients.create.admin_failure",
             extra={

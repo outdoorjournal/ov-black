@@ -54,6 +54,10 @@ export interface ItineraryTiming {
   date_end?: string | null;
   duration_nights?: number | null;
   timing_note?: string | null;
+  // Ownership/linkage (GraphResponse.itinerary carries the full ItineraryResponse),
+  // so a spec can assert the itinerary is bound to the intended client.
+  client_id?: string | null;
+  created_by?: string | null;
 }
 
 /**
@@ -69,6 +73,118 @@ export async function getItineraryAsAdvisor(id: string): Promise<ItineraryTiming
   const data = (await resp.json()) as { itinerary?: ItineraryTiming };
   const itinerary = data.itinerary ?? (data as ItineraryTiming);
   return itinerary;
+}
+
+// ── Advisor seeds (client + itinerary) ───────────────────────────────────────
+// Some advisor scenarios begin PAST the itinerary shell — they need a
+// client-bound itinerary already standing (e.g. to reach the concierge or a
+// trip's party) without re-driving creation + intake in the browser every time.
+// So those specs seed that precondition at the API seam — the advisor is
+// entitled to POST /clients and POST /itinerary — and then drive the *action*
+// under test in the browser. (ADV-2 itself no longer seeds the itinerary: the
+// command-center "New itinerary" affordance now creates the client binding in
+// the browser — see itinerary-intake.spec.ts.) This mirrors the Collection seed
+// helpers below and the harness's "seed state, drive the action" rule of thumb.
+
+/**
+ * Create a client owned by the advisor (POST /clients) and return its id. Like
+ * the browser New Client form, this mints the invited auth user + welcome mail
+ * — harmless against an example.com address, which never delivers. Pass a UNIQUE
+ * email per test so the client is unambiguous and runs never collide.
+ */
+export async function createClientAsAdvisor(
+  fullName: string,
+  email: string,
+): Promise<string> {
+  const resp = await advisorFetch("/clients", {
+    method: "POST",
+    body: JSON.stringify({
+      full_name: fullName,
+      email,
+      dossier: { typed: { contact_preference: "email", travel_party_notes: "" } },
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`POST /clients failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as { client_id: string }).client_id;
+}
+
+/**
+ * Create an itinerary linked to a client (POST /itinerary), authored by the
+ * advisor, and return its id. Timing/brief are intentionally left empty so the
+ * first-run intake still gates — a spec seeds the brief here only when it needs
+ * to start *past* the intake (e.g. to reach the concierge). Returns the id.
+ */
+export async function createItineraryForClientAsAdvisor(
+  clientId: string,
+  opts: { title?: string; brief?: string } = {},
+): Promise<string> {
+  const resp = await advisorFetch("/itinerary", {
+    method: "POST",
+    body: JSON.stringify({
+      title: opts.title ?? "",
+      client_id: clientId,
+      ...(opts.brief ? { brief: opts.brief } : {}),
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`POST /itinerary failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as { id: string }).id;
+}
+
+/** A client's durable party roster as the advisor sees it (for cross-actor backstops). */
+export async function getClientPartyAsAdvisor(
+  clientId: string,
+): Promise<
+  Array<{
+    id: string;
+    full_name: string;
+    dietary?: string | null;
+    created_by_actor?: string | null;
+  }>
+> {
+  const resp = await advisorFetch(`/clients/${clientId}/party-members`);
+  if (!resp.ok) {
+    throw new Error(`GET party-members failed (${resp.status})`);
+  }
+  return ((await resp.json()) as { members: Array<{ id: string; full_name: string; dietary?: string | null; created_by_actor?: string | null }> }).members;
+}
+
+/**
+ * Seed a durable ("remembered") household party member for a client (advisor
+ * write) and return its id — the record a trip can later attach from. Members
+ * created this way are stamped `created_by_actor = advisor`.
+ */
+export async function createPartyMemberAsAdvisor(
+  clientId: string,
+  body: { fullName: string; dietary?: string },
+): Promise<string> {
+  const resp = await advisorFetch(`/clients/${clientId}/party-members`, {
+    method: "POST",
+    body: JSON.stringify({
+      full_name: body.fullName,
+      ...(body.dietary ? { dietary: body.dietary } : {}),
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`POST party-member failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as { id: string }).id;
+}
+
+/** The itinerary's own party roster ("On this trip") as the advisor sees it. */
+export async function getItineraryPartyAsAdvisor(
+  itineraryId: string,
+): Promise<
+  Array<{ traveler_id: string; party_member_id: string | null; member?: { full_name?: string } | null }>
+> {
+  const resp = await advisorFetch(`/itineraries/${itineraryId}/party`);
+  if (!resp.ok) {
+    throw new Error(`GET itinerary party failed (${resp.status})`);
+  }
+  return ((await resp.json()) as { members: Array<{ traveler_id: string; party_member_id: string | null; member?: { full_name?: string } | null }> }).members;
 }
 
 // ── Collection (wish list) seam ──────────────────────────────────────────────
