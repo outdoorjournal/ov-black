@@ -12,6 +12,8 @@
 // internal state — the server never resolves to "active conversation"
 // because it's a transient client state, not a load shape.
 
+import type { ReactNode } from "react";
+
 import type {
   AgentTurnSummary,
   MyItinerarySummary,
@@ -75,15 +77,9 @@ export function BasecampShell({
         />
       ) : null}
 
-      {/* Concierge on the LEFT (mirroring the itinerary shell). DOM order stays
-          content-then-chat so a phone shows the itineraries first and the chat
-          below; `lg:order-*` flips them to chat-left on the desktop grid. */}
       {variant === "post_first_touch" ? (
-        <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[minmax(0,480px)_1fr] lg:gap-10">
-          <div className="flex flex-col gap-6 lg:order-2">
-            {onboardingComplete ? <EmptyItinerariesHint /> : <OnboardingReminder />}
-          </div>
-          <div className="lg:order-1">
+        <ConciergeSplit
+          concierge={
             <RightRailChat
               clientId={clientId}
               accessToken={accessToken}
@@ -92,16 +88,15 @@ export function BasecampShell({
               existingSessionId={sessionId}
               onboardingComplete={onboardingComplete}
             />
-          </div>
-        </div>
+          }
+        >
+          {onboardingComplete ? <EmptyItinerariesHint /> : <OnboardingReminder />}
+        </ConciergeSplit>
       ) : null}
 
       {variant === "with_itineraries" ? (
-        <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[minmax(0,480px)_1fr] lg:gap-10">
-          <div className="flex flex-col gap-6 lg:order-2">
-            <ItineraryGrid itineraries={itineraries} />
-          </div>
-          <div className="lg:order-1">
+        <ConciergeSplit
+          concierge={
             <RightRailChat
               clientId={clientId}
               accessToken={accessToken}
@@ -110,10 +105,38 @@ export function BasecampShell({
               existingSessionId={sessionId}
               onboardingComplete={onboardingComplete}
             />
-          </div>
-        </div>
+          }
+        >
+          <ItineraryGrid itineraries={itineraries} />
+        </ConciergeSplit>
       ) : null}
     </BasecampChrome>
+  );
+}
+
+/**
+ * The returning-visitor split: the concierge flush against the rail on the left
+ * (a flat, full-height, sticky column — the SAME chrome as the itinerary shell's
+ * ConciergeColumn), the surface content scrolling on the right. DOM order stays
+ * content-then-concierge so a phone shows the content first with the chat as a
+ * bounded block below; `lg:order-*` flips to concierge-left on desktop.
+ */
+function ConciergeSplit({
+  concierge,
+  children,
+}: {
+  concierge: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col lg:flex-row">
+      <div className="order-1 min-w-0 flex-1 px-6 pb-12 pt-6 sm:px-10 lg:order-2">
+        {children}
+      </div>
+      <aside className="order-2 h-[75vh] shrink-0 border-t border-ink/10 bg-paper lg:order-1 lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-[400px] lg:border-r lg:border-t-0">
+        {concierge}
+      </aside>
+    </div>
   );
 }
 
