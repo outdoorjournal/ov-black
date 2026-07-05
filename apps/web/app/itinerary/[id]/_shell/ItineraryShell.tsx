@@ -25,6 +25,8 @@ import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/iti
 import { TimelineDataProvider } from "@/app/_components/itinerary-graph/TimelineDataContext";
 import type { UserRole } from "@/lib/role";
 
+import { CardComposer } from "./CardComposer";
+import { ComposerControlProvider, type ComposerPrefill } from "./ComposerControl";
 import { ConciergeColumn } from "./ConciergeColumn";
 import { ConciergeControlProvider } from "./ConciergeControl";
 import { MobileTabBar } from "./MobileTabBar";
@@ -67,6 +69,11 @@ export function ItineraryShell({
   // Q5 (PS6): ≥1100px the concierge is open by default but collapsible to a slim
   // edge tab, so the planning space can take the full width when wanted.
   const [conciergeCollapsed, setConciergeCollapsed] = useState(false);
+  // The card composer (ADV-4) is summoned from the Studio button, the Collection
+  // add affordance, or an empty timeline slot; a null prefill = compose into the
+  // Collection, a {dayKey, minute} prefill = schedule at that slot.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerPrefill, setComposerPrefill] = useState<ComposerPrefill>(null);
 
   if (showIntake && apiBaseUrl && accessToken) {
     return (
@@ -97,6 +104,14 @@ export function ItineraryShell({
         <ConciergeControlProvider
           value={{ openConcierge: () => setConciergeOpen(true) }}
         >
+         <ComposerControlProvider
+          value={{
+            openComposer: (prefill) => {
+              setComposerPrefill(prefill ?? null);
+              setComposerOpen(true);
+            },
+          }}
+         >
           <div
             data-testid="itinerary-shell"
             className="relative flex min-h-0 flex-1 overflow-hidden"
@@ -154,7 +169,17 @@ export function ItineraryShell({
             {/* Place mode's cross-surface chrome (PS5): the holding chip + undo
                 toast float above every destination, driven by the shared store. */}
             <PlaceModeLayer />
+
+            {/* Card composer (ADV-4): summoned over any destination. Inside the
+                store Provider so it can author via the shared graph store. */}
+            {composerOpen ? (
+              <CardComposer
+                prefill={composerPrefill}
+                onClose={() => setComposerOpen(false)}
+              />
+            ) : null}
           </div>
+         </ComposerControlProvider>
         </ConciergeControlProvider>
       </TimelineDataProvider>
     </itineraryGraphStore.Provider>

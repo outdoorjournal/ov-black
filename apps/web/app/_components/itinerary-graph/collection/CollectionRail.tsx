@@ -24,12 +24,15 @@ import {
   inferCardKind,
   statusToKind,
 } from "../shared/cards/CardBody";
+import { useComposerControl } from "@/app/itinerary/[id]/_shell/ComposerControl";
+
 import {
   collectionDragId,
   collectionItemsOf,
   itineraryGraphStore,
   selectCanLeaveNote,
   selectCanSchedule,
+  selectEditable,
 } from "../store/itineraryGraphStore";
 
 import { GROUP_AXES, groupCollection, type GroupAxis } from "./grouping";
@@ -174,6 +177,8 @@ function GroupByToggle({
 function AddAffordances() {
   const storeApi = itineraryGraphStore.useStoreApi();
   const savingLink = itineraryGraphStore.useStore((s) => s.savingLink);
+  const editable = itineraryGraphStore.useStore(selectEditable);
+  const { openComposer } = useComposerControl();
   const [link, setLink] = useState("");
   const [note, setNote] = useState("");
 
@@ -195,6 +200,16 @@ function AddAffordances() {
 
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-ink/10 px-4 py-3">
+      {editable ? (
+        <button
+          type="button"
+          onClick={() => openComposer()}
+          data-testid="collection-add-card"
+          className="h-8 rounded-md border border-ink/20 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5"
+        >
+          Add a card
+        </button>
+      ) : null}
       <label className="flex items-center gap-2">
         <span className="w-14 shrink-0 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
           Link

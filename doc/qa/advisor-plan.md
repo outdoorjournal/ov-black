@@ -83,22 +83,29 @@ remaining scenario-unlockers each open one ADV scenario, and two are demo-polish
 - **Test to add:** the assertable outcome is choice-independent — after the action, the
   itinerary carries a `cover_image` derived from the brief; browser shows the hero.
 
-### ✅ Closed: G-NODE-EDITOR — advisor card editor UI (ADV-4)
-- **Shipped:** an "Add a card" editor in the Studio **`AuthoringPanel`** (the advisor Build
-  aside), with two shapes mapped 1:1 to the existing write paths via a new
-  `itineraryGraphStore.authorNode` action: **Details** (type select + name + price pair
+### ✅ Closed: G-NODE-EDITOR — advisor card composer UI (ADV-4)
+- **Shipped:** a summonable **`CardComposer`** overlay (store-driven, opened via a new
+  `ComposerControl` context from the shell) with two shapes mapped 1:1 to the existing write
+  paths via a new `itineraryGraphStore.authorNode` action: **Details** (type + name + price
   amount/currency/`per_person|total`) → `POST /nodes` (status `proposed`), and **Link**
   (paste a URL) → `POST /nodes/from-link` (server-fetched OG preview, degrading to the bare
-  URL). Writes gate on the edit lock (`selectEditable`), like the inventory "Add". Pure
-  frontend — no API change (only re-exported `CostKind` from the api-client).
-- **v1 boundary:** price applies to the **Details** path only. The `updateNode` client
-  wrapper's patch type carries no cost, so pricing a pasted-link card (create-then-patch)
-  is deferred; a link card is a "maybe" that can be priced later via edit.
-- **Tested:** `apps/web/e2e/advisor/node-editor.spec.ts` (ADV-4) — acquires the lock on the
-  Timeline, crosses to Studio (lock carries via the shared store), authors a typed+priced
-  card (appears in the Collection) and a pasted-link card, each backstopped at the API seam
-  (type + status + cost pair; `source="web"` + URL for the link). `actor_kind=advisor` is
-  Pillar 3's job (not on the node read).
+  URL). Writes gate on the edit lock (`selectEditable`). A **live card preview** (the real
+  `CardShell`+`CardBody`) updates as the advisor edits. Pure frontend — no API change (only
+  re-exported `CostKind`).
+- **Three entry points** (per the placement discussion): the Studio "Add a card" button and
+  the Collection add affordance → compose into the (shared) Collection; an **empty timeline
+  slot** click → the composer pre-set to that day + minute (Outlook-style), landing the card
+  **scheduled** there (`authorNode`'s `schedule` → `starts_at` + 1h default). The create-slot
+  layer sits under the cards (empty space only) and is advisor-lock-gated.
+- **Deferred (product decision):** an **advisor-only** Collection needs a node
+  `audience`/visibility column + filtering it from every traveler-facing read (graph API,
+  Collection, agent context). Phase 1 ships shared-Collection + scheduled; advisor-private next.
+- **v1 boundary:** price applies to the **Details** shape only (the `updateNode` wrapper's
+  patch type carries no cost, so pricing a link card is deferred).
+- **Tested:** `apps/web/e2e/advisor/node-editor.spec.ts` (ADV-4) — three composer flows
+  (typed+priced via Studio with a live-preview assertion → Collection; pasted link via the
+  Collection affordance → `web` node; empty timeline-slot click → **scheduled** node with
+  `starts_at`), each API-seam-backstopped. `actor_kind=advisor` is Pillar 3's job.
 
 ### G-ANALYZE-AGENT — Analyze as a conversational step (ADV-6)
 - **Goal:** the advisor can ask the concierge to analyze the plan and hear what's wrong.

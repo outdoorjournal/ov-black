@@ -230,13 +230,16 @@ export type ItineraryGraphState = {
   // preview the server fetches (→ POST /nodes/from-link). Gated by
   // `selectEditable` (needs the edit lock). `cost` is a both-or-neither
   // amount+currency with a per_person|total kind; it applies to the typed
-  // shape only (from-link carries no cost).
+  // shape only (from-link carries no cost). `schedule` (a day + minute-of-day)
+  // places the typed card ON the timeline at that time (Outlook-style
+  // create-at-slot); omit it and the card lands in the (unscheduled) Collection.
   authorNode: (input: {
     type: NodeType;
     title?: string;
     url?: string;
     note?: string;
     cost?: { amount: string; currency: string; kind: CostKind } | null;
+    schedule?: { dayKey: string; minute: number } | null;
   }) => void;
   removeNode: (id: string) => void;
   // ── traveler notes (feedback for staff; gated by `selectCanLeaveNote`) ──
@@ -887,7 +890,7 @@ export const itineraryGraphStore = createStoreContext<
             }
           });
         },
-        authorNode: ({ type, title, url, note, cost }) => {
+        authorNode: ({ type, title, url, note, cost, schedule }) => {
           const s = get();
           if (!selectEditable(s)) return;
           const c = client();
@@ -930,6 +933,19 @@ export const itineraryGraphStore = createStoreContext<
                   cost_kind: cost.kind,
                 }
               : null;
+          // Schedule (Outlook-style create-at-slot): a day + minute places the
+          // card on the timeline at that time; otherwise it stays an unscheduled
+          // Collection item. Default a 1h duration, mirroring the seed helpers.
+          const startIso = schedule
+            ? rebaseStartToDayAndMinute(
+                schedule.dayKey,
+                schedule.minute,
+                s.sample.timezoneOffsetHours,
+              )
+            : null;
+          const scheduled = startIso
+            ? { starts_at: startIso, duration_minutes: 60 }
+            : null;
           const tempId = `tmp-${Date.now()}-${Math.round(
             Math.random() * 1e6,
           )}`;
@@ -942,7 +958,9 @@ export const itineraryGraphStore = createStoreContext<
             title: cleanTitle,
             source: null,
             source_id: null,
-            metadata: {},
+            metadata: startIso
+              ? { start_time: startIso, duration_minutes: 60 }
+              : {},
             ...(priced ?? {}),
           };
           set({ nodes: [...s.nodes, optimistic], flashNodeId: tempId });
@@ -953,6 +971,7 @@ export const itineraryGraphStore = createStoreContext<
               title: cleanTitle,
               status: "proposed",
               ...(priced ?? {}),
+              ...(scheduled ?? {}),
             },
           }).then((result) => {
             set((cur) => ({

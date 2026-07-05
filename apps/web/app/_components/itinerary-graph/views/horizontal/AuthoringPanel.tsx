@@ -18,13 +18,13 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
-  CostKind,
   FillProposalResponse,
   FindingResponse,
   FindingSeverity,
-  NodeType,
   Price,
 } from "@ov-black/api-client";
+
+import { useComposerControl } from "@/app/itinerary/[id]/_shell/ComposerControl";
 
 import {
   itineraryGraphStore,
@@ -97,6 +97,7 @@ type AuthoringPanelProps = {
 export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
   const editable = itineraryGraphStore.useStore(selectEditable);
   const storeApi = itineraryGraphStore.useStoreApi();
+  const { openComposer } = useComposerControl();
 
   // ── inventory search ──
   const inventoryResults = itineraryGraphStore.useStore(
@@ -188,7 +189,17 @@ export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
       ) : null}
 
       {/* ── 0. Add a card (hand-author) ─────────────────────────────────── */}
-      <AddCardEditor editable={editable} />
+      <section data-testid="itinerary-graph-add-card">
+        <button
+          type="button"
+          onClick={() => openComposer()}
+          disabled={!editable}
+          data-testid="add-card-open"
+          className={`${btn} w-full justify-center`}
+        >
+          Add a card
+        </button>
+      </section>
 
       {/* ── 1. Inventory search ─────────────────────────────────────────── */}
       <section data-testid="itinerary-graph-search">
@@ -442,234 +453,5 @@ export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
         </ul>
       </section>
     </div>
-  );
-}
-
-// ── Add a card: hand-author a node (ADV-4 / G-NODE-EDITOR) ───────────────────
-// The advisor's editor for a bespoke card the inventory providers don't carry.
-// Two shapes, mapped 1:1 to the two create endpoints the store already wraps:
-//   • Details — choose a type, name it, optionally price it → POST /nodes
-//     (status `proposed`, cost amount + currency + per-person|total kind).
-//   • Link    — paste a URL; the server fetches its OpenGraph preview into a
-//     proposed card → POST /nodes/from-link.
-// Writes need the edit lock, so submit gates on `editable` exactly like the
-// inventory "Add" button. Craft-feel: plain text + `disabled`, no spinners.
-
-const NODE_TYPE_OPTIONS: ReadonlyArray<{ value: NodeType; label: string }> = [
-  { value: "experience", label: "Experience" },
-  { value: "meal", label: "Meal" },
-  { value: "hotel", label: "Hotel" },
-  { value: "destination", label: "Destination" },
-  { value: "transit", label: "Transit" },
-  { value: "note", label: "Note" },
-];
-
-const CURRENCY_OPTIONS = ["USD", "EUR", "GBP", "JPY", "CHF"] as const;
-
-const COST_KIND_OPTIONS: ReadonlyArray<{ value: CostKind; label: string }> = [
-  { value: "total", label: "Total" },
-  { value: "per_person", label: "Per person" },
-];
-
-const addField =
-  "h-8 w-full min-w-0 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
-
-const addLabel =
-  "w-12 shrink-0 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45";
-
-function AddCardEditor({ editable }: { editable: boolean }) {
-  const storeApi = itineraryGraphStore.useStoreApi();
-  const savingLink = itineraryGraphStore.useStore((s) => s.savingLink);
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"details" | "link">("details");
-  const [type, setType] = useState<NodeType>("experience");
-  const [title, setTitle] = useState("");
-  const [url, setUrl] = useState("");
-  const [note, setNote] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState<string>("USD");
-  const [costKind, setCostKind] = useState<CostKind>("total");
-
-  const ready = mode === "details" ? title.trim() !== "" : url.trim() !== "";
-  const canSubmit = editable && ready && !savingLink;
-
-  const submit = () => {
-    if (!canSubmit) return;
-    if (mode === "link") {
-      const trimmedNote = note.trim();
-      storeApi.getState().authorNode({
-        type,
-        url: url.trim(),
-        ...(trimmedNote ? { note: trimmedNote } : {}),
-      });
-    } else {
-      storeApi.getState().authorNode({
-        type,
-        title: title.trim(),
-        cost:
-          amount.trim() !== ""
-            ? { amount: amount.trim(), currency, kind: costKind }
-            : null,
-      });
-    }
-    setTitle("");
-    setUrl("");
-    setNote("");
-    setAmount("");
-    setOpen(false);
-  };
-
-  return (
-    <section data-testid="itinerary-graph-add-card">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        data-testid="add-card-toggle"
-        className={`${btn} w-full justify-center`}
-      >
-        {open ? "Close" : "Add a card"}
-      </button>
-
-      {open ? (
-        <div className="mt-3 flex flex-col gap-2 rounded-md border border-ink/15 bg-paper/80 p-3">
-          <div className="flex gap-1 rounded-md border border-ink/15 bg-paper p-0.5">
-            {(["details", "link"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                aria-pressed={mode === m}
-                data-testid={`add-card-mode-${m}`}
-                className={`h-6 flex-1 rounded px-2 font-sans text-[10px] uppercase tracking-[0.16em] transition-colors ${
-                  mode === m
-                    ? "bg-ink/10 text-ink"
-                    : "text-ink/50 hover:bg-ink/5"
-                }`}
-              >
-                {m === "details" ? "Details" : "Link"}
-              </button>
-            ))}
-          </div>
-
-          <label className="flex items-center gap-2">
-            <span className={addLabel}>Type</span>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as NodeType)}
-              data-testid="add-card-type"
-              className={addField}
-            >
-              {NODE_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {mode === "details" ? (
-            <>
-              <label className="flex items-center gap-2">
-                <span className={addLabel}>Name</span>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submit();
-                  }}
-                  placeholder="Private sushi omakase…"
-                  data-testid="add-card-title"
-                  className={addField}
-                />
-              </label>
-              <label className="flex items-center gap-2">
-                <span className={addLabel}>Price</span>
-                <div className="flex min-w-0 flex-1 gap-2">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="Amount"
-                    data-testid="add-card-amount"
-                    className={addField}
-                  />
-                  <select
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    data-testid="add-card-currency"
-                    className={`${addField} w-20`}
-                  >
-                    {CURRENCY_OPTIONS.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={costKind}
-                    onChange={(e) => setCostKind(e.target.value as CostKind)}
-                    data-testid="add-card-kind"
-                    className={`${addField} w-28`}
-                  >
-                    {COST_KIND_OPTIONS.map((k) => (
-                      <option key={k.value} value={k.value}>
-                        {k.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </label>
-            </>
-          ) : (
-            <>
-              <label className="flex items-center gap-2">
-                <span className={addLabel}>Link</span>
-                <input
-                  type="url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submit();
-                  }}
-                  placeholder="Paste a restaurant, hotel, or article…"
-                  data-testid="add-card-link"
-                  className={addField}
-                />
-              </label>
-              <label className="flex items-center gap-2">
-                <span className={addLabel}>Note</span>
-                <input
-                  type="text"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Why it's a fit (optional)"
-                  data-testid="add-card-note"
-                  className={addField}
-                />
-              </label>
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!canSubmit}
-            data-testid="add-card-submit"
-            className={btn}
-          >
-            {savingLink ? "Adding…" : "Add to board"}
-          </button>
-          {!editable ? (
-            <p className="font-sans text-[10px] leading-relaxed text-ink/50">
-              Press <span className="uppercase tracking-[0.16em]">Edit</span>{" "}
-              above to add cards.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
   );
 }

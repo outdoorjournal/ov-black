@@ -72,6 +72,11 @@ interface HorizontalCanvasProps {
   // host, which resolves it to a minute against the shared layout segments.
   placing: boolean;
   onPlaceTap: (dayKey: string, clientY: number) => void;
+  // Create-at-slot (ADV-4): while editable and not placing/dragging, clicking
+  // empty day-column space reports the day + raw clientY back to the host, which
+  // resolves the minute and opens the composer pre-set to that slot (Outlook-
+  // style). Absent → no create affordance (e.g. traveler surfaces).
+  onCreateTap?: (dayKey: string, clientY: number) => void;
   bodyRef: React.Ref<HTMLDivElement>;
   onCardHover: (id: string | null) => void;
   onCardClick: (id: string) => void;
@@ -120,6 +125,7 @@ export function HorizontalCanvas({
   ghostId,
   placing,
   onPlaceTap,
+  onCreateTap,
   bodyRef,
   onCardHover,
   onCardClick,
@@ -171,6 +177,32 @@ export function HorizontalCanvas({
         className="relative"
         style={{ width: innerWidth, height: layout.totalHeight }}
       >
+        {/* Create-at-slot layer (ADV-4): full-column click targets rendered
+            FIRST (lowest in the stack) so cards + night bars paint above and
+            keep their own clicks, while a click on empty column space (the
+            zebra/separators are pointer-events-none) falls through to here and
+            opens the composer at that day + minute. Only for editable advisors,
+            and suppressed while placing/dragging so it never fights those. */}
+        {onCreateTap && editable && !placing && !isDragActive
+          ? layout.days.map((d) => (
+              <button
+                key={`create-${d.date}`}
+                type="button"
+                data-testid="create-slot"
+                data-day={d.date}
+                aria-label={`Add a card on ${d.label}`}
+                onClick={(e) => onCreateTap(d.date, e.clientY)}
+                className="absolute cursor-copy rounded-lg transition-colors hover:bg-brand/[0.04]"
+                style={{
+                  left: colXOf(d) - 4,
+                  top: 0,
+                  width: d.columnWidth + 8,
+                  height: layout.totalHeight,
+                }}
+              />
+            ))
+          : null}
+
         {/* Per-day backgrounds (zebra) + separators. The canvas drops the
             alpha quite low so it reads as a paper-grain alternation, not a
             loud stripe. */}

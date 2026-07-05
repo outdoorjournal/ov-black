@@ -1,0 +1,374 @@
+"use client";
+
+// The advisor card composer (ADV-4) — a summonable overlay for hand-authoring a
+// bespoke node the inventory providers don't carry. Two shapes: **Details**
+// (type + name + price → POST /nodes) and **Link** (paste a URL → OpenGraph
+// preview via POST /nodes/from-link). A live card preview renders the real
+// board card (CardShell + CardBody) from the in-progress form, so the advisor
+// sees the result as they type.
+//
+// Placement is set by where it was summoned (ComposerControl.openComposer):
+// with a `prefill` (day + minute) the typed card lands scheduled on the timeline
+// at that slot; without one it lands in the (unscheduled) Collection. Advisor-
+// only placement is a later slice (needs a node audience column + read filter).
+
+import { useEffect, useMemo, useState } from "react";
+
+import type { CostKind, NodeType } from "@ov-black/api-client";
+
+import { CardBody, inferCardKind, statusToKind } from "@/app/_components/itinerary-graph/shared/cards/CardBody";
+import { CardShell } from "@/app/_components/itinerary-graph/shared/cards/CardShell";
+import type { NodeResponse } from "@/app/_components/itinerary-graph/model/horizontalTypes";
+import {
+  itineraryGraphStore,
+  selectEditable,
+} from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
+
+import type { ComposerPrefill } from "./ComposerControl";
+
+const NODE_TYPE_OPTIONS: ReadonlyArray<{ value: NodeType; label: string }> = [
+  { value: "experience", label: "Experience" },
+  { value: "meal", label: "Meal" },
+  { value: "hotel", label: "Hotel" },
+  { value: "destination", label: "Destination" },
+  { value: "transit", label: "Transit" },
+  { value: "note", label: "Note" },
+];
+
+const CURRENCY_OPTIONS = ["USD", "EUR", "GBP", "JPY", "CHF"] as const;
+
+const COST_KIND_OPTIONS: ReadonlyArray<{ value: CostKind; label: string }> = [
+  { value: "total", label: "Total" },
+  { value: "per_person", label: "Per person" },
+];
+
+const field =
+  "h-9 w-full min-w-0 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
+const label = "font-sans text-[10px] uppercase tracking-[0.18em] text-ink/50";
+
+// minute-of-day → "9:30 AM"
+function minuteLabel(minute: number): string {
+  const h = Math.floor(minute / 60);
+  const m = minute % 60;
+  const hh = ((h + 11) % 12) + 1;
+  const ampm = h < 12 ? "AM" : "PM";
+  return `${hh}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
+export function CardComposer({
+  prefill,
+  onClose,
+}: {
+  prefill: ComposerPrefill;
+  onClose: () => void;
+}) {
+  const editable = itineraryGraphStore.useStore(selectEditable);
+  const savingLink = itineraryGraphStore.useStore((s) => s.savingLink);
+  const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
+  const storeApi = itineraryGraphStore.useStoreApi();
+
+  const scheduled = prefill != null;
+  const [mode, setMode] = useState<"details" | "link">("details");
+  const [type, setType] = useState<NodeType>("experience");
+  const [title, setTitle] = useState("");
+  const [url, setUrl] = useState("");
+  const [note, setNote] = useState("");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState<string>("USD");
+  const [costKind, setCostKind] = useState<CostKind>("total");
+
+  // Scheduling applies to typed cards; when placing at a slot, lock to Details.
+  useEffect(() => {
+    if (scheduled) setMode("details");
+  }, [scheduled]);
+
+  // Esc closes the overlay.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const pricedAmount = amount.trim();
+  const priceCells = useMemo(
+    () =>
+      mode === "details" && pricedAmount !== ""
+        ? {
+            cost_amount: pricedAmount,
+            cost_currency: currency,
+            cost_kind: costKind,
+          }
+        : null,
+    [mode, pricedAmount, currency, costKind],
+  );
+
+  // Live preview: a synthetic node mirroring the in-progress form, rendered
+  // through the same CardShell + CardBody the board uses.
+  const draft = useMemo<NodeResponse>(() => {
+    const trimmedTitle = title.trim();
+    const trimmedUrl = url.trim();
+    return {
+      id: "draft-preview",
+      itinerary_id: itineraryId,
+      parent_subgraph_id: null,
+      type,
+      status: "proposed",
+      title:
+        mode === "link"
+          ? trimmedUrl || "Pasted link"
+          : trimmedTitle || "New card",
+      source: mode === "link" ? "web" : null,
+      source_id: mode === "link" ? trimmedUrl || null : null,
+      metadata: {},
+      ...(priceCells ?? {}),
+    };
+  }, [itineraryId, mode, type, title, url, priceCells]);
+
+  const ready = mode === "details" ? title.trim() !== "" : url.trim() !== "";
+  const canSubmit = editable && ready && !savingLink;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    if (mode === "link") {
+      const trimmedNote = note.trim();
+      storeApi.getState().authorNode({
+        type,
+        url: url.trim(),
+        ...(trimmedNote ? { note: trimmedNote } : {}),
+      });
+    } else {
+      storeApi.getState().authorNode({
+        type,
+        title: title.trim(),
+        cost:
+          pricedAmount !== ""
+            ? { amount: pricedAmount, currency, kind: costKind }
+            : null,
+        ...(prefill ? { schedule: prefill } : {}),
+      });
+    }
+    onClose();
+  };
+
+  const kind = inferCardKind(draft);
+
+  return (
+    <div
+      data-testid="card-composer"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    >
+      {/* Backdrop */}
+      <button
+        type="button"
+        aria-label="Close composer"
+        onClick={onClose}
+        className="absolute inset-0 bg-ink/40"
+      />
+
+      <div
+        role="dialog"
+        aria-label="Add a card"
+        className="relative z-10 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-ink/10 bg-paper shadow-2xl"
+      >
+        <header className="flex items-center justify-between border-b border-ink/10 px-5 py-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="font-serif text-xl text-ink">Add a card</h2>
+            {scheduled && prefill ? (
+              <p
+                data-testid="composer-schedule-chip"
+                className="font-sans text-[11px] text-ink/60"
+              >
+                Scheduling on {prefill.dayKey} at {minuteLabel(prefill.minute)}
+              </p>
+            ) : (
+              <p className="font-sans text-[11px] text-ink/50">
+                Lands in the Collection — schedule it later.
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="composer-close"
+            className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/50 transition-colors hover:text-ink"
+          >
+            Close
+          </button>
+        </header>
+
+        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 sm:grid-cols-[1fr_16rem]">
+          {/* ── Form ── */}
+          <div className="flex flex-col gap-3">
+            {!scheduled ? (
+              <div className="flex gap-1 rounded-md border border-ink/15 bg-paper p-0.5">
+                {(["details", "link"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    aria-pressed={mode === m}
+                    data-testid={`composer-mode-${m}`}
+                    className={`h-7 flex-1 rounded px-2 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
+                      mode === m
+                        ? "bg-ink/10 text-ink"
+                        : "text-ink/50 hover:bg-ink/5"
+                    }`}
+                  >
+                    {m === "details" ? "Details" : "Link"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <label className="flex flex-col gap-1">
+              <span className={label}>Type</span>
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value as NodeType)}
+                data-testid="composer-type"
+                className={field}
+              >
+                {NODE_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {mode === "details" ? (
+              <>
+                <label className="flex flex-col gap-1">
+                  <span className={label}>Name</span>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submit();
+                    }}
+                    placeholder="Private sushi omakase…"
+                    data-testid="composer-title"
+                    className={field}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className={label}>Price (optional)</span>
+                  <div className="flex min-w-0 gap-2">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="Amount"
+                      data-testid="composer-amount"
+                      className={field}
+                    />
+                    <select
+                      value={currency}
+                      onChange={(e) => setCurrency(e.target.value)}
+                      data-testid="composer-currency"
+                      className={`${field} w-20`}
+                    >
+                      {CURRENCY_OPTIONS.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={costKind}
+                      onChange={(e) => setCostKind(e.target.value as CostKind)}
+                      data-testid="composer-kind"
+                      className={`${field} w-28`}
+                    >
+                      {COST_KIND_OPTIONS.map((k) => (
+                        <option key={k.value} value={k.value}>
+                          {k.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="flex flex-col gap-1">
+                  <span className={label}>Link</span>
+                  <input
+                    type="url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submit();
+                    }}
+                    placeholder="Paste a restaurant, hotel, or article…"
+                    data-testid="composer-link"
+                    className={field}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className={label}>Note (optional)</span>
+                  <input
+                    type="text"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="Why it's a fit"
+                    data-testid="composer-note"
+                    className={field}
+                  />
+                </label>
+              </>
+            )}
+          </div>
+
+          {/* ── Live preview ── */}
+          <div className="flex flex-col gap-2">
+            <span className={label}>Preview</span>
+            <div
+              data-testid="composer-preview"
+              className="rounded-lg bg-ink/[0.03] p-3"
+            >
+              <CardShell kind={kind} status="proposed" width="glance" lockLabel={type}>
+                <CardBody node={draft} kind={kind} tzOffsetHours={0} />
+              </CardShell>
+              {priceCells ? (
+                <p
+                  data-testid="composer-preview-price"
+                  className="mt-2 text-center font-sans text-[11px] text-ink/70"
+                >
+                  {currency} {pricedAmount} ·{" "}
+                  {costKind === "per_person" ? "per person" : "total"}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <footer className="flex items-center justify-end gap-3 border-t border-ink/10 px-5 py-4">
+          {!editable ? (
+            <p className="mr-auto font-sans text-[11px] text-ink/50">
+              Press <span className="uppercase tracking-[0.16em]">Edit</span> on
+              the Timeline to add cards.
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSubmit}
+            data-testid="composer-submit"
+            className="h-9 rounded-md border border-ink/20 bg-ink px-4 font-sans text-[12px] uppercase tracking-[0.16em] text-paper transition-colors hover:bg-ink/90 disabled:cursor-default disabled:opacity-40"
+          >
+            {savingLink
+              ? "Adding…"
+              : scheduled
+                ? "Add to timeline"
+                : "Add to Collection"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}

@@ -305,14 +305,14 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-4 · Advisor hand-authors a node in a Card-like editor
 
-- **Status:** ✅ Automated (Studio "Add a card" editor shipped; API + advisor-project browser).
+- **Status:** ✅ Automated (summonable "card composer" with live preview + create-at-slot; API + advisor-project browser).
 - **Personas:** Advisor
 - **Surface:** Web UI (Playwright) + API seam (pytest)
 - **Preconditions:** An itinerary the advisor can write to.
 - **Automated by:**
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_proposing_an_inventory_node_carries_provenance_and_cost` — the `from-inventory` write path (provenance + cost).
   - `apps/api/tests/…` node-create coverage for `POST /itinerary/{id}/nodes` (blank, typed, priced) and `POST /itinerary/{id}/nodes/from-link` (paste a URL → OpenGraph title/image/description → a node) — both go through the same `add_node` write path (lock/queue + history).
-  - `apps/web/e2e/advisor/node-editor.spec.ts` (ADV-4) — the advisor acquires the lock, opens the Studio "Add a card" editor, and authors a typed **+ priced** card (type=meal, 450 USD per-person → shows in the Collection) and a pasted-link card (→ a `web`-sourced node); both backstopped at the API seam.
+  - `apps/web/e2e/advisor/node-editor.spec.ts` (ADV-4) — three composer flows: a typed **+ priced** card via the Studio button (asserting the **live preview** reflects the name + price) → lands in the Collection; a **pasted-link** card via the Collection add affordance → a `web`-sourced node; and an **empty timeline-slot click** → the composer opens pre-set to that day/minute and the card persists **scheduled** (`starts_at` on the clicked day). All backstopped at the API seam.
 
 **Given** an advisor who wants to place a bespoke node the inventory providers don't carry,
 
@@ -331,19 +331,24 @@ mutation and a traveler mutation are the same write path with a different
   `cost_kind` (per-person / total), feeding the cost rollup and later invoicing.
 
 **Notes / gaps**
-- ✅ **Shipped — the editor lives in Studio.** The "Add a card" editor in the advisor Build
-  aside (`AuthoringPanel`) drives a new `itineraryGraphStore.authorNode` action: a **Details**
-  shape (type + name + price amount/currency/`per_person|total`) → `POST /nodes`, and a
-  **Link** shape (paste a URL) → `POST /nodes/from-link` (OG preview, degrading to the bare
-  URL). Writes gate on the edit lock, like the inventory "Add". Was tracked as
-  **G-NODE-EDITOR** in [advisor-plan.md](./advisor-plan.md) (now closed).
+- ✅ **Shipped — a summonable card composer with a live preview.** A store-driven overlay
+  (`CardComposer`, summoned via `ComposerControl` from the shell) drives a new
+  `itineraryGraphStore.authorNode` action: a **Details** shape (type + name + price
+  amount/currency/`per_person|total`) → `POST /nodes`, and a **Link** shape (paste a URL) →
+  `POST /nodes/from-link` (OG preview, degrading to the bare URL). A **live card preview**
+  (the real `CardShell`+`CardBody`) updates as the advisor edits. Writes gate on the edit
+  lock. Was tracked as **G-NODE-EDITOR** (now closed).
+- **Three entry points** (per the placement discussion): the Studio "Add a card" button and
+  the Collection add affordance compose into the (shared) Collection; clicking an **empty
+  timeline slot** opens the composer pre-set to that day + minute (Outlook-style), so the
+  card lands **scheduled** there (`authorNode`'s `schedule` → `starts_at` + a 1h default).
+- **Deferred to a later slice (product decision):** an **advisor-only** Collection (hidden
+  from the traveler) needs a node `audience`/visibility column + filtering it out of every
+  traveler-facing read (graph API, Collection, agent context). Phase 1 ships the two
+  placements that exist (shared Collection + scheduled); advisor-private is next.
 - **v1 boundary:** price applies to the **Details** shape; pricing a pasted-link card is a
   follow-up (the `updateNode` client wrapper carries no cost, so create-then-patch is
-  deferred). A link card is a "maybe" that can be priced later via edit.
-- Browser proof: `node-editor.spec.ts` drives type-select + price → a card appears in the
-  Collection, and paste-link → a `web`-sourced node; API-seam backstops type + status +
-  cost pair (+ URL for the link). `actor_kind = advisor` stays Pillar 3's assertion (it's
-  not exposed on the node read).
+  deferred). `actor_kind = advisor` stays Pillar 3's assertion (not exposed on the node read).
 
 ---
 

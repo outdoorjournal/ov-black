@@ -74,6 +74,8 @@ import { ConciergeChat } from "./ConciergeChat";
 import { BookingPanel } from "./BookingPanel";
 import { DiffPanel } from "./DiffPanel";
 import { InvoicePanel } from "./InvoicePanel";
+import { useComposerControl } from "@/app/itinerary/[id]/_shell/ComposerControl";
+
 import { PartyPanel } from "./PartyPanel";
 import { VaultPanel } from "./VaultPanel";
 import { HorizontalCanvas } from "./HorizontalCanvas";
@@ -179,6 +181,7 @@ export function HorizontalView({
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
   const storeApi = itineraryGraphStore.useStoreApi();
+  const { openComposer } = useComposerControl();
   const router = useRouter();
 
   const canvasScrollRef = useRef<HTMLDivElement>(null);
@@ -458,6 +461,21 @@ export function HorizontalView({
       storeApi.getState().placeHeldItem(dayKey, minute);
     },
     [layout.segments, storeApi],
+  );
+
+  // Create-at-slot (ADV-4): map an empty-column click to (dayKey, minute) — the
+  // same y→minute + 15-min snap as place mode — and open the composer pre-set to
+  // that slot, so the authored card lands scheduled there.
+  const handleCreateTap = useCallback(
+    (dayKey: string, clientY: number) => {
+      const body = bodyRef.current;
+      if (!body) return;
+      const rect = body.getBoundingClientRect();
+      const raw = mapYToMinute(clientY - rect.top, layout.segments);
+      const minute = Math.max(0, Math.min(1439, Math.round(raw / 15) * 15));
+      openComposer({ dayKey, minute });
+    },
+    [layout.segments, openComposer],
   );
 
 
@@ -774,6 +792,7 @@ export function HorizontalView({
                     ghostId={ghostNode?.id ?? null}
                     placing={heldItem !== null}
                     onPlaceTap={handlePlaceTap}
+                    {...(editable ? { onCreateTap: handleCreateTap } : {})}
                     bodyRef={bodyRef}
                     onCardHover={(id) => {
                       if (id && id !== storeApi.getState().focusedNodeId) {
