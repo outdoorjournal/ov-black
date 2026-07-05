@@ -204,6 +204,9 @@ export interface GraphNode {
   source_id?: string | null;
   starts_at?: string | null;
   metadata?: Record<string, unknown>;
+  cost_amount?: string | null;
+  cost_currency?: string | null;
+  cost_kind?: "per_person" | "total" | null;
 }
 
 /** Seed an unscheduled item onto an itinerary (advisor write). Returns its id. */

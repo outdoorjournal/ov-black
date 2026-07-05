@@ -42,6 +42,7 @@ import {
   startAnalysis,
   updateNode,
   type AnalysisStatus,
+  type CostKind,
   type FillProposalResponse,
   type FindingResponse,
   type ItineraryStatus,
@@ -222,6 +223,20 @@ export type ItineraryGraphState = {
     type: NodeType;
     title: string;
     metadata?: Record<string, unknown>;
+  }) => void;
+  // Advisor hand-authoring (ADV-4): create a bespoke card the inventory
+  // providers don't carry. Two shapes: a typed + optionally priced card
+  // (→ POST /nodes, status `proposed`), or a pasted link whose OpenGraph
+  // preview the server fetches (→ POST /nodes/from-link). Gated by
+  // `selectEditable` (needs the edit lock). `cost` is a both-or-neither
+  // amount+currency with a per_person|total kind; it applies to the typed
+  // shape only (from-link carries no cost).
+  authorNode: (input: {
+    type: NodeType;
+    title?: string;
+    url?: string;
+    note?: string;
+    cost?: { amount: string; currency: string; kind: CostKind } | null;
   }) => void;
   removeNode: (id: string) => void;
   // ── traveler notes (feedback for staff; gated by `selectCanLeaveNote`) ──
@@ -870,6 +885,81 @@ export const itineraryGraphStore = createStoreContext<
                 nodes: cur.nodes.filter((n) => n.id !== tempId),
               }));
             }
+          });
+        },
+        authorNode: ({ type, title, url, note, cost }) => {
+          const s = get();
+          if (!selectEditable(s)) return;
+          const c = client();
+          if (!c) return;
+
+          const link = (url ?? "").trim();
+          // Paste-link path: the server fetches the OpenGraph preview into a
+          // proposed card (title/image/description), degrading to the bare URL
+          // when the fetch fails. from-link carries no cost — price is offered
+          // on the typed path only.
+          if (link) {
+            if (s.savingLink) return;
+            set({ savingLink: true });
+            void createNodeFromLink(c, {
+              itineraryId: s.itineraryId,
+              url: link,
+              kind: type,
+              ...(note && note.trim() ? { note: note.trim() } : {}),
+            })
+              .then((result) => {
+                if (result.ok) {
+                  set((cur) => ({
+                    nodes: [...cur.nodes, result.node],
+                    flashNodeId: result.node.id,
+                  }));
+                }
+              })
+              .finally(() => set({ savingLink: false }));
+            return;
+          }
+
+          // Typed path: a bespoke, optionally priced card, proposed on the board.
+          const cleanTitle = (title ?? "").trim();
+          if (!cleanTitle) return;
+          const priced =
+            cost && cost.amount.trim() !== ""
+              ? {
+                  cost_amount: cost.amount.trim(),
+                  cost_currency: cost.currency,
+                  cost_kind: cost.kind,
+                }
+              : null;
+          const tempId = `tmp-${Date.now()}-${Math.round(
+            Math.random() * 1e6,
+          )}`;
+          const optimistic: NodeResponse = {
+            id: tempId,
+            itinerary_id: s.itineraryId,
+            parent_subgraph_id: null,
+            type,
+            status: "proposed",
+            title: cleanTitle,
+            source: null,
+            source_id: null,
+            metadata: {},
+            ...(priced ?? {}),
+          };
+          set({ nodes: [...s.nodes, optimistic], flashNodeId: tempId });
+          void createNode(c, {
+            itineraryId: s.itineraryId,
+            body: {
+              type,
+              title: cleanTitle,
+              status: "proposed",
+              ...(priced ?? {}),
+            },
+          }).then((result) => {
+            set((cur) => ({
+              nodes: result.ok
+                ? cur.nodes.map((n) => (n.id === tempId ? result.node : n))
+                : cur.nodes.filter((n) => n.id !== tempId),
+            }));
           });
         },
         removeNode: (id) => {

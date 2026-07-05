@@ -32,7 +32,7 @@ seam missing), or **gap** (no code path — a product decision precedes the test
 | 2B | Travel party (existing/new) | **built** | `party_members` routes + agent `record_/update_party_member`; dashboard `PartyPanel` trip-attach; P4; `travel-party.spec.ts` | ✅ advisor browser (add + trip-attach) shipped; concierge-add agent-gated |
 | 2C | Advisor≠traveler agent access | **built** | audience isolation (`open_or_reuse_session`); `agent/tools/__init__.py` mode bundles; P3 + `test_modes` | — (optional visibility browser test) |
 | 3 | Build by conversation | **partial** | search→propose→approve (P3, full-loop); `propose_card`; `concierge.spec.ts` | ✅ advisor browser turn-loop shipped; live grounding still agent-gated |
-| 4 | Hand-author a node | **partial** | `POST /nodes`, `/from-inventory` (P3), `/from-link` OG preview | **no card-editor UI component** |
+| 4 | Hand-author a node | **built** | `POST /nodes`, `/from-inventory` (P3), `/from-link` OG preview; Studio "Add a card" editor (`AuthoringPanel`); `node-editor.spec.ts` (ADV-4) | ✅ typed+priced + paste-link editor shipped (G-NODE-EDITOR closed); link-card pricing is a follow-up |
 | 5 | Duffel flights | **partial** | `inventory/providers/duffel.py`; `search_inventory`+`propose_flight`; P3 flight lane | **no flight-picker UI**; live creds-gated |
 | 6 | Analyze w/ the agent | **partial** | `routers/analyze.py` (P3 analyze+fill) | **no agent tool** to run Analyze / read findings; UI trigger unconfirmed |
 | 7 | Send + message (email+chat) | **partial** | `routers/messaging.py` `/threads`; `HumanThread.tsx`; `test_agent_summon.py` | **no e2e**; email 🔍; "send" as first-class action undecided |
@@ -49,9 +49,9 @@ server-side.
 
 ## §2. Product gaps (decision precedes test)
 
-Originally six gaps blocked a scenario being asserted *as written*; **G-INVITE-LATER is
-now closed** (below), leaving five. Each is small and isolated; the remaining
-scenario-unlockers each open one ADV scenario, and two are demo-polish.
+Originally six gaps blocked a scenario being asserted *as written*; **G-INVITE-LATER and
+G-NODE-EDITOR are now closed** (below), leaving four. Each is small and isolated; the
+remaining scenario-unlockers each open one ADV scenario, and two are demo-polish.
 
 ### ✅ Closed: G-INVITE-LATER — silent client create (ADV-1)
 - **Shipped:** `POST /clients` now carries `notify: bool = true`. When false the create
@@ -83,19 +83,22 @@ scenario-unlockers each open one ADV scenario, and two are demo-polish.
 - **Test to add:** the assertable outcome is choice-independent — after the action, the
   itinerary carries a `cover_image` derived from the brief; browser shows the hero.
 
-### G-NODE-EDITOR — advisor card editor UI (ADV-4)
-- **Goal:** a card-like editor: choose type, paste a link (auto-preview), fill fields incl. price.
-- **Today:** **all three write paths exist** — `POST /nodes` (blank/typed/priced),
-  `/nodes/from-inventory` (P3-tested), `/nodes/from-link` (OG preview via
-  `services/link_preview.py`), all through the shared `add_node` lock/queue/history spine.
-  There is **no** `NodeEditor`/`CardEditor` component (`app/prototype/cards` is an unwired
-  visual ref).
-- **Plan:** build the editor modal against the existing endpoints — type select, a
-  paste-link field that calls `/from-link` for the preview, and a cost pair (amount +
-  currency + kind). Pure frontend; no API work.
-- **Size:** M. **Touches:** `app/_components/itinerary-graph/…` (new editor), wire into the board.
-- **Test to add:** browser — type+link+price → card appears; API backstop on type,
-  `actor_kind=advisor`, cost pair, resolved link snapshot.
+### ✅ Closed: G-NODE-EDITOR — advisor card editor UI (ADV-4)
+- **Shipped:** an "Add a card" editor in the Studio **`AuthoringPanel`** (the advisor Build
+  aside), with two shapes mapped 1:1 to the existing write paths via a new
+  `itineraryGraphStore.authorNode` action: **Details** (type select + name + price pair
+  amount/currency/`per_person|total`) → `POST /nodes` (status `proposed`), and **Link**
+  (paste a URL) → `POST /nodes/from-link` (server-fetched OG preview, degrading to the bare
+  URL). Writes gate on the edit lock (`selectEditable`), like the inventory "Add". Pure
+  frontend — no API change (only re-exported `CostKind` from the api-client).
+- **v1 boundary:** price applies to the **Details** path only. The `updateNode` client
+  wrapper's patch type carries no cost, so pricing a pasted-link card (create-then-patch)
+  is deferred; a link card is a "maybe" that can be priced later via edit.
+- **Tested:** `apps/web/e2e/advisor/node-editor.spec.ts` (ADV-4) — acquires the lock on the
+  Timeline, crosses to Studio (lock carries via the shared store), authors a typed+priced
+  card (appears in the Collection) and a pasted-link card, each backstopped at the API seam
+  (type + status + cost pair; `source="web"` + URL for the link). `actor_kind=advisor` is
+  Pillar 3's job (not on the node read).
 
 ### G-ANALYZE-AGENT — Analyze as a conversational step (ADV-6)
 - **Goal:** the advisor can ask the concierge to analyze the plan and hear what's wrong.
@@ -176,8 +179,10 @@ per-trip party-attach UI ADV-2B needed.
 **Wave 2 — close a small gap, then assert the scenario.** One product slice each, then its test:
 - ✅ **G-INVITE-LATER → ADV-1** — shipped (see §2): `notify` opt-out + `uninvited` state +
   roster "Send invite"; `onboarding-invite.spec.ts` ADV-1 drives it in the browser.
-- Remaining: **G-NODE-EDITOR → ADV-4**, **G-ANALYZE-AGENT → ADV-6**,
-  **G-APPROVE-TOTAL → ADV-10**, **G-TESTCARD → ADV-11 browser**.
+- ✅ **G-NODE-EDITOR → ADV-4** — shipped (see §2): Studio "Add a card" editor
+  (typed+priced / paste-link) via `authorNode`; `node-editor.spec.ts` drives both in the browser.
+- Remaining: **G-ANALYZE-AGENT → ADV-6**, **G-APPROVE-TOTAL → ADV-10**,
+  **G-TESTCARD → ADV-11 browser**.
 - **G-COVER → ADV-2A** is the largest; sequence it after the decision in §2.
 
 **Wave 3 — messaging + boundary-limited.**

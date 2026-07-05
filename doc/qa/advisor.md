@@ -29,7 +29,7 @@ mutation and a traveler mutation are the same write path with a different
 | [ADV-2B](#adv-2b--build-the-travel-party-existing-or-new-with-the-agent) | Build the travel party (existing or new, with the agent) | ✅ Automated | P4 party CRUD + cross-trip reuse (API) + advisor-project browser: durable add + trip-attach (`e2e/advisor/travel-party.spec.ts`); concierge-add agent-gated |
 | [ADV-2C](#adv-2c--the-advisors-agent-workspace-has-different-tools--access) | The advisor's agent workspace has different tools + access | ✅ Automated | P3 advisor/traveler audience isolation + `test_modes` tool bundles (API/agent) |
 | [ADV-3](#adv-3--advisor-builds-the-itinerary-by-conversation-on-the-travelers-behalf) | Build the itinerary by conversation, on the traveler's behalf | 🟡 Partial | P3 search→propose→approve + full-loop build (API) + advisor-project browser turn loop (`e2e/advisor/concierge.spec.ts`); grounded *semantic* turn still agent-gated |
-| [ADV-4](#adv-4--advisor-hand-authors-a-node-in-a-card-like-editor) | Hand-author a node in a Card-like editor (type, links, price) | 🟡 Partial | `POST /nodes` + `/from-inventory` (P3) + `/from-link` OG preview (API); **card-editor UI missing** |
+| [ADV-4](#adv-4--advisor-hand-authors-a-node-in-a-card-like-editor) | Hand-author a node in a Card-like editor (type, links, price) | ✅ Automated | Studio "Add a card" editor (typed+priced / paste-link) via `authorNode`; `node-editor.spec.ts` (browser) + P3 write paths |
 | [ADV-5](#adv-5--advisor-picks-flights-via-duffel) | Pick flights via Duffel | 🟡 Partial | Duffel provider + `search_inventory(flight)` + `propose_flight` (API, P3 flight lane); **flight-picker UI missing**; live creds-gated |
 | [ADV-6](#adv-6--advisor-works-with-the-agent-to-analyze-the-itinerary) | Work with the agent to Analyze the itinerary | 🟡 Partial | Analyze/Fill engine (P3); **no agent tool to run Analyze conversationally**; UI trigger to confirm |
 | [ADV-7](#adv-7--advisor-sends-the-itinerary-to-the-traveler-with-a-message) | Send the itinerary to the traveler with a message | 🟡 Partial | human thread `POST /threads/{id}/messages` + `HumanThread` UI; **email delivery 🔍 SMTP**; no e2e pillar yet |
@@ -305,15 +305,14 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-4 · Advisor hand-authors a node in a Card-like editor
 
-- **Status:** 🟡 Partial — the write paths (blank, from-inventory, from-link) exist and are
-  API-tested; the **card-editor UI is missing.**
+- **Status:** ✅ Automated (Studio "Add a card" editor shipped; API + advisor-project browser).
 - **Personas:** Advisor
 - **Surface:** Web UI (Playwright) + API seam (pytest)
 - **Preconditions:** An itinerary the advisor can write to.
 - **Automated by:**
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_proposing_an_inventory_node_carries_provenance_and_cost` — the `from-inventory` write path (provenance + cost).
   - `apps/api/tests/…` node-create coverage for `POST /itinerary/{id}/nodes` (blank, typed, priced) and `POST /itinerary/{id}/nodes/from-link` (paste a URL → OpenGraph title/image/description → a node) — both go through the same `add_node` write path (lock/queue + history).
-  - The **editor UI** that lets an advisor choose a type, paste a link, and fill price — **no component; no test.**
+  - `apps/web/e2e/advisor/node-editor.spec.ts` (ADV-4) — the advisor acquires the lock, opens the Studio "Add a card" editor, and authors a typed **+ priced** card (type=meal, 450 USD per-person → shows in the Collection) and a pasted-link card (→ a `web`-sourced node); both backstopped at the API seam.
 
 **Given** an advisor who wants to place a bespoke node the inventory providers don't carry,
 
@@ -332,14 +331,19 @@ mutation and a traveler mutation are the same write path with a different
   `cost_kind` (per-person / total), feeding the cost rollup and later invoicing.
 
 **Notes / gaps**
-- 🔎 **The gap is purely UI.** All three server write paths (`/nodes`, `/nodes/from-inventory`,
-  `/nodes/from-link`) are built and share the `add_node` lock/queue/history spine; there is
-  **no** `NodeEditor`/`CardEditor` component in `apps/web` (a `prototype/cards` visual
-  reference exists but is unwired). Building the editor is the work; the API is ready.
-  Tracked as **G-NODE-EDITOR** in [advisor-plan.md](./advisor-plan.md).
-- Once the editor ships, the browser test drives type-select + paste-link + price → a card
-  appears on the board; an API-seam backstop confirms type, `actor_kind`, cost pair, and
-  the resolved link snapshot.
+- ✅ **Shipped — the editor lives in Studio.** The "Add a card" editor in the advisor Build
+  aside (`AuthoringPanel`) drives a new `itineraryGraphStore.authorNode` action: a **Details**
+  shape (type + name + price amount/currency/`per_person|total`) → `POST /nodes`, and a
+  **Link** shape (paste a URL) → `POST /nodes/from-link` (OG preview, degrading to the bare
+  URL). Writes gate on the edit lock, like the inventory "Add". Was tracked as
+  **G-NODE-EDITOR** in [advisor-plan.md](./advisor-plan.md) (now closed).
+- **v1 boundary:** price applies to the **Details** shape; pricing a pasted-link card is a
+  follow-up (the `updateNode` client wrapper carries no cost, so create-then-patch is
+  deferred). A link card is a "maybe" that can be priced later via edit.
+- Browser proof: `node-editor.spec.ts` drives type-select + price → a card appears in the
+  Collection, and paste-link → a `web`-sourced node; API-seam backstops type + status +
+  cost pair (+ URL for the link). `actor_kind = advisor` stays Pillar 3's assertion (it's
+  not exposed on the node read).
 
 ---
 

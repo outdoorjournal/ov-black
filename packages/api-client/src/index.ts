@@ -216,6 +216,7 @@ export type {
   GraphResponse,
   NodeStatus,
   NodeType,
+  CostKind,
   EdgeType,
 } from "./generated/types.gen.js";
 
