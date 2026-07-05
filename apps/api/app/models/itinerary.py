@@ -391,6 +391,12 @@ class Node(Base):
         nullable=False,
         server_default=func.now(),
     )
+    # 0040 — soft-delete tombstone (notes only). Non-null hides the node from
+    # every graph read while preserving the row + its node_history lineage.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
 
 class Edge(Base):

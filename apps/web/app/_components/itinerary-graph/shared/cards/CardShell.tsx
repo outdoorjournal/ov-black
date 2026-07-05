@@ -52,9 +52,11 @@ const cardShell = tv({
     width: {
       // Compact matches glance's 260px footprint — the variant collapses
       // vertically, not horizontally (low-zoom density on the timeline).
+      // Bottom padding is applied by the component (see `bottomPad`) so a card
+      // with no status-footer band still closes with even inset all around.
       compact: { root: "w-[260px]", body: "px-2.5 py-1.5" },
-      glance: { root: "w-[260px]", body: "p-3 pb-0" },
-      zoom: { root: "w-full max-w-[640px]", body: "p-5 pb-0" },
+      glance: { root: "w-[260px]", body: "px-3 pt-3" },
+      zoom: { root: "w-full max-w-[640px]", body: "px-5 pt-5" },
     },
     status: {
       idea: { root: "opacity-80" },
@@ -95,6 +97,22 @@ export function CardShell({
 
   const { root, body } = cardShell({ width, status });
 
+  // A status-footer band (approved/booked/confirmed) or an actions row already
+  // caps the card's bottom edge — the band sits flush and carries its own mt-3
+  // gap. When neither is present (an un-firmed proposed/idea/discarded card) the
+  // body closes itself with bottom padding that mirrors its top/sides, so an
+  // image-led card no longer bleeds flush against the bottom edge. Longhand
+  // px/pt in the recipe keeps this a clean additive property (no p-3 override).
+  const hasFooter =
+    !isCompact &&
+    (status === "approved" || status === "booked" || status === "confirmed");
+  const bottomPad =
+    isCompact || hasFooter || actions != null
+      ? ""
+      : width === "zoom"
+        ? "pb-5"
+        : "pb-3";
+
   return (
     <div
       role="group"
@@ -120,7 +138,7 @@ export function CardShell({
         />
       ) : null}
 
-      <div className={body()}>
+      <div className={bottomPad ? `${body()} ${bottomPad}` : body()}>
         {isCompact ? null : (
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
             <token.Icon size={12} strokeWidth={1.6} aria-hidden />

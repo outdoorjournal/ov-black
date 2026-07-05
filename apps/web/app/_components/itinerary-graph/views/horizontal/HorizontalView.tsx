@@ -1097,6 +1097,11 @@ export function HorizontalView({
                       notes={attachedNotes.get(expandedNode.id) ?? []}
                       canAdd={canLeaveNote}
                       onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
+                      onDeleteNote={
+                        canLeaveNote
+                          ? (noteId) => storeApi.getState().removeNode(noteId)
+                          : undefined
+                      }
                     />
                   ) : null}
                   {/* ADV-10 node-by-node approve: firm up this single proposed

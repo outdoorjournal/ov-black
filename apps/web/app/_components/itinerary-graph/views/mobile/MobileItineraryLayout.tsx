@@ -89,6 +89,7 @@ export function MobileItineraryLayout({
   const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
   const canLeaveNote = itineraryGraphStore.useStore(selectCanLeaveNote);
   const addAttachedNote = itineraryGraphStore.useStore((s) => s.addAttachedNote);
+  const removeNode = itineraryGraphStore.useStore((s) => s.removeNode);
   const addFreeStandingNote = itineraryGraphStore.useStore(
     (s) => s.addFreeStandingNote,
   );
@@ -269,6 +270,9 @@ export function MobileItineraryLayout({
                   notes={attachedNotes.get(expandedNode.id) ?? []}
                   canAdd={canLeaveNote}
                   onAddNote={(text) => addAttachedNote(expandedNode.id, text)}
+                  onDeleteNote={
+                    canLeaveNote ? (noteId) => removeNode(noteId) : undefined
+                  }
                 />
               ) : null}
             </motion.div>

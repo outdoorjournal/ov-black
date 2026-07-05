@@ -1341,6 +1341,226 @@ async def test_delete_node_writes_before_snapshot(
 
 @integration
 @pytest.mark.asyncio
+async def test_delete_node_soft_deletes_row_but_hides_from_graph(
+    db_session: AsyncSession,
+) -> None:
+    """A delete is a soft delete: the row (and its history lineage) survives with
+    ``deleted_at`` stamped, yet the node vanishes from the graph read that every
+    surface renders."""
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="soft delete")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="ghost",
+        )
+        assert isinstance(node, Node)
+
+        err = await delete_node(db_session, actor, itinerary_id=itinerary.id, node_id=node.id)
+        assert err is None
+
+        # Row survives, tombstoned. (Select the column directly — the fixture's
+        # session is ``expire_on_commit=False`` and the soft delete is a raw
+        # UPDATE, so the identity-mapped instance would carry a stale value.)
+        deleted_at = (
+            await db_session.execute(select(Node.deleted_at).where(Node.id == node.id))
+        ).scalar_one()
+        assert deleted_at is not None
+
+        # …but the graph read drops it.
+        view = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(view, ItineraryError)
+        assert node.id not in {n.id for n in view.nodes}
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_delete_node_cascades_to_attached_note_and_subgraph_child(
+    db_session: AsyncSession,
+) -> None:
+    """Deleting a host tombstones its dependent subtree in the same sweep — an
+    attached note (``attached_to_node_id``) and a subgraph child
+    (``parent_subgraph_id``) — the exact set the old ON DELETE CASCADE removed."""
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="cascade")
+    try:
+        host = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="host",
+        )
+        assert isinstance(host, Node)
+        note = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.note,
+            title="rides along",
+            attached_to_node_id=host.id,
+        )
+        child = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.meal,
+            title="child",
+            parent_subgraph_id=host.id,
+        )
+        assert isinstance(note, Node)
+        assert isinstance(child, Node)
+
+        err = await delete_node(db_session, actor, itinerary_id=itinerary.id, node_id=host.id)
+        assert err is None
+
+        # All three rows survive, every one tombstoned. (Column select — the
+        # raw-UPDATE soft delete leaves identity-mapped instances stale under the
+        # fixture's ``expire_on_commit=False``.)
+        rows = (
+            await db_session.execute(
+                select(Node.id, Node.deleted_at).where(Node.itinerary_id == itinerary.id)
+            )
+        ).all()
+        deleted_by_id = {r.id: r.deleted_at for r in rows}
+        assert deleted_by_id[host.id] is not None
+        assert deleted_by_id[note.id] is not None
+        assert deleted_by_id[child.id] is not None
+
+        # …and none of the subtree survives the graph read.
+        view = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(view, ItineraryError)
+        assert {host.id, note.id, child.id}.isdisjoint({n.id for n in view.nodes})
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_delete_node_drops_dangling_edges_from_graph(
+    db_session: AsyncSession,
+) -> None:
+    """An edge whose endpoint was tombstoned is dropped from the graph view (the
+    CTE omits the node, so a surviving edge would dangle)."""
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="edge drop")
+    try:
+        a = await add_node(
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience, title="a"
+        )
+        b = await add_node(
+            db_session, actor, itinerary_id=itinerary.id, type=NodeType.experience, title="b"
+        )
+        assert isinstance(a, Node)
+        assert isinstance(b, Node)
+        edge = await add_edge(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            from_node_id=a.id,
+            to_node_id=b.id,
+            type=EdgeType.follows,
+        )
+        assert isinstance(edge, Edge)
+
+        err = await delete_node(db_session, actor, itinerary_id=itinerary.id, node_id=b.id)
+        assert err is None
+
+        view = await get_itinerary_graph(db_session, itinerary.id)
+        assert not isinstance(view, ItineraryError)
+        assert {n.id for n in view.nodes} == {a.id}
+        assert view.edges == []
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_delete_firmed_note_allowed_despite_status_gate(
+    db_session: AsyncSession,
+) -> None:
+    """A note is feedback, not a commitment: the firmed-status gate (G1) that
+    refuses deleting an approved/booked card does NOT apply to notes, so a firmed
+    note is still removable. (The non-note firmed refusal is covered in
+    test_node_status_gate.py::test_delete_of_booked_node_refused_for_all.)"""
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="firmed note")
+    try:
+        note = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.note,
+            title="firm feedback",
+            status=NodeStatus.approved,
+        )
+        assert isinstance(note, Node)
+        # Confirm it really is in a firmed status before we try to delete it.
+        status = (
+            await db_session.execute(select(Node.status).where(Node.id == note.id))
+        ).scalar_one()
+        assert status is NodeStatus.approved
+
+        err = await delete_node(db_session, actor, itinerary_id=itinerary.id, node_id=note.id)
+        assert err is None  # not STATUS_LOCKED
+
+        deleted_at = (
+            await db_session.execute(select(Node.deleted_at).where(Node.id == note.id))
+        ).scalar_one()
+        assert deleted_at is not None
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_delete_node_second_delete_is_idempotent_noop(
+    db_session: AsyncSession,
+) -> None:
+    """Re-deleting an already-tombstoned node returns None and writes NO second
+    history row — the ``deleted_at is null`` guard makes the repeat a true no-op."""
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="idempotent")
+    try:
+        node = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.experience,
+            title="twice",
+        )
+        assert isinstance(node, Node)
+
+        first = await delete_node(db_session, actor, itinerary_id=itinerary.id, node_id=node.id)
+        assert first is None
+        second = await delete_node(db_session, actor, itinerary_id=itinerary.id, node_id=node.id)
+        assert second is None
+
+        # Exactly one delete history row — the no-op recorded nothing.
+        delete_ops = (
+            (
+                await db_session.execute(
+                    select(NodeHistory).where(
+                        NodeHistory.node_id == node.id,
+                        NodeHistory.op == "delete",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(delete_ops) == 1
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_add_edge_writes_history(db_session: AsyncSession) -> None:
     actor = _actor()
     itinerary = await create_itinerary(db_session, actor, title="edge test")

@@ -30,6 +30,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  createNode,
   searchInventory,
   type ItineraryResponse,
   type MealItem,
@@ -149,14 +150,53 @@ describe("unified Add composer — Details / Link / Find / Fill", () => {
     expect(screen.getByTestId("itinerary-graph-fill-run")).toBeDefined();
   });
 
-  test("placing at a slot locks to Details (no mode switch)", () => {
+  test("placing at a slot offers all four modes with an editable scheduled time", () => {
     render(
       withProviders(
         <CardComposer prefill={{ dayKey: "2024-06-20", minute: 540 }} onClose={() => {}} />,
       ),
     );
-    expect(screen.queryByTestId("composer-mode-find")).toBeNull();
+    // Summoned from a timeline slot, the composer offers the same four modes as
+    // the Collection path — no longer locked to Details.
+    for (const m of ["details", "link", "find", "fill"] as const) {
+      expect(screen.getByTestId(`composer-mode-${m}`)).toBeDefined();
+    }
+    // It opens on Details with the slot's time in an EDITABLE field (540 → 09:00).
     expect(screen.getByTestId("composer-title")).toBeDefined();
+    const scheduleInput = screen.getByTestId("composer-schedule-input") as HTMLInputElement;
+    expect(scheduleInput.value).toBe("2024-06-20T09:00");
+    // Switching to Find drops the schedule field — Find lands in the Collection.
+    fireEvent.click(screen.getByTestId("composer-mode-find"));
+    expect(screen.getByTestId("itinerary-graph-search")).toBeDefined();
+    expect(screen.queryByTestId("composer-schedule-input")).toBeNull();
+  });
+
+  test("editing the scheduled time persists the adjusted start", async () => {
+    vi.mocked(createNode).mockResolvedValue({ ok: true } as never);
+    render(
+      withProviders(
+        <CardComposer prefill={{ dayKey: "2024-06-20", minute: 540 }} onClose={() => {}} />,
+      ),
+    );
+    fireEvent.change(screen.getByTestId("composer-title"), {
+      target: { value: "Private tea ceremony" },
+    });
+    // Nudge the seeded 09:00 to 14:30 before adding.
+    fireEvent.change(screen.getByTestId("composer-schedule-input"), {
+      target: { value: "2024-06-20T14:30" },
+    });
+    fireEvent.click(screen.getByTestId("composer-submit"));
+    await flush();
+    // The persisted node carries the EDITED start (14:30 in the trip's +09:00).
+    expect(createNode).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: expect.objectContaining({
+          title: "Private tea ceremony",
+          starts_at: "2024-06-20T14:30:00+09:00",
+        }),
+      }),
+    );
   });
 });
 

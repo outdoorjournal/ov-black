@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 
-import { StickyNote } from "lucide-react";
+import { StickyNote, X } from "lucide-react";
 
 import type { NodeResponse } from "../model/horizontalTypes";
 
@@ -16,9 +16,16 @@ interface NotesPanelProps {
   /** When true (and `onAddNote` given), render the inline composer. */
   canAdd?: boolean;
   onAddNote?: (text: string) => void;
+  /** When given, each note gets a delete (×) control that soft-deletes it. */
+  onDeleteNote?: ((noteId: string) => void) | undefined;
 }
 
-export function NotesPanel({ notes, canAdd = false, onAddNote }: NotesPanelProps) {
+export function NotesPanel({
+  notes,
+  canAdd = false,
+  onAddNote,
+  onDeleteNote,
+}: NotesPanelProps) {
   const [text, setText] = useState("");
   const showComposer = canAdd && Boolean(onAddNote);
 
@@ -46,9 +53,20 @@ export function NotesPanel({ notes, canAdd = false, onAddNote }: NotesPanelProps
           {notes.map((n) => (
             <li
               key={n.id}
-              className="font-serif text-[12px] leading-snug text-ink/85"
+              className="group flex items-start justify-between gap-2 font-serif text-[12px] leading-snug text-ink/85"
             >
-              {n.title}
+              <span>{n.title}</span>
+              {onDeleteNote ? (
+                <button
+                  type="button"
+                  data-testid="note-delete"
+                  aria-label="Delete note"
+                  onClick={() => onDeleteNote(n.id)}
+                  className="mt-0.5 shrink-0 rounded-full p-0.5 text-amber-900/40 transition-colors hover:bg-[#8b2a1d]/10 hover:text-[#8b2a1d] focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                >
+                  <X className="h-3 w-3" aria-hidden />
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

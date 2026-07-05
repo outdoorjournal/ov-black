@@ -90,6 +90,7 @@ _MAIN_SQL = text(
         upper(n.starts_at) as starts_at_upper
     from public.nodes n
     where n.itinerary_id = :iid
+      and n.deleted_at is null
       and n.attached_to_node_id is null
       and (cast(:include_structural as boolean) or n.role is null)
       and (not cast(:selected_only as boolean) or n.is_selected_alt)
@@ -127,6 +128,7 @@ _ATTACHED_SQL = text(
         upper(n.starts_at) as starts_at_upper
     from public.nodes n
     where n.attached_to_node_id = any(:host_ids)
+      and n.deleted_at is null
     order by n.attached_to_node_id, n.created_at asc
     """
 )

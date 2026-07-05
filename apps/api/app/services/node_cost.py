@@ -170,6 +170,7 @@ async def sum_node_costs(
         Node.cost_amount.isnot(None),
         Node.cost_currency.isnot(None),
         Node.is_selected_alt.is_(True),
+        Node.deleted_at.is_(None),
     ]
     if statuses is not None:
         conditions.append(Node.status.in_(list(statuses)))

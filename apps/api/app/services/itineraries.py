@@ -738,6 +738,7 @@ async def get_itinerary_graph(
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
+               and n.deleted_at is null
             union all
             select c.id, c.itinerary_id, c.parent_subgraph_id, c.type, c.status,
                    c.title, c.source, c.source_id, c.metadata, c.cost_amount,
@@ -746,6 +747,7 @@ async def get_itinerary_graph(
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
+               and c.deleted_at is null
         )
         select id, itinerary_id, parent_subgraph_id, type, status, title,
                source, source_id, metadata, cost_amount, cost_currency,
@@ -793,6 +795,10 @@ async def get_itinerary_graph(
         .scalars()
         .all()
     )
+    # Drop edges whose endpoint was soft-deleted (or pruned as a hidden node's
+    # descendant): the CTE above already omits those nodes, so a surviving edge
+    # would dangle. This mirrors the old ON DELETE CASCADE on the edge FKs.
+    visible_node_ids = {node.id for node in nodes}
     edges: list[EdgeOut] = [
         EdgeOut(
             id=edge.id,
@@ -803,6 +809,7 @@ async def get_itinerary_graph(
             metadata=edge.metadata_,
         )
         for edge in edge_rows
+        if edge.from_node_id in visible_node_ids and edge.to_node_id in visible_node_ids
     ]
 
     return GraphView(itinerary=itinerary, nodes=nodes, edges=edges)
@@ -1143,17 +1150,61 @@ async def delete_node(
     if lock_err is not None:
         return lock_err
 
-    # Status gate (G1): a firmed node can't be hard-deleted by anyone — even an
-    # advisor demotes it to a pre-firmed status (cancellation → discarded) first
-    # so the booking's history lineage is never silently destroyed.
-    if node.status in _FIRMED_STATUSES:
+    # Status gate (G1): a firmed node is a commitment (approved/booked/confirmed)
+    # and can't be deleted by anyone — even an advisor demotes it to a pre-firmed
+    # status (cancellation → discarded) first so a booking's history lineage is
+    # never silently destroyed. Notes are the exception: a note is feedback, not
+    # a plan commitment, so a user may remove ANY of their notes whatever its
+    # status. Everything else (regular cards, collection items) is deletable only
+    # while pre-firmed — exactly the "delete things that aren't approved/booked".
+    if node.type is not NodeType.note and node.status in _FIRMED_STATUSES:
         return ItineraryError(
             outcome=ItineraryOutcome.STATUS_LOCKED,
             detail="demote_before_delete",
         )
 
+    # Soft delete: stamp ``deleted_at`` on the node AND its whole dependent
+    # subtree — subgraph descendants (parent_subgraph_id) and attached notes
+    # (attached_to_node_id), recursively — the same set the old ON DELETE CASCADE
+    # removed. The row + its node_history lineage survive, but every graph read
+    # (all of which filter ``deleted_at is null``) drops exactly this subtree, so
+    # nothing dangles. ``union`` (distinct) guards against any FK cycle; the
+    # ``deleted_at is null`` guard makes a repeat delete affect zero rows.
     before = _snapshot_node(node)
-    await session.delete(node)
+    stamped = (
+        (
+            await session.execute(
+                text(
+                    """
+                    with recursive doomed(id) as (
+                        select cast(:nid as uuid)
+                      union
+                        select n.id
+                          from public.nodes n
+                          join doomed d
+                            on n.parent_subgraph_id = d.id
+                            or n.attached_to_node_id = d.id
+                         where n.itinerary_id = :iid
+                    )
+                    update public.nodes
+                       set deleted_at = now()
+                     where id in (select id from doomed)
+                       and deleted_at is null
+                    returning id
+                    """
+                ),
+                {"nid": node_id, "iid": itinerary_id},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Nothing stamped → the node (and its subtree) were already tombstoned. Skip
+    # the history row so a repeat delete is a true idempotent no-op. (We trust the
+    # UPDATE's RETURNING, not the ORM's ``node.deleted_at``, which a prior raw
+    # UPDATE in this same session would have left stale.)
+    if not stamped:
+        return None
     await session.flush()
     await _write_node_history(
         session,
@@ -1543,6 +1594,7 @@ async def approve_itinerary(
         .where(
             Node.itinerary_id == itinerary_id,
             Node.status == NodeStatus.proposed,
+            Node.deleted_at.is_(None),
         )
         .values(status=NodeStatus.approved)
     )
@@ -1553,7 +1605,7 @@ async def approve_itinerary(
             select(
                 func.count(Node.id),
                 func.count(Node.id).filter(Node.status == NodeStatus.approved),
-            ).where(Node.itinerary_id == itinerary_id)
+            ).where(Node.itinerary_id == itinerary_id, Node.deleted_at.is_(None))
         )
     ).one()
     logger.info(
@@ -1694,7 +1746,7 @@ async def _maybe_derive_itinerary_approved(
             select(
                 func.count(Node.id).filter(Node.status == NodeStatus.proposed),
                 func.count(Node.id).filter(Node.status == NodeStatus.approved),
-            ).where(Node.itinerary_id == itinerary_id)
+            ).where(Node.itinerary_id == itinerary_id, Node.deleted_at.is_(None))
         )
     ).one()
     remaining_proposed, approved_count = int(counts[0]), int(counts[1])

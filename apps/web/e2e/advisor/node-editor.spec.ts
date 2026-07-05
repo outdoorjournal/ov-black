@@ -176,9 +176,13 @@ test("ADV-4: advisor clicks an empty timeline slot to schedule a new card", asyn
 
   const composer = page.locator('[data-testid="card-composer"]');
   await expect(composer).toBeVisible();
-  await expect(
-    page.locator('[data-testid="composer-schedule-chip"]'),
-  ).toBeVisible();
+  // The slot seeds an EDITABLE datetime, not a static chip — pre-filled to the
+  // clicked day so the advisor can nudge the time before adding.
+  const scheduleInput = page.locator('[data-testid="composer-schedule-input"]');
+  await expect(scheduleInput).toBeVisible();
+  await expect(scheduleInput).toHaveValue(/^2026-08-01T\d{2}:\d{2}$/);
+  // Adjust the time to a firm morning before adding (stays on 2026-08-01).
+  await scheduleInput.fill("2026-08-01T07:15");
 
   await page.locator('[data-testid="composer-type"]').selectOption("experience");
   await page.locator('[data-testid="composer-title"]').fill(title);

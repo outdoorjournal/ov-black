@@ -162,6 +162,8 @@ export type ItineraryGraphState = {
   reopenPending: boolean;
   /** id of the node whose per-node approve is in flight (disables its button). */
   approvingNodeId: string | null;
+  /** id of the node whose per-node propose is in flight (disables its button). */
+  proposingNodeId: string | null;
   /** Per-currency price of the plan (ADV-10), `{ currency: amount }` from the
    *  GraphResponse — amounts are strings; empty when nothing is priced. */
   totals: Record<string, string>;
@@ -226,10 +228,13 @@ export type ItineraryGraphState = {
   // advisor on a client's behalf): the all-at-once "Approve all" — cascades
   // remaining `proposed` nodes to `approved`. `approveNode` (traveler): approve a
   // single proposed card; clearing the last one derives the itinerary to approved.
+  // `proposeCard` (advisor): the per-card mirror of `propose` — firm up one idea
+  // card to `proposed` (hand it over) without freezing the whole build.
   propose: () => void;
   reopen: () => void;
   approve: () => void;
   approveNode: (id: string) => void;
+  proposeCard: (id: string) => void;
   setNodes: (nodes: NodeResponse[]) => void;
   editNodeField: (
     id: string,
@@ -684,6 +689,7 @@ export const itineraryGraphStore = createStoreContext<
         proposePending: false,
         reopenPending: false,
         approvingNodeId: null,
+        proposingNodeId: null,
         totals,
 
         viewerOpenForkId,
@@ -934,6 +940,34 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ approvingNodeId: null }));
         },
+        // ADV-10 node-by-node propose: the advisor firms up a single `idea` card
+        // to `proposed` — the per-card mirror of the whole-plan `propose`. Only
+        // moves that one node; the itinerary itself stays `draft` (the advisor is
+        // still building). Optimistic; reverts on failure.
+        proposeCard: (id) => {
+          const s = get();
+          if (!selectCanPropose(s) || s.proposingNodeId) return;
+          const target = s.nodes.find((n) => n.id === id);
+          if (!target || target.status !== "idea") return;
+          const c = client();
+          if (!c) return;
+          const previousNodes = s.nodes;
+          set({
+            proposingNodeId: id,
+            nodes: s.nodes.map((n) =>
+              n.id === id ? { ...n, status: "proposed" as const } : n,
+            ),
+          });
+          void updateNodeStatus(c, {
+            itineraryId: s.itineraryId,
+            nodeId: id,
+            status: "proposed",
+          })
+            .then((result) => {
+              if (!result.ok) set({ nodes: previousNodes });
+            })
+            .finally(() => set({ proposingNodeId: null }));
+        },
         setNodes: (nodes) => set({ nodes }),
         editNodeField: (id, field, value) => {
           const s = get();
@@ -1127,7 +1161,16 @@ export const itineraryGraphStore = createStoreContext<
         },
         removeNode: (id) => {
           const s = get();
-          if (!selectEditable(s)) return;
+          // Anyone writing with credentials may delete — advisors AND a traveler
+          // on their own itinerary. The backend's writability check is the real
+          // authority; a non-owner's optimistic remove reverts on the 403.
+          if (!selectCanLeaveNote(s)) return;
+          const target = s.nodes.find((n) => n.id === id);
+          // A firmed (approved/booked/confirmed) node must be demoted before
+          // removal — except a note, which is feedback and always removable.
+          // Mirrors the backend G1 gate so the optimistic remove never flickers
+          // on a delete that is guaranteed to be refused.
+          if (target && target.type !== "note" && target.lock_reason) return;
           const c = client();
           if (!c) return;
           const previousNodes = s.nodes;

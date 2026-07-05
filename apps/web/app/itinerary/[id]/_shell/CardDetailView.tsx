@@ -32,6 +32,7 @@ import {
   itineraryGraphStore,
   selectCanApprove,
   selectCanLeaveNote,
+  selectCanPropose,
   selectEditable,
   selectTravelerEditable,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
@@ -71,9 +72,14 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
   const editable = itineraryGraphStore.useStore(
     (s) => selectEditable(s) || selectTravelerEditable(s),
   );
-  // ADV-10 node-by-node approve: the traveler firms up this single proposed card.
+  // ADV-10 node-by-node hand-over. The traveler firms up this single proposed
+  // card (approve); the advisor proposes a single idea card (propose). `canEdit`
+  // (advisor) splits the two — an advisor proposes, a traveler approves.
   const canApprove = itineraryGraphStore.useStore(selectCanApprove);
+  const canPropose = itineraryGraphStore.useStore(selectCanPropose);
+  const canEdit = itineraryGraphStore.useStore((s) => s.canEdit);
   const approvingNodeId = itineraryGraphStore.useStore((s) => s.approvingNodeId);
+  const proposingNodeId = itineraryGraphStore.useStore((s) => s.proposingNodeId);
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
@@ -130,9 +136,19 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
 
           {/* The facet rail: aside on desktop, stacked below on mobile. */}
           <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-[320px]">
-            {/* (ADV-10) node-by-node approve — the traveler firms up this one
-                card; clearing the last proposed card derives the plan to approved. */}
-            {canApprove && node.status === "proposed" ? (
+            {/* (ADV-10) per-card hand-over. Advisor: propose an idea card to the
+                traveler (idea → proposed) — the per-card mirror of "Propose" on
+                the dashboard, without freezing the whole build. */}
+            {canPropose && node.status === "idea" ? (
+              <ProposalFacet
+                pending={proposingNodeId === node.id}
+                onPropose={() => storeApi.getState().proposeCard(node.id)}
+              />
+            ) : null}
+            {/* Traveler: firm up this one proposed card (proposed → approved);
+                clearing the last proposed card derives the plan to approved. An
+                advisor never approves per-card here (they propose, above). */}
+            {canApprove && !canEdit && node.status === "proposed" ? (
               <ApprovalFacet
                 pending={approvingNodeId === node.id}
                 onApprove={() => storeApi.getState().approveNode(node.id)}
@@ -193,6 +209,33 @@ function ApprovalFacet({
         className="mt-2 h-9 rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
       >
         Approve this
+      </button>
+    </FacetCard>
+  );
+}
+
+// ── Proposal — advisor per-card "Propose this" (ADV-10) ─────────────────────────
+function ProposalFacet({
+  pending,
+  onPropose,
+}: {
+  pending: boolean;
+  onPropose: () => void;
+}) {
+  return (
+    <FacetCard label="Hand-over" testid="card-detail-proposal">
+      <p className="font-serif text-[13px] text-ink/70">
+        Ready to show the traveler? Propose this card now, or propose the whole
+        plan at once from the dashboard.
+      </p>
+      <button
+        type="button"
+        onClick={onPropose}
+        disabled={pending}
+        data-testid="card-detail-propose-node"
+        className="mt-2 h-9 rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+      >
+        Propose this
       </button>
     </FacetCard>
   );

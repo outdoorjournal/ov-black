@@ -110,8 +110,16 @@ async def fork_itinerary(
     session.add(fork)
     await session.flush()  # assign fork.id
 
+    # Soft-deleted nodes are gone from view — a fork must not resurrect them.
     baseline_nodes = list(
-        (await session.execute(select(Node).where(Node.itinerary_id == itinerary_id)))
+        (
+            await session.execute(
+                select(Node).where(
+                    Node.itinerary_id == itinerary_id,
+                    Node.deleted_at.is_(None),
+                )
+            )
+        )
         .scalars()
         .all()
     )

@@ -229,6 +229,26 @@ export async function seedCollectionItemAsAdvisor(
   return ((await resp.json()) as GraphNode).id;
 }
 
+/** Seed a raw `idea` item (advisor still building — nothing proposed yet), so
+ *  the per-card "Propose this" hand-over (ADV-10) has an idea card to act on. */
+export async function seedIdeaItemAsAdvisor(
+  itineraryId: string,
+  body: { type?: string; title: string },
+): Promise<string> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/nodes`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: body.type ?? "experience",
+      status: "idea",
+      title: body.title,
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`seed idea node failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as GraphNode).id;
+}
+
 /** Seed a SCHEDULED item (carries a start_time), so the timeline is present. */
 export async function seedScheduledItemAsAdvisor(
   itineraryId: string,

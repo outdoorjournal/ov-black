@@ -202,7 +202,7 @@ describe("selectCanApprove", () => {
 });
 
 describe("approval actions are inert without credentials (ADV-10)", () => {
-  test("propose / approve / approveNode are no-ops with null creds", () => {
+  test("propose / approve / approveNode / proposeCard are no-ops with null creds", () => {
     const { result } = renderStore({
       role: "advisor",
       status: "draft",
@@ -212,10 +212,43 @@ describe("approval actions are inert without credentials (ADV-10)", () => {
       result.current.getState().propose();
       result.current.getState().approve();
       result.current.getState().approveNode("n1");
+      result.current.getState().proposeCard("n1");
     });
     // No credentials → guarded before any optimistic mutation; nothing changed.
     expect(result.current.getState().status).toBe("draft");
     expect(result.current.getState().nodes[0]!.status).toBe("approved");
+  });
+});
+
+describe("proposeCard — advisor per-card hand-over gate (ADV-10)", () => {
+  // Guard coverage: each case is credentialed but bails BEFORE the network call
+  // (on the idea-only / advisor-only checks), so no fetch fires — matching this
+  // file's no-real-fetch philosophy. The optimistic flip + UI gating live in
+  // cardDetail.test.tsx / the advisor e2e (mocked wrapper / real backend).
+  test("is a no-op on a card that isn't an idea (only idea → proposed)", () => {
+    const { result } = renderStore({
+      timeline: timeline([NODE]), // NODE is `approved`, not an idea
+      role: "advisor",
+      status: "draft",
+      startLocked: true,
+      apiBaseUrl: "http://x",
+      accessToken: "t",
+    });
+    act(() => result.current.getState().proposeCard("n1"));
+    expect(result.current.getState().nodes[0]!.status).toBe("approved");
+  });
+
+  test("is a no-op for a traveler (propose is an advisor gesture)", () => {
+    const idea: NodeResponse = { ...NODE, id: "idea-1", status: "idea" };
+    const { result } = renderStore({
+      timeline: timeline([idea]),
+      role: "client",
+      status: "draft",
+      apiBaseUrl: "http://x",
+      accessToken: "t",
+    });
+    act(() => result.current.getState().proposeCard("idea-1"));
+    expect(result.current.getState().nodes[0]!.status).toBe("idea");
   });
 });
 

@@ -59,13 +59,21 @@ const field =
   "h-9 w-full min-w-0 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
 const label = "font-sans text-[10px] uppercase tracking-[0.18em] text-ink/50";
 
-// minute-of-day → "9:30 AM"
-function minuteLabel(minute: number): string {
-  const h = Math.floor(minute / 60);
-  const m = minute % 60;
-  const hh = ((h + 11) % 12) + 1;
-  const ampm = h < 12 ? "AM" : "PM";
-  return `${hh}:${String(m).padStart(2, "0")} ${ampm}`;
+// A prefill slot (day + minute-of-day) ⇄ an <input type="datetime-local"> value
+// ("YYYY-MM-DDTHH:MM"), so the advisor can nudge the scheduled time in the modal.
+function slotToLocal(dayKey: string, minute: number): string {
+  const hh = String(Math.floor(minute / 60)).padStart(2, "0");
+  const mm = String(minute % 60).padStart(2, "0");
+  return `${dayKey}T${hh}:${mm}`;
+}
+
+function localToSlot(local: string): { dayKey: string; minute: number } | null {
+  const [dayKey, time] = local.split("T");
+  if (!dayKey || !time) return null;
+  const [h, m] = time.split(":");
+  const minute = Number(h) * 60 + Number(m);
+  if (!Number.isFinite(minute)) return null;
+  return { dayKey, minute };
 }
 
 export function CardComposer({
@@ -92,11 +100,11 @@ export function CardComposer({
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<string>("USD");
   const [costKind, setCostKind] = useState<CostKind>("total");
-
-  // Scheduling applies to typed cards; when placing at a slot, lock to Details.
-  useEffect(() => {
-    if (scheduled) setMode("details");
-  }, [scheduled]);
+  // The clicked slot is a starting point, not a lock — seed an editable
+  // datetime-local so the advisor can adjust the day/time before adding.
+  const [scheduleLocal, setScheduleLocal] = useState(
+    prefill ? slotToLocal(prefill.dayKey, prefill.minute) : "",
+  );
 
   // Esc closes the overlay.
   useEffect(() => {
@@ -142,6 +150,22 @@ export function CardComposer({
     };
   }, [itineraryId, mode, type, title, url, priceCells]);
 
+  // Only the typed Details path honors the slot; Link/Find/Fill each add per
+  // their own semantics (into the Collection). The editable field shows for
+  // Details when summoned from a slot; clearing it drops the card to the
+  // Collection, so `willSchedule` gates the chrome (chip → "Add to timeline").
+  const editedSchedule = useMemo(
+    () => (scheduleLocal ? localToSlot(scheduleLocal) : null),
+    [scheduleLocal],
+  );
+  const showScheduleField = scheduled && mode === "details";
+  const willSchedule = mode === "details" && editedSchedule != null;
+  // Keep the picker within the trip's span so a nudge can't strand the card on a
+  // day with no column.
+  const dayDates = timeline.days.map((d) => d.date);
+  const minDay = dayDates[0];
+  const maxDay = dayDates[dayDates.length - 1];
+
   const ready = mode === "details" ? title.trim() !== "" : url.trim() !== "";
   const canSubmit = editable && ready && !savingLink;
 
@@ -162,7 +186,7 @@ export function CardComposer({
           pricedAmount !== ""
             ? { amount: pricedAmount, currency, kind: costKind }
             : null,
-        ...(prefill ? { schedule: prefill } : {}),
+        ...(editedSchedule ? { schedule: editedSchedule } : {}),
       });
     }
     onClose();
@@ -193,13 +217,24 @@ export function CardComposer({
         <header className="flex items-center justify-between border-b border-ink/10 px-5 py-4">
           <div className="flex flex-col gap-1">
             <h2 className="font-serif text-xl text-ink">Add a card</h2>
-            {scheduled && prefill ? (
-              <p
-                data-testid="composer-schedule-chip"
-                className="font-sans text-[11px] text-ink/60"
+            {showScheduleField ? (
+              <label
+                data-testid="composer-schedule"
+                className="flex items-center gap-2"
               >
-                Scheduling on {prefill.dayKey} at {minuteLabel(prefill.minute)}
-              </p>
+                <span className="font-sans text-[11px] text-ink/55">
+                  Scheduling for
+                </span>
+                <input
+                  type="datetime-local"
+                  value={scheduleLocal}
+                  onChange={(e) => setScheduleLocal(e.target.value)}
+                  data-testid="composer-schedule-input"
+                  className="h-7 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
+                  {...(minDay ? { min: `${minDay}T00:00` } : {})}
+                  {...(maxDay ? { max: `${maxDay}T23:59` } : {})}
+                />
+              </label>
             ) : (
               <p className="font-sans text-[11px] text-ink/50">
                 {mode === "find"
@@ -220,26 +255,25 @@ export function CardComposer({
           </button>
         </header>
 
-        {/* Mode switch — the four ways to get a card on the board. Hidden when
-            placing at a specific slot (that path always authors in Details). */}
-        {!scheduled ? (
-          <div className="flex gap-1 border-b border-ink/10 px-5 pt-3">
-            {(["details", "link", "find", "fill"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                aria-pressed={mode === m}
-                data-testid={`composer-mode-${m}`}
-                className={`h-8 rounded-t-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
-                  mode === m ? "bg-ink/10 text-ink" : "text-ink/50 hover:bg-ink/5"
-                }`}
-              >
-                {MODE_LABEL[m]}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        {/* Mode switch — the four ways to get a card on the board. Shown in every
+            entry path (including a timeline-slot tap); only Details honors the
+            slot, so the header/label adapt via `willSchedule`. */}
+        <div className="flex gap-1 border-b border-ink/10 px-5 pt-3">
+          {(["details", "link", "find", "fill"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              aria-pressed={mode === m}
+              data-testid={`composer-mode-${m}`}
+              className={`h-8 rounded-t-md px-3 font-sans text-[11px] uppercase tracking-[0.16em] transition-colors ${
+                mode === m ? "bg-ink/10 text-ink" : "text-ink/50 hover:bg-ink/5"
+              }`}
+            >
+              {MODE_LABEL[m]}
+            </button>
+          ))}
+        </div>
 
         {mode === "find" || mode === "fill" ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-5">
@@ -404,7 +438,7 @@ export function CardComposer({
           >
             {savingLink
               ? "Adding…"
-              : scheduled
+              : willSchedule
                 ? "Add to timeline"
                 : "Add to Collection"}
           </button>

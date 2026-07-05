@@ -39,9 +39,11 @@ vi.mock("@/app/itinerary/[id]/_shell/SessionThread", () => ({
 }));
 
 const getNodeChargesMock = vi.fn();
+const updateNodeStatusMock = vi.fn();
 vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   getNodeCharges: (...args: unknown[]) => getNodeChargesMock(...args),
+  updateNodeStatus: (...args: unknown[]) => updateNodeStatusMock(...args),
 }));
 
 import type { ItineraryResponse, NodeResponse } from "@ov-black/api-client";
@@ -150,6 +152,7 @@ function renderDetail(
 beforeEach(() => {
   vi.clearAllMocks();
   getNodeChargesMock.mockResolvedValue({ ok: true, charges: charges() });
+  updateNodeStatusMock.mockResolvedValue({ ok: true });
 });
 
 describe("CardDetailView · facets", () => {
@@ -214,6 +217,57 @@ describe("CardDetailView · facets", () => {
     renderDetail(<CardDetailView nodeId="ghost" />, [HOTEL]);
     expect(screen.getByTestId("card-detail-missing")).toBeInTheDocument();
     expect(screen.queryByTestId("card-detail")).not.toBeInTheDocument();
+  });
+});
+
+describe("CardDetailView · per-card hand-over (ADV-10)", () => {
+  const IDEA = node("idea-1", { title: "Kaiseki dinner", status: "idea" });
+  const PROPOSED = node("prop-1", { title: "Kaiseki dinner", status: "proposed" });
+
+  test("advisor sees 'Propose this' on an idea card — never the traveler's approve", () => {
+    renderDetail(<CardDetailView nodeId="idea-1" />, [IDEA], {
+      role: "advisor",
+      status: "draft",
+    });
+    expect(screen.getByTestId("card-detail-proposal")).toBeInTheDocument();
+    expect(screen.getByTestId("card-detail-propose-node")).toBeInTheDocument();
+    // The advisor proposes; they never get the traveler's "Approve this" here.
+    expect(screen.queryByTestId("card-detail-approval")).not.toBeInTheDocument();
+  });
+
+  test("clicking 'Propose this' flips the card idea → proposed at the seam", async () => {
+    renderDetail(<CardDetailView nodeId="idea-1" />, [IDEA], {
+      role: "advisor",
+      status: "draft",
+    });
+    fireEvent.click(screen.getByTestId("card-detail-propose-node"));
+    expect(updateNodeStatusMock).toHaveBeenCalledWith(expect.anything(), {
+      itineraryId: "it-1",
+      nodeId: "idea-1",
+      status: "proposed",
+    });
+    // Optimistic: the card is proposed now, so the hand-over action is spent.
+    await waitFor(() =>
+      expect(screen.queryByTestId("card-detail-propose-node")).not.toBeInTheDocument(),
+    );
+  });
+
+  test("traveler sees 'Approve this' on a proposed card — never the propose action", () => {
+    renderDetail(<CardDetailView nodeId="prop-1" />, [PROPOSED], {
+      role: "client",
+      status: "proposed",
+    });
+    expect(screen.getByTestId("card-detail-approval")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-detail-proposal")).not.toBeInTheDocument();
+  });
+
+  test("advisor on an already-proposed card gets neither action (nothing to do)", () => {
+    renderDetail(<CardDetailView nodeId="prop-1" />, [PROPOSED], {
+      role: "advisor",
+      status: "draft",
+    });
+    expect(screen.queryByTestId("card-detail-proposal")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-detail-approval")).not.toBeInTheDocument();
   });
 });
 

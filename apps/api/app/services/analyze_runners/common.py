@@ -90,6 +90,7 @@ _NODES_SQL = text(
         st_x(n.location::geometry) as lng
     from public.nodes n
     where n.itinerary_id = :iid
+      and n.deleted_at is null
       and n.role is null
       and n.attached_to_node_id is null
       and n.status <> 'discarded'
