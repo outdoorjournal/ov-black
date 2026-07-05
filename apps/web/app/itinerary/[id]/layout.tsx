@@ -77,13 +77,12 @@ export default async function ItineraryLayout({
     if (baseline.ok) baselineTitle = baseline.itinerary.title;
   }
 
-  // Shared masthead: wordmark → breadcrumbs → avatar menu.
+  // Shared masthead: wordmark → trip title → avatar menu. The return-home crumb
+  // ("Basecamp" / "Clients") now lives at the top of the rail (PS7), so the
+  // header carries only the current trip — one crumb, not a nav trail.
   const tripTitle = result.itinerary.title?.trim() || "Itinerary";
   const homeHref = role === "advisor" ? "/command-center" : "/basecamp";
-  const crumbs: Crumb[] =
-    role === "advisor"
-      ? [{ label: "Clients", href: "/command-center/clients" }, { label: tripTitle }]
-      : [{ label: "Basecamp", href: "/basecamp" }, { label: tripTitle }];
+  const crumbs: Crumb[] = [{ label: tripTitle }];
 
   // First-run gate: no brief yet → capture the goal + timing before the shell.
   // A fork inherits its baseline's intent, so only baselines gate.

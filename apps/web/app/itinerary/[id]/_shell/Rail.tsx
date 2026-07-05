@@ -1,18 +1,19 @@
 "use client";
 
-// The places axis (M006/PS1) — a slim left rail of routed destinations. One
+// The places axis (M006/PS1) — the itinerary's slice of the shared AppRail. One
 // noun per destination; role changes affordances WITHIN a surface, not access,
 // so the only role gate here is the advisor-only Studio below the divider.
 //
-// The rail is Home · Timeline · Collection · ─ · Studio (Q7). Home (the per-trip
-// Dashboard, PS3) sits at the top; Party + notifications live in the Dashboard,
-// not the rail. Below md the rail hides and the MobileTabBar carries the axis.
+// The rail is «back» · Home · Timeline · Collection · ─ · Studio (Q7). The top
+// item is the return to the viewer's home (Basecamp for a traveler, the client
+// list for an advisor), styled as a muted back link — so the masthead no longer
+// needs a "Basecamp ›" breadcrumb (PS7 header cleanup). Below md the rail hides
+// and the MobileTabBar carries the axis.
 
 import type { Route } from "next";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
 
+import { AppRail, type RailItem } from "@/app/_components/shell/AppRail";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 
 import {
@@ -29,88 +30,62 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
   const pathname = usePathname();
   const activeSeg = lastSegment(pathname);
 
+  const backItem =
+    role === "advisor"
+      ? { href: "/command-center/clients" as Route, label: "Clients" }
+      : { href: "/basecamp" as Route, label: "Basecamp" };
+
+  const items: RailItem[] = [
+    {
+      href: `/itinerary/${id}/dashboard` as Route,
+      label: "Home",
+      active: activeSeg === "dashboard",
+      icon: <DashboardIcon />,
+    },
+    {
+      href: `/itinerary/${id}/timeline` as Route,
+      label: "Timeline",
+      active: activeSeg === "timeline",
+      icon: <TimelineIcon />,
+    },
+    {
+      href: `/itinerary/${id}/collection` as Route,
+      label: "Collection",
+      active: activeSeg === "collection",
+      icon: <CollectionIcon />,
+    },
+    ...(role === "advisor"
+      ? [
+          {
+            href: `/itinerary/${id}/studio` as Route,
+            label: "Studio",
+            active: activeSeg === "studio",
+            icon: <StudioIcon />,
+            dividerBefore: true,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <nav
-      data-testid="planner-rail"
-      aria-label="Views"
-      className="hidden w-[76px] shrink-0 flex-col items-stretch border-r border-ink/10 bg-paper/85 py-3 md:flex"
-    >
-      <RailLink
-        href={`/itinerary/${id}/dashboard`}
-        label="Home"
-        active={activeSeg === "dashboard"}
-        icon={<DashboardIcon />}
-      />
-      <RailLink
-        href={`/itinerary/${id}/timeline`}
-        label="Timeline"
-        active={activeSeg === "timeline"}
-        icon={<TimelineIcon />}
-      />
-      <RailLink
-        href={`/itinerary/${id}/collection`}
-        label="Collection"
-        active={activeSeg === "collection"}
-        icon={<CollectionIcon />}
-      />
-
-      {role === "advisor" ? (
-        <>
-          <div className="mx-4 my-2 border-t border-ink/10" aria-hidden />
-          <RailLink
-            href={`/itinerary/${id}/studio`}
-            label="Studio"
-            active={activeSeg === "studio"}
-            icon={<StudioIcon />}
-          />
-        </>
-      ) : null}
-
-      {/* Concierge opener for the tablet band (md–1100px, where the column is
-          collapsed). Inert ≥1100px (the column is always in-flow there). */}
-      <button
-        type="button"
-        onClick={onOpenConcierge}
-        data-testid="rail-open-concierge"
-        className="mt-auto flex flex-col items-center gap-1 py-2.5 font-sans text-[9px] uppercase tracking-[0.14em] text-ink/50 transition-colors hover:text-ink min-[1100px]:hidden"
-      >
-        <ConciergeIcon />
-        Concierge
-      </button>
-    </nav>
-  );
-}
-
-function RailLink({
-  href,
-  label,
-  active,
-  icon,
-}: {
-  href: Route;
-  label: string;
-  active: boolean;
-  icon: ReactNode;
-}) {
-  return (
-    <Link
-      href={href}
-      aria-current={active ? "page" : undefined}
-      data-testid={`rail-${label.toLowerCase()}`}
-      className={
-        "relative flex flex-col items-center gap-1 py-2.5 font-sans text-[9px] uppercase tracking-[0.14em] transition-colors " +
-        (active ? "text-ink" : "text-ink/50 hover:text-ink")
+    <AppRail
+      ariaLabel="Views"
+      backItem={backItem}
+      items={items}
+      footer={
+        // Concierge opener for the tablet band (md–1100px, where the column is
+        // collapsed). Inert ≥1100px (the column is always in-flow there).
+        <button
+          type="button"
+          onClick={onOpenConcierge}
+          data-testid="rail-open-concierge"
+          className="mt-auto flex flex-col items-center gap-1 py-2.5 font-sans text-[9px] uppercase tracking-[0.14em] text-ink/50 transition-colors hover:text-ink min-[1100px]:hidden"
+        >
+          <ConciergeIcon />
+          Concierge
+        </button>
       }
-    >
-      {active ? (
-        <span
-          className="absolute left-0 top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r bg-ink"
-          aria-hidden
-        />
-      ) : null}
-      {icon}
-      {label}
-    </Link>
+    />
   );
 }
 

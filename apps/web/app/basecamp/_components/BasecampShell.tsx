@@ -12,8 +12,6 @@
 // internal state — the server never resolves to "active conversation"
 // because it's a transient client state, not a load shape.
 
-import Link from "next/link";
-
 import type {
   AgentTurnSummary,
   MyItinerarySummary,
@@ -77,65 +75,45 @@ export function BasecampShell({
         />
       ) : null}
 
+      {/* Concierge on the LEFT (mirroring the itinerary shell). DOM order stays
+          content-then-chat so a phone shows the itineraries first and the chat
+          below; `lg:order-*` flips them to chat-left on the desktop grid. */}
       {variant === "post_first_touch" ? (
-        <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[1fr_minmax(0,480px)] lg:gap-10">
-          <div className="flex flex-col gap-6">
-            <AccountLinks />
+        <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[minmax(0,480px)_1fr] lg:gap-10">
+          <div className="flex flex-col gap-6 lg:order-2">
             {onboardingComplete ? <EmptyItinerariesHint /> : <OnboardingReminder />}
           </div>
-          <RightRailChat
-            clientId={clientId}
-            accessToken={accessToken}
-            apiBaseUrl={apiBaseUrl}
-            initialTurns={priorTurns}
-            existingSessionId={sessionId}
-            onboardingComplete={onboardingComplete}
-          />
+          <div className="lg:order-1">
+            <RightRailChat
+              clientId={clientId}
+              accessToken={accessToken}
+              apiBaseUrl={apiBaseUrl}
+              initialTurns={priorTurns}
+              existingSessionId={sessionId}
+              onboardingComplete={onboardingComplete}
+            />
+          </div>
         </div>
       ) : null}
 
       {variant === "with_itineraries" ? (
-        <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[1fr_minmax(0,480px)] lg:gap-10">
-          <div className="flex flex-col gap-6">
-            <AccountLinks />
+        <div className="grid min-h-[calc(100vh-5.5rem)] grid-cols-1 gap-6 px-6 pb-12 pt-6 sm:px-10 lg:grid-cols-[minmax(0,480px)_1fr] lg:gap-10">
+          <div className="flex flex-col gap-6 lg:order-2">
             <ItineraryGrid itineraries={itineraries} />
           </div>
-          <RightRailChat
-            clientId={clientId}
-            accessToken={accessToken}
-            apiBaseUrl={apiBaseUrl}
-            initialTurns={priorTurns}
-            existingSessionId={sessionId}
-            onboardingComplete={onboardingComplete}
-          />
+          <div className="lg:order-1">
+            <RightRailChat
+              clientId={clientId}
+              accessToken={accessToken}
+              apiBaseUrl={apiBaseUrl}
+              initialTurns={priorTurns}
+              existingSessionId={sessionId}
+              onboardingComplete={onboardingComplete}
+            />
+          </div>
         </div>
       ) : null}
     </BasecampChrome>
-  );
-}
-
-function AccountLinks() {
-  return (
-    <div className="flex flex-wrap gap-x-6 gap-y-2">
-      <Link
-        href="/basecamp/party"
-        className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55 transition-colors hover:text-ink"
-      >
-        Your travel party →
-      </Link>
-      <Link
-        href="/basecamp/vault"
-        className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55 transition-colors hover:text-ink"
-      >
-        Your vault →
-      </Link>
-      <Link
-        href="/basecamp/invoices"
-        className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55 transition-colors hover:text-ink"
-      >
-        Your invoices →
-      </Link>
-    </div>
   );
 }
 
@@ -147,7 +125,7 @@ function EmptyItinerariesHint() {
         Your itineraries will appear here.
       </h2>
       <p className="max-w-md text-base leading-relaxed text-ink/70">
-        Reach the concierge any time — a thread to your right is always open.
+        Reach the concierge any time — a thread alongside is always open.
       </p>
       <StartItineraryButton />
     </div>

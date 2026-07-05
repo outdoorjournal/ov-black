@@ -3,7 +3,7 @@
 // intake gate. Heavy leaves (the real chat, the intake form, next/link's router)
 // are stubbed so these assert the SHELL's structure + gating, not their guts.
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, test, vi } from "vitest";
 
@@ -221,6 +221,19 @@ describe("Rail · places axis", () => {
     render(withProviders("client", <Rail onOpenConcierge={() => {}} />));
     expect(screen.queryByTestId("rail-studio")).toBeNull();
     expect(screen.getByTestId("rail-timeline")).toBeTruthy();
+  });
+
+  test("the top item is a role-aware return home (PS7 — replaces the header crumb)", () => {
+    render(withProviders("client", <Rail onOpenConcierge={() => {}} />));
+    const back = screen.getByTestId("rail-back");
+    expect(back.getAttribute("href")).toBe("/basecamp");
+    expect(back.textContent).toContain("Basecamp");
+
+    cleanup();
+    render(withProviders("advisor", <Rail onOpenConcierge={() => {}} />));
+    const advisorBack = screen.getByTestId("rail-back");
+    expect(advisorBack.getAttribute("href")).toBe("/command-center/clients");
+    expect(advisorBack.textContent).toContain("Clients");
   });
 
   test("the active destination is marked from the pathname", () => {

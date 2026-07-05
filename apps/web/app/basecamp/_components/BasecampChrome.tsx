@@ -16,6 +16,8 @@ import type { ReactNode } from "react";
 import { AppHeader } from "@/app/_components/app-header/AppHeader";
 import type { AppHeaderUser } from "@/lib/appHeader";
 
+import { BasecampRail } from "./BasecampRail";
+
 export type BasecampChromeProps = {
   user: AppHeaderUser;
   children: ReactNode;
@@ -23,10 +25,15 @@ export type BasecampChromeProps = {
 
 export function BasecampChrome({ user, children }: BasecampChromeProps) {
   return (
-    <main className="relative min-h-screen bg-paper text-ink">
+    <main className="relative flex min-h-screen flex-col bg-paper text-ink">
       <AppHeader user={user} homeHref="/basecamp" />
 
-      <section className="relative z-10">{children}</section>
+      {/* Same shape as the itinerary shell: the shared rail on the left, the
+          surface (which may lead with the concierge) filling the rest. */}
+      <div className="flex min-h-0 flex-1">
+        <BasecampRail />
+        <section className="relative z-10 min-w-0 flex-1">{children}</section>
+      </div>
     </main>
   );
 }
