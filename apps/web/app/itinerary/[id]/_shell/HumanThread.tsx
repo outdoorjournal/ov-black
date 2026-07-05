@@ -1,16 +1,19 @@
 "use client";
 
-// The human messaging channel (M006/PS7) — the "Advisor" people-circle. A
+// The human messaging channel (M006/PS7 → PS8) — the "Advisor" people-circle. A
 // durable conversation between the traveler, their advisor, and (once party
 // members have logins) that trip's party. Unlike the Artemis SessionThread this
-// has NO agent turn and NO SSE stream: it get-or-creates the one human thread
-// for the scope, lists its messages, and posts human messages. A light poll
-// surfaces the other party's replies (no realtime yet).
+// has NO SSE stream: it get-or-creates the one human thread for the scope, lists
+// its messages, and posts human messages. A light poll surfaces the other
+// party's replies (no realtime yet).
 //
-// Artemis is summoned into this thread only in PS8 (@-mention); until then an
-// `author_kind==='artemis'` message never appears here.
+// PS8 — @-mention bridge: mentioning `@Artemis` in a message summons the
+// concierge into this thread. The backend runs the turn AFTER the send (so the
+// human message lands instantly) and inserts one `author_kind==='artemis'`
+// reply; the poll surfaces it. Disclosure follows the THREAD (client-safe even
+// when an advisor summons), never the sender.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createApiClient,
@@ -20,7 +23,22 @@ import {
   type MessageSummary,
 } from "@ov-black/api-client";
 
+import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
+
 const POLL_MS = 6000;
+// While a summoned Artemis reply is expected, poll harder so it lands promptly.
+const POLL_AWAITING_MS = 2500;
+// Give up the "composing" hint if no reply arrives — the human message stands.
+const AWAIT_TIMEOUT_MS = 45000;
+
+// Mirrors the backend trigger (services/agent.py `_MENTION_RE`): a standalone,
+// case-insensitive `@artemis`. The lookbehind rejects an `@` glued to a word so
+// `name@artemis.example` never fires.
+const MENTION_RE = /(?<![\w@])@artemis\b/i;
+
+function mentionsArtemis(text: string): boolean {
+  return MENTION_RE.test(text);
+}
 
 type ViewerKind = "advisor" | "traveler";
 
@@ -44,8 +62,20 @@ export function HumanThread({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  // PS8: after summoning Artemis, show a quiet "composing" hint until the reply
+  // lands (or the timeout lapses). `pendingSinceRef` snapshots the Artemis-message
+  // count at summon time so the next one that arrives clears the hint.
+  const [awaitingArtemis, setAwaitingArtemis] = useState(false);
+  const pendingSinceRef = useRef<number | null>(null);
+  const awaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const seeded = useRef(false);
+
+  const artemisCount = useMemo(
+    () => messages.filter((m) => m.author_kind === "artemis").length,
+    [messages],
+  );
 
   const canApi = Boolean(apiBaseUrl && accessToken && clientId);
   const api = useCallback(() => {
@@ -74,19 +104,41 @@ export function HumanThread({
     })();
   }, [canApi, api, clientId, itineraryId]);
 
-  // Poll for the other party's messages while the channel is open.
+  // Poll for the other party's messages while the channel is open. Poll harder
+  // while a summoned Artemis reply is expected so it lands promptly.
   useEffect(() => {
     if (!threadId) return;
     const client = api();
     if (!client) return;
-    const timer = setInterval(() => {
-      void (async () => {
-        const loaded = await listMessages(client, threadId);
-        if (loaded.ok) setMessages(loaded.messages);
-      })();
-    }, POLL_MS);
+    const timer = setInterval(
+      () => {
+        void (async () => {
+          const loaded = await listMessages(client, threadId);
+          if (loaded.ok) setMessages(loaded.messages);
+        })();
+      },
+      awaitingArtemis ? POLL_AWAITING_MS : POLL_MS,
+    );
     return () => clearInterval(timer);
-  }, [threadId, api]);
+  }, [threadId, api, awaitingArtemis]);
+
+  // Clear the "composing" hint the moment a new Artemis message arrives.
+  useEffect(() => {
+    if (!awaitingArtemis || pendingSinceRef.current === null) return;
+    if (artemisCount > pendingSinceRef.current) {
+      setAwaitingArtemis(false);
+      pendingSinceRef.current = null;
+      if (awaitTimerRef.current) clearTimeout(awaitTimerRef.current);
+    }
+  }, [artemisCount, awaitingArtemis]);
+
+  // Drop any pending timer on unmount.
+  useEffect(
+    () => () => {
+      if (awaitTimerRef.current) clearTimeout(awaitTimerRef.current);
+    },
+    [],
+  );
 
   // Keep the transcript pinned to the newest message.
   useEffect(() => {
@@ -99,6 +151,7 @@ export function HumanThread({
     if (!text || !threadId || sending) return;
     const client = api();
     if (!client) return;
+    const summoning = mentionsArtemis(text);
     setSending(true);
     const result = await sendMessage(client, threadId, { content: text });
     setSending(false);
@@ -106,13 +159,32 @@ export function HumanThread({
       setDraft("");
       // Optimistic append; the next poll reconciles ordering with the server.
       setMessages((prev) => [...prev, result.message]);
+      if (summoning) {
+        // The backend runs the summon after the send; the reply lands on a
+        // later poll. Snapshot the current Artemis count so the arrival clears
+        // the hint, and arm a safety timeout.
+        pendingSinceRef.current = artemisCount;
+        setAwaitingArtemis(true);
+        if (awaitTimerRef.current) clearTimeout(awaitTimerRef.current);
+        awaitTimerRef.current = setTimeout(() => {
+          setAwaitingArtemis(false);
+          pendingSinceRef.current = null;
+        }, AWAIT_TIMEOUT_MS);
+      }
     }
-  }, [draft, threadId, sending, api]);
+  }, [draft, threadId, sending, api, artemisCount]);
+
+  // Prepend the @Artemis mention (once) and focus the composer so the human can
+  // finish their question. Summoning is the mention itself — the send does the rest.
+  const askArtemis = useCallback(() => {
+    setDraft((d) => (mentionsArtemis(d) ? d : `@Artemis ${d.trimStart()}`));
+    composerRef.current?.focus();
+  }, []);
 
   const intro =
     viewerKind === "advisor"
-      ? "The client conversation — messages here are visible to the traveler and their party. No agent replies."
-      : "Message your advisor and travel party. This is a human conversation — the concierge answers when you ask Artemis.";
+      ? "The client conversation — visible to the traveler and their party. Mention @Artemis to bring the concierge in; its reply is client-safe."
+      : "Message your advisor and travel party. Mention @Artemis to bring the concierge into the conversation.";
 
   return (
     <div data-testid="human-thread" className="flex h-full min-h-0 flex-col">
@@ -135,11 +207,31 @@ export function HumanThread({
         {messages.map((m) => (
           <HumanMessage key={m.id} message={m} viewerKind={viewerKind} />
         ))}
+        {awaitingArtemis ? (
+          <p
+            data-testid="human-artemis-pending"
+            className="font-serif text-[13px] italic leading-relaxed text-[rgba(245,112,31,0.75)]"
+          >
+            Artemis is composing a reply…
+          </p>
+        ) : null}
       </div>
 
       <div className="shrink-0 border-t border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs">
         <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={askArtemis}
+            disabled={!canApi || status === "error"}
+            data-testid="human-ask-artemis"
+            aria-label="Ask Artemis in this conversation"
+            title="Bring the concierge into this conversation"
+            className="h-9 shrink-0 rounded-md border border-[rgba(245,112,31,0.35)] px-3 font-sans text-[10px] uppercase tracking-[0.16em] text-[rgba(245,112,31,0.9)] transition-colors hover:bg-[rgba(245,112,31,0.08)] disabled:opacity-40"
+          >
+            @ Artemis
+          </button>
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -180,11 +272,13 @@ function HumanMessage({
 }) {
   const mine = message.author_kind === viewerKind;
   const isArtemis = message.author_kind === "artemis";
+  // Explicit AI attribution (PS8): the concierge reply is unmistakably Artemis,
+  // distinct from the human "Advisor" — and tinted below.
   const label =
     message.author_kind === "advisor"
       ? "Advisor"
       : message.author_kind === "artemis"
-        ? "Artemis"
+        ? "Artemis · concierge"
         : message.author_kind === "system"
           ? "Update"
           : "Traveler";
@@ -203,7 +297,10 @@ function HumanMessage({
       ) : null}
       <div
         className={
-          "max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 font-serif text-[13px] leading-relaxed " +
+          "max-w-[85%] rounded-2xl px-3 py-2 font-serif text-[13px] leading-relaxed " +
+          // Artemis prose flows through ProseMessage (block markdown + place chips);
+          // human messages are plain text, so preserve their line breaks.
+          (isArtemis ? "" : "whitespace-pre-wrap ") +
           (mine
             ? "bg-ink/10 text-ink"
             : isArtemis
@@ -211,7 +308,7 @@ function HumanMessage({
               : "bg-paper text-ink ring-1 ring-ink/10")
         }
       >
-        {message.content}
+        {isArtemis ? <ProseMessage content={message.content} /> : message.content}
       </div>
     </div>
   );

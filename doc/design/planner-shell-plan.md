@@ -10,12 +10,16 @@
 > **Status (handoff):** **PS0–PS5 are landed on `dev`; PS6 is landing incrementally (Q5 collapse · mobile
 > Schedule gating · overlay summon + a11y done; the in-canvas aside teardown consciously deferred); **PS7's
 > human messaging channel is landed** — the messaging substrate + the itinerary-side human channel **and** the
-> basecamp Artemis↔Advisor unify (only the `agent_sessions`→threads backfill + an advisor↔traveler e2e remain,
-> both non-blocking).** See §0 below for exactly what's done, what was deferred within those
-> slices, verification, and what's next. Q13 is **resolved (UNIFY, endorsed)** and now **built** (migration
-> `0037`); Q3 (card takeover → PS4), Q4 (keep both homes → PS3), and Q6 (place-mode is state, not a URL → PS5)
-> shipped as their defaults. On milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx)
-> and this slots into `mvp-plan.md` as M006.
+> basecamp Artemis↔Advisor unify. **PS8's @-mention bridge is landed** — mentioning `@Artemis` in a human thread
+> summons a **client-safe, thread-scoped** agent turn that posts one `author_kind='artemis'` reply (card
+> proposals flow to the single graph); the **disclosure invariant is test-enforced** (the bridge takes no
+> summoner, so an advisor's mention is as client-safe as a traveler's). All PS0–PS8 slices are now landed; the
+> only remaining M006 items are non-blocking cleanups (the `agent_sessions`→threads backfill, an advisor↔traveler
+> e2e, and the two pre-existing `test_me` + `chat.spec ONB-2` reds). See §0 for exactly what's done, deferred,
+> and verified. Q13 is **resolved (UNIFY, endorsed)** and **built** (migration `0037`); Q3 (card takeover → PS4),
+> Q4 (keep both homes → PS3), and Q6 (place-mode is state, not a URL → PS5) shipped as their defaults. On
+> milestone green-light the §1 decisions graduate to `doc/decisions.md` (D0xx) and this slots into `mvp-plan.md`
+> as M006.
 
 ---
 
@@ -44,7 +48,35 @@ itinerary" moved to its `secondary` slot) so the top nav matches the itinerary. 
 `GET /me/onboarding_session` wasn't scoped to `itinerary_id IS NULL`, so after PS2's itinerary-scoped sessions the
 basecamp rail surfaced *the itinerary's* Artemis chat — now filtered to the basecamp (unpinned) session
 (`test_onboarding_session_ignores_itinerary_pinned`). **Deferred within PS7:** the `agent_sessions`→threads
-**backfill** (moved to PS8) and a Playwright advisor↔traveler **e2e**. **Next up: PS8** (@-mention bridge).
+**backfill** (moved to PS8) and a Playwright advisor↔traveler **e2e**.
+
+**PS8 (this session):** the Artemis-in-human-chat **@-mention bridge**. Backend: `services/agent.py` gains
+`mentions_artemis`/`strip_mention` (a standalone, case-insensitive `@artemis` token; the lookbehind rejects
+`name@artemis.example`) + **`summon_artemis_in_thread`** — a **thread-scoped agent turn that takes NO summoner
+principal**, so disclosure follows the *thread's* audience (a human thread is always `traveler`) and an advisor's
+mention is client-safe **by construction**. It get-or-creates the thread's engine `agent_session` (the Q13=UNIFY
+`thread_id` forward hook — a stable `agentcore_session_id` + the itinerary pin; **no `agent_turns` written** — the
+thread's `messages` ARE the history), assembles the same client-safe traveler context (`assemble_traveler_context`
++ `build_system_prompt`), runs one non-streaming turn, and inserts a single `author_kind='artemis'` message. A
+`card` frame is persisted as a proposed-experience node via the existing `_persist_proposed_card` (AGENT actor)
+and attached as the message's `proposed_node_id` — **proposals land on the single graph**. `routers/messaging.py`:
+`POST /threads/{id}/messages` now runs the summon as a **`BackgroundTasks`** job (after the response, so the human
+message lands instantly and the reply arrives on the next poll); the trigger is the message content (`@Artemis`),
+so **no api-client/schema change** — the existing `sendMessage` wrapper + `MessageSummary` (already carries
+`author_kind='artemis'` + `proposed_node_id`) are unchanged. Frontend (`HumanThread`): an **"@ Artemis"**
+composer button (prepends the mention once, focuses), a quiet **"Artemis is composing a reply…"** pending hint
+(faster poll while awaiting; a 45 s safety timeout), and **explicit AI attribution** (the reply renders
+"Artemis · concierge", tinted, distinct from the human "Advisor"). The Artemis bubble reuses the **same
+`ProseMessage` renderer** as the Artemis chat (markdown + `place:` chips + `ov-timeline` blocks), role-gated like
+`ChatPanel` (human messages stay plain text) so `[Fiskardo](place:…)` renders as a chip, not literal text. **Redaction discipline held** — the summon
+logs ids/counts only; the sweep test proves Dossier/OSINT/net-worth never reach a log record. **Runtime contract:**
+a summon carries **no user JWT** (`auth_bearer=""`) — it acts only through the `agent_token` path (traveler
+context + `propose_card`), so `apps/agent`'s `TurnPayload.auth_bearer` was relaxed from `min_length=1` to
+`default=""` (back-compatible; user-scoped tools then fail closed to `missing_auth`, the intended scope for a
+summon). The local `apps/agent` runtime must be restarted to pick that up (no `--reload`). **Deferred (still
+non-blocking):** the `agent_sessions`→threads **backfill** (the bridge doesn't need it — the human thread's
+messages are the spine; it stays a data-migration follow-up), the advisor↔traveler **e2e**, and proactive/@-only
+delegation beyond the first trigger. **Next up:** M006 wrap (green-light + the pre-existing cleanups).
 
 | Slice | State | Notes |
 | --- | --- | --- |
@@ -55,7 +87,8 @@ basecamp rail surfaced *the itinerary's* Artemis chat — now filtered to the ba
 | **PS6** | **partial** | Shell polish. **Done:** Q5 **concierge collapse** (open by default ≥1100px → slim edge tab, in `ItineraryShell`/`ConciergeColumn`); place-mode **Schedule desktop-only** (`hidden md:block`, closes the mobile dead-end); Collection **overlay summon** (`CollectionOverlay` — a summonable drawer in the md–xl band, auto-closes on hold) with a11y (focus-into-drawer, Esc, `motion-reduce` on the tap targets). **Deferred (by human call):** the leftover in-canvas **aside teardown** — it's still consumed by the retired `ItineraryGraphView` (prototype-only), so removing it is a separate refactor; the broad a11y sweep continues there. |
 | **PS5** | **done** | Place mode (pick-then-place, a11y path over drag): store slice `heldItem` + `lastPlacement` with `holdItem`/`placeHeldItem`/`clearHeldItem`/`undoPlacement` (`placeHeldItem` reuses `moveNode`; gated `selectCanSchedule` = editable ∨ traveler-fork, so a draft-mine traveler keeps drag→lazy-fork). **Schedule** button on `CollectionCard` → `holdItem`; `HorizontalCanvas` renders pulsing per-day **tap targets** when holding, mapping the tapped `clientY` → minute via the drag path's `mapYToMinute`; a shell-level **`PlaceModeLayer`** floats the holding chip + undo toast, handles Esc, and slides to the timeline when you pick from elsewhere (the held state survives the nav because the store is shell-hosted). `CollectionRail` gained a `variant="overlay"`. **No backend.** |
 | **PS3** | **done** | Per-trip Dashboard: `dashboard/page.tsx` + `DashboardView` (index now redirects here; rail/tab **Home** entry + `DashboardIcon`). Sections — **hero** (mood-splash via `MOODS[timeline.mood]` + title/brief/timing; edit reuses `ItineraryIntake` prefilled → `router.refresh()`), one derived **next best action** (`deriveNextAction`, pure), the **money roll-up** (`listInvoices` → `rollupInvoices` owed-per-currency/issued/paid; per-invoice **pay** → existing `/invoices/[id]`; charge lines with `node_id` deep-link **down** to the PS4 card money facet), and **travel party** (advisor → `PartyPanel`; traveler → read-only `listItineraryParty` glance + link to `/basecamp/party`). Advisor-only **Trip management** tabs (Vault · Invoices · Booking) **rehomed out of Studio** — `StudioPlanningSpace` is now Build/Diff only. **No backend** (client-side roll-up over existing reads). |
-| **PS7** | **partial** | Human messaging channel (Q13 = UNIFY, built). **Done:** migration `0037` (`threads`/`messages`/`thread_participants` + defense-in-depth **RLS** — participant/client-ownership `SELECT`, non-recursive; `agent_sessions.thread_id` forward hook, backfill deferred to PS8); ORM `Thread`/`Message`/`ThreadParticipant`; `services/messaging.py` (get-or-create the one human thread per `(client, itinerary?, audience='traveler')`, participant seeding = traveler auth-user + advisor owner, **no agent turn**, cross-tenant → D015 404, reuses the agent JIT client↔auth backfill); `routers/messaging.py` (`POST /threads` · `GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); `HumanThread` (transcript + composer + light poll) wired to the **Advisor people-circle** in `ConciergeColumn` (`channel` state; Artemis body stays mounted, human body mounts on demand). **Basecamp unify (done):** shared `PeopleCircles` on both surfaces, `RightRailChat` Artemis↔Advisor switch (basecamp `HumanThread`, `itinerary_id=NULL`), basecamp header → shared `AppHeader`; fixed `GET /me/onboarding_session` to scope `itinerary_id IS NULL` (was leaking the itinerary Artemis chat onto basecamp). **Deferred:** `agent_sessions`→threads backfill (→ PS8), advisor↔traveler **e2e**. |
+| **PS7** | **done** | Human messaging channel (Q13 = UNIFY, built). Migration `0037` (`threads`/`messages`/`thread_participants` + defense-in-depth **RLS** — participant/client-ownership `SELECT`, non-recursive; `agent_sessions.thread_id` forward hook); ORM `Thread`/`Message`/`ThreadParticipant`; `services/messaging.py` (get-or-create the one human thread per `(client, itinerary?, audience='traveler')`, participant seeding = traveler auth-user + advisor owner, **no agent turn**, cross-tenant → D015 404, reuses the agent JIT client↔auth backfill); `routers/messaging.py` (`POST /threads` · `GET`/`POST /threads/{id}/messages`); api-client wrappers (`openThread`/`listMessages`/`sendMessage`); `HumanThread` wired to the **Advisor people-circle** in `ConciergeColumn`. **Basecamp unify:** shared `PeopleCircles`, `RightRailChat` Artemis↔Advisor switch (basecamp `HumanThread`, `itinerary_id=NULL`), basecamp header → shared `AppHeader`; fixed `GET /me/onboarding_session` to scope `itinerary_id IS NULL`. **Deferred (non-blocking):** advisor↔traveler **e2e**. |
+| **PS8** | **done** | Artemis-in-human-chat **@-mention bridge**. `services/agent.py`: `mentions_artemis`/`strip_mention` + **`summon_artemis_in_thread`** — a **summoner-less** thread-scoped turn (disclosure follows the thread's `traveler` audience, client-safe even when an advisor summons), get-or-creates the thread's engine `agent_session` (`thread_id` hook; no `agent_turns` — thread messages are the history), inserts one `author_kind='artemis'` message, and persists a `card` frame as a proposed node + `proposed_node_id` (**proposals land on the graph**). `routers/messaging.py`: `POST /threads/{id}/messages` runs the summon via **`BackgroundTasks`** on `@Artemis` content (**no api-client/schema change** — content-triggered). `HumanThread`: **"@ Artemis"** composer button, quiet **"composing…"** pending hint (faster poll + safety timeout), explicit **"Artemis · concierge"** attribution. Redaction sweep test proves no Dossier/OSINT/net-worth in logs. **No migration** (0037 already carries `thread_id`/`proposed_node_id`/the `artemis` enum). **Deferred (non-blocking):** `agent_sessions`→threads backfill, advisor↔traveler e2e, proactive triggers beyond @-mention. |
 
 **Verified (current, incl. PS3–PS6):** web — **44 files / 267 vitest pass**, **typecheck + lint clean**. New
 coverage this session: `dashboardModel.test.ts` (roll-up nets payments / excludes draft+void · next-action
@@ -159,12 +192,11 @@ fail on `dev` independently — `evaluate_onboarding` is `profile_fact_count >= 
 - A running web `next dev` holds `.next`; a concurrent `next build` will `MODULE_NOT_FOUND` in the prerender
   worker *after* "Compiled successfully" — that's the collision, not a real build failure.
 
-**Next:** PS1 → PS2 → PS4 → PS3 → PS5 are done; **PS6 is landing incrementally** (collapse · mobile Schedule
-gating · overlay summon + a11y done; only the in-canvas **aside teardown** remains, deferred by human call — it
-needs retiring `ItineraryGraphView`). The front is now **PS7** (general human chat channel — traveler ↔ advisor
-↔ party, gated on Q13=unify + PS2; the larger second track, backend + RLS), with **PS8** (@-mention bridge)
-after it. Cleanup still owed regardless: the pre-existing `chat.spec ONB-2` (basecamp onboarding opener) + the
-two stale `test_me` onboarding assertions.
+**Next:** **PS1–PS8 are all landed.** The only remaining PS6 item is the in-canvas **aside teardown** (deferred
+by human call — it needs retiring `ItineraryGraphView`). Cleanup still owed before M006 "done": the pre-existing
+`chat.spec ONB-2` (basecamp onboarding opener) + the two stale `test_me` onboarding assertions, the PS7/PS8
+advisor↔traveler **e2e**, the `agent_sessions`→threads **backfill** (non-blocking), and a full authenticated
+**browser UAT**. On green-light the §1 decisions graduate to `doc/decisions.md` and this registers as M006.
 
 **PS7 kickoff (for the next agent) — start here:**
 1. **Schema.** Turn the throwaway `scratchpad/00NN_messaging_threads.draft.sql` into the real migration **`0037`**
@@ -425,6 +457,18 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS0, PS2 · **size:** L.
 
 ### PS8 — Artemis-in-human-chat bridge (@-mention)  ·  *gated on PS7*
+> **DONE** (this session, see §0). `services/agent.py` = `mentions_artemis`/`strip_mention` +
+> **`summon_artemis_in_thread`** (a **summoner-less** thread-scoped turn — the disclosure invariant falls out:
+> the function has no principal, so it can only build the thread's client-safe `traveler` context; get-or-creates
+> the thread's engine `agent_session` via the `thread_id` hook with no `agent_turns`; inserts one
+> `author_kind='artemis'` message; a `card` frame → proposed node + `proposed_node_id`). `routers/messaging.py`
+> runs it as a **`BackgroundTasks`** job on `@Artemis` content (content-triggered → **no api-client/schema
+> change**). `HumanThread` = "@ Artemis" button + "composing…" pending hint + "Artemis · concierge" attribution.
+> pytest `test_agent_summon.py` (7: mention parse · reply inserted + engine bound · **disclosure follows the
+> thread not the summoner** · **proposal lands on the graph** · **redaction sweep** · ai_session-thread ignored);
+> web `humanChannel.test.tsx` +3 (ask-button · pending→clear-on-reply · attribution). **No migration.**
+> **Deferred (non-blocking):** the `agent_sessions`→threads backfill (the bridge doesn't need it — the human
+> thread's messages are the spine), advisor↔traveler e2e, proactive/delegation triggers beyond the first @-mention.
 - **goal:** summon Artemis into a human thread; one bridge, @-mention as the first trigger.
 - **deliverables:** mention parse → **thread-scoped agent turn** → Artemis-authored message; **disclosure follows
   the thread's audience, not the summoner** (client-safe in client-visible threads even when an advisor
@@ -450,7 +494,8 @@ and can run late without blocking the traveler-facing shell.
 | **none** ✱ | PS4 | **done** — `GET /itinerary/{id}/nodes/{node_id}/charges` (no schema change): sums `invoice_line_items.node_id` across non-void invoices (billed/paid/owed) + attaches the live `bookings` row |
 | **none** | PS3 | **done** — no backend: the Dashboard money roll-up is a **client-side** `rollupInvoices` over the existing `listInvoices` read; next-action is a client-side derivation; pay reuses the existing `/invoices/[id]` page |
 | **none** | PS5 | **done** — no backend: place mode is a transient `heldItem`/`lastPlacement` **UI slice** over the existing `moveNode`/`unscheduleNode`; not a route (refresh mid-place returns clean) |
-| **0037** ✱ | PS7 | **done** — `threads` / `messages` / `thread_participants` (+ defense-in-depth **RLS**: participant/client-ownership `SELECT`, deliberately non-recursive) per **PS0/Q13 = UNIFY**; `agent_sessions += thread_id` (forward hook — the `agent_sessions`→`ai_session` thread backfill is deferred to PS8) |
+| **0037** ✱ | PS7 | **done** — `threads` / `messages` / `thread_participants` (+ defense-in-depth **RLS**: participant/client-ownership `SELECT`, deliberately non-recursive) per **PS0/Q13 = UNIFY**; `agent_sessions += thread_id` (forward hook) |
+| **none** | PS8 | **done** — no schema change: the @-mention bridge reuses 0037's `thread_id` (engine binding), `messages.author_kind='artemis'` + `messages.proposed_node_id` (proposal → graph). Content-triggered (`@Artemis` in a message) via `BackgroundTasks`, so **no api-client regen** either |
 
 ✱ Next free migration number after this is **0038**. Every schema change re-runs
 `pnpm -C packages/api-client generate` and adds a wrapper in `packages/api-client/src/index.ts` (generated

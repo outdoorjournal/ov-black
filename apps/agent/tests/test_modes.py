@@ -145,3 +145,10 @@ def test_turn_payload_rejects_missing_required_fields() -> None:
 def test_turn_payload_accepts_null_itinerary_id() -> None:
     payload = _payload(itinerary_id=None)
     assert payload.itinerary_id is None
+
+
+def test_turn_payload_accepts_empty_auth_bearer_for_summoned_turn() -> None:
+    # M006/PS8: an @-mention summon carries no user JWT — it acts only through
+    # the agent_token path, so an empty auth_bearer must validate.
+    payload = _payload(auth_bearer="")
+    assert payload.auth_bearer == ""

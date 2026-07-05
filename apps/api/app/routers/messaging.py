@@ -21,10 +21,10 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
 from app.auth import AuthenticatedUser, require_user
-from app.db import get_session
+from app.db import get_session, get_sessionmaker
 from app.routers.agent import _actor_for_user
 from app.schemas.messaging import (
     MessageSummary,
@@ -32,6 +32,7 @@ from app.schemas.messaging import (
     SendMessageRequest,
     ThreadSummary,
 )
+from app.services.agent import mentions_artemis, summon_artemis_in_thread
 from app.services.messaging import (
     MessagingOutcome,
     list_messages,
@@ -138,15 +139,17 @@ async def list_messages_endpoint(
     status_code=status.HTTP_201_CREATED,
     response_model=MessageSummary,
     responses={
-        201: {"description": "Human message posted — no agent turn."},
+        201: {"description": "Human message posted; @Artemis summons a reply async."},
         404: {"description": "No thread with this id accessible to the caller."},
         422: {"description": "Invalid content body (empty or > 8000 chars)."},
     },
-    summary="Post one human message to a thread (no agent turn).",
+    summary="Post one human message; an @Artemis mention summons a reply (PS8).",
 )
 async def send_message_endpoint(
     thread_id: uuid.UUID,
     payload: SendMessageRequest,
+    request: Request,
+    background: BackgroundTasks,
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> MessageSummary:
@@ -160,4 +163,22 @@ async def send_message_endpoint(
     )
     if outcome is not MessagingOutcome.OK or message is None:
         raise HTTPException(status_code=404, detail="thread_not_found")
+
+    # PS8 @-mention bridge: if the human summoned Artemis, run the thread-scoped
+    # turn AFTER the response so the sender's own message lands instantly and the
+    # Artemis reply arrives on the next poll. Disclosure follows the thread, not
+    # this sender — the bridge takes no principal (see summon_artemis_in_thread).
+    # Skip silently when no runtime is wired (local dev without an agent): the
+    # human message still posts.
+    if mentions_artemis(payload.content):
+        runtime = getattr(request.app.state, "agent_runtime", None)
+        if runtime is not None:
+            background.add_task(
+                summon_artemis_in_thread,
+                get_sessionmaker(),
+                runtime,
+                thread_id=thread_id,
+                trigger_content=payload.content,
+                trigger_message_id=message.id,
+            )
     return _message_summary(message)

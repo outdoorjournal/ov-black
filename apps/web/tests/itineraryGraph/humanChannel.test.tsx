@@ -213,6 +213,101 @@ describe("HumanThread", () => {
   });
 });
 
+describe("HumanThread · @Artemis summon (PS8)", () => {
+  test("Ask Artemis prepends the mention (once) and keeps the typed text", async () => {
+    render(
+      <HumanThread
+        clientId="c-1"
+        itineraryId="it-1"
+        apiBaseUrl="http://api.test"
+        accessToken="tok"
+        viewerKind="traveler"
+      />,
+    );
+    const composer = (await screen.findByTestId(
+      "human-composer",
+    )) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "what about dinner?" } });
+    fireEvent.click(screen.getByTestId("human-ask-artemis"));
+    expect(composer.value).toBe("@Artemis what about dinner?");
+    // Idempotent — a second click never doubles the mention.
+    fireEvent.click(screen.getByTestId("human-ask-artemis"));
+    expect(composer.value).toBe("@Artemis what about dinner?");
+  });
+
+  test("sending an @Artemis message shows the composing hint until the reply lands", async () => {
+    sendMessage.mockResolvedValue({
+      ok: true,
+      message: msg({ id: "u1", author_kind: "traveler", content: "@Artemis dinner ideas?" }),
+    });
+    render(
+      <HumanThread
+        clientId="c-1"
+        itineraryId="it-1"
+        apiBaseUrl="http://api.test"
+        accessToken="tok"
+        viewerKind="traveler"
+      />,
+    );
+    const composer = (await screen.findByTestId(
+      "human-composer",
+    )) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "@Artemis dinner ideas?" } });
+    fireEvent.click(screen.getByTestId("human-send"));
+
+    // The composing hint appears once the send resolves.
+    await waitFor(() =>
+      expect(screen.getByTestId("human-artemis-pending")).toBeTruthy(),
+    );
+
+    // The summoned reply lands on the next (faster) poll → hint clears, reply renders.
+    listMessages.mockResolvedValue({
+      ok: true,
+      messages: [
+        msg({ id: "u1", author_kind: "traveler", content: "@Artemis dinner ideas?" }),
+        msg({ id: "a1", author_kind: "artemis", content: "A quiet kaiseki would suit." }),
+      ],
+    });
+    await waitFor(
+      () => expect(screen.queryByTestId("human-artemis-pending")).toBeNull(),
+      { timeout: 4000 },
+    );
+    expect(screen.getByText("A quiet kaiseki would suit.")).toBeTruthy();
+  });
+
+  test("an Artemis message renders explicit AI attribution + rich prose", async () => {
+    listMessages.mockResolvedValue({
+      ok: true,
+      messages: [
+        // A human message stays plain; the Artemis one flows through ProseMessage.
+        msg({ id: "u0", author_kind: "traveler", content: "where next?" }),
+        msg({ id: "a1", author_kind: "artemis", content: "Consider a private onsen." }),
+      ],
+    });
+    render(
+      <HumanThread
+        clientId="c-1"
+        itineraryId="it-1"
+        apiBaseUrl="http://api.test"
+        accessToken="tok"
+        viewerKind="traveler"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Consider a private onsen.")).toBeTruthy(),
+    );
+    const rows = screen.getAllByTestId("human-message");
+    const artemisRow = rows.find((r) => r.getAttribute("data-author") === "artemis");
+    expect(artemisRow).toBeTruthy();
+    // Named, distinct from the human "Advisor" — unmistakably the concierge AI.
+    expect(screen.getByText("Artemis · concierge")).toBeTruthy();
+    // Same renderer as the Artemis chat (markdown + place: chips), only for Artemis.
+    const proses = screen.getAllByTestId("prose-message");
+    expect(proses).toHaveLength(1);
+    expect(artemisRow?.contains(proses[0]!)).toBe(true);
+  });
+});
+
 describe("ConciergeColumn · Advisor people-circle summons the human channel", () => {
   test("clicking Advisor mounts the human thread; Artemis switches back", async () => {
     render(withProviders("advisor", <ConciergeColumn onClose={() => {}} />));

@@ -30,6 +30,7 @@ import enum
 import json
 import logging
 import random
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -55,9 +56,13 @@ from app.models import (
     Dossier,
     Itinerary,
     ItineraryStatus,
+    Message,
     NodeStatus,
     NodeType,
     SessionAudience,
+    Thread,
+    ThreadActorKind,
+    ThreadKind,
     TurnRole,
 )
 from app.observability import emit_metric
@@ -1647,3 +1652,287 @@ async def stream_turn(
                     "reason": reason,
                 },
             )
+
+
+# ── PS8: Artemis-in-human-chat bridge (@-mention) ──────────────────────────
+#
+# A human posts into a human thread; if their message @-mentions Artemis, we run
+# ONE thread-scoped agent turn and insert a single ``author_kind='artemis'``
+# message. The whole thread (traveler + advisor + party) sees it, so the reply
+# MUST be client-safe — which is why :func:`summon_artemis_in_thread` takes no
+# summoner principal at all: disclosure follows the thread's audience, never who
+# typed the mention. Proposals still flow to the single graph. Redaction
+# discipline from ``stream_turn`` applies verbatim — trigger / reply / context
+# text is never logged.
+
+# The mention trigger: a standalone, case-insensitive ``@artemis`` token. The
+# lookbehind rejects an ``@`` glued to a word (so ``name@artemis.example`` never
+# fires). First and, this slice, only summon trigger.
+_MENTION_RE = re.compile(r"(?<![\w@])@artemis\b", re.IGNORECASE)
+
+
+def mentions_artemis(content: str) -> bool:
+    """True when a human message summons Artemis via an @-mention."""
+    return _MENTION_RE.search(content) is not None
+
+
+def strip_mention(content: str) -> str:
+    """Drop the @Artemis token so the model reads the plain request.
+
+    Collapses the whitespace the removed token leaves behind. A bare ``@Artemis``
+    with nothing else falls back to a neutral opener so the turn still has input.
+    """
+    stripped = " ".join(_MENTION_RE.sub("", content).split()).strip()
+    return stripped or "Hello — how can you help with this trip?"
+
+
+async def _get_or_create_thread_engine(db: AsyncSession, *, thread: Thread) -> AgentSession:
+    """Get — or create — the one ``AgentSession`` that is a human thread's engine.
+
+    Q13 = UNIFY forward hook: a thread binds exactly one ``agent_session`` via
+    ``thread_id``. For a human thread this is the engine Artemis runs on when
+    summoned — a stable ``agentcore_session_id`` (AgentCore Memory continuity
+    across summons) plus the itinerary pin for card provenance. It is NOT a
+    standing participant: no ``thread_participants`` row is seeded (Artemis is
+    summoned per-turn, not seated). Get-or-create keyed on ``thread_id``.
+    """
+    engine = (
+        await db.execute(
+            select(AgentSession)
+            .where(AgentSession.thread_id == thread.id, AgentSession.ended_at.is_(None))
+            .order_by(AgentSession.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if engine is not None:
+        return engine
+    engine = AgentSession(
+        client_id=thread.client_id,
+        agentcore_session_id=str(uuid.uuid4()),
+        itinerary_id=thread.itinerary_id,
+        audience=thread.audience,
+        thread_id=thread.id,
+    )
+    db.add(engine)
+    await db.commit()
+    await db.refresh(engine)
+    return engine
+
+
+async def _load_thread_prior_turns(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    exclude_message_id: uuid.UUID | None,
+    limit: int = 20,
+) -> list[dict[str, str]]:
+    """The recent human-visible transcript as model turns, oldest-first.
+
+    The thread's ``messages`` ARE the conversation history (UNIFY): a traveler or
+    advisor message maps to ``user``, an Artemis message to ``assistant``, and
+    ``system`` notices are skipped. The just-posted trigger is excluded — it
+    becomes the current input. Best-effort: a miss just starts the model fresh.
+    """
+    try:
+        stmt = (
+            select(Message.author_kind, Message.content)
+            .where(
+                Message.thread_id == thread_id,
+                Message.removed_at.is_(None),
+                Message.author_kind != ThreadActorKind.system,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit)
+        )
+        if exclude_message_id is not None:
+            stmt = stmt.where(Message.id != exclude_message_id)
+        rows = (await db.execute(stmt)).all()
+    except (SQLAlchemyError, AssertionError):
+        return []
+    turns: list[dict[str, str]] = []
+    for author_kind, content in reversed(rows):
+        role = "assistant" if author_kind is ThreadActorKind.artemis else "user"
+        turns.append({"role": role, "content": content})
+    return turns
+
+
+async def summon_artemis_in_thread(
+    session_factory: async_sessionmaker[AsyncSession],
+    runtime: AgentRuntimeClient,
+    *,
+    thread_id: uuid.UUID,
+    trigger_content: str,
+    trigger_message_id: uuid.UUID | None = None,
+    settings: Settings | None = None,
+) -> uuid.UUID | None:
+    """Summon Artemis into a HUMAN thread; insert one ``author_kind='artemis'``
+    message and return its id (or ``None`` if nothing was said).
+
+    **Disclosure invariant.** This function takes NO summoner principal. The reply
+    is assembled from the THREAD's audience — a human thread is always
+    ``traveler`` — so an advisor-summoned reply in a client-visible thread stays
+    client-safe *by construction*. There is no code path by which who typed
+    "@Artemis" could widen disclosure or tool scope.
+
+    **Proposals land on the spine.** A ``card`` frame is persisted as a
+    proposed-experience node (AGENT actor, same path as ``stream_turn``) and the
+    first new node id is attached to the Artemis message's ``proposed_node_id``.
+
+    **Best-effort.** On any upstream failure the human message stands alone (no
+    Artemis reply) and we return ``None``. Redaction: trigger / reply / context
+    text is NEVER logged — ids + counts only.
+    """
+    settings = settings or get_settings()
+
+    # ── Load the thread + its client context (audience-scoped, not summoner) ─
+    async with session_factory() as db:
+        thread = (
+            await db.execute(select(Thread).where(Thread.id == thread_id))
+        ).scalar_one_or_none()
+        if thread is None or thread.kind is not ThreadKind.human:
+            # Only human threads summon Artemis; ai_session threads run their own
+            # turn path. Nothing to do here.
+            return None
+
+        ctx_rows = await load_agent_context(db, client_id=thread.client_id)
+        if ctx_rows is None:
+            return None
+
+        engine = await _get_or_create_thread_engine(db, thread=thread)
+        engine_id = engine.id
+        agentcore_session_id = engine.agentcore_session_id
+        client_id = thread.client_id
+        itinerary_id = thread.itinerary_id
+        # A human thread is always audience='traveler'; default defensively.
+        audience_value = thread.audience.value if thread.audience is not None else "traveler"
+
+        # Same client-safe context a traveler turn would get — the summoner is
+        # never consulted, so the disclosure boundary is the thread's.
+        fork_baseline_title = await _fork_baseline_title(db, itinerary_id)
+        trip_brief = await trip_brief_for_itinerary(db, itinerary_id)
+        traveler_ctx = assemble_traveler_context(
+            dossier=ctx_rows.dossier,
+            dossier_facts=ctx_rows.dossier_facts,
+            profile_facts=ctx_rows.profile_facts,
+            osint_facts=ctx_rows.osint_facts,
+            client_full_name=ctx_rows.client.full_name,
+            alternative_of=fork_baseline_title,
+            trip_brief=trip_brief,
+        )
+        system_prompt = build_system_prompt(traveler_ctx)
+        mode = await _detect_mode(db, itinerary_id=itinerary_id, client_id=client_id)
+        prior_turns = await _load_thread_prior_turns(
+            db, thread_id=thread_id, exclude_message_id=trigger_message_id
+        )
+
+    # ── Mint the backend agent token (best-effort) ─────────────────────────
+    try:
+        agent_token = mint_agent_token(
+            session_id=engine_id,
+            client_id=client_id,
+            agentcore_session_id=agentcore_session_id,
+            settings=settings,
+        )
+    except AgentTokenError:
+        agent_token = ""
+
+    input_text = strip_mention(trigger_content)
+    payload = {
+        "system": system_prompt,
+        "input": [{"role": "user", "content": [{"text": input_text}]}],
+        "input_text": input_text,
+        "prior_turns": prior_turns,
+        "mode": mode,
+        # No summoner bearer: a summoned reply acts only through the AGENT-actor
+        # card path, never a user's own token — an advisor summon can't widen
+        # tool scope inside a client-visible thread.
+        "auth_bearer": "",
+        "agent_token": agent_token,
+        # Client-facing framing — disclosure + tool scope follow the THREAD.
+        "actor_kind": "user",
+        "client_id": str(client_id),
+        "itinerary_id": str(itinerary_id) if itinerary_id else None,
+        "audience": audience_value,
+    }
+
+    # ── Run one turn: accumulate prose + capture the first card proposal ────
+    assembled_text = ""
+    proposed_node_id: uuid.UUID | None = None
+    itinerary_id_cache: uuid.UUID | None = itinerary_id
+    try:
+        stream = runtime.invoke_stream(agentcore_session_id=agentcore_session_id, payload=payload)
+        async with aclosing(stream) as events:
+            async for event in events:
+                kind = event.get("type")
+                if kind == "delta":
+                    assembled_text += str(event.get("text", ""))
+                elif kind == "card":
+                    source = event.get("source")
+                    source_id = event.get("source_id")
+                    snapshot = event.get("snapshot")
+                    if not (
+                        isinstance(source, str)
+                        and isinstance(source_id, str)
+                        and isinstance(snapshot, dict)
+                    ):
+                        continue
+                    async with session_factory() as card_db:
+                        if itinerary_id_cache is None:
+                            itinerary_id_cache = await _ensure_itinerary_for_client(
+                                card_db, client_id=client_id, actor_user_id=None
+                            )
+                        node_id = await _persist_proposed_card(
+                            card_db,
+                            session_id=engine_id,
+                            itinerary_id=itinerary_id_cache,
+                            agentcore_session_id=agentcore_session_id,
+                            source=source,
+                            source_id=source_id,
+                            snapshot=snapshot,
+                        )
+                    if proposed_node_id is None:
+                        proposed_node_id = node_id
+                elif kind == "done":
+                    break
+                # Other frames (first_token / assemble_draft / unknown) have no
+                # live SSE consumer in the human-thread bridge — ignore them.
+    except (AgentRuntimeError, TimeoutError) as exc:
+        reason = exc.reason if isinstance(exc, AgentRuntimeError) else "first_token_timeout"
+        logger.warning(
+            "agent.summon.upstream_unavailable",
+            extra={"thread_id": str(thread_id), "reason": reason},
+        )
+        return None
+
+    content = assembled_text.strip()
+    if not content:
+        if proposed_node_id is not None:
+            content = "I've added a suggestion to your itinerary — take a look."
+        else:
+            logger.info("agent.summon.empty", extra={"thread_id": str(thread_id)})
+            return None
+
+    # ── Insert the Artemis message (author_kind='artemis', author_id NULL) ──
+    async with session_factory() as db:
+        message = Message(
+            thread_id=thread_id,
+            author_kind=ThreadActorKind.artemis,
+            author_id=None,
+            content=content,
+            proposed_node_id=proposed_node_id,
+            parent_message_id=trigger_message_id,
+        )
+        db.add(message)
+        await db.commit()
+        await db.refresh(message)
+        message_id = message.id
+
+    logger.info(
+        "agent.summon.complete",
+        extra={
+            "thread_id": str(thread_id),
+            "message_id": str(message_id),
+            "proposed_node_id": str(proposed_node_id) if proposed_node_id else None,
+        },
+    )
+    return message_id

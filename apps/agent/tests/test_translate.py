@@ -144,6 +144,52 @@ def test_tool_result_read_only_tool_has_no_ui_frame() -> None:
     assert list(translate_event(event)) == []
 
 
+def test_prose_resumes_with_paragraph_break_after_tool() -> None:
+    """A narration line before a tool call and the result text after it must not
+    run together — the resumed prose re-breaks into its own paragraph."""
+    t = EventTranslator()
+    assert list(t.translate({"delta": "Let me pull up the itinerary."})) == [
+        {"type": "delta", "text": "Let me pull up the itinerary."}
+    ]
+    # A read-only tool ran (no UI frame) — but it IS a prose boundary.
+    list(t.translate(_assistant_tool_use_event("tu-r", "get_traveler_context")))
+    list(t.translate(_tool_result_message_event("tu-r", {"profile_facts": []})))
+    # The next chunk gets a leading paragraph break (prev char was a period).
+    assert list(t.translate({"delta": "**Extraterrestrial** is a meal card"})) == [
+        {"type": "delta", "text": "\n\n**Extraterrestrial** is a meal card"}
+    ]
+
+
+def test_midsentence_resume_after_tool_uses_a_single_space() -> None:
+    """If the model paused mid-sentence for a tool, don't fuse the two words."""
+    t = EventTranslator()
+    list(t.translate({"delta": "Let me check the price"}))
+    list(t.translate(_assistant_tool_use_event("tu-p", "search_inventory")))
+    assert list(t.translate({"delta": "of that suite for you."})) == [
+        {"type": "delta", "text": " of that suite for you."}
+    ]
+
+
+def test_no_break_when_whitespace_already_present() -> None:
+    t = EventTranslator()
+    list(t.translate({"delta": "One moment.\n"}))
+    list(t.translate(_assistant_tool_use_event("tu-w", "get_traveler_context")))
+    # prev char is a newline → nothing spliced in.
+    assert list(t.translate({"delta": "Here's what I found."})) == [
+        {"type": "delta", "text": "Here's what I found."}
+    ]
+
+
+def test_first_text_after_tool_has_no_leading_break() -> None:
+    """No prose was emitted before the tool → don't lead the reply with a break."""
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("tu-f", "get_traveler_context")))
+    list(t.translate(_tool_result_message_event("tu-f", {"profile_facts": []})))
+    assert list(t.translate({"delta": "Welcome back, Chris."})) == [
+        {"type": "delta", "text": "Welcome back, Chris."}
+    ]
+
+
 def test_unknown_event_shape_is_swallowed() -> None:
     assert list(translate_event({"random": "value"})) == []
 

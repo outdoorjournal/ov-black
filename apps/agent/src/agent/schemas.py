@@ -52,7 +52,12 @@ class TurnPayload(BaseModel):
     - ``auth_bearer`` — forwarded Supabase JWT. Tools that act on the
       *user's* own resources (itineraries, mutations) set this as the
       Authorization header on outbound calls; ``require_user`` /
-      ``require_advisor`` enforce access.
+      ``require_advisor`` enforce access. **Empty on a summoned turn**
+      (M006/PS8 @-mention bridge): Artemis is summoned into a human thread
+      with no user principal, so it acts only through the ``agent_token``
+      path (traveler context + ``propose_card``). User-scoped tools then
+      fail closed to ``missing_auth`` — which is the intended scope for a
+      summon (a client-visible thread must not gain the summoner's reach).
     - ``agent_token`` — backend-only HS256 token minted at POST /sessions
       and stashed only here. The traveler-context tools
       (``get_traveler_context``, ``record_profile_fact``,
@@ -72,7 +77,9 @@ class TurnPayload(BaseModel):
     input_text: str = Field(min_length=1, max_length=16000)
     prior_turns: list[PriorTurn] = Field(default_factory=list, max_length=200)
     mode: Mode
-    auth_bearer: str = Field(min_length=1, max_length=8000)
+    # Empty allowed: a summoned turn (PS8) carries no user JWT — see the class
+    # docstring. Normal turns always forward a real bearer.
+    auth_bearer: str = Field(default="", max_length=8000)
     agent_token: str = Field(default="", max_length=8000)
     actor_kind: Literal["user", "advisor"] = "user"
     client_id: uuid.UUID

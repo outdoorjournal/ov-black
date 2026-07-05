@@ -181,8 +181,50 @@ class EventTranslator:
     routed to the right SSE frame shape. Construct one per turn.
     """
 
+    # Trailing characters that end a clause — after one of these, prose resuming
+    # past a tool call starts a fresh paragraph. Includes closing quotes/brackets,
+    # the em-dash, and the ellipsis.
+    _SENTENCE_END = frozenset(".!?:;—…”’\"')]}")
+
     def __init__(self) -> None:
         self._tool_names: dict[str, str] = {}
+        # Paragraph-break bookkeeping: a tool call splits the model's narration
+        # into two assistant messages whose text the API concatenates verbatim,
+        # so "…looks like." and "**Extraterrestrial**…" arrive glued. Track
+        # whether a tool ran since the last text and the last char emitted, so
+        # resuming prose can re-break itself.
+        self._tool_boundary = False
+        self._emitted_text = False
+        self._last_char = ""
+
+    @staticmethod
+    def _separator_after_tool(prev_char: str, next_text: str) -> str:
+        """The separator to splice in when prose resumes after a tool ran.
+
+        A paragraph break after a completed clause, a single space mid-sentence
+        (so two words never fuse), and nothing when either side already carries
+        whitespace.
+        """
+        next_char = next_text[0] if next_text else ""
+        if not prev_char or prev_char in " \n" or next_char in " \n":
+            return ""
+        if prev_char in EventTranslator._SENTENCE_END:
+            return "\n\n"
+        return " "
+
+    def _emit_delta(self, text: str) -> Iterator[dict]:
+        """Yield a ``delta`` frame, re-breaking prose that resumes after a tool."""
+        if not text:
+            return
+        out = text
+        if self._tool_boundary and self._emitted_text:
+            sep = self._separator_after_tool(self._last_char, text)
+            if sep:
+                out = sep + text
+        self._tool_boundary = False
+        self._emitted_text = True
+        self._last_char = text[-1]
+        yield {"type": "delta", "text": out}
 
     def translate(self, event: Any) -> Iterator[dict]:
         """Map one Strands event dict to zero or more SSE frame dicts."""
@@ -191,7 +233,7 @@ class EventTranslator:
 
         delta_text = _extract_delta_text(event)
         if delta_text is not None:
-            yield {"type": "delta", "text": delta_text}
+            yield from self._emit_delta(delta_text)
             return
 
         message = event.get("message")
@@ -215,11 +257,13 @@ class EventTranslator:
         content = message.get("content")
         if not isinstance(content, list):
             return
-        # First pass: capture toolUse → name mappings (assistant messages).
+        # First pass: capture toolUse → name mappings (assistant messages). A
+        # tool call here is a prose boundary — the next text delta re-breaks.
         for block in content:
             if isinstance(block, dict):
                 tu = block.get("toolUse") or block.get("tool_use")
                 if isinstance(tu, dict):
+                    self._tool_boundary = True
                     tuid = tu.get("toolUseId") or tu.get("tool_use_id")
                     name = tu.get("name")
                     if isinstance(tuid, str) and isinstance(name, str):
@@ -233,6 +277,9 @@ class EventTranslator:
                     yield from self._translate_tool_result_block(tr)
 
     def _translate_tool_result_block(self, tr: dict) -> Iterator[dict]:
+        # A tool result is a prose boundary too (covers the legacy top-level
+        # path where no separate assistant toolUse message was seen).
+        self._tool_boundary = True
         # Resolve the tool name. Real Strands toolResult blocks have only
         # toolUseId; legacy/test shapes may carry an explicit name.
         name = (
@@ -265,7 +312,14 @@ class EventTranslator:
             )
             return
         frame = _frame_for_tool(name, output)
-        if frame is not None:
+        if frame is None:
+            return
+        if frame.get("type") == "delta":
+            # A tool materialised into reply text (propose_timeline's fence) —
+            # route it through the delta path so the fence's own blank lines feed
+            # the paragraph-break bookkeeping and never double up.
+            yield from self._emit_delta(str(frame.get("text", "")))
+        else:
             yield frame
 
 
