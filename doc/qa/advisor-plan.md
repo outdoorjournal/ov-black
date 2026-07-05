@@ -198,9 +198,17 @@ Collection slice).
     the delta.
   - **Per-card coverage** — the card-detail `MoneyFacet` distinguishes *priced-but-not-yet-
     invoiced* (an advisor to-do) from costless, and deep-links a charged node to its invoice.
-  - **Demo pay** — an env-gated (`OVB_DEMO_TEST_CARD`, `demoTestCardEnabled()`) "pay with test
-    card" button in `PayInvoiceView` submits the sandbox `fake-valid-nonce` directly (no card
-    entry), settling the invoice. Off by default; never ships to prod.
+  - **Pinned to the itinerary** — the whole cockpit is summonable from the Timeline toolbar's
+    **Invoices** button (`itinerary-graph-tool-invoices` → an `AuthoringModal`, mirroring
+    Analyze), so the advisor issues + reconciles *without leaving the board*. Advisor-only (the
+    toolbar is `canEdit`-gated) and lock-gated for writes. It also remains on the dashboard's
+    "Trip management → Invoices" tab. (Post-harmonization the timeline aside was dropped, which
+    had orphaned invoicing on the itinerary page — this restores it.)
+  - **Demo pay** — an env-gated (`OVB_DEMO_TEST_CARD` / `NEXT_PUBLIC_DEMO_TEST_CARD` →
+    `demoTestCard()`) "pay with test card" button in `PayInvoiceView`. The env var holds the
+    sandbox card (e.g. the Braintree Visa `4111111111111111`); the button shows it masked
+    (`····1111`) and submits the sandbox `fake-valid-nonce` directly (a raw PAN isn't a nonce),
+    settling via the local Fake gateway. Off by default (gitignored `.env.local`); never prod.
 - **Design note (deviation):** a **%-of-trip deposit** shortcut was dropped — a deposit
   *adjustment* and node-coverage billing are incompatible money models (a 30% deposit *plus*
   later billing all nodes = 130% invoiced). One coherent model — invoices partition the trip's
@@ -210,10 +218,11 @@ Collection slice).
   remainder math, reversed-line fallthrough, supplemental gating), `invoicePanel.test.tsx` (strip,
   bill-all seeds+charges, supplemental seeds the delta), `payInvoiceView.test.tsx` (test-card off
   by default; on → sandbox nonce → paid, no drop-in tokenizer). Browser —
-  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → hold lock on the Timeline → dashboard
-  Invoices panel via the Rail so the shell store keeps the lock → reconcile glance → bill-all →
-  issue, API-seam-backstopped; demo pay driven when the flag is on) — **green against the live stack**.
-- **Boundary:** the live Braintree drop-in / real settlement stays gateway-gated per §4 — the
+  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → hold lock on the Timeline → summon the
+  **Invoices** cockpit from the toolbar → reconcile glance → bill-all → issue, API-seam-backstopped;
+  then the demo **pay with test card** → paid receipt) — **green against the live stack, demo pay
+  included** (with `NEXT_PUBLIC_DEMO_TEST_CARD` set + the local Fake gateway).
+- **Boundary:** the live Braintree drop-in tokenizer / real settlement stays gateway-gated per §4 — the
   browser drives the *demo* nonce path; the drop-in tokenizer is never exercised headless.
 
 **Also flagged, not gating:** **G-SEND** (is "send the itinerary" a first-class action that

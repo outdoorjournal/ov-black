@@ -13,19 +13,18 @@ import {
 // ADV-11 (advisor half) — the billing COCKPIT. Before payment can happen the
 // advisor has to get to an issued invoice, and know what it covers. Driven as a
 // QA person would: seed a client + itinerary with two approved, priced cards, hold
-// the edit lock, open the dashboard's Invoices panel, and use the reconciliation
-// glance + "Bill all uninvoiced" + Issue to stand up the first invoice. The API
-// seam backstops what the browser actions actually persisted.
+// the edit lock, summon the Invoices cockpit from the Timeline toolbar (pinned to
+// this itinerary — no leaving the board), and use the reconciliation glance +
+// "Bill all uninvoiced" + Issue to stand up the first invoice. The API seam
+// backstops what the browser actions actually persisted.
 //
 // Nodes are approved individually (a node can be `approved` while the itinerary
-// stays `draft`) so the advisor keeps the edit lock invoicing needs. The lock is
-// claimed on the Timeline (where the toolbar lives), then we reach the dashboard
-// via the Rail (client-side nav) so the shared shell store keeps the lock — a hard
-// page load would reset it to unlocked.
+// stays `draft`) so the advisor keeps the edit lock invoicing needs.
 //
-// The traveler pay half (Braintree drop-in / sandbox test-card) is gateway-gated
-// per advisor-plan.md §4 — the env-flagged "pay with test card" affordance is unit-
-// tested (payInvoiceView.test.tsx); here we drive it only when the demo flag is on.
+// The traveler pay half uses the env-gated "pay with test card" affordance
+// (sandbox nonce via the Fake gateway locally): driven when OVB_/NEXT_PUBLIC_
+// DEMO_TEST_CARD is set, else skipped (gateway boundary per advisor-plan.md §4).
+// The button→nonce→paid path is also unit-tested (payInvoiceView.test.tsx).
 //
 // Runs under the `advisor` project (setup:advisor's captured session).
 
@@ -75,10 +74,10 @@ test("ADV-11: advisor stands up the first invoice from the billing cockpit", asy
 
   await acquireLock(page, itineraryId);
 
-  // Reach the dashboard via the Rail (client-side) so the shell store keeps the
-  // lock, then open its Invoices panel (the advisor billing surface).
-  await page.getByTestId("rail-home").click();
-  await page.getByTestId("dashboard-manage-tab-invoices").click();
+  // Summon the Invoices cockpit from the Timeline toolbar — pinned to this
+  // itinerary, no leaving the board (the entry point the advisor needs here).
+  await page.getByTestId("itinerary-graph-tool-invoices").click();
+  await expect(page.getByTestId("invoices-modal")).toBeVisible();
 
   // The reconciliation glance renders, grouped by currency, with the uninvoiced
   // remainder — the "am I done billing?" truth. Everything is still uninvoiced.
@@ -117,6 +116,9 @@ test("ADV-11: advisor stands up the first invoice from the billing cockpit", asy
   const invoiceId = invoices[0]?.id;
   if (invoiceId) {
     await page.goto(`/invoices/${invoiceId}`);
+    // Wait for the pay section to actually render (the invoice loads async) before
+    // deciding whether the demo test-card button is present — else we race the load.
+    await expect(page.getByTestId("pay-submit")).toBeVisible();
     const testCard = page.getByTestId("pay-test-card");
     if (await testCard.count()) {
       await testCard.click();
@@ -125,7 +127,7 @@ test("ADV-11: advisor stands up the first invoice from the billing cockpit", asy
       test.info().annotations.push({
         type: "skip",
         description:
-          "pay-with-test-card off (OVB_DEMO_TEST_CARD unset) — pay is gateway-gated per §4",
+          "pay-with-test-card off (DEMO_TEST_CARD unset) — pay is gateway-gated per §4",
       });
     }
   }

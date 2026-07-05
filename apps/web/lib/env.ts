@@ -89,16 +89,23 @@ export function mapboxToken(): string | undefined {
 }
 
 /**
- * Demo/dev flag — when truthy, the pay page offers a "pay with test card" button
- * that submits the Braintree sandbox nonce so a demo flows without typing a card.
- * Read server-side and passed as a prop; NEVER enable in prod (the gateway must be
- * the Fake/sandbox gateway for the nonce to succeed). Bracket read so Next never
- * inlines it. Truthy values: "1" / "true" / "yes" (case-insensitive).
+ * Demo/dev only — the sandbox card the pay page offers as a one-click "pay with
+ * test card". The env var holds the card NUMBER (e.g. the Braintree sandbox Visa
+ * `4111111111111111`): it's both the on-switch and what the button shows (masked
+ * last-4). The actual charge always submits the sandbox `fake-valid-nonce` — a raw
+ * PAN isn't a payment nonce — so the card is representative, not tokenized. NEVER
+ * set in prod (the gateway must be the Fake/sandbox gateway for the nonce to
+ * succeed). Bracket read so Next never inlines it. Returns the trimmed card, or
+ * null when unset / explicitly off ("0" / "false" / "no" / "off").
  */
-export function demoTestCardEnabled(): boolean {
+export function demoTestCard(): string | null {
   const raw =
     (typeof process !== "undefined" && process.env
       ? process.env["OVB_DEMO_TEST_CARD"] ?? process.env["NEXT_PUBLIC_DEMO_TEST_CARD"]
       : undefined) ?? "";
-  return ["1", "true", "yes"].includes(raw.trim().toLowerCase());
+  const value = raw.trim();
+  if (value === "" || ["0", "false", "no", "off"].includes(value.toLowerCase())) {
+    return null;
+  }
+  return value;
 }

@@ -33,17 +33,24 @@ function copy(detail: string): string {
   return ERROR_COPY[detail] ?? "Something went wrong. Try again.";
 }
 
+/** "Pay with test card ····1111" — the configured sandbox card, masked to last-4. */
+function testCardLabel(card: string): string {
+  const last4 = card.replace(/\D/g, "").slice(-4);
+  return last4 ? `Pay with test card ····${last4}` : "Pay with test card";
+}
+
 export function PayInvoiceView({
   apiBaseUrl,
   accessToken,
   invoiceId,
-  demoTestCard = false,
+  demoTestCard = null,
 }: {
   apiBaseUrl: string;
   accessToken: string;
   invoiceId: string;
-  /** Demo/dev only (env-gated by the page) — offer a one-click sandbox-card pay. */
-  demoTestCard?: boolean;
+  /** Demo/dev only (env-gated by the page) — the sandbox card number to offer as a
+   *  one-click pay; null/undefined hides it. Display only; the charge uses the nonce. */
+  demoTestCard?: string | null;
 }) {
   const [invoice, setInvoice] = useState<InvoiceResponse | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -215,7 +222,7 @@ export function PayInvoiceView({
               data-testid="pay-test-card"
               className="self-start rounded-md border border-dashed border-ink/25 px-3 py-1.5 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/60 transition-colors hover:bg-ink/5 disabled:opacity-40"
             >
-              {paying ? "Processing…" : "Pay with test card"}
+              {paying ? "Processing…" : testCardLabel(demoTestCard)}
             </button>
           ) : null}
         </section>

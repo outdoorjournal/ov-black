@@ -10,7 +10,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { createApiClient, getInvoice } from "@ov-black/api-client";
 
-import { demoTestCardEnabled, publicEnv } from "@/lib/env";
+import { demoTestCard, publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 import { PayInvoiceView } from "./_components/PayInvoiceView";
@@ -54,7 +54,7 @@ export default async function InvoicePage({ params }: PageProps) {
       apiBaseUrl={apiBaseUrl}
       accessToken={accessToken}
       invoiceId={invoiceId}
-      demoTestCard={demoTestCardEnabled()}
+      demoTestCard={demoTestCard()}
     />
   );
 }

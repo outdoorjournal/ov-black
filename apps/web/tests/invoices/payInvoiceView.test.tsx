@@ -126,10 +126,12 @@ test("demo test-card pays with the sandbox nonce, no card entry", async () => {
       apiBaseUrl="http://api.test"
       accessToken="tok"
       invoiceId="inv-1"
-      demoTestCard
+      demoTestCard="4111111111111111"
     />,
   );
   const testCard = await screen.findByTestId("pay-test-card");
+  // The configured sandbox card is shown, masked to last-4.
+  expect(testCard.textContent).toContain("····1111");
   fireEvent.click(testCard);
   // Submits the sandbox nonce directly — never touches the drop-in tokenizer.
   await waitFor(() =>

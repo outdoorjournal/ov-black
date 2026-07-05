@@ -31,7 +31,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { Pencil, Plus, RotateCcw, Send, Sparkles, Unlock } from "lucide-react";
+import { Pencil, Plus, Receipt, RotateCcw, Send, Sparkles, Unlock } from "lucide-react";
 import {
   type UIEvent,
   useCallback,
@@ -210,6 +210,7 @@ export function HorizontalView({
   // in-canvas aside is suppressed (the routed shell); the prototype keeps Analyze
   // in its aside's Build tab.
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const [invoicesOpen, setInvoicesOpen] = useState(false);
   const [scrollHints, setScrollHints] = useState({ left: false, right: false });
   // Which half of the staff aside is showing: the authoring tools ("build") or
   // the agent conversation ("concierge"). Advisors default to Build; travelers
@@ -743,6 +744,7 @@ export function HorizontalView({
               authoringInToolbar={!showConciergeAside}
               onAddCard={() => openComposer()}
               onAnalyze={() => setAnalyzeOpen(true)}
+              onInvoices={() => setInvoicesOpen(true)}
             />
           ) : null}
           <VersionSwitcher />
@@ -1148,6 +1150,26 @@ export function HorizontalView({
         </AuthoringModal>
       ) : null}
 
+      {/* Invoices (M005/ADV-11): the billing cockpit summoned from the toolbar so
+          the advisor issues + reconciles invoices pinned to this itinerary without
+          leaving the board. Routed timeline only (the prototype keeps its aside). */}
+      {!showConciergeAside && invoicesOpen ? (
+        <AuthoringModal
+          title="Invoices"
+          onClose={() => setInvoicesOpen(false)}
+          testId="invoices-modal"
+          widthClass="max-w-xl"
+        >
+          <InvoicePanel
+            itineraryId={timeline.itinerary.id}
+            apiBaseUrl={apiBaseUrl}
+            accessToken={accessToken}
+            editable={editable}
+            heading={false}
+          />
+        </AuthoringModal>
+      ) : null}
+
       {/* DragOverlay portals a clone of the dragged card so it can follow the
           cursor without disturbing the canvas's absolute layout (which is busy
           opening up a ghost slot in the target day). */}
@@ -1266,6 +1288,7 @@ function StaffToolbar({
   authoringInToolbar,
   onAddCard,
   onAnalyze,
+  onInvoices,
 }: {
   status: string;
   lockStatus: "unlocked" | "locked-by-me" | "locked-by-other";
@@ -1291,6 +1314,7 @@ function StaffToolbar({
   authoringInToolbar: boolean;
   onAddCard: () => void;
   onAnalyze: () => void;
+  onInvoices: () => void;
 }) {
   const btn =
     "inline-flex h-8 items-center gap-1.5 rounded-md border border-ink/20 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-40";
@@ -1328,6 +1352,17 @@ function StaffToolbar({
           >
             <Sparkles className="h-3.5 w-3.5" />
             Analyze
+          </button>
+          {/* Invoices, pinned to this itinerary — summon the billing cockpit
+              without leaving the board (advisor-only: the toolbar is canEdit-gated). */}
+          <button
+            type="button"
+            onClick={onInvoices}
+            data-testid="itinerary-graph-tool-invoices"
+            className={btn}
+          >
+            <Receipt className="h-3.5 w-3.5" />
+            Invoices
           </button>
         </>
       ) : (

@@ -90,11 +90,15 @@ export function InvoicePanel({
   accessToken,
   itineraryId,
   editable,
+  heading = true,
 }: {
   apiBaseUrl: string | null;
   accessToken: string | null;
   itineraryId: string;
   editable: boolean;
+  /** Print the panel's own "Invoices" header. Hosts that already title the
+   *  surface (the toolbar modal) pass false. */
+  heading?: boolean;
 }) {
   const [invoices, setInvoices] = useState<InvoiceResponse[]>([]);
   const [nodes, setNodes] = useState<NodeResponse[]>([]);
@@ -211,9 +215,11 @@ export function InvoicePanel({
       data-testid="invoice-panel"
       className="flex h-full flex-col gap-5 overflow-y-auto bg-paper px-4 py-4 text-ink"
     >
-      <header className="flex items-baseline justify-between gap-2">
-        <h3 className="font-serif text-lg tracking-tight text-ink">Invoices</h3>
-      </header>
+      {heading ? (
+        <header className="flex items-baseline justify-between gap-2">
+          <h3 className="font-serif text-lg tracking-tight text-ink">Invoices</h3>
+        </header>
+      ) : null}
 
       {/* Reconciliation glance — the money truth the two dashboard sections never
           joined: trip total vs what's invoiced / paid / outstanding, and the
