@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type Page, expect, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import {
   approveNodeAsAdvisor,
@@ -12,14 +12,14 @@ import {
 
 // ADV-11 (advisor half) — the billing COCKPIT. Before payment can happen the
 // advisor has to get to an issued invoice, and know what it covers. Driven as a
-// QA person would: seed a client + itinerary with two approved, priced cards, hold
-// the edit lock, summon the Invoices cockpit from the Timeline toolbar (pinned to
-// this itinerary — no leaving the board), and use the reconciliation glance +
-// "Bill all uninvoiced" + Issue to stand up the first invoice. The API seam
-// backstops what the browser actions actually persisted.
+// QA person would: seed a client + itinerary with two approved, priced cards, open
+// the Invoices destination from the left Rail (its own CRUD surface pinned to the
+// itinerary), and use the reconciliation glance + "Bill all uninvoiced" + Issue to
+// stand up the first invoice. The API seam backstops what the actions persisted.
 //
-// Nodes are approved individually (a node can be `approved` while the itinerary
-// stays `draft`) so the advisor keeps the edit lock invoicing needs.
+// No edit lock: invoicing gates on advisor ROLE, not the graph build-lock — it's
+// advisor-only server-side and works on any itinerary status. Nodes are approved
+// individually so the trip carries a per-currency total to reconcile against.
 //
 // The traveler pay half uses the env-gated "pay with test card" affordance
 // (sandbox nonce via the Fake gateway locally): driven when OVB_/NEXT_PUBLIC_
@@ -30,17 +30,6 @@ import {
 
 function uniqueEmail(tag: string): string {
   return `e2e-adv11-${tag}-${randomUUID()}@example.com`;
-}
-
-// Acquire the edit lock on the Timeline (invoice-assembly writes gate on it).
-async function acquireLock(page: Page, itineraryId: string): Promise<void> {
-  await page.goto(`/itinerary/${itineraryId}/timeline`);
-  const edit = page.locator('[data-testid="itinerary-graph-edit"]:visible').first();
-  await expect(edit).toBeVisible();
-  await edit.click();
-  await expect(
-    page.locator('[data-testid="itinerary-graph-release"]:visible').first(),
-  ).toBeEnabled();
 }
 
 test("ADV-11: advisor stands up the first invoice from the billing cockpit", async ({
@@ -72,12 +61,12 @@ test("ADV-11: advisor stands up the first invoice from the billing cockpit", asy
   await approveNodeAsAdvisor(itineraryId, nodeA);
   await approveNodeAsAdvisor(itineraryId, nodeB);
 
-  await acquireLock(page, itineraryId);
-
-  // Summon the Invoices cockpit from the Timeline toolbar — pinned to this
-  // itinerary, no leaving the board (the entry point the advisor needs here).
-  await page.getByTestId("itinerary-graph-tool-invoices").click();
-  await expect(page.getByTestId("invoices-modal")).toBeVisible();
+  // Reach the Invoices destination from the left Rail — its own CRUD surface
+  // pinned to this itinerary. No edit lock needed: invoicing gates on advisor role,
+  // not the graph build-lock (it must work on any itinerary status).
+  await page.goto(`/itinerary/${itineraryId}/dashboard`);
+  await page.getByTestId("rail-invoices").click();
+  await expect(page.getByTestId("invoices-view")).toBeVisible();
 
   // The reconciliation glance renders, grouped by currency, with the uninvoiced
   // remainder — the "am I done billing?" truth. Everything is still uninvoiced.

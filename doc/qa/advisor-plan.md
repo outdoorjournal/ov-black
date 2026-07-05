@@ -198,12 +198,17 @@ Collection slice).
     the delta.
   - **Per-card coverage** — the card-detail `MoneyFacet` distinguishes *priced-but-not-yet-
     invoiced* (an advisor to-do) from costless, and deep-links a charged node to its invoice.
-  - **Pinned to the itinerary** — the whole cockpit is summonable from the Timeline toolbar's
-    **Invoices** button (`itinerary-graph-tool-invoices` → an `AuthoringModal`, mirroring
-    Analyze), so the advisor issues + reconciles *without leaving the board*. Advisor-only (the
-    toolbar is `canEdit`-gated) and lock-gated for writes. It also remains on the dashboard's
-    "Trip management → Invoices" tab. (Post-harmonization the timeline aside was dropped, which
-    had orphaned invoicing on the itinerary page — this restores it.)
+  - **Pinned to the itinerary (its own Rail destination)** — **Invoices** is a first-class left-
+    Rail noun (`/itinerary/[id]/invoices` → `InvoicesView`; advisor-only, same role gate as
+    Studio), a proper full-page CRUD surface for managing several invoices + their lines — better
+    than a summoned modal. Still available on the dashboard's "Trip management → Invoices" tab.
+    (Post-harmonization the timeline aside was dropped, orphaning invoicing on the itinerary page;
+    this restores it as a dedicated destination.)
+  - **Decoupled from the graph edit-lock** — invoicing now gates on advisor **role**
+    (`canManage`), not `selectEditable`. The invoice API is advisor-only and admits writes
+    "regardless of itinerary status" (financial data), so requiring the draft-only *build* lock
+    was wrong — it blocked invoicing an **approved** trip and made a dedicated route unusable
+    (unheld lock → read-only). Travelers who reach the surface see invoices read-only.
   - **Demo pay** — an env-gated (`OVB_DEMO_TEST_CARD` / `NEXT_PUBLIC_DEMO_TEST_CARD` →
     `demoTestCard()`) "pay with test card" button in `PayInvoiceView`. The env var holds the
     sandbox card (e.g. the Braintree Visa `4111111111111111`); the button shows it masked
@@ -218,9 +223,9 @@ Collection slice).
   remainder math, reversed-line fallthrough, supplemental gating), `invoicePanel.test.tsx` (strip,
   bill-all seeds+charges, supplemental seeds the delta), `payInvoiceView.test.tsx` (test-card off
   by default; on → sandbox nonce → paid, no drop-in tokenizer). Browser —
-  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → hold lock on the Timeline → summon the
-  **Invoices** cockpit from the toolbar → reconcile glance → bill-all → issue, API-seam-backstopped;
-  then the demo **pay with test card** → paid receipt) — **green against the live stack, demo pay
+  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → open **Invoices** from the left Rail
+  (its own route, no edit lock) → reconcile glance → bill-all → issue, API-seam-backstopped; then
+  the demo **pay with test card** → paid receipt) — **green against the live stack, demo pay
   included** (with `NEXT_PUBLIC_DEMO_TEST_CARD` set + the local Fake gateway).
 - **Boundary:** the live Braintree drop-in tokenizer / real settlement stays gateway-gated per §4 — the
   browser drives the *demo* nonce path; the drop-in tokenizer is never exercised headless.

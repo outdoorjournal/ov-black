@@ -89,15 +89,19 @@ export function InvoicePanel({
   apiBaseUrl,
   accessToken,
   itineraryId,
-  editable,
+  canManage,
   heading = true,
 }: {
   apiBaseUrl: string | null;
   accessToken: string | null;
   itineraryId: string;
-  editable: boolean;
+  /** Whether the viewer may write invoices (advisor). Gated on ROLE, not the
+   *  graph edit-lock: invoicing is advisor-only server-side and works on any
+   *  itinerary status (financial data), so it must not require holding the
+   *  draft-only build lock. Non-managers see invoices read-only. */
+  canManage: boolean;
   /** Print the panel's own "Invoices" header. Hosts that already title the
-   *  surface (the toolbar modal) pass false. */
+   *  surface pass false. */
   heading?: boolean;
 }) {
   const [invoices, setInvoices] = useState<InvoiceResponse[]>([]);
@@ -272,7 +276,7 @@ export function InvoicePanel({
 
       {/* Supplemental prompt — items became chargeable after an invoice went out;
           offer a pre-seeded supplemental over exactly the uncovered nodes. */}
-      {editable && summary.supplemental ? (
+      {canManage && summary.supplemental ? (
         <section
           data-testid="invoice-supplemental"
           className="flex flex-col gap-2 rounded-lg border border-[#8a5a1d]/30 bg-[#8a5a1d]/[0.06] px-3 py-3"
@@ -306,7 +310,7 @@ export function InvoicePanel({
       ) : null}
 
       {/* New invoice */}
-      {editable ? (
+      {canManage ? (
         <section className="flex flex-col gap-2 border-y border-ink/10 py-3">
           <span className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/55">
             New invoice
@@ -357,7 +361,7 @@ export function InvoicePanel({
         </section>
       ) : (
         <p className="font-sans text-xs italic text-ink/50">
-          Hold the edit lock to assemble invoices.
+          Your advisor manages invoicing for this trip.
         </p>
       )}
 
@@ -373,7 +377,7 @@ export function InvoicePanel({
             key={invoice.id}
             invoice={invoice}
             uninvoicedNodes={summary.uninvoicedNodes}
-            editable={editable}
+            canManage={canManage}
             api={api}
             onChanged={refresh}
             onError={setError}
@@ -400,14 +404,14 @@ const STATUS_TONE: Record<string, string> = {
 function InvoiceCard({
   invoice,
   uninvoicedNodes,
-  editable,
+  canManage,
   api,
   onChanged,
   onError,
 }: {
   invoice: InvoiceResponse;
   uninvoicedNodes: ChargeableNode[];
-  editable: boolean;
+  canManage: boolean;
   api: ReturnType<typeof createApiClient> | null;
   onChanged: () => Promise<void>;
   onError: (msg: string | null) => void;
@@ -426,7 +430,7 @@ function InvoiceCard({
       .filter((id): id is string => Boolean(id)),
   );
   const open = invoice.status === "draft" || invoice.status === "issued";
-  const canWrite = editable && open && api !== null;
+  const canWrite = canManage && open && api !== null;
 
   const run = useCallback(
     async (fn: () => Promise<{ ok: boolean; detail?: string }>) => {

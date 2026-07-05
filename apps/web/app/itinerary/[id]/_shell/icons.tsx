@@ -60,3 +60,14 @@ export function ConciergeIcon() {
     </svg>
   );
 }
+
+export function InvoiceIcon() {
+  return (
+    <svg {...BASE} aria-hidden>
+      {/* A receipt: paper with a torn/zigzag foot and a couple of line items. */}
+      <path d="M5 3h10v14l-2-1.2L11 17l-2-1.2L7 17l-2-1.2V3Z" />
+      <path d="M8 7h4" />
+      <path d="M8 10.5h4" />
+    </svg>
+  );
+}

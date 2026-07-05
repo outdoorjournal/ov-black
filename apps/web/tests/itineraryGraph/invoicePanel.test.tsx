@@ -112,13 +112,13 @@ beforeEach(() => {
   vi.mocked(issueInvoice).mockResolvedValue({ ok: true, invoice: INVOICE });
 });
 
-function renderPanel(editable = true) {
+function renderPanel(canManage = true) {
   return render(
     <InvoicePanel
       apiBaseUrl="http://api.test"
       accessToken="tok"
       itineraryId="itin-1"
-      editable={editable}
+      canManage={canManage}
     />,
   );
 }
@@ -181,13 +181,13 @@ test("Issue issues the draft invoice", async () => {
   await waitFor(() => expect(issueInvoice).toHaveBeenCalledWith({}, "inv-1"));
 });
 
-test("read-only without the edit lock — no assemble controls", async () => {
+test("read-only for a non-manager (traveler) — no assemble controls", async () => {
   renderPanel(false);
   await screen.findByText("Deposit");
   expect(screen.queryByTestId("invoice-create")).toBeNull();
   expect(screen.queryByTestId("invoice-issue")).toBeNull();
   expect(screen.queryByTestId("line-void-ln-charge")).toBeNull();
-  expect(screen.getByText(/Hold the edit lock/)).toBeTruthy();
+  expect(screen.getByText(/advisor manages invoicing/)).toBeTruthy();
 });
 
 test("reconciliation strip reconciles trip total vs invoiced + uninvoiced remainder", async () => {

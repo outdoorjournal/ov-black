@@ -699,6 +699,9 @@ function AdvisorManagement({
   accessToken: string | null;
 }) {
   const editable = itineraryGraphStore.useStore(selectEditable);
+  // Invoicing is advisor-only server-side and independent of the graph edit-lock
+  // (it must work on an approved trip), so it gates on role, not `editable`.
+  const canManageInvoices = itineraryGraphStore.useStore((s) => s.canEdit);
   const [tab, setTab] = useState<ManageTab>("invoices");
 
   return (
@@ -738,7 +741,7 @@ function AdvisorManagement({
             itineraryId={itineraryId}
             apiBaseUrl={apiBaseUrl}
             accessToken={accessToken}
-            editable={editable}
+            canManage={canManageInvoices}
           />
         </div>
         <div className={tab === "booking" ? "" : "hidden"}>

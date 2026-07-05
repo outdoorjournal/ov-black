@@ -628,7 +628,7 @@ mutation and a traveler mutation are the same write path with a different
   - `apps/web/tests/itineraryGraph/dashboardModel.test.ts` — `reconcileBilling` / `coverageByNode` / `isChargeable`: the uninvoiced-remainder math, a reversed charge line falling back to uninvoiced, and the supplemental gate (issued + uncovered nodes).
   - `apps/web/tests/itineraryGraph/invoicePanel.test.tsx` — the reconciliation strip, **Bill all uninvoiced** (seeds a draft + charges each uncovered node), and the **supplemental** prompt seeding the delta.
   - `apps/web/tests/invoices/payInvoiceView.test.tsx` — the test-card button is absent unless the demo flag is on; on, it pays with the sandbox nonce (no drop-in tokenizer) → receipt.
-  - `apps/web/e2e/advisor/invoicing.spec.ts` (ADV-11) — seed → approve nodes → hold the edit lock on the Timeline → summon the **Invoices** cockpit from the toolbar (pinned to the itinerary) → reconciliation glance → **Bill all uninvoiced** → **Issue**, API-seam-backstopped (one issued invoice, Σ = trip total) → **Pay with test card** → paid receipt. **Passes against the live stack, demo pay included** (with `NEXT_PUBLIC_DEMO_TEST_CARD` set + the local Fake gateway).
+  - `apps/web/e2e/advisor/invoicing.spec.ts` (ADV-11) — seed → approve nodes → open **Invoices** from the left Rail (its own destination pinned to the itinerary; no edit lock — invoicing gates on advisor role) → reconciliation glance → **Bill all uninvoiced** → **Issue**, API-seam-backstopped (one issued invoice, Σ = trip total) → **Pay with test card** → paid receipt. **Passes against the live stack, demo pay included** (with `NEXT_PUBLIC_DEMO_TEST_CARD` set + the local Fake gateway).
 
 **Given** an advisor ready to collect payment on an approved trip,
 
@@ -655,6 +655,10 @@ mutation and a traveler mutation are the same write path with a different
   remainder**), **coverage-aware charging** (the picker can't double-bill a node) with **"Bill
   all uninvoiced"**, a guided **supplemental** for the post-issue delta, **per-card coverage**
   in the money facet, and the env-gated **test-card** pay. See [advisor-plan.md](./advisor-plan.md).
+- ✅ **Reachable + un-locked.** Invoices is its own left-**Rail** destination
+  (`/itinerary/[id]/invoices`, advisor-only), a full-page CRUD surface pinned to the itinerary
+  (also on the dashboard's Trip-management tab). It gates on advisor **role**, not the graph
+  build-lock — so it works on an approved trip and doesn't need the advisor holding the edit lock.
 - ✅ **Auto-populate from approved nodes** — was flagged optional; shipped as **"Bill all
   uninvoiced"** (one draft covering every uncovered chargeable node).
 - 🔍 **Gateway-unwired self-skips** — where no Braintree keys are set the local Fake gateway

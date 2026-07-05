@@ -21,6 +21,7 @@ import {
   CollectionIcon,
   ConciergeIcon,
   DashboardIcon,
+  InvoiceIcon,
   StudioIcon,
   TimelineIcon,
 } from "./icons";
@@ -61,6 +62,18 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
       active: activeSeg === "collection",
       icon: <CollectionIcon />,
     },
+    // Invoicing is advisor-only (same role gate as Studio) — the billing CRUD
+    // for this trip, pinned as its own destination rather than a summoned modal.
+    ...(role === "advisor"
+      ? [
+          {
+            href: `/itinerary/${id}/invoices` as Route,
+            label: "Invoices",
+            active: activeSeg === "invoices",
+            icon: <InvoiceIcon />,
+          },
+        ]
+      : []),
     ...(role === "advisor" && isAlternative
       ? [
           {
