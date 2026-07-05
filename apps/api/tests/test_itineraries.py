@@ -306,11 +306,18 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _is_advisor(_session: Any, user_uuid: uuid.UUID | None) -> bool:
         return bool(returns.get("is_advisor", False))
 
+    # The graph-read endpoint sums per-currency totals (ADV-10). Stub it off the
+    # fake session — hermetic like the rest — returning {} unless a test sets
+    # returns["totals"] to assert the price surfaces on the response.
+    async def _sum_costs(_session: Any, _itinerary_id: uuid.UUID, **_kwargs: Any) -> Any:
+        return returns.get("totals", {})
+
     # Patch the bound names inside the router module — that's the call site.
     from app.routers import itineraries as routers_itineraries
 
     monkeypatch.setattr(routers_itineraries, "create_itinerary", _create)
     monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _get_graph)
+    monkeypatch.setattr(routers_itineraries, "sum_node_costs", _sum_costs)
     monkeypatch.setattr(routers_itineraries, "update_itinerary_details", _update_itinerary)
     monkeypatch.setattr(routers_itineraries, "add_node", _add_node)
     monkeypatch.setattr(routers_itineraries, "update_node", _update_node)
@@ -600,6 +607,32 @@ def test_get_itinerary_assembles_graph(
     assert body["nodes"][1]["cost_amount"] is None
     assert len(body["edges"]) == 1
     assert body["edges"][0]["type"] == "alternative_to"
+    # Totals default to empty when nothing is priced (ADV-10).
+    assert body["totals"] == {}
+
+
+def test_get_itinerary_surfaces_per_currency_totals(
+    client: TestClient,
+    stub_service: dict[str, Any],
+    auth_headers: dict[str, str],
+) -> None:
+    """The graph read surfaces the plan's per-currency price (ADV-10) so the UI
+    can show a total beside the one-action approve. Decimal → str like cost."""
+    from app.services.itineraries import GraphView
+
+    iid = uuid.uuid4()
+    stub_service["returns"]["get_itinerary_graph"] = GraphView(
+        itinerary=Itinerary(id=iid, title="Kyoto"),
+        nodes=[],
+        edges=[],
+    )
+    stub_service["returns"]["totals"] = {
+        "USD": Decimal("450.00"),
+        "EUR": Decimal("80.00"),
+    }
+    resp = client.get(f"/itinerary/{iid}", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["totals"] == {"USD": "450.00", "EUR": "80.00"}
 
 
 def test_add_node_provenance_asymmetry_returns_400(

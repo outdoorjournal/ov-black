@@ -1521,17 +1521,36 @@ async def approve_itinerary(
             outcome=ItineraryOutcome.VALIDATION_ERROR,
             detail="already_approved",
         )
+    # Cascade (ADV-10): a single itinerary approval firms the whole plan — every
+    # remaining ``proposed`` node flips to ``approved`` in the same transaction.
+    # ``idea`` (wish-list maybes), already-firmed (booked/confirmed), and
+    # ``discarded`` nodes are untouched. The approver's entitlement to the
+    # itinerary is enforced by the route's writability gate.
+    await session.execute(
+        update(Node)
+        .where(
+            Node.itinerary_id == itinerary_id,
+            Node.status == NodeStatus.proposed,
+        )
+        .values(status=NodeStatus.approved)
+    )
     await session.commit()
     await session.refresh(row)
-    node_count = (
-        await session.execute(select(func.count(Node.id)).where(Node.itinerary_id == itinerary_id))
-    ).scalar_one()
+    counts = (
+        await session.execute(
+            select(
+                func.count(Node.id),
+                func.count(Node.id).filter(Node.status == NodeStatus.approved),
+            ).where(Node.itinerary_id == itinerary_id)
+        )
+    ).one()
     logger.info(
         "itinerary.approved",
         extra={
             "itinerary_id": str(itinerary_id),
             "user_id": str(actor.user_id) if actor.user_id else None,
-            "node_count": int(node_count),
+            "node_count": int(counts[0]),
+            "approved_count": int(counts[1]),
         },
     )
     return row

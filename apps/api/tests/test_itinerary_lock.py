@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from app.models import Itinerary, ItineraryStatus, Node, NodeType
+from app.models import Itinerary, ItineraryStatus, Node, NodeStatus, NodeType
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
@@ -249,6 +249,68 @@ async def test_approve_itinerary_flips_status_and_rejects_second_call(
                     await vs.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
                 ).scalar_one()
                 assert fresh.status == ItineraryStatus.approved
+        finally:
+            await verify_engine.dispose()
+    finally:
+        await _cleanup(itinerary_id, [advisor_id])
+
+
+# ── (e2) approve cascades proposed → approved, ideas untouched (ADV-10) ────
+
+
+@integration
+@pytest.mark.asyncio
+async def test_approve_cascades_proposed_nodes_to_approved(
+    db_session: AsyncSession,
+) -> None:
+    """A single approval firms the plan: every ``proposed`` node flips to
+    ``approved`` while ``idea`` (wish-list) nodes are left alone."""
+    advisor_id = await _seed_user(db_session, uuid.uuid4())
+    itinerary = await create_itinerary(db_session, _system(), title="lock-e2")
+    itinerary_id = itinerary.id
+    try:
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
+        proposed = await add_node(
+            db_session,
+            _advisor(advisor_id),
+            itinerary_id=itinerary_id,
+            type=NodeType.experience,
+            title="proposed-one",
+            status=NodeStatus.proposed,
+        )
+        idea = await add_node(
+            db_session,
+            _advisor(advisor_id),
+            itinerary_id=itinerary_id,
+            type=NodeType.meal,
+            title="wishlist-maybe",
+            status=NodeStatus.idea,
+        )
+        assert isinstance(proposed, Node)
+        assert isinstance(idea, Node)
+        proposed_id, idea_id = proposed.id, idea.id
+
+        result = await approve_itinerary(
+            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
+        )
+        assert isinstance(result, Itinerary)
+        assert result.status == ItineraryStatus.approved
+
+        # Fresh engine to dodge expired-state lazy loads after the commit.
+        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            verify_maker = async_sessionmaker(
+                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
+            )
+            async with verify_maker() as vs:
+                statuses = {
+                    r.id: r.status
+                    for r in (
+                        await vs.execute(select(Node).where(Node.itinerary_id == itinerary_id))
+                    ).scalars()
+                }
+            assert statuses[proposed_id] is NodeStatus.approved  # cascaded
+            assert statuses[idea_id] is NodeStatus.idea  # untouched
         finally:
             await verify_engine.dispose()
     finally:

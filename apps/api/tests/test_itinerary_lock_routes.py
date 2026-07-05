@@ -139,6 +139,13 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
 
     monkeypatch.setattr(routers_itineraries, "_resolve_viewer_open_fork_id", _no_open_fork)
 
+    # GET also sums per-currency totals (ADV-10) with a real query — stub it so
+    # the DB-less router tests stay hermetic; default {} unless a test overrides.
+    async def _sum_costs(_s: Any, _itinerary_id: uuid.UUID, **_kwargs: Any) -> Any:
+        return returns.get("totals", {})
+
+    monkeypatch.setattr(routers_itineraries, "sum_node_costs", _sum_costs)
+
     async def _session_dep() -> Iterator[object]:
         yield object()
 

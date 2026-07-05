@@ -84,7 +84,7 @@ from app.services.itineraries import (
     update_node,
 )
 from app.services.link_preview import fetch_link_preview
-from app.services.node_cost import cost_from_inventory_item
+from app.services.node_cost import cost_from_inventory_item, sum_node_costs
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -306,6 +306,12 @@ class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: list[NodeResponse]
     edges: list[EdgeResponse]
+    # Per-currency price of the plan (ADV-10): ``{currency: amount}`` summed over
+    # the itinerary's priced, non-discarded, selected nodes — ``per_person``
+    # amounts expanded by party size, matching the money-gate. Amounts serialize
+    # as strings like ``cost_amount``. Empty when nothing is priced. Populated on
+    # the graph-read endpoint; other producers (fork/reconcile) leave it empty.
+    totals: dict[str, str] = Field(default_factory=dict)
     # The calling viewer's own OPEN fork of this itinerary, when it is a baseline
     # (``forked_from_id is None``) — the traveler's "My version". Resolved per
     # request in ``get_itinerary_endpoint`` so the two-version toggle switches to
@@ -757,11 +763,12 @@ def _node_response_from_node(node: Any) -> NodeResponse:
     )
 
 
-def _graph_to_response(view: Any) -> GraphResponse:
+def _graph_to_response(view: Any, *, totals: dict[str, str] | None = None) -> GraphResponse:
     """Assemble a GraphResponse from a service GraphView (itinerary + nodes + edges).
 
     Shared by the graph-read and fork endpoints so fork lineage (on the itinerary
-    and every node) serializes identically everywhere.
+    and every node) serializes identically everywhere. ``totals`` (per-currency
+    price) is supplied only by the graph-read endpoint; fork/reconcile omit it.
     """
     return GraphResponse(
         itinerary=_itinerary_to_response(view.itinerary),
@@ -777,6 +784,7 @@ def _graph_to_response(view: Any) -> GraphResponse:
             )
             for e in view.edges
         ],
+        totals=totals or {},
     )
 
 
@@ -862,7 +870,10 @@ async def get_itinerary_endpoint(
     # Draft-read gate (shared with the analyze endpoints).
     await assert_itinerary_readable(session, user, result.itinerary)
     # mypy: result is GraphView past this point
-    response = _graph_to_response(result)
+    # Surface the plan's per-currency price (ADV-10) so the UI can show a total
+    # alongside the one-action approve. Decimal → str to match cost_amount.
+    totals = {c: str(a) for c, a in (await sum_node_costs(session, itinerary_id)).items()}
+    response = _graph_to_response(result, totals=totals)
     # On a baseline, surface the caller's own OPEN fork so the traveler's
     # two-version toggle ("My version") resolves to it rather than re-forking.
     if result.itinerary.forked_from_id is None:
