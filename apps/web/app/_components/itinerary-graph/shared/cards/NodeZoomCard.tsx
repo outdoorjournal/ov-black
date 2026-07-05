@@ -15,7 +15,7 @@ import type { ReactNode } from "react";
 import { formatClock, formatDuration, offsetHoursOr } from "../../model/horizontalTime";
 import type { NodeResponse } from "../../model/horizontalTypes";
 import { placePhotoUrl } from "../../model/placePhoto";
-import { inferCardKind } from "../../views/horizontal/NodeCard";
+import { inferCardKind } from "./CardBody";
 import { CardShell, Chip, Sub, Title } from "./CardShell";
 import {
   METRO_LINE_COLORS,

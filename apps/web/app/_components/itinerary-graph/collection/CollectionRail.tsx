@@ -17,9 +17,13 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
-import { getHMeta, getMeta } from "../model/horizontalTypes";
 import type { NodeResponse } from "../model/horizontalTypes";
-import { TYPE_TOKENS, type CardKind } from "../shared/cards/tokens";
+import { CardShell } from "../shared/cards/CardShell";
+import {
+  CardBody,
+  inferCardKind,
+  statusToKind,
+} from "../shared/cards/CardBody";
 import {
   collectionDragId,
   collectionItemsOf,
@@ -242,14 +246,12 @@ function CollectionCard({
   // Place mode (PS5): a tap-not-drag path for scheduling. Only a real editable
   // surface offers it (a draft-mine traveler keeps the drag→lazy-fork path).
   const canSchedule = itineraryGraphStore.useStore(selectCanSchedule);
-  const token = TYPE_TOKENS[node.type as CardKind] ?? TYPE_TOKENS.destination;
-  const meta = getMeta(node);
-  const cover = meta.snapshot?.cover_image;
-  const loc = getHMeta(node).location?.label ?? meta.snapshot?.location;
-  const price =
-    node.cost_amount && node.cost_currency
-      ? `${node.cost_currency} ${node.cost_amount}`
-      : meta.snapshot?.price;
+  // A Collection card is the SAME card as the timeline glance of this node
+  // (M006 harmonization): shared CardShell substrate + shared CardBody. The
+  // drag handle + Schedule overlay stay as chrome around the shell. Collection
+  // items are unscheduled, so tz is moot (0) — CardBody just omits the time row.
+  const kind = inferCardKind(node);
+  const status = statusToKind(node.status);
 
   return (
     <motion.div
@@ -285,44 +287,17 @@ function CollectionCard({
         {...listeners}
         {...attributes}
         onClick={onOpen ? () => onOpen(node.id) : undefined}
-        className="w-full cursor-grab overflow-hidden rounded-lg border border-ink/12 bg-paper text-left shadow-xs transition-shadow hover:shadow-md active:cursor-grabbing"
+        className="block w-full cursor-grab rounded-lg text-left transition active:cursor-grabbing focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand"
       >
-        {cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={cover}
-            alt=""
-            className="h-24 w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div
-            className="h-2 w-full"
-            style={{ backgroundColor: token.accent }}
-            aria-hidden
-          />
-        )}
-        <div className="flex flex-col gap-1 px-3 py-2">
-          <div className="flex items-center gap-1.5">
-            <span
-              className="rounded-sm px-1.5 py-0.5 font-sans text-[9px] uppercase tracking-[0.14em]"
-              style={{ backgroundColor: token.tint, color: token.accent }}
-            >
-              {token.label}
-            </span>
-            {price ? (
-              <span className="font-sans text-[10px] tracking-wide text-ink/55">
-                {price}
-              </span>
-            ) : null}
-          </div>
-          <div className="font-serif text-[15px] leading-snug text-ink">
-            {node.title || token.label}
-          </div>
-          {loc ? (
-            <div className="truncate font-sans text-[11px] text-ink/50">{loc}</div>
-          ) : null}
-        </div>
+        <CardShell
+          kind={kind}
+          status={status}
+          width="glance"
+          lockReason={node.lock_reason ?? null}
+          lockLabel={node.type}
+        >
+          <CardBody node={node} kind={kind} tzOffsetHours={0} />
+        </CardShell>
       </button>
     </motion.div>
   );

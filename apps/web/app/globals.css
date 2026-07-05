@@ -131,3 +131,64 @@ body {
   background-color: hsl(var(--brand) / 0.92);
   color: hsl(var(--brand-foreground));
 }
+
+/*
+  Card substrate (M006 harmonization). Every card surface — timeline glance,
+  Collection, chat proposal, and the zoom detail — renders a `CardShell`, and
+  every CardShell wears this paper "material". The status-escalating weight
+  (paper darkens, border thickens, shadow deepens) lives here as CSS custom
+  properties keyed on [data-status], so the CardShell tailwind-variants recipe
+  only carries *structure* (width, padding, opacity). The noise texture + top
+  sheen are applied inline by CardShell (a static image that never varies), and
+  the per-type corner-stamp accent stays an inline style (it's data, not design).
+  Mirrors the former SUBSTRATE_BY_STATUS map that lived in CardShell.tsx.
+*/
+@layer components {
+  .card-substrate {
+    background-color: var(--card-bg);
+    border: var(--card-border);
+    box-shadow: var(--card-shadow);
+  }
+  .card-substrate[data-status="idea"] {
+    --card-bg: #f7f4ee;
+    --card-border: 1px dashed rgba(10, 10, 10, 0.18);
+    --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  }
+  .card-substrate[data-status="proposed"] {
+    --card-bg: #f7f4ee;
+    --card-border: 1px solid rgba(10, 10, 10, 0.1);
+    --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.25),
+      inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  }
+  .card-substrate[data-status="approved"] {
+    --card-bg: #f5f1e7;
+    --card-border: 1px solid rgba(10, 10, 10, 0.14);
+    --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 10px 26px -12px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  }
+  .card-substrate[data-status="booked"] {
+    --card-bg: #ede6d6;
+    --card-border: 1.5px solid rgba(10, 10, 10, 0.2);
+    --card-shadow: 0 2px 0 rgba(0, 0, 0, 0.06), 0 14px 32px -10px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  }
+  .card-substrate[data-status="confirmed"] {
+    --card-bg: #e6dcc4;
+    --card-border: 2px solid rgba(10, 10, 10, 0.32);
+    --card-shadow: 0 0 0 1px rgba(10, 10, 10, 0.1), 0 3px 0 rgba(0, 0, 0, 0.08),
+      0 22px 44px -12px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.55),
+      inset 0 0 0 3px rgba(247, 244, 238, 0.7), inset 0 0 0 4px rgba(10, 10, 10, 0.1);
+  }
+  .card-substrate[data-status="discarded"] {
+    --card-bg: #f7f4ee;
+    --card-border: 1px solid rgba(10, 10, 10, 0.1);
+    --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  }
+  /* Notes keep their yellow paper regardless of status — commentary, not booked
+     inventory — overriding only bg + border; the shadow stays status-weighted.
+     Declared last so it wins over the [data-status] rule at equal specificity. */
+  .card-substrate[data-note="true"] {
+    --card-bg: #fbf1c7;
+    --card-border: 1px solid rgba(180, 140, 30, 0.22);
+  }
+}

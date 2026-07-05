@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { tv } from "tailwind-variants";
 
 import {
   NOISE_BG,
@@ -31,53 +32,46 @@ interface CardShellProps {
   lockReason?: string | null;
   // A friendly noun for the locked item (the node type), used in the copy.
   lockLabel?: string;
+  // A form-factor slot rendered at the very bottom of the card, below the
+  // status footer band. The chat proposal card uses it for its Must Do /
+  // Thumbs Up / Not This Time action row; the timeline/collection cards omit it.
+  actions?: ReactNode;
 }
 
-interface SubstrateStyle {
-  bg: string;
-  border: string;
-  shadow: string;
-}
+// The card substrate as a tailwind-variants recipe. Structure only — `width`
+// sets the footprint + body padding; `status` carries the idea/discarded
+// opacity cues. The status-escalating *material* (paper colour, border weight,
+// shadow depth) lives in globals.css keyed on [data-status] (the .card-substrate
+// layer), so every surface that renders a CardShell gets the identical paper.
+const cardShell = tv({
+  slots: {
+    root: "card-substrate relative overflow-hidden rounded-lg text-left font-sans text-ink",
+    body: "",
+  },
+  variants: {
+    width: {
+      // Compact matches glance's 260px footprint — the variant collapses
+      // vertically, not horizontally (low-zoom density on the timeline).
+      compact: { root: "w-[260px]", body: "px-2.5 py-1.5" },
+      glance: { root: "w-[260px]", body: "p-3 pb-0" },
+      zoom: { root: "w-full max-w-[640px]", body: "p-5 pb-0" },
+    },
+    status: {
+      idea: { root: "opacity-80" },
+      proposed: {},
+      approved: {},
+      booked: {},
+      confirmed: {},
+      discarded: { root: "opacity-50 grayscale" },
+    },
+  },
+  defaultVariants: { width: "glance", status: "proposed" },
+});
 
-// Status escalates the substrate itself — paper darkens, border thickens,
-// shadow deepens, Confirmed gains an inner ring to read as heavier stock.
-// Mirrors HYBRID_CFG in StatusAlternatives.tsx (the chosen Alt C+D direction).
-const SUBSTRATE_BY_STATUS: Record<StatusKind, SubstrateStyle> = {
-  idea: {
-    bg: "#f7f4ee",
-    border: "1px dashed rgba(10,10,10,0.18)",
-    shadow: "0 1px 0 rgba(0,0,0,0.04)",
-  },
-  proposed: {
-    bg: "#f7f4ee",
-    border: "1px solid rgba(10,10,10,0.10)",
-    shadow:
-      "0 1px 0 rgba(0,0,0,0.04), 0 8px 24px -12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.6)",
-  },
-  approved: {
-    bg: "#f5f1e7",
-    border: "1px solid rgba(10,10,10,0.14)",
-    shadow:
-      "0 1px 0 rgba(0,0,0,0.05), 0 10px 26px -12px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.55)",
-  },
-  booked: {
-    bg: "#ede6d6",
-    border: "1.5px solid rgba(10,10,10,0.20)",
-    shadow:
-      "0 2px 0 rgba(0,0,0,0.06), 0 14px 32px -10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5)",
-  },
-  confirmed: {
-    bg: "#e6dcc4",
-    border: "2px solid rgba(10,10,10,0.32)",
-    shadow:
-      "0 0 0 1px rgba(10,10,10,0.10), 0 3px 0 rgba(0,0,0,0.08), 0 22px 44px -12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.55), inset 0 0 0 3px rgba(247,244,238,0.7), inset 0 0 0 4px rgba(10,10,10,0.10)",
-  },
-  discarded: {
-    bg: "#f7f4ee",
-    border: "1px solid rgba(10,10,10,0.10)",
-    shadow: "0 1px 0 rgba(0,0,0,0.04)",
-  },
-};
+// Noise texture + a soft top sheen — a static image identical on every card, so
+// it stays an inline background-image (not a per-status CSS var). The status
+// colour/border/shadow underneath come from the .card-substrate CSS layer.
+const SUBSTRATE_IMAGE = `${NOISE_BG}, linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 40%)`;
 
 export function CardShell({
   kind,
@@ -89,60 +83,28 @@ export function CardShell({
   statusDate,
   lockReason,
   lockLabel,
+  actions,
 }: CardShellProps) {
   const token = TYPE_TOKENS[kind];
   const isNote = noteOverride ?? kind === "note";
 
-  const substrate = SUBSTRATE_BY_STATUS[status];
-
-  // Notes keep their yellow paper substrate regardless of status — they are
-  // commentary, not booked inventory, so the substrate-weight cue would
-  // mis-signal a lifecycle they don't have.
-  const bg = isNote ? "#fbf1c7" : substrate.bg;
-  const border = isNote
-    ? "1px solid rgba(180,140,30,0.22)"
-    : substrate.border;
-
-  const style = {
-    backgroundImage: `${NOISE_BG}, linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 40%)`,
-    backgroundColor: bg,
-    border,
-    boxShadow: substrate.shadow,
-  };
-
-  // Padding lives on the body wrapper, not the shell, so the footer band can
-  // run edge-to-edge. Compact matches glance's 260px footprint — the variant
-  // collapses *vertically*, not horizontally; it's triggered by low zoom
-  // density on the timeline, where horizontal room isn't the constraint.
-  const widthClass =
-    width === "compact" || width === "glance"
-      ? "w-[260px]"
-      : "w-full max-w-[640px]";
-  const wrapClass = [
-    "relative rounded-lg overflow-hidden font-sans text-ink text-left",
-    widthClass,
-    status === "idea" ? "opacity-80" : "",
-    status === "discarded" ? "opacity-50 grayscale" : "",
-  ].join(" ");
-
-  const bodyClass =
-    width === "compact"
-      ? "px-2.5 py-1.5"
-      : width === "glance"
-        ? "p-3 pb-0"
-        : "p-5 pb-0";
-
   // Compact mode is a strip — no full type-label header, no status footer.
-  // Compact shows the type icon inline with the body and relies on the
-  // corner stamp + substrate weight to carry status.
+  // Compact shows the type icon inline with the body and relies on the corner
+  // stamp + substrate weight to carry status.
   const isCompact = width === "compact";
+
+  const { root, body } = cardShell({ width, status });
 
   return (
     <div
       role="group"
       aria-label={`${token.label} card, ${STATUS_TOKENS[status].label}`}
-      className={wrapClass}
-      style={style}
+      className={root()}
+      // Drives the .card-substrate CSS layer (paper colour / border / shadow).
+      // Notes override bg+border via [data-note] while keeping the status shadow.
+      data-status={status}
+      data-note={isNote ? "true" : undefined}
+      style={{ backgroundImage: SUBSTRATE_IMAGE } as CSSProperties}
     >
       {status !== "idea" && status !== "discarded" ? (
         <span
@@ -158,7 +120,7 @@ export function CardShell({
         />
       ) : null}
 
-      <div className={bodyClass}>
+      <div className={body()}>
         {isCompact ? null : (
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
             <token.Icon size={12} strokeWidth={1.6} aria-hidden />
@@ -177,6 +139,8 @@ export function CardShell({
           lockLabel={lockLabel}
         />
       )}
+
+      {actions}
     </div>
   );
 }
