@@ -29,13 +29,13 @@ mutation and a traveler mutation are the same write path with a different
 | [ADV-2B](#adv-2b--build-the-travel-party-existing-or-new-with-the-agent) | Build the travel party (existing or new, with the agent) | ✅ Automated | P4 party CRUD + cross-trip reuse (API) + advisor-project browser: durable add + trip-attach (`e2e/advisor/travel-party.spec.ts`); concierge-add agent-gated |
 | [ADV-2C](#adv-2c--the-advisors-agent-workspace-has-different-tools--access) | The advisor's agent workspace has different tools + access | ✅ Automated | P3 advisor/traveler audience isolation + `test_modes` tool bundles (API/agent) |
 | [ADV-3](#adv-3--advisor-builds-the-itinerary-by-conversation-on-the-travelers-behalf) | Build the itinerary by conversation, on the traveler's behalf | 🟡 Partial | P3 search→propose→approve + full-loop build (API) + advisor-project browser turn loop (`e2e/advisor/concierge.spec.ts`); grounded *semantic* turn still agent-gated |
-| [ADV-4](#adv-4--advisor-hand-authors-a-node-in-a-card-like-editor) | Hand-author a node in a Card-like editor (type, links, price) | ✅ Automated | Studio "Add a card" editor (typed+priced / paste-link) via `authorNode`; `node-editor.spec.ts` (browser) + P3 write paths |
+| [ADV-4](#adv-4--advisor-hand-authors-a-node-in-a-card-like-editor) | Hand-author a node in a Card-like editor (type, links, price) | ✅ Automated | summonable `CardComposer` (Studio / Collection / timeline-slot) + live preview + create-at-slot scheduling via `authorNode`; `node-editor.spec.ts` (browser) + P3 write paths |
 | [ADV-5](#adv-5--advisor-picks-flights-via-duffel) | Pick flights via Duffel | 🟡 Partial | Duffel provider + `search_inventory(flight)` + `propose_flight` (API, P3 flight lane); **flight-picker UI missing**; live creds-gated |
 | [ADV-6](#adv-6--advisor-works-with-the-agent-to-analyze-the-itinerary) | Work with the agent to Analyze the itinerary | 🟡 Partial | Analyze/Fill engine (P3); **no agent tool to run Analyze conversationally**; UI trigger to confirm |
 | [ADV-7](#adv-7--advisor-sends-the-itinerary-to-the-traveler-with-a-message) | Send the itinerary to the traveler with a message | 🟡 Partial | human thread `POST /threads/{id}/messages` + `HumanThread` UI; **email delivery 🔍 SMTP**; no e2e pillar yet |
 | [ADV-8](#adv-8--traveler-reviews-and-chats-with-the-advisor-requesting-changes) | Traveler reviews & chats with the advisor, requesting changes | 🟡 Partial | P5 `request_reconcile` fork loop + human thread (API); @Artemis summon newer, thin coverage |
 | [ADV-9](#adv-9--advisor-makes-changes-via-the-agent-respecting-locked-nodes) | Make changes via the agent, respecting locked nodes | ✅ Automated | P5 booked-node immutability + status×actor gate + reconcile (API) |
-| [ADV-10](#adv-10--traveler-approves-the-itinerary-at-once-and-sees-the-price) | Traveler approves the itinerary at once, sees the price | 🟡 Partial | itinerary-level approve (P3) + client-sees-approved (full-loop) + cost rollup computable (P3); **bulk node-approve + surfaced total missing** |
+| [ADV-10](#adv-10--traveler-approves-the-itinerary-at-once-and-sees-the-price) | Traveler approves the itinerary at once, sees the price | 🟡 Partial | **backend shipped** — approve **cascades** `proposed`→`approved` + graph read carries per-currency `totals` (API-tested); the **traveler UI** (one-action approve + shown price) is the remaining half |
 | [ADV-11](#adv-11--advisor-invoices-the-trip-traveler-pays-via-braintree) | Advisor invoices the trip; traveler pays via Braintree | ✅ Automated | P6 assemble/pay/money-gate + M005 discount/void + full-loop (API); pre-filled test-card **UI affordance** to add; gateway-unwired 🔍 |
 
 ---
@@ -553,18 +553,17 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-10 · Traveler approves the itinerary at once, and sees the price
 
-- **Status:** 🟡 Partial — itinerary-level approval + client visibility + cost rollup are
-  covered; a **single bulk "approve the remaining nodes" action and a surfaced total** are missing.
+- **Status:** 🟡 Partial — **backend shipped** (approve cascade + surfaced per-currency
+  totals, API-tested); the **traveler UI** (one-action approve + shown price) is the last half.
 - **Personas:** Traveler
 - **Surface:** Web UI (Playwright) + API seam (CLI/pytest)
 - **Preconditions:** A shared itinerary with several `proposed` nodes and per-node costs.
 - **Automated by:**
   - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_advisor_approves_built_itinerary` — approval flips the itinerary `status → approved` (the gate that makes it client-visible).
   - `apps/cli/tests/e2e/test_full_loop_e2e.py::test_loop_client_sees_approved_itinerary` — the traveler sees the approved itinerary on their own surface (`GET /me/itineraries`, `status == approved`).
-  - `apps/cli/tests/e2e/test_pillar3_build_e2e.py::test_cost_rolls_up_per_currency` — Σ node cost per currency is computable (the price the traveler should see; `ovb.invariants.cost_totals`).
-  - Per-node approval tool `update_node_status` (`apps/agent/src/agent/tools/mutations.py`).
-  - A one-action **bulk approve** of remaining `proposed` nodes, and a **surfaced total** in
-    the graph/UI — **no endpoint, no UI, no test.**
+  - `apps/api/tests/test_itinerary_lock.py::test_approve_cascades_proposed_nodes_to_approved` — a single approval flips every remaining `proposed` node to `approved` (ideas untouched).
+  - `apps/api/tests/test_itineraries.py::test_get_itinerary_surfaces_per_currency_totals` — `GET /itinerary/{id}` carries `totals: {currency: amount}` (Σ via `sum_node_costs`); default `{}` when nothing is priced.
+  - The **traveler UI** — a one-action approve + the shown per-currency price — **to write once built.**
 
 **Given** a traveler happy with the whole plan,
 
@@ -575,21 +574,22 @@ mutation and a traveler mutation are the same write path with a different
 
 **Then**
 - the itinerary is `approved` and visible on the traveler's own surface;
-- **(target)** every still-`proposed` node flips to `approved` in that single action (no
-  node left behind);
-- **(target)** the traveler sees a clear per-currency total (Σ of node costs), computed
-  from the same first-class cost the invoicing later charges.
+- every still-`proposed` node flips to `approved` in that single action (no node left
+  behind) — **shipped** as a cascade on `approve_itinerary`;
+- the traveler sees a clear per-currency total (Σ of node costs), computed from the same
+  first-class cost the invoicing later charges — the graph read now **carries** `totals`;
+  the UI that shows it is the remaining half.
 
 **Notes / gaps**
-- ✅ Itinerary-level approval, client visibility, and the fact that a per-currency total is
-  **computable** all hold. The data for "see the price" exists.
-- 🔎 **Two gaps** (both **G-APPROVE-TOTAL** in [advisor-plan.md](./advisor-plan.md)): (1)
-  there's no single "approve all remaining proposed nodes" action — approval is per-node via
-  `update_node_status`, or itinerary-status only; the "all at once → nodes approved" invariant
-  needs either a cascade on itinerary-approve or a bulk endpoint. (2) No endpoint/graph field
-  surfaces the aggregate total, so the traveler-visible price is unbuilt UI even though
-  `cost_totals` proves it's derivable. Decide whether approval **cascades** to nodes before
-  writing the assertion.
+- ✅ **Backend shipped** (**G-APPROVE-TOTAL**, decision = cascade): `approve_itinerary`
+  cascades every remaining `proposed` node to `approved` in one transaction (idea/booked/
+  confirmed/discarded untouched), and `GET /itinerary/{id}` surfaces `totals: {currency:
+  amount}` (Σ via `sum_node_costs`, `per_person` expanded by party size, Decimal → str),
+  regenerated into the api-client `GraphResponse`. API-tested (cascade + totals).
+- 🔎 **Remaining: the traveler UI** — a one-action approve affordance + the shown per-currency
+  price, reading `totals` off the graph the store already loads. Small (UI only) now that the
+  decision + backend are done; the browser assertion (approve once → nodes `approved` + price
+  shows) pairs with it. Tracked in [advisor-plan.md](./advisor-plan.md).
 
 ---
 

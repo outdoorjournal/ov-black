@@ -8,9 +8,12 @@
 > not an invariant contract.
 >
 > **Bottom line (handoff):** ~two-thirds of the advisor loop is already **green at the
-> API seam** via the pillar suite (P1–P6). The outstanding work is (a) **advisor-project
-> Playwright** specs that drive the real screens, and (b) **six product gaps** — most
-> small and isolated — before the remaining scenarios are true. Nothing here is a
+> API seam** via the pillar suite (P1–P6). Wave 1 (advisor-project Playwright over the
+> built spine) is shipped, and of the original **six product gaps**, **G-INVITE-LATER**
+> (ADV-1) and **G-NODE-EDITOR** (ADV-4, the card composer) are **closed**, with
+> **G-APPROVE-TOTAL** (ADV-10) **backend-shipped** (only its traveler UI left). Outstanding:
+> the G-APPROVE-TOTAL UI, **G-ANALYZE-AGENT** (ADV-6), **G-TESTCARD** (ADV-11), **G-COVER**
+> (ADV-2A), plus the deferred **advisor-private Collection** slice. Nothing here is a
 > rewrite; it's finishing UI + a few tools on top of a built spine.
 
 ## §0. Method
@@ -32,13 +35,13 @@ seam missing), or **gap** (no code path — a product decision precedes the test
 | 2B | Travel party (existing/new) | **built** | `party_members` routes + agent `record_/update_party_member`; dashboard `PartyPanel` trip-attach; P4; `travel-party.spec.ts` | ✅ advisor browser (add + trip-attach) shipped; concierge-add agent-gated |
 | 2C | Advisor≠traveler agent access | **built** | audience isolation (`open_or_reuse_session`); `agent/tools/__init__.py` mode bundles; P3 + `test_modes` | — (optional visibility browser test) |
 | 3 | Build by conversation | **partial** | search→propose→approve (P3, full-loop); `propose_card`; `concierge.spec.ts` | ✅ advisor browser turn-loop shipped; live grounding still agent-gated |
-| 4 | Hand-author a node | **built** | `POST /nodes`, `/from-inventory` (P3), `/from-link` OG preview; Studio "Add a card" editor (`AuthoringPanel`); `node-editor.spec.ts` (ADV-4) | ✅ typed+priced + paste-link editor shipped (G-NODE-EDITOR closed); link-card pricing is a follow-up |
+| 4 | Hand-author a node | **built** | `POST /nodes`, `/from-inventory` (P3), `/from-link` OG preview; summonable `CardComposer` (Studio / Collection / timeline-slot) + live preview; `authorNode`; `node-editor.spec.ts` (ADV-4) | ✅ composer shipped (G-NODE-EDITOR closed): typed+priced, paste-link, create-at-slot scheduling; advisor-private Collection + link-card pricing are follow-ups |
 | 5 | Duffel flights | **partial** | `inventory/providers/duffel.py`; `search_inventory`+`propose_flight`; P3 flight lane | **no flight-picker UI**; live creds-gated |
 | 6 | Analyze w/ the agent | **partial** | `routers/analyze.py` (P3 analyze+fill) | **no agent tool** to run Analyze / read findings; UI trigger unconfirmed |
 | 7 | Send + message (email+chat) | **partial** | `routers/messaging.py` `/threads`; `HumanThread.tsx`; `test_agent_summon.py` | **no e2e**; email 🔍; "send" as first-class action undecided |
 | 8 | Traveler requests changes | **partial** | `request_reconcile` (P5); human thread + @Artemis | conversational-request e2e; @Artemis thin |
 | 9 | Advisor changes, locked nodes | **built** | status×actor gate, `demote_before_edit`, reconcile (P5) | — (optional lock-affordance browser test) |
-| 10 | Bulk-approve + see price | **partial** | itinerary approve (P3), client-sees (full-loop), `cost_totals` (P3) | **no bulk node-approve action**; **no surfaced total** |
+| 10 | Bulk-approve + see price | **partial** | approve **cascades** `proposed`→`approved` (`approve_itinerary`); graph read carries per-currency `totals`; P3/full-loop; `test_itinerary_lock`/`test_itineraries` | ✅ backend shipped (cascade + surfaced totals); **traveler UI** (one-action approve + shown price) is the remaining half |
 | 11 | Invoice + Braintree pay | **built** | `routers/invoices.py`, `payments/braintree_gateway.py`; P6 + M005 + full-loop | pre-filled **test-card UI**; auto-invoice-from-nodes (optional) |
 
 **Orientation (surfaces):** `command-center/*` = advisor-only (roster, new client, client
@@ -50,8 +53,9 @@ server-side.
 ## §2. Product gaps (decision precedes test)
 
 Originally six gaps blocked a scenario being asserted *as written*; **G-INVITE-LATER and
-G-NODE-EDITOR are now closed** (below), leaving four. Each is small and isolated; the
-remaining scenario-unlockers each open one ADV scenario, and two are demo-polish.
+G-NODE-EDITOR are now closed**, and **G-APPROVE-TOTAL's backend is shipped** (only its
+traveler UI remains) — see below. That leaves G-COVER, G-ANALYZE-AGENT, G-TESTCARD, and the
+G-APPROVE-TOTAL UI. Each is small and isolated.
 
 ### ✅ Closed: G-INVITE-LATER — silent client create (ADV-1)
 - **Shipped:** `POST /clients` now carries `notify: bool = true`. When false the create
@@ -117,17 +121,21 @@ remaining scenario-unlockers each open one ADV scenario, and two are demo-polish
 - **Test to add:** agent-mode unit that the tool bundle includes Analyze in advisor/planning;
   API path already covered by P3.
 
-### G-APPROVE-TOTAL — bulk approve + surfaced price (ADV-10)
+### 🟡 Backend shipped: G-APPROVE-TOTAL — bulk approve + surfaced price (ADV-10)
 - **Goal:** the traveler approves once, remaining `proposed` nodes → `approved`, and sees a total.
-- **Today:** approval is itinerary-status-level or per-node (`update_node_status`); no cascade.
-  `cost_totals` proves the per-currency total is **derivable** but nothing surfaces it.
-- **Plan — decide first:** does itinerary-approve **cascade** remaining `proposed` nodes to
-  `approved`, or is there a distinct bulk endpoint? Recommend a cascade on the approve path
-  (one mental model). Add a `totals: {currency: amount}` field to the graph/itinerary read so
-  the UI can show the price.
-- **Size:** M. **Touches:** approve service (cascade), graph serializer (totals), traveler UI.
-- **Test to add:** API — approve → every `proposed` node is `approved`; graph read carries
-  the per-currency total. Browser — traveler sees the price + one-action approve.
+- **Decision (made):** itinerary-approve **cascades** (one mental model), not a distinct bulk
+  endpoint.
+- **Shipped (backend):** `approve_itinerary` now flips every remaining `proposed` node to
+  `approved` in the same transaction (`idea`/booked/confirmed/discarded untouched); and
+  `GET /itinerary/{id}` surfaces `totals: {currency: amount}` via `sum_node_costs` (priced,
+  non-discarded, selected nodes; `per_person` expanded by party size; Decimal → str; regen'd
+  into the api-client `GraphResponse`). Tests: `test_itinerary_lock` cascade, `test_itineraries`
+  totals (default `{}` + a set value).
+- **Remaining (the other half):** the **traveler UI** — a one-action approve + the shown
+  per-currency price, reading `totals` off the graph the store already loads.
+- **Size:** S (UI only, now that the backend + decision are done). **Touches:** traveler
+  approve affordance + a total in the itinerary header/dashboard.
+- **Test to add:** browser — traveler approves once → nodes read `approved` + the price shows.
 
 ### G-TESTCARD — pre-filled sandbox card in the pay UI (ADV-11)
 - **Goal:** demo payment without typing card numbers.
@@ -186,10 +194,13 @@ per-trip party-attach UI ADV-2B needed.
 **Wave 2 — close a small gap, then assert the scenario.** One product slice each, then its test:
 - ✅ **G-INVITE-LATER → ADV-1** — shipped (see §2): `notify` opt-out + `uninvited` state +
   roster "Send invite"; `onboarding-invite.spec.ts` ADV-1 drives it in the browser.
-- ✅ **G-NODE-EDITOR → ADV-4** — shipped (see §2): Studio "Add a card" editor
-  (typed+priced / paste-link) via `authorNode`; `node-editor.spec.ts` drives both in the browser.
-- Remaining: **G-ANALYZE-AGENT → ADV-6**, **G-APPROVE-TOTAL → ADV-10**,
-  **G-TESTCARD → ADV-11 browser**.
+- ✅ **G-NODE-EDITOR → ADV-4** — shipped (see §2): summonable `CardComposer` (Studio /
+  Collection / empty timeline-slot) + live preview + create-at-slot scheduling, via
+  `authorNode`; `node-editor.spec.ts` drives all three flows in the browser.
+- 🟡 **G-APPROVE-TOTAL → ADV-10** — **backend shipped** (approve cascade + surfaced `totals`,
+  API-tested); the **traveler UI** (one-action approve + shown price) is the remaining half.
+- Remaining: **G-ANALYZE-AGENT → ADV-6**, **G-TESTCARD → ADV-11 browser**, and the
+  **G-APPROVE-TOTAL** traveler UI above.
 - **G-COVER → ADV-2A** is the largest; sequence it after the decision in §2.
 
 **Wave 3 — messaging + boundary-limited.**
