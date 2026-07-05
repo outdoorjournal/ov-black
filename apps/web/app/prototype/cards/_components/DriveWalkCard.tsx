@@ -152,7 +152,7 @@ function RoutePreview({ accent }: { accent: string }) {
       preserveAspectRatio="none"
       role="img"
       aria-label="Route preview from Haneda to Aman Tokyo"
-      className="rounded border border-ink/10 bg-ink/[0.03]"
+      className="rounded border border-ink/10 bg-ink/3"
     >
       <line x1="0" y1="40" x2="380" y2="40" stroke="#0a0a0a" strokeOpacity="0.06" />
       <line x1="0" y1="80" x2="380" y2="80" stroke="#0a0a0a" strokeOpacity="0.06" />

@@ -44,7 +44,7 @@ export default async function ClientsPage() {
     <main className="flex w-full flex-1 flex-col gap-10 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
       <header className="flex flex-col gap-4 border-b border-paper/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55">
+          <p className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55">
             Command Center
           </p>
           <h1 className="mt-3 font-serif text-4xl tracking-tight text-paper sm:text-5xl">
@@ -62,7 +62,7 @@ export default async function ClientsPage() {
         </div>
       ) : null}
 
-      <section className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/[0.05] p-5 sm:p-7">
+      <section className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/5 p-5 sm:p-7">
         {clients.length === 0 ? (
           <p className="font-sans text-sm italic text-paper/55">
             No clients yet — click <em>New Client</em> to add your first one.
@@ -79,7 +79,7 @@ function ClientList({ clients }: { clients: ClientSummary[] }) {
   return (
     <div className="-mx-5 overflow-x-auto sm:-mx-7">
       <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
-        <thead className="bg-paper/[0.06] text-[10px] uppercase tracking-[0.3em] text-paper/55">
+        <thead className="bg-paper/6 text-[10px] uppercase tracking-label text-paper/55">
           <tr>
             <Th className="pl-5 sm:pl-7">Name</Th>
             <Th className="hidden md:table-cell">Email</Th>
@@ -92,7 +92,7 @@ function ClientList({ clients }: { clients: ClientSummary[] }) {
         </thead>
         <tbody className="divide-y divide-paper/10">
           {clients.map((c) => (
-            <tr key={c.id} className="group transition-colors hover:bg-paper/[0.08]">
+            <tr key={c.id} className="group transition-colors hover:bg-paper/8">
               <Td className="pl-5 sm:pl-7">
                 <Link
                   href={`/command-center/clients/${c.id}`}

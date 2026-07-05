@@ -129,7 +129,7 @@ function AddContactForm({ clientId }: { clientId: string }) {
         e.preventDefault();
         submit();
       }}
-      className="flex flex-col gap-2 rounded-sm border border-paper/15 bg-paper/[0.09] p-3"
+      className="flex flex-col gap-2 rounded-sm border border-paper/15 bg-paper/9 p-3"
     >
       <div className="grid gap-2 sm:grid-cols-[8rem_1fr_8rem_auto]">
         <Select value={kind} onValueChange={(v) => setKind(v as ContactKind)}>

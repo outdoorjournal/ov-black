@@ -174,7 +174,7 @@ export function SupplierSlotPickerDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-xs"
       onClick={onClose}
       role="dialog"
       aria-modal="true"

@@ -24,7 +24,7 @@ export default async function NewClientPage() {
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-6 py-12 sm:px-10 sm:py-16">
       <header className="flex flex-col gap-6 border-b border-ink/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-ink/55">
+          <p className="font-sans text-[10px] uppercase tracking-eyebrow text-ink/55">
             Dossier &amp; welcome
           </p>
           <h1 className="mt-4 font-serif text-5xl tracking-tight text-ink sm:text-6xl">

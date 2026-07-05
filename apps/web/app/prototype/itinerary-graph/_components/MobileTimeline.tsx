@@ -140,7 +140,7 @@ export function MobileTimeline({
             initial={{ opacity: 0, scale: 0.92, x: 80 }}
             animate={{ opacity: 1, scale: 0.88, x: 0 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="fixed bottom-4 right-3 z-50 w-[220px] rotate-[-2deg]"
+            className="fixed bottom-4 right-3 z-50 w-[220px] -rotate-2"
             style={{ pointerEvents: "auto" }}
           >
             <div className="rounded-md bg-paper p-1 shadow-[0_18px_40px_-8px_rgba(0,0,0,0.45)]">

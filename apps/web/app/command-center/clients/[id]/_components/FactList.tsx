@@ -156,7 +156,7 @@ function FactRow({
       ) : (
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className="break-words font-sans text-sm text-paper/90">
+            <p className="wrap-break-word font-sans text-sm text-paper/90">
               {fact.text}
             </p>
             {url ? (

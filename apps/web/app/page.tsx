@@ -45,7 +45,7 @@ export default async function HomePage() {
           <span className="font-serif text-2xl tracking-tight">
             Outdoor Voyage
           </span>
-          <span className="text-[10px] uppercase tracking-[0.4em] text-paper/60">
+          <span className="text-[10px] uppercase tracking-eyebrow text-paper/60">
             Black
           </span>
         </div>
@@ -70,7 +70,7 @@ export default async function HomePage() {
         <div className="flex w-full max-w-md flex-col gap-6">
           <div className="rounded-sm bg-card p-8 text-ink shadow-float sm:p-10">
             <h2 className="font-serif text-3xl tracking-tight">Sign in</h2>
-            <p className="mt-2 text-[11px] uppercase tracking-[0.3em] text-ink/55">
+            <p className="mt-2 text-[11px] uppercase tracking-label text-ink/55">
               Enter your email for a sign-in link
             </p>
             <div className="mt-8">
@@ -78,13 +78,13 @@ export default async function HomePage() {
             </div>
           </div>
 
-          <p className="text-center text-[11px] uppercase tracking-[0.3em] text-paper/50">
+          <p className="text-center text-[11px] uppercase tracking-label text-paper/50">
             Membership is extended by referral
           </p>
         </div>
       </section>
 
-      <footer className="relative z-10 border-t border-paper/10 px-6 py-6 text-[10px] uppercase tracking-[0.3em] text-paper/50 sm:px-10">
+      <footer className="relative z-10 border-t border-paper/10 px-6 py-6 text-[10px] uppercase tracking-label text-paper/50 sm:px-10">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <span>© Outdoor Voyage</span>
           <span className="hidden sm:inline">Est. in the field</span>

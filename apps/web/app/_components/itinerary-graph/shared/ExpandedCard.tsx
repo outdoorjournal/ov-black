@@ -85,7 +85,7 @@ export function Card({
       {node.status !== "idea" && node.status !== "discarded" ? (
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-1 left-3 h-3 w-12 rotate-[-3deg] opacity-70"
+          className="pointer-events-none absolute -top-1 left-3 h-3 w-12 -rotate-3 opacity-70"
           style={{
             backgroundColor: accent,
             boxShadow: "0 1px 2px rgba(0,0,0,0.2)",

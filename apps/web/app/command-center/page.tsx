@@ -58,7 +58,7 @@ export default async function CommandCenterPage() {
     <main className="flex w-full flex-1 flex-col gap-12 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
       <header className="flex flex-col gap-4 border-b border-paper/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55">
+          <p className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55">
             Command Center · {today}
           </p>
           <h1 className="mt-3 font-serif text-4xl tracking-tight text-paper sm:text-5xl">
@@ -89,7 +89,7 @@ export default async function CommandCenterPage() {
         <h2 id="metrics-heading" className="sr-only">
           Roster snapshot
         </h2>
-        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-paper/10 bg-paper/[0.06] sm:grid-cols-5">
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-paper/10 bg-paper/6 sm:grid-cols-5">
           <Metric label="Clients" value={metrics.total} />
           <Metric label="Active" value={metrics.active} />
           <Metric label="Awaiting sign-in" value={metrics.pending} />
@@ -138,7 +138,7 @@ function Panel({
   return (
     <section
       {...rest}
-      className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/[0.05] p-5 sm:p-7"
+      className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/5 p-5 sm:p-7"
     >
       {children}
     </section>
@@ -162,7 +162,7 @@ function SectionHeader({
       >
         {title}
       </h2>
-      <span className="font-sans text-[10px] uppercase tracking-[0.3em] text-paper/55">
+      <span className="font-sans text-[10px] uppercase tracking-label text-paper/55">
         {eyebrow}
       </span>
     </div>
@@ -173,7 +173,7 @@ function Metric({ label, value }: { label: string; value: number }) {
   return (
     <div className="bg-ink px-5 py-6">
       <p className="font-serif text-4xl tracking-tight text-paper">{value}</p>
-      <p className="mt-2 font-sans text-[10px] uppercase tracking-[0.3em] text-paper/55">
+      <p className="mt-2 font-sans text-[10px] uppercase tracking-label text-paper/55">
         {label}
       </p>
     </div>
@@ -184,7 +184,7 @@ function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
   return (
     <div className="-mx-5 overflow-x-auto sm:-mx-7">
       <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
-        <thead className="bg-paper/[0.06] text-[10px] uppercase tracking-[0.3em] text-paper/55">
+        <thead className="bg-paper/6 text-[10px] uppercase tracking-label text-paper/55">
           <tr>
             <Th className="pl-5 sm:pl-7">Title</Th>
             <Th>Client</Th>
@@ -197,7 +197,7 @@ function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
           {rows.map((row) => (
             <tr
               key={row.id}
-              className="group transition-colors hover:bg-paper/[0.08]"
+              className="group transition-colors hover:bg-paper/8"
             >
               <Td className="pl-5 sm:pl-7">
                 <Link
@@ -236,7 +236,7 @@ function ClientsTable({ rows }: { rows: ClientSummary[] }) {
   return (
     <div className="-mx-5 overflow-x-auto sm:-mx-7">
       <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
-        <thead className="bg-paper/[0.06] text-[10px] uppercase tracking-[0.3em] text-paper/55">
+        <thead className="bg-paper/6 text-[10px] uppercase tracking-label text-paper/55">
           <tr>
             <Th className="pl-6 sm:pl-10">Name</Th>
             <Th className="hidden md:table-cell">Email</Th>
@@ -250,7 +250,7 @@ function ClientsTable({ rows }: { rows: ClientSummary[] }) {
           {rows.map((c) => (
             <tr
               key={c.id}
-              className="group transition-colors hover:bg-paper/[0.08]"
+              className="group transition-colors hover:bg-paper/8"
             >
               <Td className="pl-5 sm:pl-7">
                 <Link

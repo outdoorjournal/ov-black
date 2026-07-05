@@ -32,7 +32,7 @@ export function DayStrip({ groups, activeIndex, onSelect }: DayStripProps) {
       ref={ref}
       role="tablist"
       aria-label="Itinerary days"
-      className="flex shrink-0 gap-2 overflow-x-auto border-b border-ink/10 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="flex shrink-0 gap-2 overflow-x-auto border-b border-ink/10 px-3 py-2 scrollbar-none [&::-webkit-scrollbar]:hidden"
     >
       {groups.map((g, i) => {
         const { weekday, dayMonth } = formatDayTile(g.date);

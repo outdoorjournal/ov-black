@@ -271,7 +271,7 @@ function ChatShellInner({
   }, []);
 
   return (
-    <div className="flex h-[100dvh] flex-col">
+    <div className="flex h-dvh flex-col">
       {header}
       <main
         className="relative min-h-0 flex-1"
@@ -283,7 +283,7 @@ function ChatShellInner({
           <div className="flex h-full min-h-0 flex-col">
             <header className="flex items-baseline justify-between border-b border-ink/10 px-8 pb-6 pt-8">
               <div>
-                <p className="font-sans text-[11px] uppercase tracking-[0.3em] text-ink/50">
+                <p className="font-sans text-[11px] uppercase tracking-label text-ink/50">
                   Correspondence
                 </p>
                 <h1 className="mt-1 font-serif text-3xl text-ink">

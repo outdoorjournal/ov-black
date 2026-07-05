@@ -109,7 +109,7 @@ export default async function ClientDetailPage({
         <div className="min-w-0">
           <Link
             href="/command-center"
-            className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+            className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55 transition-colors hover:text-paper"
           >
             ← Command Center
           </Link>
@@ -255,7 +255,7 @@ function Panel({
   return (
     <section
       {...rest}
-      className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/[0.05] p-5 sm:p-7"
+      className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/5 p-5 sm:p-7"
     >
       {children}
     </section>
@@ -277,7 +277,7 @@ function SectionHeader({
         {title}
       </h2>
       {eyebrow ? (
-        <span className="font-sans text-[10px] uppercase tracking-[0.3em] text-paper/55">
+        <span className="font-sans text-[10px] uppercase tracking-label text-paper/55">
           {eyebrow}
         </span>
       ) : null}
@@ -288,7 +288,7 @@ function SectionHeader({
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="font-sans text-[10px] uppercase tracking-[0.3em] text-paper/45">
+      <dt className="font-sans text-[10px] uppercase tracking-label text-paper/45">
         {label}
       </dt>
       <dd className="mt-1 font-sans text-sm text-paper/90">{value}</dd>
@@ -301,7 +301,7 @@ function ItineraryRow({ row }: { row: AdvisorItinerarySummary }) {
     <li>
       <Link
         href={`/itinerary/${row.id}`}
-        className="group flex items-center gap-4 px-1 py-3 transition-colors hover:bg-paper/[0.04]"
+        className="group flex items-center gap-4 px-1 py-3 transition-colors hover:bg-paper/4"
       >
         <div className="min-w-0 flex-1">
           <p className="truncate font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline">
@@ -335,7 +335,7 @@ function SessionRow({
     <li>
       <Link
         href={`/chat/${clientId}`}
-        className="group flex items-center gap-4 px-1 py-3 transition-colors hover:bg-paper/[0.04]"
+        className="group flex items-center gap-4 px-1 py-3 transition-colors hover:bg-paper/4"
       >
         <div className="min-w-0 flex-1">
           <p className="truncate font-sans text-sm text-paper/90">

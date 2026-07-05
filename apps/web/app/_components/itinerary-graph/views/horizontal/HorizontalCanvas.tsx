@@ -155,7 +155,7 @@ export function HorizontalCanvas({
           Horizontally, the strip is as wide as the canvas, so day tiles
           scroll-with the columns naturally. */}
       <div
-        className="sticky top-0 z-30 border-b border-ink/10 bg-paper/85 backdrop-blur-sm"
+        className="sticky top-0 z-30 border-b border-ink/10 bg-paper/85 backdrop-blur-xs"
         style={{ height: DAY_HEADER_HEIGHT, width: innerWidth }}
       >
         {layout.days.map((d) => (
@@ -228,7 +228,7 @@ export function HorizontalCanvas({
                 data-day={d.date}
                 aria-label={`Place on ${d.label}`}
                 onClick={(e) => onPlaceTap(d.date, e.clientY)}
-                className="absolute z-30 animate-pulse rounded-lg border-2 border-dashed border-brand/50 bg-brand/[0.06] transition-colors hover:animate-none hover:bg-brand/[0.12] motion-reduce:animate-none"
+                className="absolute z-30 animate-pulse rounded-lg border-2 border-dashed border-brand/50 bg-brand/6 transition-colors hover:animate-none hover:bg-brand/12 motion-reduce:animate-none"
                 style={{
                   left: colXOf(d) - 4,
                   top: 0,
@@ -300,7 +300,7 @@ export function HorizontalCanvas({
                     }}
                     title={`Scroll back to ${p.node.title}`}
                     aria-label={`Scroll back to ${p.node.title}`}
-                    className="pointer-events-auto absolute left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-ink/15 bg-paper text-ink/70 shadow-sm transition-colors hover:bg-ink hover:text-paper"
+                    className="pointer-events-auto absolute left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-ink/15 bg-paper text-ink/70 shadow-xs transition-colors hover:bg-ink hover:text-paper"
                     style={{ bottom: -2 }}
                   >
                     <svg
@@ -414,10 +414,10 @@ function DayHeaderTile({ day, colX }: { day: DayLayout; colX: number }) {
         height: DAY_HEADER_HEIGHT - 12,
       }}
     >
-      <div className="relative mx-auto flex h-full w-full max-w-[300px] flex-col justify-center rounded-md border border-ink/15 bg-paper px-3 py-1.5 shadow-sm">
+      <div className="relative mx-auto flex h-full w-full max-w-[300px] flex-col justify-center rounded-md border border-ink/15 bg-paper px-3 py-1.5 shadow-xs">
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-1 left-3 h-2 w-12 rotate-[-2deg] bg-amber-600/40"
+          className="pointer-events-none absolute -top-1 left-3 h-2 w-12 -rotate-2 bg-amber-600/40"
           style={{ mixBlendMode: "multiply" }}
         />
         <div className="text-[9px] uppercase tracking-[0.22em] text-ink/55">
@@ -498,7 +498,7 @@ function GhostSlot({
       }}
     >
       <div
-        className="h-full w-full rounded-lg border-2 border-dashed border-ink/45 bg-ink/[0.04]"
+        className="h-full w-full rounded-lg border-2 border-dashed border-ink/45 bg-ink/4"
         aria-hidden
       >
         <div className="flex h-full w-full items-center justify-center">
@@ -583,7 +583,7 @@ function CardWrap({
           ref={setNodeRef}
           {...listeners}
           {...attributes}
-          className="outline-none"
+          className="outline-hidden"
           style={{
             cursor: dragDisabled ? "default" : isDragging ? "grabbing" : "grab",
             touchAction: dragDisabled ? "auto" : "none",

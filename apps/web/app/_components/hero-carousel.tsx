@@ -46,9 +46,9 @@ export function HeroCarousel({ images }: { images: readonly string[] }) {
 
       {/* Cinematic darkening — heavier on the left and at the base so overlaid
           type stays legible while the photograph still reads through. */}
-      <div className="absolute inset-0 bg-gradient-to-r from-ink/85 via-ink/45 to-ink/70" />
-      <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-ink/80 to-transparent" />
-      <div className="absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-ink to-transparent" />
+      <div className="absolute inset-0 bg-linear-to-r from-ink/85 via-ink/45 to-ink/70" />
+      <div className="absolute inset-x-0 top-0 h-40 bg-linear-to-b from-ink/80 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-56 bg-linear-to-t from-ink to-transparent" />
 
       {/* Rotation indicators — the active frame picks up the brand accent.
           z-20 so they sit above the page footer (which is z-10). */}

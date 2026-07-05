@@ -640,7 +640,7 @@ export function HorizontalView({
         data-lock-status={lockStatus}
         data-can-edit={canEdit ? "true" : "false"}
         data-timeline-visible={showTimeline ? "true" : "false"}
-        className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm"
+        className="z-30 flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-xs"
       >
         <div>
           <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
@@ -681,7 +681,7 @@ export function HorizontalView({
         <div
           data-testid="alternative-banner"
           role="note"
-          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-sm"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-xs"
         >
           <span className="font-serif text-sm italic text-ink/80">
             You&rsquo;re viewing
@@ -728,7 +728,7 @@ export function HorizontalView({
           {showTimeline && !collectionDominant ? (
             <div
               ref={axisScrollRef}
-              className="shrink-0 overflow-hidden border-r border-ink/10 bg-paper/85 backdrop-blur-sm"
+              className="shrink-0 overflow-hidden border-r border-ink/10 bg-paper/85 backdrop-blur-xs"
               style={{ width: TIME_GUTTER }}
             >
               <div
@@ -836,7 +836,7 @@ export function HorizontalView({
               <div className="flex h-full flex-col">
                 <div
                   data-testid="itinerary-graph-aside-tabs"
-                  className="flex shrink-0 gap-1 border-b border-l border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
+                  className="flex shrink-0 gap-1 border-b border-l border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs"
                 >
                   {(
                     [
@@ -992,7 +992,7 @@ export function HorizontalView({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-xs"
             onClick={() => setExpandedId(null)}
           >
             <motion.div
@@ -1168,7 +1168,7 @@ function NodeEditPanel({
           data-testid="itinerary-graph-node-title"
           defaultValue={node.title}
           onBlur={(e) => onEditField("title", e.target.value)}
-          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-serif text-lg text-ink focus:border-ink/40 focus:outline-none"
+          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-serif text-lg text-ink focus:border-ink/40 focus:outline-hidden"
         />
       </label>
       <label className="mt-3 block">
@@ -1180,7 +1180,7 @@ function NodeEditPanel({
           data-testid="itinerary-graph-node-source-id"
           defaultValue={node.source_id ?? ""}
           onBlur={(e) => onEditField("source_id", e.target.value)}
-          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-sans text-sm text-ink/80 focus:border-ink/40 focus:outline-none"
+          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-sans text-sm text-ink/80 focus:border-ink/40 focus:outline-hidden"
         />
       </label>
       {node.cost_amount && node.cost_currency ? (

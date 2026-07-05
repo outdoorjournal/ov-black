@@ -46,7 +46,7 @@ export function Card({ card, onAction }: CardProps) {
       data-card-status={status}
     >
       {hasCover ? (
-        <div className="relative aspect-[16/10] w-full bg-ink/5">
+        <div className="relative aspect-16/10 w-full bg-ink/5">
           <Image
             src={snapshot.cover_image as string}
             alt=""
@@ -59,7 +59,7 @@ export function Card({ card, onAction }: CardProps) {
         // Palette-tone fallback when no cover is provided — keeps the card
         // footprint stable without pulling in any skeleton primitive.
         <div
-          className="aspect-[16/10] w-full bg-ink/5"
+          className="aspect-16/10 w-full bg-ink/5"
           data-testid="mood-board-card-cover-fallback"
         />
       )}

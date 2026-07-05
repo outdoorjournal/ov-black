@@ -160,7 +160,7 @@ export function NodeCard({
         <span
           data-testid="attached-note-badge"
           aria-label={`${attachedNoteCount} note${attachedNoteCount === 1 ? "" : "s"}`}
-          className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full border border-amber-900/25 bg-[#fbf1c7] px-1 font-sans text-[10px] font-semibold leading-none text-amber-900 shadow-sm"
+          className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full border border-amber-900/25 bg-[#fbf1c7] px-1 font-sans text-[10px] font-semibold leading-none text-amber-900 shadow-xs"
         >
           ✎ {attachedNoteCount}
         </span>

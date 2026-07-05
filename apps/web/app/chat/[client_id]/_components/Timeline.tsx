@@ -66,7 +66,7 @@ export function Timeline({ data }: { data: TimelineData }) {
   return (
     <span
       data-testid="chat-timeline"
-      className="my-5 block rounded-md bg-ink/[0.03] px-5 py-4 ring-1 ring-inset ring-ink/[0.06]"
+      className="my-5 block rounded-md bg-ink/3 px-5 py-4 ring-1 ring-inset ring-ink/6"
     >
       {data.caption ? (
         <span className="mb-4 block font-sans text-[10px] uppercase tracking-[0.22em] text-ink/45">

@@ -27,7 +27,7 @@ export function PartyManager({ members }: { members: PartyMemberDetail[] }) {
       <header className="flex flex-col gap-3 border-b border-paper/10 pb-6">
         <Link
           href="/basecamp"
-          className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+          className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55 transition-colors hover:text-paper"
         >
           ← Basecamp
         </Link>
@@ -112,7 +112,7 @@ function MemberRow({ member }: { member: PartyMemberDetail }) {
     .join(" · ");
 
   return (
-    <div className="group flex items-start gap-4 rounded-sm border border-paper/10 bg-paper/[0.04] px-4 py-3">
+    <div className="group flex items-start gap-4 rounded-sm border border-paper/10 bg-paper/4 px-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="font-serif text-lg tracking-tight text-paper">

@@ -124,7 +124,7 @@ export function ConciergeColumn({
               <div
                 data-testid="concierge-thread-tabs"
                 role="tablist"
-                className="flex shrink-0 gap-1 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
+                className="flex shrink-0 gap-1 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs"
               >
                 {(["advisor", "traveler"] as const).map((a) => (
                   <button

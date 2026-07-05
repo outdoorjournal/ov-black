@@ -30,7 +30,7 @@ export function InvoiceList({ invoices }: { invoices: MyInvoiceSummary[] }) {
       <header className="flex flex-col gap-3 border-b border-paper/10 pb-6">
         <Link
           href="/basecamp"
-          className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+          className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55 transition-colors hover:text-paper"
         >
           ← Basecamp
         </Link>
@@ -52,7 +52,7 @@ export function InvoiceList({ invoices }: { invoices: MyInvoiceSummary[] }) {
               <Link
                 href={`/invoices/${inv.id}`}
                 data-testid={`invoice-row-${inv.id}`}
-                className="group flex items-start justify-between gap-4 rounded-sm border border-paper/10 bg-paper/[0.04] px-4 py-3 transition-colors hover:bg-paper/[0.07]"
+                className="group flex items-start justify-between gap-4 rounded-sm border border-paper/10 bg-paper/4 px-4 py-3 transition-colors hover:bg-paper/[0.07]"
               >
                 <span className="flex min-w-0 flex-col gap-1">
                   <span className="truncate font-serif text-paper">

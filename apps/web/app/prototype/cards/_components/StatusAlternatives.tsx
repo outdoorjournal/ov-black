@@ -80,7 +80,7 @@ function Alternative({
   return (
     <div className="print:break-inside-avoid">
       <header className="mb-3 flex items-baseline gap-3 print:break-after-avoid">
-        <span className="font-mono text-[10px] uppercase tracking-[0.3em] text-ink/45">
+        <span className="font-mono text-[10px] uppercase tracking-label text-ink/45">
           Alt {id}
         </span>
         <h3 className="font-serif text-xl leading-tight text-ink">{title}</h3>
@@ -435,7 +435,7 @@ function FooterBand({ status }: { status: StatusKind }) {
         className="mt-3 flex flex-col px-3 py-2"
         style={{ backgroundColor: "#0a0a0a", color: "#f7f4ee" }}
       >
-        <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.3em]">
+        <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-label">
           <span aria-hidden>◉</span> Confirmed
         </span>
         <span className="mt-0.5 font-mono text-[10px] tracking-wide text-paper/75">

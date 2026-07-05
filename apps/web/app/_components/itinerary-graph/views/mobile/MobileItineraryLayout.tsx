@@ -161,7 +161,7 @@ export function MobileItineraryLayout({
     <div
       className={
         "flex w-full flex-col overflow-hidden bg-paper text-ink " +
-        (embedded ? "min-h-0 flex-1" : "h-[100dvh]")
+        (embedded ? "min-h-0 flex-1" : "h-dvh")
       }
     >
       <header className="flex shrink-0 items-start justify-between gap-2 border-b border-ink/10 px-4 pb-1.5 pt-3">
@@ -202,7 +202,7 @@ export function MobileItineraryLayout({
           <div
             ref={pagerRef}
             onScroll={onPagerScroll}
-            className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden scrollbar-none [&::-webkit-scrollbar]:hidden"
           >
             {groups.map((g) => (
               <section
@@ -253,7 +253,7 @@ export function MobileItineraryLayout({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-[60] flex items-end justify-center bg-ink/45 p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-60 flex items-end justify-center bg-ink/45 p-4 backdrop-blur-xs"
             onClick={() => setExpandedId(null)}
           >
             <motion.div

@@ -82,7 +82,7 @@ export function CommandCenterChrome({
               href={item.href}
               aria-current={active ? "page" : undefined}
               className={
-                "relative py-3 font-sans text-[10px] uppercase tracking-[0.3em] transition-colors " +
+                "relative py-3 font-sans text-[10px] uppercase tracking-label transition-colors " +
                 (active ? "text-paper" : "text-paper/55 hover:text-paper")
               }
             >

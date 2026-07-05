@@ -94,7 +94,7 @@ export function SignInEntry() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="mt-1 block w-full rounded border border-ink/20 bg-white px-3 py-2.5 text-sm text-ink transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
+          className="mt-1 block w-full rounded border border-ink/20 bg-white px-3 py-2.5 text-sm text-ink transition focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/30"
         />
       </div>
 

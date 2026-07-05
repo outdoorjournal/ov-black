@@ -75,7 +75,7 @@ export function FinalItineraryView({
       className="mx-auto flex min-h-screen max-w-2xl flex-col gap-10 px-6 py-12"
     >
       <header className="flex flex-col gap-2">
-        <p className="font-sans text-xs uppercase tracking-[0.3em] text-ink/60">
+        <p className="font-sans text-xs uppercase tracking-label text-ink/60">
           Your itinerary
         </p>
         <h1 className="font-serif text-4xl tracking-tight text-ink">

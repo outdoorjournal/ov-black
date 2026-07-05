@@ -39,7 +39,7 @@ export function ScrollHint({ direction, visible, onClick }: ScrollHintProps) {
           onClick={onClick}
           aria-label={ariaLabel}
           className={[
-            "pointer-events-auto absolute top-1/2 z-30 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-ink/15 bg-paper/90 text-ink/75 shadow-md backdrop-blur-sm hover:text-ink",
+            "pointer-events-auto absolute top-1/2 z-30 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-ink/15 bg-paper/90 text-ink/75 shadow-md backdrop-blur-xs hover:text-ink",
             sideClass,
           ].join(" ")}
           initial={{ opacity: 0, scale: 0.85 }}

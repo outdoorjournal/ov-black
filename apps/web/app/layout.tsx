@@ -31,7 +31,6 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-paper text-ink">
         <script
-          // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
             __html: `window.__OVB_ENV__=${publicEnvJson}`,
           }}

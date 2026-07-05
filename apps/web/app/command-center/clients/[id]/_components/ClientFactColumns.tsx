@@ -98,7 +98,7 @@ function Column({
           <h3 className="font-serif text-xl tracking-tight text-paper">
             {title}
           </h3>
-          <span className="font-sans text-[10px] uppercase tracking-[0.3em] text-paper/45">
+          <span className="font-sans text-[10px] uppercase tracking-label text-paper/45">
             {count}
           </span>
         </div>

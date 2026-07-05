@@ -25,7 +25,7 @@ export function Section({
   return (
     <section className="border-t border-ink/10 pt-10 print:break-before-page print:border-t-0 print:pt-0">
       <header className="mb-6 flex items-baseline gap-4 print:break-after-avoid">
-        <span className="font-mono text-[11px] uppercase tracking-[0.3em] text-ink/40">
+        <span className="font-mono text-[11px] uppercase tracking-label text-ink/40">
           {index}
         </span>
         <div>
@@ -183,7 +183,7 @@ export function A11yPanel() {
     },
     {
       title: "Focus states",
-      body: "Cards expose a 2px ink/40 outline on :focus-visible (set globally in app), preserving the cream paper aesthetic.",
+      body: "Cards expose a 2px ink/40 outline-solid on :focus-visible (set globally in app), preserving the cream paper aesthetic.",
     },
   ];
   return (

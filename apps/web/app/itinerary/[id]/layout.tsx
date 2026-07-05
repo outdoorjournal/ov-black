@@ -91,7 +91,7 @@ export default async function ItineraryLayout({
     (result.itinerary.brief ?? "").trim().length === 0;
 
   return (
-    <div className="flex h-[100dvh] flex-col bg-paper">
+    <div className="flex h-dvh flex-col bg-paper">
       <AppHeader
         user={headerUserFromSupabase(user)}
         homeHref={homeHref}

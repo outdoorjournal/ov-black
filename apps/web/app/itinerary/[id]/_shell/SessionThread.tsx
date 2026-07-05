@@ -151,7 +151,7 @@ export function SessionThread({
     // would size to its content and overflow the column instead of filling it.
     <div className="flex h-full min-h-0 flex-col">
       {/* Session bar: the active title (tap to browse) + start-new. */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm">
+      <div className="flex shrink-0 items-center gap-2 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs">
         <button
           type="button"
           onClick={() => setListOpen((v) => !v)}
@@ -247,7 +247,7 @@ function SessionRow({
       data-active={active ? "true" : "false"}
       className={
         "group flex items-center gap-2 px-3 py-2 " +
-        (active ? "bg-ink/[0.06]" : "hover:bg-ink/[0.03]")
+        (active ? "bg-ink/6" : "hover:bg-ink/3")
       }
     >
       {editing ? (
@@ -268,7 +268,7 @@ function SessionRow({
             }
           }}
           data-testid="session-rename-input"
-          className="h-6 min-w-0 flex-1 rounded border border-ink/20 bg-paper px-1.5 font-serif text-[13px] text-ink focus:border-ink/40 focus:outline-none"
+          className="h-6 min-w-0 flex-1 rounded border border-ink/20 bg-paper px-1.5 font-serif text-[13px] text-ink focus:border-ink/40 focus:outline-hidden"
         />
       ) : (
         <button

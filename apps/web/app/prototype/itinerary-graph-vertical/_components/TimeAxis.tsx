@@ -31,7 +31,7 @@ export function TimeAxis({
 
   return (
     <div
-      className="relative w-[110px] shrink-0 border-r border-ink/10 bg-paper/80 backdrop-blur-sm"
+      className="relative w-[110px] shrink-0 border-r border-ink/10 bg-paper/80 backdrop-blur-xs"
       style={{ minHeight: totalHeight }}
     >
       {/* Sun gradient + minor hash marks per live segment */}
@@ -57,7 +57,7 @@ export function TimeAxis({
           className="pointer-events-none absolute right-0 flex items-center gap-1.5"
           style={{ top: m.y - 6 }}
         >
-          <span className="font-mono text-[10px] tracking-[0.1em] text-ink/70">
+          <span className="font-mono text-[10px] tracking-widest text-ink/70">
             {m.label}
           </span>
           <span
@@ -254,12 +254,12 @@ function DayTile({
   const { weekday, dayMonth } = formatDayTile(date);
   return (
     <div
-      className="absolute left-1 right-1 z-10 rounded-sm border border-ink/15 bg-paper px-2 py-1 shadow-sm"
+      className="absolute left-1 right-1 z-10 rounded-sm border border-ink/15 bg-paper px-2 py-1 shadow-xs"
       style={{ top: y }}
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute -top-1 left-2 h-2 w-8 rotate-[-2deg] bg-amber-600/40"
+        className="pointer-events-none absolute -top-1 left-2 h-2 w-8 -rotate-2 bg-amber-600/40"
         style={{ mixBlendMode: "multiply" }}
       />
       <div className="text-[9px] uppercase tracking-[0.2em] text-ink/50">{label}</div>

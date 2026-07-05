@@ -372,7 +372,7 @@ function MapFallback({ focus }: { focus: MapFocus | null }) {
   const cy = focus ? ((90 - focus.lat) / 180) * 100 : 50;
   return (
     <div
-      className="absolute inset-x-0 bottom-0 h-[62%] transition-all duration-[1200ms] ease-out"
+      className="absolute inset-x-0 bottom-0 h-[62%] transition-all duration-1200 ease-out"
       style={{
         opacity: 0.6,
         backgroundImage: `radial-gradient(circle at ${cx}% ${cy}%, rgba(180,140,90,0.45), rgba(20,23,61,0.25) 40%, rgba(20,23,61,0) 70%)`,

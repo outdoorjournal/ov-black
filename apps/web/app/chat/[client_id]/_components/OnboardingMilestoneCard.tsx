@@ -22,7 +22,7 @@ export function OnboardingMilestoneCard() {
       initial={{ opacity: 0, scale: 0.92, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 420, damping: 26 }}
-      className="relative self-start overflow-hidden rounded-md border border-brand/30 bg-brand/[0.04] px-5 py-4"
+      className="relative self-start overflow-hidden rounded-md border border-brand/30 bg-brand/4 px-5 py-4"
     >
       {/* One-time shimmer sweep on entrance — the "something happened" spark. */}
       <motion.span
@@ -30,7 +30,7 @@ export function OnboardingMilestoneCard() {
         initial={{ x: "-130%" }}
         animate={{ x: "130%" }}
         transition={{ delay: 0.12, duration: 0.9, ease: "easeInOut" }}
-        className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/50 to-transparent"
+        className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-linear-to-r from-transparent via-white/50 to-transparent"
       />
       <div className="relative flex items-center gap-2">
         <motion.span

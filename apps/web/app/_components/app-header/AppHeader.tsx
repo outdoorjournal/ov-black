@@ -116,7 +116,7 @@ export function AppHeader({ user, homeHref, crumbs = [], secondary }: AppHeaderP
 
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="flex items-center gap-2 rounded-full outline-none ring-offset-2 ring-offset-ink transition focus-visible:ring-2 focus-visible:ring-brand"
+            className="flex items-center gap-2 rounded-full outline-hidden ring-offset-2 ring-offset-ink transition focus-visible:ring-2 focus-visible:ring-brand"
             aria-label="Account menu"
           >
             <Avatar className="h-8 w-8 border border-paper/20">

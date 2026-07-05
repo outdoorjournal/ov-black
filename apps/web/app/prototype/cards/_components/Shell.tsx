@@ -298,7 +298,7 @@ export function Shell() {
 function Header() {
   return (
     <header className="mb-12 max-w-3xl">
-      <p className="text-[10px] uppercase tracking-[0.4em] text-ink/45">
+      <p className="text-[10px] uppercase tracking-eyebrow text-ink/45">
         Prototype · OV Black · cards
       </p>
       <h1 className="mt-2 font-serif text-4xl leading-tight text-ink sm:text-5xl">

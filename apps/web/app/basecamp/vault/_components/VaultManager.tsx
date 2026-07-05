@@ -37,7 +37,7 @@ export function VaultManager({
       <header className="flex flex-col gap-3 border-b border-paper/10 pb-6">
         <Link
           href="/basecamp"
-          className="font-sans text-[10px] uppercase tracking-[0.4em] text-paper/55 transition-colors hover:text-paper"
+          className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55 transition-colors hover:text-paper"
         >
           ← Basecamp
         </Link>

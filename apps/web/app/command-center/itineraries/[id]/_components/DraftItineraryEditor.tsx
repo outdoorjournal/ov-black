@@ -254,7 +254,7 @@ function DraftItineraryEditorInner({
                 onBlur={(event) =>
                   onNodeFieldBlur(node.id, "title", event.target.value)
                 }
-                className="w-full border-0 bg-transparent font-serif text-xl leading-tight text-ink focus:outline-none focus:ring-0"
+                className="w-full border-0 bg-transparent font-serif text-xl leading-tight text-ink focus:outline-hidden focus:ring-0"
               />
             </div>
             <div className="mt-3 flex items-center gap-3">
@@ -274,7 +274,7 @@ function DraftItineraryEditorInner({
                 onBlur={(event) =>
                   onNodeFieldBlur(node.id, "source_id", event.target.value)
                 }
-                className="flex-1 border-0 bg-transparent font-sans text-sm text-ink/80 focus:outline-none focus:ring-0"
+                className="flex-1 border-0 bg-transparent font-sans text-sm text-ink/80 focus:outline-hidden focus:ring-0"
               />
             </div>
           </li>

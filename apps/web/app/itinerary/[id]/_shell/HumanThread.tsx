@@ -137,7 +137,7 @@ export function HumanThread({
         ))}
       </div>
 
-      <div className="shrink-0 border-t border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm">
+      <div className="shrink-0 border-t border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs">
         <div className="flex items-end gap-2">
           <textarea
             value={draft}
@@ -154,7 +154,7 @@ export function HumanThread({
             }
             disabled={!canApi || status === "error"}
             data-testid="human-composer"
-            className="max-h-28 min-h-[2.25rem] min-w-0 flex-1 resize-none rounded-md border border-ink/15 bg-paper px-2.5 py-1.5 font-serif text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-none disabled:opacity-40"
+            className="max-h-28 min-h-9 min-w-0 flex-1 resize-none rounded-md border border-ink/15 bg-paper px-2.5 py-1.5 font-serif text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden disabled:opacity-40"
           />
           <button
             type="button"

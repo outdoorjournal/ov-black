@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 // managers, so it takes an `onSave(patch)` the caller wires to the right action.
 
 const inputCls =
-  "h-9 w-full rounded-sm border border-paper/20 bg-transparent px-2 font-sans text-sm text-paper placeholder:text-paper/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-paper/30";
+  "h-9 w-full rounded-sm border border-paper/20 bg-transparent px-2 font-sans text-sm text-paper placeholder:text-paper/40 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-paper/30";
 const labelCls =
   "font-sans text-[10px] uppercase tracking-[0.25em] text-paper/55";
 
@@ -54,7 +54,7 @@ export function DocumentMetaForm({
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-sm border border-paper/15 bg-paper/[0.06] p-4">
+    <div className="flex flex-col gap-3 rounded-sm border border-paper/15 bg-paper/6 p-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1">
           <span className={labelCls}>Label</span>

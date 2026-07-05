@@ -157,7 +157,7 @@ export function ItineraryIntake({
   return (
     <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto bg-paper px-6 py-12 text-ink sm:py-16">
       <div className="w-full max-w-2xl">
-        <p className="font-sans text-[11px] uppercase tracking-[0.3em] text-ink/50">
+        <p className="font-sans text-[11px] uppercase tracking-label text-ink/50">
           New itinerary
         </p>
         <h1 className="mt-2 font-serif text-4xl leading-tight tracking-tight sm:text-5xl">
@@ -184,7 +184,7 @@ export function ItineraryIntake({
               rows={2}
               autoFocus
               placeholder="Sailing in Greece with my family…"
-              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-4 py-3 font-serif text-xl leading-snug text-ink transition placeholder:text-ink/30 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
+              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-4 py-3 font-serif text-xl leading-snug text-ink transition placeholder:text-ink/30 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
             />
           </div>
 
@@ -228,7 +228,7 @@ export function ItineraryIntake({
                     type="date"
                     value={dateStart}
                     onChange={(e) => setDateStart(e.target.value)}
-                    className="rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
+                    className="rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
                   />
                 </label>
                 <label className="flex flex-col gap-1">
@@ -239,7 +239,7 @@ export function ItineraryIntake({
                     type="date"
                     value={dateEnd}
                     onChange={(e) => setDateEnd(e.target.value)}
-                    className="rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
+                    className="rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
                   />
                 </label>
                 {mode === "window" ? (
@@ -254,7 +254,7 @@ export function ItineraryIntake({
                       value={durationNights}
                       onChange={(e) => setDurationNights(e.target.value)}
                       placeholder="7"
-                      className="w-28 rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink placeholder:text-ink/30 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
+                      className="w-28 rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink placeholder:text-ink/30 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
                     />
                   </label>
                 ) : null}
@@ -281,7 +281,7 @@ export function ItineraryIntake({
               onChange={(e) => setNote(e.target.value)}
               rows={2}
               placeholder="Can't travel in August · need to be back by a Sunday · school-term only…"
-              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-4 py-3 font-sans text-sm leading-relaxed text-ink transition placeholder:text-ink/30 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
+              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-4 py-3 font-sans text-sm leading-relaxed text-ink transition placeholder:text-ink/30 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
             />
           </div>
 

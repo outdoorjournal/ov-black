@@ -28,7 +28,7 @@ export function TimeAxis({
   const dedupedMarkers = dedupeMarkersByGap(timeMarkers, MARKER_MIN_GAP_PX);
   return (
     <div
-      className="relative w-[96px] shrink-0 border-r border-ink/10 bg-paper/85 backdrop-blur-sm"
+      className="relative w-[96px] shrink-0 border-r border-ink/10 bg-paper/85 backdrop-blur-xs"
       style={{ minHeight: totalHeight }}
     >
       {/* Sun gradient + tick marks per live segment. */}
@@ -47,7 +47,7 @@ export function TimeAxis({
           className="pointer-events-none absolute right-0 flex items-center gap-1.5"
           style={{ top: m.y - 6 }}
         >
-          <span className="font-mono text-[10px] tracking-[0.1em] text-ink/65">
+          <span className="font-mono text-[10px] tracking-widest text-ink/65">
             {m.label}
           </span>
           <span aria-hidden className="h-px w-2.5 bg-ink/40 opacity-70" />

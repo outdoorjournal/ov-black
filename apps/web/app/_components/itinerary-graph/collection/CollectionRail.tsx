@@ -187,7 +187,7 @@ function AddAffordances() {
   };
 
   const input =
-    "h-8 w-full rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-none";
+    "h-8 w-full rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
 
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-ink/10 px-4 py-3">
@@ -274,7 +274,7 @@ function CollectionCard({
           onClick={() => storeApi.getState().holdItem(node.id)}
           data-testid="collection-schedule"
           aria-label={`Schedule ${node.title || "this"}`}
-          className="absolute right-2 top-2 z-10 hidden rounded-full border border-ink/15 bg-paper/95 px-2.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 shadow-sm transition-colors hover:bg-ink hover:text-paper md:block"
+          className="absolute right-2 top-2 z-10 hidden rounded-full border border-ink/15 bg-paper/95 px-2.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 shadow-xs transition-colors hover:bg-ink hover:text-paper md:block"
         >
           Schedule
         </button>
@@ -285,7 +285,7 @@ function CollectionCard({
         {...listeners}
         {...attributes}
         onClick={onOpen ? () => onOpen(node.id) : undefined}
-        className="w-full cursor-grab overflow-hidden rounded-lg border border-ink/12 bg-paper text-left shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
+        className="w-full cursor-grab overflow-hidden rounded-lg border border-ink/12 bg-paper text-left shadow-xs transition-shadow hover:shadow-md active:cursor-grabbing"
       >
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element

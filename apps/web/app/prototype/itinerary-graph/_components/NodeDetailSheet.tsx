@@ -31,7 +31,7 @@ export function NodeDetailSheet({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-stretch justify-end bg-ink/30 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-stretch justify-end bg-ink/30 backdrop-blur-xs"
           onClick={onClose}
         >
           <motion.aside
@@ -138,7 +138,7 @@ function DetailBody({ node, mood }: { node: NodeResponse; mood: MoodId }) {
 
 function RawMeta({ node }: { node: NodeResponse }) {
   return (
-    <details className="rounded-md border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[11px]">
+    <details className="rounded-md border border-ink/10 bg-ink/2 px-3 py-2 text-[11px]">
       <summary className="cursor-pointer uppercase tracking-[0.22em] text-ink/55">
         Raw metadata
       </summary>

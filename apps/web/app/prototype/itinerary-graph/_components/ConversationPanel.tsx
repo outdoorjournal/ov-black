@@ -96,7 +96,7 @@ export function ConversationPanel({
         className="flex items-center gap-2 border-t border-ink/10 px-3 py-2"
       >
         <input
-          className="flex-1 rounded-md border border-ink/15 bg-paper px-3 py-2 text-[13px] outline-none focus:border-ink/40"
+          className="flex-1 rounded-md border border-ink/15 bg-paper px-3 py-2 text-[13px] outline-hidden focus:border-ink/40"
           placeholder="Ask me to propose, assemble, or swap…"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -134,7 +134,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     >
       {message.text}
       {message.streaming ? (
-        <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-[1px] bg-current align-middle opacity-70" />
+        <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-px bg-current align-middle opacity-70" />
       ) : null}
     </motion.div>
   );

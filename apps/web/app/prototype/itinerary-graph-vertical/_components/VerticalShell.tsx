@@ -374,7 +374,7 @@ function VerticalShellInner({ timeline }: VerticalShellProps) {
     >
       <AmbientBackdrop focus={focusCoords} arc={focusArc} />
 
-      <header className="relative z-20 flex items-center justify-between gap-4 border-b border-ink/10 bg-paper/80 px-4 py-2 backdrop-blur-sm">
+      <header className="relative z-20 flex items-center justify-between gap-4 border-b border-ink/10 bg-paper/80 px-4 py-2 backdrop-blur-xs">
         <div>
           <div className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
             OV Black · Vertical prototype
@@ -448,7 +448,7 @@ function VerticalShellInner({ timeline }: VerticalShellProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-xs"
             onClick={() => setExpandedId(null)}
           >
             <motion.div

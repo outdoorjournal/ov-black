@@ -27,7 +27,7 @@ export function MobileTabBar({
     <nav
       data-testid="mobile-tab-bar"
       aria-label="Views"
-      className="fixed inset-x-0 bottom-0 z-30 flex h-14 border-t border-ink/10 bg-paper/95 backdrop-blur md:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-14 border-t border-ink/10 bg-paper/95 backdrop-blur-sm md:hidden"
     >
       <TabLink
         href={`/itinerary/${id}/dashboard`}

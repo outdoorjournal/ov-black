@@ -68,7 +68,7 @@ export function PlaceModeLayer() {
       {heldItem ? (
         <div
           data-testid="holding-chip"
-          className="fixed inset-x-0 bottom-20 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-full border border-ink/15 bg-paper/95 px-4 py-2.5 shadow-lg backdrop-blur md:bottom-6"
+          className="fixed inset-x-0 bottom-20 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-full border border-ink/15 bg-paper/95 px-4 py-2.5 shadow-lg backdrop-blur-sm md:bottom-6"
           role="status"
         >
           <span className="font-sans text-[10px] uppercase tracking-[0.18em] text-ink/45">

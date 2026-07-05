@@ -218,7 +218,7 @@ function DraggableCard({
       style={dragStyle}
       {...listeners}
       {...attributes}
-      className="outline-none"
+      className="outline-hidden"
     >
       <Card
         node={node}

@@ -37,7 +37,7 @@ export function StudioPlanningSpace() {
       <div
         data-testid="studio-tabs"
         role="tablist"
-        className="flex shrink-0 flex-wrap gap-1 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-sm"
+        className="flex shrink-0 flex-wrap gap-1 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs"
       >
         {tabs.map((t) => (
           <button

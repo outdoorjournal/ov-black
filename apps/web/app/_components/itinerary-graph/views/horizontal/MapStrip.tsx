@@ -35,7 +35,7 @@ export function MapStrip({ focus, arc = null, height = 220 }: MapStripProps) {
       </div>
       {/* Label rides above the fade so it stays legible at the very top
           where the map itself is mostly transparent. */}
-      <div className="pointer-events-none absolute left-3 top-2 z-10 flex items-baseline gap-2 rounded-md bg-paper/85 px-2.5 py-1 backdrop-blur-sm">
+      <div className="pointer-events-none absolute left-3 top-2 z-10 flex items-baseline gap-2 rounded-md bg-paper/85 px-2.5 py-1 backdrop-blur-xs">
         <span className="text-[10px] uppercase tracking-[0.22em] text-ink/55">
           On the map
         </span>

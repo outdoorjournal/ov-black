@@ -311,7 +311,7 @@ function SinglePromptInner({
               onKeyDown={onKeyDown}
               placeholder="Begin in your own words…"
               rows={3}
-              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-5 py-4 font-sans text-base leading-relaxed text-ink transition placeholder:text-ink/40 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25"
+              className="w-full resize-none rounded-sm border border-ink/15 bg-white px-5 py-4 font-sans text-base leading-relaxed text-ink transition placeholder:text-ink/40 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
               autoFocus
               disabled={opening}
             />
@@ -344,13 +344,13 @@ function SinglePromptInner({
             ) : null}
           </div>
         ) : (
-          <div className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-sm bg-paper text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]">
+          <div className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-sm bg-paper text-ink shadow-float">
             <button
               type="button"
               onClick={() => void dismiss()}
               disabled={dismissing}
               aria-label="Close conversation"
-              className="absolute right-4 top-4 z-10 rounded-sm px-2 py-1 font-sans text-[10px] uppercase tracking-[0.4em] text-ink/45 transition hover:text-ink/80 disabled:opacity-40"
+              className="absolute right-4 top-4 z-10 rounded-sm px-2 py-1 font-sans text-[10px] uppercase tracking-eyebrow text-ink/45 transition hover:text-ink/80 disabled:opacity-40"
             >
               {dismissing ? "Closing…" : "Close"}
             </button>

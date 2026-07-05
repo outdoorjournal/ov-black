@@ -50,7 +50,7 @@ export function AtmosFrame({ mood, phaseCounter }: AtmosFrameProps) {
     >
       <div
         data-atmos-layer="palette"
-        className="absolute inset-0 transition-colors duration-[3000ms] ease-out"
+        className="absolute inset-0 transition-colors duration-3000 ease-out"
         style={{ backgroundColor: entry.palette.bg }}
       />
       <div
@@ -58,8 +58,8 @@ export function AtmosFrame({ mood, phaseCounter }: AtmosFrameProps) {
         data-image-status={imageStatus}
         className={
           imageStatus === "error"
-            ? "absolute inset-0 opacity-0 transition-opacity duration-[3000ms] ease-out"
-            : "absolute inset-0 opacity-[0.55] transition-opacity duration-[3000ms] ease-out"
+            ? "absolute inset-0 opacity-0 transition-opacity duration-3000 ease-out"
+            : "absolute inset-0 opacity-[0.55] transition-opacity duration-3000 ease-out"
         }
       >
         {imageStatus === "ok" ? (

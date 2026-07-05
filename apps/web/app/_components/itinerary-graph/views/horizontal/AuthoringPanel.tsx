@@ -198,7 +198,7 @@ export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
             }}
             placeholder="ramen in Kyoto, a private guide…"
             data-testid="itinerary-graph-search-input"
-            className="h-8 min-w-0 flex-1 rounded-md border border-ink/15 bg-paper px-3 font-sans text-sm text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-none"
+            className="h-8 min-w-0 flex-1 rounded-md border border-ink/15 bg-paper px-3 font-sans text-sm text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden"
           />
           <button
             type="button"
@@ -357,7 +357,7 @@ export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
               value={gapStart}
               onChange={(e) => setGapStart(e.target.value)}
               data-testid="itinerary-graph-fill-start"
-              className="h-8 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-none"
+              className="h-8 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
             />
           </label>
           <label className="flex items-center justify-between gap-2">
@@ -369,7 +369,7 @@ export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
               value={gapEnd}
               onChange={(e) => setGapEnd(e.target.value)}
               data-testid="itinerary-graph-fill-end"
-              className="h-8 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-none"
+              className="h-8 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
             />
           </label>
           <button

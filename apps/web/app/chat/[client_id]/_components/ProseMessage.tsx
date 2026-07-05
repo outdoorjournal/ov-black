@@ -110,7 +110,7 @@ const COMPONENTS: Components = {
       // Unparseable → fall through to a plain block so nothing is swallowed.
     }
     return (
-      <code className="rounded bg-ink/[0.06] px-1 py-0.5 font-sans text-[0.85em] text-ink/80">
+      <code className="rounded bg-ink/6 px-1 py-0.5 font-sans text-[0.85em] text-ink/80">
         {children}
       </code>
     );
@@ -127,7 +127,7 @@ export type ProseMessageProps = {
 
 export function ProseMessage({ content, className }: ProseMessageProps) {
   return (
-    <div className={cn("break-words", className)} data-testid="prose-message">
+    <div className={cn("wrap-break-word", className)} data-testid="prose-message">
       <Markdown
         remarkPlugins={[remarkGfm]}
         urlTransform={urlTransform}

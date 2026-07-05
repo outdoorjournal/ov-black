@@ -87,7 +87,7 @@ export function PlaceChip({ label, query }: PlaceChipProps) {
         className={cn(
           "inline-flex items-center gap-1 rounded-full px-2 py-0.5 align-baseline",
           "font-sans text-[0.85em] leading-none text-ink transition-colors",
-          "bg-ink/[0.06] ring-1 ring-inset ring-ink/10 hover:bg-brand/10 hover:ring-brand/30",
+          "bg-ink/6 ring-1 ring-inset ring-ink/10 hover:bg-brand/10 hover:ring-brand/30",
           open && "bg-brand/10 ring-brand/40",
         )}
       >
@@ -176,7 +176,7 @@ function ChipMap({ lookup }: { lookup: LookupState }) {
 
   // Fallback: loading shimmer or a quiet "no map" state.
   return (
-    <span className="flex h-36 w-full items-center justify-center bg-ink/[0.04]">
+    <span className="flex h-36 w-full items-center justify-center bg-ink/4">
       <MapPin
         className={cn(
           "h-6 w-6 text-ink/30",

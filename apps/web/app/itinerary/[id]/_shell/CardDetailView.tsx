@@ -242,7 +242,7 @@ function ScheduleFacet({
           defaultValue={node.title}
           onBlur={(e) => onEditTitle(e.target.value)}
           data-testid="card-detail-title"
-          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-serif text-base text-ink focus:border-ink/40 focus:outline-none"
+          className="mt-1 w-full border-0 border-b border-ink/15 bg-transparent font-serif text-base text-ink focus:border-ink/40 focus:outline-hidden"
         />
       </label>
 
@@ -254,7 +254,7 @@ function ScheduleFacet({
               value={dayKey}
               onChange={(e) => setDayKey(e.target.value)}
               data-testid="card-detail-day"
-              className="mt-1 h-9 w-full rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-none"
+              className="mt-1 h-9 w-full rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
             >
               {days.map((d) => (
                 <option key={d.date} value={d.date}>
@@ -270,7 +270,7 @@ function ScheduleFacet({
               value={hhmm}
               onChange={(e) => setHhmm(e.target.value)}
               data-testid="card-detail-time"
-              className="mt-1 h-9 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-none"
+              className="mt-1 h-9 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
             />
           </label>
         </div>
