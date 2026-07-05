@@ -36,7 +36,7 @@ mutation and a traveler mutation are the same write path with a different
 | [ADV-8](#adv-8--traveler-reviews-and-chats-with-the-advisor-requesting-changes) | Traveler reviews & chats with the advisor, requesting changes | 🟡 Partial | P5 `request_reconcile` fork loop + human thread (API); @Artemis summon newer, thin coverage |
 | [ADV-9](#adv-9--advisor-makes-changes-via-the-agent-respecting-locked-nodes) | Make changes via the agent, respecting locked nodes | ✅ Automated | P5 booked-node immutability + status×actor gate + reconcile (API) |
 | [ADV-10](#adv-10--traveler-approves-the-itinerary-at-once-and-sees-the-price) | Traveler approves the itinerary at once, sees the price | ✅ Automated | propose → approve state machine: advisor **proposes** (draft→proposed), traveler **approves** node-by-node or all-at-once (cascade + derived approval) + per-currency `totals` (API `test_itinerary_lock`/`test_itineraries`) + browser (`e2e/advisor/approve.spec.ts` advisor propose, `e2e/traveler-flows/approve.spec.ts` traveler approve-all + card-by-card) |
-| [ADV-11](#adv-11--advisor-invoices-the-trip-traveler-pays-via-braintree) | Advisor invoices the trip; traveler pays via Braintree | ✅ Automated | P6 assemble/pay/money-gate + M005 discount/void + full-loop (API); pre-filled test-card **UI affordance** to add; gateway-unwired 🔍 |
+| [ADV-11](#adv-11--advisor-invoices-the-trip-traveler-pays-via-braintree) | Advisor invoices the trip; traveler pays via Braintree | ✅ Automated | P6 assemble/pay/money-gate + M005 discount/void + full-loop (API); **billing cockpit** — reconciliation glance + coverage-aware charging + supplemental + per-card coverage + env-gated demo pay (`dashboardModel`/`invoicePanel`/`payInvoiceView` + `e2e/advisor/invoicing.spec.ts`); live drop-in gateway-gated 🔍 |
 
 ---
 
@@ -610,8 +610,11 @@ mutation and a traveler mutation are the same write path with a different
 
 ## ADV-11 · Advisor invoices the trip; traveler pays via Braintree
 
-- **Status:** ✅ Automated at the API seam (assemble → issue → pay → money gate → confirm →
-  reconcile); the only add is a **pre-filled test-card affordance** in the pay UI.
+- **Status:** ✅ Automated — the payment *contract* is green at the API seam (assemble → issue →
+  pay → money gate → confirm → reconcile), **and** the advisor now has a real issue/manage flow:
+  a **billing cockpit** (reconciliation glance with the uninvoiced remainder · coverage-aware
+  charging + "Bill all uninvoiced" · guided supplemental · per-card coverage) plus an env-gated
+  demo **test-card** pay (G-BILLING-COCKPIT closed). Live drop-in settlement stays gateway-gated.
 - **Personas:** Advisor → Traveler
 - **Surface:** Web UI (Playwright) + API seam (CLI/pytest) + payment gateway
 - **Preconditions:** An approved itinerary with priced, bookable nodes; a payment gateway
@@ -622,7 +625,10 @@ mutation and a traveler mutation are the same write path with a different
   - `apps/cli/tests/e2e/test_pillar6_invoice_book_e2e.py::test_money_gate_blocks_unpaid_booking_and_reconciles` — unpaid node → 409 `node_not_paid`; once a covering paid line exists it books, a confirmation → `confirmed`, and Σ(paid lines) ⇔ Σ(booked node costs) balances.
   - `apps/cli/tests/e2e/test_m005_invoicing_e2e.py::test_advisor_invoices_and_collects_payment` — assemble + a signed discount line + void→reversal netting, then issue + pay.
   - `apps/cli/tests/e2e/test_full_loop_e2e.py::test_loop_detail_to_confirmed_continuation` — the traveler pays their **own** invoice inside the full loop.
-  - The **pre-populated example card** in the Braintree Drop-in — no UI affordance yet.
+  - `apps/web/tests/itineraryGraph/dashboardModel.test.ts` — `reconcileBilling` / `coverageByNode` / `isChargeable`: the uninvoiced-remainder math, a reversed charge line falling back to uninvoiced, and the supplemental gate (issued + uncovered nodes).
+  - `apps/web/tests/itineraryGraph/invoicePanel.test.tsx` — the reconciliation strip, **Bill all uninvoiced** (seeds a draft + charges each uncovered node), and the **supplemental** prompt seeding the delta.
+  - `apps/web/tests/invoices/payInvoiceView.test.tsx` — the test-card button is absent unless the demo flag is on; on, it pays with the sandbox nonce (no drop-in tokenizer) → receipt.
+  - `apps/web/e2e/advisor/invoicing.spec.ts` (ADV-11) — seed → approve nodes → hold the edit lock → Invoices aside → reconciliation glance → **Bill all uninvoiced** → **Issue**, API-seam-backstopped (one issued invoice, Σ = trip total); the demo pay is driven only when `OVB_DEMO_TEST_CARD` is on.
 
 **Given** an advisor ready to collect payment on an approved trip,
 
@@ -642,15 +648,23 @@ mutation and a traveler mutation are the same write path with a different
   balances (Σ paid lines ⇔ Σ booked node costs).
 
 **Notes / gaps**
+- ✅ **The advisor issue/manage flow is real now (G-BILLING-COCKPIT).** The narrow "pre-filled
+  test card" ask was the wrong end — payment presupposes an *issued* invoice, and the advisor
+  had no coherent way to get there or see what one covered. Shipped: a per-currency
+  **reconciliation glance** (trip total vs invoiced/paid/outstanding + the **uninvoiced
+  remainder**), **coverage-aware charging** (the picker can't double-bill a node) with **"Bill
+  all uninvoiced"**, a guided **supplemental** for the post-issue delta, **per-card coverage**
+  in the money facet, and the env-gated **test-card** pay. See [advisor-plan.md](./advisor-plan.md).
+- ✅ **Auto-populate from approved nodes** — was flagged optional; shipped as **"Bill all
+  uninvoiced"** (one draft covering every uncovered chargeable node).
 - 🔍 **Gateway-unwired self-skips** — where no Braintree keys are set the local Fake gateway
   stands in (`fake-valid-nonce` works for both), and against a target with **no** gateway
-  the pay step skips (`payments_unconfigured`) rather than false-failing.
-- 🔎 **The "pre-populated for now, to make it easy" ask is UI-only.** The Drop-in accepts the
-  test nonce; add a dev/demo affordance that pre-fills the sandbox card (or a one-click "pay
-  with test card" button) so a demo flows without typing card numbers (**G-TESTCARD**). The
-  payment *contract* is fully green already.
-- 🔎 **Auto-populate an invoice from approved nodes** — today the advisor adds lines by hand;
-  an "invoice all approved bookables" convenience is optional follow-on, not a gate.
+  the pay step skips (`payments_unconfigured`) rather than false-failing. The browser spec
+  drives only the **demo nonce** path; the live drop-in tokenizer is never exercised headless.
+- 🔎 **A money-split deposit** (invoice X% now, remainder later) was deliberately **not** built:
+  a %-deposit line and node-coverage billing are incompatible (deposit + later bill-all =
+  over-invoiced). One coherent model — invoices partition the trip's nodes — keeps the
+  reconciliation honest; a deposit that tracks its own remainder is a possible follow-up.
 
 ---
 
@@ -661,3 +675,9 @@ is (a) advisor-**project** Playwright specs (`apps/web/e2e/advisor/…`) that dr
 screens, and (b) a handful of genuine **product gaps** before some scenarios can be asserted
 as written. Both are enumerated, prioritised, and cost-noted in the companion
 [advisor-plan.md](./advisor-plan.md).
+
+
+## Reminders for later
+
+Need some way of updating card manually to add details like confirmation numbers, etc. This is for when advisor manually books something not in inventory and wants to show it to the user. It could be marked as "booked" just like the others, but just manually or via agent action.
+

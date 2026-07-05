@@ -162,6 +162,7 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
               itineraryId={itineraryId}
               apiBaseUrl={apiBaseUrl}
               accessToken={accessToken}
+              nodeHasCost={node.cost_amount != null && node.cost_currency != null}
             />
           </aside>
         </div>
@@ -346,11 +347,13 @@ function MoneyFacet({
   itineraryId,
   apiBaseUrl,
   accessToken,
+  nodeHasCost,
 }: {
   nodeId: string;
   itineraryId: string;
   apiBaseUrl: string | null;
   accessToken: string | null;
+  nodeHasCost: boolean;
 }) {
   const [state, setState] = useState<
     | { kind: "loading" }
@@ -384,7 +387,7 @@ function MoneyFacet({
           Costs aren&rsquo;t available right now.
         </p>
       ) : (
-        <MoneyBody charges={state.charges} />
+        <MoneyBody charges={state.charges} nodeHasCost={nodeHasCost} />
       )}
     </FacetCard>
   );
@@ -396,14 +399,29 @@ const NODE_STATUS_LABEL: Record<string, string> = {
   discarded: "Cancelled",
 };
 
-function MoneyBody({ charges }: { charges: NodeChargesResponse }) {
+function MoneyBody({
+  charges,
+  nodeHasCost,
+}: {
+  charges: NodeChargesResponse;
+  nodeHasCost: boolean;
+}) {
   const cur = charges.currency;
   const money = (v: string): string => (cur ? `${cur} ${v}` : v);
   const owed = Number.parseFloat(charges.owed_amount);
   const nothingBilled = !cur && charges.booking === null;
 
   if (nothingBilled) {
-    return (
+    // Coverage signal: a priced item that isn't on any invoice yet is an advisor
+    // to-do ("bill it"); a truly costless item is just informational.
+    return nodeHasCost ? (
+      <p
+        data-testid="card-detail-money-uninvoiced"
+        className="font-serif text-[13px] italic text-[#8a5a1d]"
+      >
+        Priced, but not yet on an invoice.
+      </p>
+    ) : (
       <p data-testid="card-detail-money-empty" className="font-serif text-[13px] italic text-ink/45">
         Nothing has been charged for this item yet.
       </p>
@@ -424,9 +442,19 @@ function MoneyBody({ charges }: { charges: NodeChargesResponse }) {
         </>
       ) : null}
       {charges.invoice_status ? (
-        <p className="pt-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
-          Invoice · {charges.invoice_status}
-        </p>
+        charges.invoice_id ? (
+          <a
+            href={`/invoices/${charges.invoice_id}`}
+            data-testid="card-detail-money-invoice-link"
+            className="pt-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/55 underline decoration-ink/20 underline-offset-2 hover:text-ink"
+          >
+            On invoice · {charges.invoice_status}
+          </a>
+        ) : (
+          <p className="pt-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
+            Invoice · {charges.invoice_status}
+          </p>
+        )
       ) : null}
       {charges.booking ? (
         <p

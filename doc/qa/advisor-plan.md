@@ -12,12 +12,15 @@
 > built spine) is shipped, and of the original **six product gaps**, **G-INVITE-LATER**
 > (ADV-1), **G-NODE-EDITOR** (ADV-4, the card composer), **G-APPROVE-TOTAL** (ADV-10,
 > now a full `draft → proposed → approved` state machine — advisor proposes, traveler
-> approves node-by-node or all-at-once, with surfaced totals) and **G-ANALYZE-AGENT**
+> approves node-by-node or all-at-once, with surfaced totals), **G-ANALYZE-AGENT**
 > (ADV-6, Analyze as a conversational step — a board **Analyze** button plus `run_analysis`
-> / `get_analysis_findings` agent tools over the built engine) are **closed**. Outstanding:
-> **G-TESTCARD** (ADV-11) and **G-COVER** (ADV-2A), plus the deferred **advisor-private
-> Collection** slice. Nothing here is a rewrite; it's finishing UI + a few tools on top of
-> a built spine.
+> / `get_analysis_findings` agent tools over the built engine) and **G-BILLING-COCKPIT**
+> (ADV-11 — the advisor's invoice issue/manage flow: a per-currency reconciliation glance
+> that surfaces the **uninvoiced remainder**, coverage-aware charging + "Bill all uninvoiced",
+> a guided **supplemental** for the delta after issue, per-card coverage, plus the demo
+> test-card pay affordance) are **closed**. Outstanding: **G-COVER** (ADV-2A) plus the deferred
+> **advisor-private Collection** slice. Nothing here is a rewrite; it's finishing UI + a few
+> tools on top of a built spine.
 
 ## §0. Method
 
@@ -45,7 +48,7 @@ seam missing), or **gap** (no code path — a product decision precedes the test
 | 8 | Traveler requests changes | **partial** | `request_reconcile` (P5); human thread + @Artemis | conversational-request e2e; @Artemis thin |
 | 9 | Advisor changes, locked nodes | **built** | status×actor gate, `demote_before_edit`, reconcile (P5) | — (optional lock-affordance browser test) |
 | 10 | Propose + approve + see price | **built** | `draft→proposed→approved` (migration `0039`): advisor `POST …/propose` + `…/reopen`; traveler-writable `…/approve` cascades + per-node derive; per-currency `totals`; DashboardView Approval section + StaffToolbar + card-detail approve; `test_itinerary_lock`/`test_itineraries` + `approve.spec.ts` (advisor + traveler-flows) | ✅ propose→approve state machine shipped (G-APPROVE-TOTAL closed): advisor proposes, traveler approves node-by-node or all-at-once, totals surfaced |
-| 11 | Invoice + Braintree pay | **built** | `routers/invoices.py`, `payments/braintree_gateway.py`; P6 + M005 + full-loop | pre-filled **test-card UI**; auto-invoice-from-nodes (optional) |
+| 11 | Invoice + Braintree pay | **built** | `routers/invoices.py`, `payments/braintree_gateway.py`; P6 + M005 + full-loop; **billing cockpit** (`InvoicePanel` reconciliation strip + coverage-aware charging + supplemental via `reconcileBilling`), per-card coverage (`MoneyFacet`), env-gated test-card pay; `dashboardModel`/`invoicePanel`/`payInvoiceView` tests + `e2e/advisor/invoicing.spec.ts` | ✅ advisor issue/manage flow + demo pay shipped (G-BILLING-COCKPIT closed); live pay gateway-gated 🔍 |
 
 **Orientation (surfaces):** `command-center/*` = advisor-only (roster, new client, client
 detail; `require_advisor`). `basecamp/*` = traveler self-serve (`/me/*`). `itinerary/[id]/*`
@@ -56,9 +59,10 @@ server-side.
 ## §2. Product gaps (decision precedes test)
 
 Originally six gaps blocked a scenario being asserted *as written*; **G-INVITE-LATER,
-G-NODE-EDITOR, G-APPROVE-TOTAL, and G-ANALYZE-AGENT are now closed** (G-APPROVE-TOTAL as a
-full `draft → proposed → approved` state machine — see below). That leaves **G-COVER** and
-**G-TESTCARD**. Each is small and isolated.
+G-NODE-EDITOR, G-APPROVE-TOTAL, G-ANALYZE-AGENT, and G-BILLING-COCKPIT (née G-TESTCARD) are
+now closed** (G-APPROVE-TOTAL as a full `draft → proposed → approved` state machine — see
+below). That leaves **G-COVER** as the last product gap (plus the deferred advisor-private
+Collection slice).
 
 ### ✅ Closed: G-INVITE-LATER — silent client create (ADV-1)
 - **Shipped:** `POST /clients` now carries `notify: bool = true`. When false the create
@@ -172,14 +176,44 @@ full `draft → proposed → approved` state machine — see below). That leaves
   `draft + proposed + approved`; if a `proposed` plan should read differently in the traveler's
   basecamp listing, that's a small copy tweak.
 
-### G-TESTCARD — pre-filled sandbox card in the pay UI (ADV-11)
-- **Goal:** demo payment without typing card numbers.
-- **Today:** the payment **contract** is fully green (P6/M005/full-loop); `fake-valid-nonce`
-  works. Just no UI affordance to pre-fill the sandbox card.
-- **Plan:** a dev/demo-only "pay with test card" affordance in the Drop-in that submits the
-  sandbox nonce. Guard it behind an env flag so it never ships to prod.
-- **Size:** S. **Touches:** `app/invoices/[id]` pay form.
-- **Test to add:** browser — the pre-filled path drives a pay to `paid` (gateway-unwired 🔍).
+### ✅ Closed: G-BILLING-COCKPIT — advisor invoice issue/manage + demo pay (ADV-11)
+- **Reframe (with the user):** "add a pre-filled test card" (the old **G-TESTCARD**) was the
+  wrong end — payment presupposes an *issued* invoice, and the advisor had no coherent way to
+  **get there** or see what an invoice covered. The panel's mechanics existed (`InvoicePanel`:
+  create/charge/adjust/void/issue) but the advisor was flying blind on the three real worries:
+  *what does this invoice cover · what changed since I issued · how do I see it without losing
+  my mind*. So the slice grew into the billing cockpit; the test-card button rides along.
+- **Shipped:**
+  - **Reconciliation glance** — a pure `reconcileBilling` in [`dashboardModel.ts`](../../apps/web/app/itinerary/[id]/_shell/dashboardModel.ts)
+    joins the two numbers the dashboard never reconciled: **trip total** (the graph `totals`)
+    vs **invoiced / paid / outstanding** (the `rollupInvoices` ledger), and adds the missing
+    **uninvoiced remainder** (amount + item count). Rendered as the `invoice-reconcile` strip
+    atop `InvoicePanel`, grouped by currency.
+  - **Coverage-aware charging** — coverage is derived from each `charge` line's `node_id`
+    (reversed lines fall back to uninvoiced); the charge picker only offers genuinely-uninvoiced
+    nodes (no silent double-billing — the API had **no** guard), and **"Bill all uninvoiced"**
+    seeds the first/balance invoice in one click.
+  - **Guided supplemental** — once an invoice is issued, chargeable nodes that no invoice covers
+    surface an `invoice-supplemental` prompt → a pre-seeded **Supplemental** draft over exactly
+    the delta.
+  - **Per-card coverage** — the card-detail `MoneyFacet` distinguishes *priced-but-not-yet-
+    invoiced* (an advisor to-do) from costless, and deep-links a charged node to its invoice.
+  - **Demo pay** — an env-gated (`OVB_DEMO_TEST_CARD`, `demoTestCardEnabled()`) "pay with test
+    card" button in `PayInvoiceView` submits the sandbox `fake-valid-nonce` directly (no card
+    entry), settling the invoice. Off by default; never ships to prod.
+- **Design note (deviation):** a **%-of-trip deposit** shortcut was dropped — a deposit
+  *adjustment* and node-coverage billing are incompatible money models (a 30% deposit *plus*
+  later billing all nodes = 130% invoiced). One coherent model — invoices partition the trip's
+  nodes — is what keeps the reconciliation honest; a real "deposit" is charging a subset of
+  nodes. (A money-split deposit that tracks its own remainder is a possible follow-up.)
+- **Tested:** unit — `dashboardModel.test.ts` (`reconcileBilling`/`coverageByNode`/`isChargeable`:
+  remainder math, reversed-line fallthrough, supplemental gating), `invoicePanel.test.tsx` (strip,
+  bill-all seeds+charges, supplemental seeds the delta), `payInvoiceView.test.tsx` (test-card off
+  by default; on → sandbox nonce → paid, no drop-in tokenizer). Browser —
+  `e2e/advisor/invoicing.spec.ts` (seed → approve nodes → hold lock → Invoices aside → reconcile
+  glance → bill-all → issue, API-seam-backstopped; demo pay driven when the flag is on).
+- **Boundary:** the live Braintree drop-in / real settlement stays gateway-gated per §4 — the
+  browser drives the *demo* nonce path; the drop-in tokenizer is never exercised headless.
 
 **Also flagged, not gating:** **G-SEND** (is "send the itinerary" a first-class action that
 flips visibility + fires email, or just the first advisor message on an approved trip? —
@@ -238,8 +272,10 @@ per-trip party-attach UI ADV-2B needed.
 - ✅ **G-ANALYZE-AGENT → ADV-6** — shipped (see §2): board **Analyze** button + `run_analysis`
   / `get_analysis_findings` planning-mode tools; `test_analyze_tools` + `test_modes` cover the
   tool shape + bundle; the live conversational turn stays Bedrock-gated per §4.
-- Remaining: **G-TESTCARD → ADV-11 browser**.
-- **G-COVER → ADV-2A** is the largest; sequence it after the decision in §2.
+- ✅ **G-BILLING-COCKPIT → ADV-11** — shipped (see §2): reconciliation glance + coverage-aware
+  charging + supplemental + per-card coverage + env-gated demo pay; `dashboardModel`/`invoicePanel`/
+  `payInvoiceView` unit + `e2e/advisor/invoicing.spec.ts`; live drop-in settlement stays §4-gated.
+- **G-COVER → ADV-2A** is the last product gap; sequence it after the decision in §2.
 
 **Wave 3 — messaging + boundary-limited.**
 - **ADV-7 / ADV-8** — first add an e2e for the human thread (advisor posts → traveler's
@@ -250,19 +286,20 @@ per-trip party-attach UI ADV-2B needed.
 
 ### Next up (recommended order for the next hand)
 
-With G-INVITE-LATER, G-NODE-EDITOR, G-APPROVE-TOTAL and G-ANALYZE-AGENT closed, **two product
-gaps + one deferred slice remain**. Suggested sequence by leverage-per-effort:
+With G-INVITE-LATER, G-NODE-EDITOR, G-APPROVE-TOTAL, G-ANALYZE-AGENT and G-BILLING-COCKPIT
+closed, **one product gap + one deferred slice remain**. Suggested sequence by leverage-per-effort:
 
-1. **G-TESTCARD → ADV-11** (S, self-contained UI) — a dev/demo-only "pay with test card"
-   affordance in the Braintree Drop-in behind an env flag; the payment contract is already
-   green, so this is pure UI + one browser spec. Unblocks a clean end-to-end demo.
-2. **G-COVER → ADV-2A** (M, decision-gated) — decide curated-picker vs. generative first
+1. **G-COVER → ADV-2A** (M, decision-gated) — decide curated-picker vs. generative first
    (§2 recommends the curated Unsplash-style picker), then `itineraries.cover_image` +
-   service + hero UI. Largest; sequence last.
-3. **Advisor-private Collection** (deferred from G-NODE-EDITOR) — a node `audience`/visibility
+   service + hero UI. The last product gap.
+2. **Advisor-private Collection** (deferred from G-NODE-EDITOR) — a node `audience`/visibility
    column filtered out of every traveler-facing read (graph API, Collection, agent context).
-   Bigger than the two above (touches every read path); do it when an advisor-only scratch
-   space is actually needed.
+   Bigger (touches every read path); do it when an advisor-only scratch space is actually needed.
+
+Two small ADV-11 follow-ups noted in §2 (non-blocking): (a) a **money-split deposit** that
+tracks its own remainder (the %-deposit shortcut was dropped as incompatible with node-coverage
+billing); (b) driving the **live drop-in** settlement once a sandbox harness exists (the browser
+spec covers only the demo nonce path today).
 
 A follow-up worth noting for ADV-6: a **live-agent conversational spec** (the advisor asks the
 concierge to check the plan → the agent fires `run_analysis`/`get_analysis_findings` → findings

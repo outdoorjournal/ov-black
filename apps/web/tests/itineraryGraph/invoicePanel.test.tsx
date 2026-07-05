@@ -98,6 +98,7 @@ beforeEach(() => {
     itinerary: {},
     nodes: [NODE],
     edges: [],
+    totals: { USD: "1950.00" },
   } as never);
   vi.mocked(createInvoice).mockResolvedValue({ ok: true, invoice: INVOICE });
   vi.mocked(addInvoiceLineItem).mockResolvedValue({
@@ -187,4 +188,59 @@ test("read-only without the edit lock — no assemble controls", async () => {
   expect(screen.queryByTestId("invoice-issue")).toBeNull();
   expect(screen.queryByTestId("line-void-ln-charge")).toBeNull();
   expect(screen.getByText(/Hold the edit lock/)).toBeTruthy();
+});
+
+test("reconciliation strip reconciles trip total vs invoiced + uninvoiced remainder", async () => {
+  renderPanel();
+  await screen.findByTestId("invoice-reconcile");
+  const row = screen.getByTestId("invoice-reconcile-row");
+  expect(row.getAttribute("data-currency")).toBe("USD");
+  // Trip total from the graph `totals`; the draft doesn't count as invoiced, so the
+  // whole 1,950 reads as uninvoiced. node-2 (1,200) is the one uncovered item.
+  expect(screen.getByTestId("reconcile-trip-total").textContent).toContain("1,950");
+  expect(screen.getByTestId("reconcile-uninvoiced").textContent).toContain("1,950");
+});
+
+test("Bill all uninvoiced seeds a draft and charges each uncovered node", async () => {
+  renderPanel();
+  const billAll = await screen.findByTestId("invoice-bill-all");
+  // node-1 is already covered by the draft's charge line; node-2 is the only uninvoiced.
+  expect(billAll.textContent).toContain("(1)");
+  fireEvent.click(billAll);
+  await waitFor(() =>
+    expect(createInvoice).toHaveBeenCalledWith({}, "itin-1", {
+      label: "Deposit",
+      currency: "USD",
+    }),
+  );
+  await waitFor(() =>
+    expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
+      node_id: "node-2",
+      kind: "charge",
+    }),
+  );
+});
+
+test("supplemental prompt appears once an invoice is issued and seeds the delta", async () => {
+  // An issued invoice covering node-1, with node-2 still uncovered → supplemental.
+  vi.mocked(listInvoices).mockResolvedValue({
+    ok: true,
+    invoices: [{ ...INVOICE, status: "issued" }],
+  });
+  renderPanel();
+  const issue = await screen.findByTestId("invoice-supplemental-issue");
+  expect(issue.getAttribute("data-currency")).toBe("USD");
+  fireEvent.click(issue);
+  await waitFor(() =>
+    expect(createInvoice).toHaveBeenCalledWith({}, "itin-1", {
+      label: "Supplemental",
+      currency: "USD",
+    }),
+  );
+  await waitFor(() =>
+    expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
+      node_id: "node-2",
+      kind: "charge",
+    }),
+  );
 });

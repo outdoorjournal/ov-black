@@ -83,6 +83,146 @@ export function isPayable(inv: InvoiceResponse): boolean {
 
 export { invoiceOwed };
 
+// ── Billing reconciliation + coverage (advisor cockpit, ADV-11) ───────────────
+// The advisor's three worries, made visible: (1) "what does this invoice cover?"
+// — coverage is derived from each charge line's `node_id`; (2) "did I bill
+// everything / anything twice?" — the uninvoiced set + per-node coverage; (3) the
+// money truth — trip total (Σ approved node costs, the graph `totals`) reconciled
+// against invoiced / paid / outstanding, with the UNINVOICED remainder that the two
+// existing glances never surfaced. All pure so InvoicePanel and the card badge can
+// share one billing truth. NOTE: "invoiced" money vs "covered" items can diverge
+// (a % deposit adjustment invoices money without covering nodes) — we report BOTH,
+// labelled, rather than pretend they're one number.
+
+/** Structural view of a node for billing — NodeResponse satisfies it. */
+export type ChargeableNode = {
+  id: string;
+  status: string;
+  title?: string | undefined;
+  cost_amount?: string | null | undefined;
+  cost_currency?: string | null | undefined;
+};
+
+/** An approved node with a cost is chargeable (mirrors InvoicePanel's filter). */
+export function isChargeable(n: ChargeableNode): boolean {
+  return (
+    n.status === "approved" &&
+    n.cost_amount != null &&
+    n.cost_currency != null &&
+    n.cost_currency.length > 0
+  );
+}
+
+export type NodeCoverage = { invoiceId: string; label: string; status: string };
+
+/**
+ * node_id → the non-void invoices that currently charge it. A charge line that
+ * has been reversed (its id is some reversal line's `reverses_line_item_id`) no
+ * longer covers, so the node falls back to uninvoiced.
+ */
+export function coverageByNode(
+  invoices: InvoiceResponse[],
+): Map<string, NodeCoverage[]> {
+  const map = new Map<string, NodeCoverage[]>();
+  for (const inv of invoices) {
+    if (inv.status === "void") continue;
+    const lines = inv.lines ?? [];
+    const reversedIds = new Set(
+      lines
+        .map((l) => l.reverses_line_item_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+    for (const line of lines) {
+      if (line.kind !== "charge" || !line.node_id) continue;
+      if (reversedIds.has(line.id)) continue;
+      const arr = map.get(line.node_id) ?? [];
+      arr.push({
+        invoiceId: inv.id,
+        label: inv.label || "Invoice",
+        status: inv.status,
+      });
+      map.set(line.node_id, arr);
+    }
+  }
+  return map;
+}
+
+export type BillingRow = {
+  currency: string;
+  /** Σ approved node costs in this currency (the graph `totals`). */
+  tripTotal: number;
+  /** Σ (issued + paid) invoice totals. */
+  invoiced: number;
+  /** Σ settled payments. */
+  paid: number;
+  /** Σ outstanding on issued invoices. */
+  outstanding: number;
+  /** max(0, tripTotal − invoiced) — the money not yet billed. */
+  uninvoiced: number;
+  /** # chargeable nodes in this currency on no invoice. */
+  uninvoicedCount: number;
+};
+
+export type BillingSummary = {
+  rows: BillingRow[];
+  /** Every chargeable node not covered by any non-void invoice. */
+  uninvoicedNodes: ChargeableNode[];
+  coverage: Map<string, NodeCoverage[]>;
+  /** ≥1 issued/paid invoice exists AND uninvoiced nodes remain → offer a supplemental. */
+  supplemental: boolean;
+};
+
+export function reconcileBilling(input: {
+  totals: Record<string, string> | null | undefined;
+  invoices: InvoiceResponse[];
+  nodes: ChargeableNode[];
+}): BillingSummary {
+  const { invoices, nodes } = input;
+  const totals = input.totals ?? {};
+  const coverage = coverageByNode(invoices);
+  const { byCurrency } = rollupInvoices(invoices);
+  const rollupByCurrency = new Map(byCurrency.map((r) => [r.currency, r]));
+
+  const chargeable = nodes.filter(isChargeable);
+  const uninvoicedNodes = chargeable.filter((n) => !coverage.has(n.id));
+
+  const currencies = new Set<string>([
+    ...Object.keys(totals),
+    ...byCurrency.map((r) => r.currency),
+    ...chargeable.map((n) => n.cost_currency as string),
+  ]);
+
+  const rows: BillingRow[] = [...currencies]
+    .sort((a, b) => a.localeCompare(b))
+    .map((currency) => {
+      const tripTotal = Number.parseFloat(totals[currency] ?? "0") || 0;
+      const r = rollupByCurrency.get(currency);
+      const invoiced = r?.billed ?? 0;
+      return {
+        currency,
+        tripTotal,
+        invoiced,
+        paid: r?.paid ?? 0,
+        outstanding: r?.owed ?? 0,
+        uninvoiced: Math.max(0, tripTotal - invoiced),
+        uninvoicedCount: uninvoicedNodes.filter(
+          (n) => n.cost_currency === currency,
+        ).length,
+      };
+    });
+
+  const hasIssued = invoices.some(
+    (i) => i.status === "issued" || i.status === "paid",
+  );
+
+  return {
+    rows,
+    uninvoicedNodes,
+    coverage,
+    supplemental: hasIssued && uninvoicedNodes.length > 0,
+  };
+}
+
 // ── Next best action ─────────────────────────────────────────────────────────
 // The Dashboard's "you're not lost" anchor (design §4): exactly ONE guided action,
 // chosen from the trip's real state. The target is either a route (deep-link) or a

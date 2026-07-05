@@ -7,11 +7,15 @@ import { describe, expect, test } from "vitest";
 import type { InvoiceResponse } from "@ov-black/api-client";
 
 import {
+  type ChargeableNode,
+  coverageByNode,
   deriveNextAction,
   firstUnpaidIssued,
   formatTiming,
   invoiceOwed,
+  isChargeable,
   isPayable,
+  reconcileBilling,
   rollupInvoices,
 } from "@/app/itinerary/[id]/_shell/dashboardModel";
 
@@ -78,6 +82,116 @@ describe("rollupInvoices", () => {
         invoice({ total: "1000.00", payments: [payment("500.00", "failed"), payment("200.00", "refunded")] }),
       ),
     ).toBeCloseTo(1000);
+  });
+});
+
+function chargeLine(over: { id: string; node_id: string; amount?: string }) {
+  return {
+    id: over.id,
+    invoice_id: "inv-1",
+    node_id: over.node_id,
+    kind: "charge" as const,
+    description: "",
+    amount: over.amount ?? "100.00",
+    currency: "USD",
+    created_at: "2024-01-01T00:00:00Z",
+  };
+}
+
+function node(over: Partial<ChargeableNode> & { id: string }): ChargeableNode {
+  return {
+    status: "approved",
+    cost_amount: "100.00",
+    cost_currency: "USD",
+    title: "A node",
+    ...over,
+  };
+}
+
+describe("isChargeable", () => {
+  test("only approved nodes with a cost + currency qualify", () => {
+    expect(isChargeable(node({ id: "a" }))).toBe(true);
+    expect(isChargeable(node({ id: "b", status: "proposed" }))).toBe(false);
+    expect(isChargeable(node({ id: "c", cost_amount: null }))).toBe(false);
+    expect(isChargeable(node({ id: "d", cost_currency: "" }))).toBe(false);
+  });
+});
+
+describe("coverageByNode", () => {
+  test("maps charge lines to their invoices; skips void invoices", () => {
+    const cov = coverageByNode([
+      invoice({ id: "iv1", lines: [chargeLine({ id: "l1", node_id: "n1" })] }),
+      invoice({ id: "iv2", status: "void", lines: [chargeLine({ id: "l2", node_id: "n2" })] }),
+    ]);
+    expect(cov.get("n1")).toEqual([{ invoiceId: "iv1", label: "Deposit", status: "issued" }]);
+    // A node only charged on a void invoice is not covered.
+    expect(cov.has("n2")).toBe(false);
+  });
+
+  test("a reversed charge line no longer covers its node", () => {
+    const cov = coverageByNode([
+      invoice({
+        id: "iv1",
+        lines: [
+          chargeLine({ id: "l1", node_id: "n1" }),
+          {
+            id: "rev",
+            invoice_id: "iv1",
+            node_id: "n1",
+            kind: "reversal" as const,
+            description: "void",
+            amount: "-100.00",
+            currency: "USD",
+            reverses_line_item_id: "l1",
+            created_at: "2024-01-02T00:00:00Z",
+          },
+        ],
+      }),
+    ]);
+    expect(cov.has("n1")).toBe(false);
+  });
+});
+
+describe("reconcileBilling", () => {
+  test("reconciles trip total against invoiced/paid/outstanding + uninvoiced remainder", () => {
+    const nodes = [
+      node({ id: "n1", cost_amount: "8000.00" }),
+      node({ id: "n2", cost_amount: "9000.00" }),
+      node({ id: "n3", cost_amount: "1200.00" }),
+    ];
+    const invoices = [
+      invoice({
+        id: "dep",
+        status: "paid",
+        total: "8000.00",
+        lines: [chargeLine({ id: "l1", node_id: "n1", amount: "8000.00" })],
+        payments: [payment("8000.00")],
+      }),
+    ];
+    const { rows, uninvoicedNodes, supplemental } = reconcileBilling({
+      totals: { USD: "18200.00" },
+      invoices,
+      nodes,
+    });
+    const usd = rows.find((r) => r.currency === "USD");
+    expect(usd?.tripTotal).toBeCloseTo(18200);
+    expect(usd?.invoiced).toBeCloseTo(8000);
+    expect(usd?.paid).toBeCloseTo(8000);
+    expect(usd?.outstanding).toBeCloseTo(0);
+    expect(usd?.uninvoiced).toBeCloseTo(10200); // 18200 − 8000
+    expect(usd?.uninvoicedCount).toBe(2); // n2 + n3 uncovered
+    // n1 is covered (paid deposit); n2/n3 are the supplemental candidates.
+    expect(uninvoicedNodes.map((n) => n.id).sort()).toEqual(["n2", "n3"]);
+    expect(supplemental).toBe(true); // an issued/paid invoice exists + uncovered nodes remain
+  });
+
+  test("no supplemental prompt when nothing is issued yet", () => {
+    const { supplemental } = reconcileBilling({
+      totals: { USD: "500.00" },
+      invoices: [invoice({ status: "draft", total: "0.00", lines: [] })],
+      nodes: [node({ id: "n1" })],
+    });
+    expect(supplemental).toBe(false);
   });
 });
 

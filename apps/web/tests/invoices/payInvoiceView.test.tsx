@@ -114,6 +114,33 @@ test("Pay tokenizes and posts the nonce, then shows the receipt", async () => {
   expect(screen.getByText(/····1111/)).toBeTruthy();
 });
 
+test("test-card button is absent unless the demo flag is on", async () => {
+  renderView();
+  await screen.findByTestId("pay-submit");
+  expect(screen.queryByTestId("pay-test-card")).toBeNull();
+});
+
+test("demo test-card pays with the sandbox nonce, no card entry", async () => {
+  render(
+    <PayInvoiceView
+      apiBaseUrl="http://api.test"
+      accessToken="tok"
+      invoiceId="inv-1"
+      demoTestCard
+    />,
+  );
+  const testCard = await screen.findByTestId("pay-test-card");
+  fireEvent.click(testCard);
+  // Submits the sandbox nonce directly — never touches the drop-in tokenizer.
+  await waitFor(() =>
+    expect(payInvoice).toHaveBeenCalledWith({}, "inv-1", {
+      payment_method_nonce: "fake-valid-nonce",
+    }),
+  );
+  expect(requestPaymentMethod).not.toHaveBeenCalled();
+  await screen.findByTestId("pay-receipt");
+});
+
 test("a paid invoice shows the receipt and never mounts the drop-in", async () => {
   vi.mocked(getInvoice).mockResolvedValue({
     ok: true,

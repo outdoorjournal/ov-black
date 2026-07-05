@@ -87,3 +87,18 @@ export function mapboxToken(): string | undefined {
   const token = resolvePublicEnv().mapboxToken;
   return token && token.length > 0 ? token : undefined;
 }
+
+/**
+ * Demo/dev flag — when truthy, the pay page offers a "pay with test card" button
+ * that submits the Braintree sandbox nonce so a demo flows without typing a card.
+ * Read server-side and passed as a prop; NEVER enable in prod (the gateway must be
+ * the Fake/sandbox gateway for the nonce to succeed). Bracket read so Next never
+ * inlines it. Truthy values: "1" / "true" / "yes" (case-insensitive).
+ */
+export function demoTestCardEnabled(): boolean {
+  const raw =
+    (typeof process !== "undefined" && process.env
+      ? process.env["OVB_DEMO_TEST_CARD"] ?? process.env["NEXT_PUBLIC_DEMO_TEST_CARD"]
+      : undefined) ?? "";
+  return ["1", "true", "yes"].includes(raw.trim().toLowerCase());
+}

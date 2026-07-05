@@ -37,10 +37,13 @@ export function PayInvoiceView({
   apiBaseUrl,
   accessToken,
   invoiceId,
+  demoTestCard = false,
 }: {
   apiBaseUrl: string;
   accessToken: string;
   invoiceId: string;
+  /** Demo/dev only (env-gated by the page) — offer a one-click sandbox-card pay. */
+  demoTestCard?: boolean;
 }) {
   const [invoice, setInvoice] = useState<InvoiceResponse | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -107,31 +110,50 @@ export function PayInvoiceView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.status, invoiceId]);
 
-  const pay = useCallback(async () => {
-    const instance = instanceRef.current;
-    if (!instance || paying) return;
+  // Post a nonce and settle the invoice — shared by the real card flow and the
+  // demo test-card flow (they differ only in where the nonce comes from).
+  const submitNonce = useCallback(async (nonce: string) => {
+    if (paying) return;
     setPaying(true);
     setError(null);
     try {
-      const { nonce } = await instance.requestPaymentMethod();
       const result = await payInvoice(api, invoiceId, {
         payment_method_nonce: nonce,
       });
       if (!mounted.current) return;
       if (result.ok) {
-        await instance.teardown().catch(() => undefined);
+        await instanceRef.current?.teardown().catch(() => undefined);
         instanceRef.current = null;
         setInvoice(result.invoice);
       } else {
         setError(copy(result.detail));
       }
     } catch {
-      if (mounted.current) setError("Please complete the card details.");
+      if (mounted.current) setError("Something went wrong. Try again.");
     } finally {
       if (mounted.current) setPaying(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId, paying]);
+
+  const pay = useCallback(async () => {
+    const instance = instanceRef.current;
+    if (!instance || paying) return;
+    let nonce: string;
+    try {
+      ({ nonce } = await instance.requestPaymentMethod());
+    } catch {
+      if (mounted.current) setError("Please complete the card details.");
+      return;
+    }
+    await submitNonce(nonce);
+  }, [paying, submitNonce]);
+
+  // Demo/dev only: skip card entry, submit the Braintree sandbox nonce directly.
+  const payWithTestCard = useCallback(
+    () => submitNonce("fake-valid-nonce"),
+    [submitNonce],
+  );
 
   if (!loaded) {
     return <p className="font-sans text-sm text-ink/50">Loading…</p>;
@@ -185,6 +207,17 @@ export function PayInvoiceView({
           >
             {paying ? "Processing…" : `Pay ${invoice.total} ${invoice.currency}`}
           </button>
+          {demoTestCard ? (
+            <button
+              type="button"
+              onClick={() => void payWithTestCard()}
+              disabled={paying}
+              data-testid="pay-test-card"
+              className="self-start rounded-md border border-dashed border-ink/25 px-3 py-1.5 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/60 transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              {paying ? "Processing…" : "Pay with test card"}
+            </button>
+          ) : null}
         </section>
       ) : (
         <p className="font-sans text-sm italic text-ink/50">

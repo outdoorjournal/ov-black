@@ -327,6 +327,39 @@ export async function discardNodeAsAdvisor(
   }
 }
 
+/** Approve a single node (advisor) — a node can be `approved` while the itinerary
+ *  itself stays `draft`, which is what invoicing needs (chargeable = approved node
+ *  cost) without freezing the advisor's edit lock (ADV-11). */
+export async function approveNodeAsAdvisor(
+  itineraryId: string,
+  nodeId: string,
+): Promise<void> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/nodes/${nodeId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: "approved" }),
+  });
+  if (!resp.ok) {
+    throw new Error(`approve node failed (${resp.status}): ${await resp.text()}`);
+  }
+}
+
+/** Every invoice on the itinerary (advisor) — the API-seam backstop for the
+ *  billing cockpit: assert what the browser actions actually persisted. */
+export async function listInvoicesAsAdvisor(
+  itineraryId: string,
+): Promise<Array<{ id: string; status: string; currency: string; total: string }>> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/invoices`);
+  if (!resp.ok) {
+    throw new Error(`list invoices failed (${resp.status}): ${await resp.text()}`);
+  }
+  return (await resp.json()) as Array<{
+    id: string;
+    status: string;
+    currency: string;
+    total: string;
+  }>;
+}
+
 /** The itinerary's Collection (unscheduled, non-discarded nodes) as advisor. */
 export async function getCollectionAsAdvisor(itineraryId: string): Promise<GraphNode[]> {
   const resp = await advisorFetch(`/itinerary/${itineraryId}/collection`);
