@@ -18,13 +18,14 @@
 
 ## 0. Status — handoff ledger
 
-**Landed on `dev`:** PS0/PS1/PS2 in `a61c1dc` (docs) · `98f50bc` (PS2 agent + client) · `07146b3` (PS1 shell +
-PS2 UI); **PS4 in `59bed60`** (card detail + charges read); **PS3 in `ce28581`** (Dashboard view + rail Home);
-**PS5 in `f2d56bd`** (place-mode: `heldItem`/`lastPlacement` slice + Schedule affordance + timeline tap targets +
-holding-chip/undo-toast); **PS6 landing across `962bd49`** (Q5 concierge collapse), **`1481fc6`** (place-mode
-Schedule desktop-only — no mobile dead-end), **this commit** (Collection **overlay** summon + a11y: focus-into-
-drawer, `motion-reduce`). Remaining PS6: the in-canvas **aside teardown** (deferred — needs retiring
-`ItineraryGraphView`). Next up: **PS7**.
+**Landed on `dev` (commit order):** PS0/PS1/PS2 in `a61c1dc` (docs) · `98f50bc` (PS2 agent + client) · `07146b3`
+(PS1 shell + PS2 UI); **PS4** `59bed60` (card detail + charges read); **PS3** `ce28581` (Dashboard view + rail
+Home); **concierge chat fix** `0cf493e` (a pre-existing scroll/`min-h-0` + stray left-shadow bug, not from a
+slice); **PS5** `f2d56bd` (place-mode: `heldItem`/`lastPlacement` slice + Schedule affordance + timeline tap
+targets + holding-chip/undo-toast); **PS6** across `962bd49` (Q5 concierge collapse) · `1481fc6` (place-mode
+Schedule desktop-only — no mobile dead-end) · `98b4a48` (Collection **overlay** summon + a11y: focus-into-drawer,
+Esc, `motion-reduce`). **Remaining PS6:** the in-canvas **aside teardown** (deferred by human call — needs
+retiring `ItineraryGraphView`). **Next up: PS7.**
 
 | Slice | State | Notes |
 | --- | --- | --- |
@@ -36,17 +37,20 @@ drawer, `motion-reduce`). Remaining PS6: the in-canvas **aside teardown** (defer
 | **PS5** | **done** | Place mode (pick-then-place, a11y path over drag): store slice `heldItem` + `lastPlacement` with `holdItem`/`placeHeldItem`/`clearHeldItem`/`undoPlacement` (`placeHeldItem` reuses `moveNode`; gated `selectCanSchedule` = editable ∨ traveler-fork, so a draft-mine traveler keeps drag→lazy-fork). **Schedule** button on `CollectionCard` → `holdItem`; `HorizontalCanvas` renders pulsing per-day **tap targets** when holding, mapping the tapped `clientY` → minute via the drag path's `mapYToMinute`; a shell-level **`PlaceModeLayer`** floats the holding chip + undo toast, handles Esc, and slides to the timeline when you pick from elsewhere (the held state survives the nav because the store is shell-hosted). `CollectionRail` gained a `variant="overlay"`. **No backend.** |
 | **PS3** | **done** | Per-trip Dashboard: `dashboard/page.tsx` + `DashboardView` (index now redirects here; rail/tab **Home** entry + `DashboardIcon`). Sections — **hero** (mood-splash via `MOODS[timeline.mood]` + title/brief/timing; edit reuses `ItineraryIntake` prefilled → `router.refresh()`), one derived **next best action** (`deriveNextAction`, pure), the **money roll-up** (`listInvoices` → `rollupInvoices` owed-per-currency/issued/paid; per-invoice **pay** → existing `/invoices/[id]`; charge lines with `node_id` deep-link **down** to the PS4 card money facet), and **travel party** (advisor → `PartyPanel`; traveler → read-only `listItineraryParty` glance + link to `/basecamp/party`). Advisor-only **Trip management** tabs (Vault · Invoices · Booking) **rehomed out of Studio** — `StudioPlanningSpace` is now Build/Diff only. **No backend** (client-side roll-up over existing reads). |
 
-**Verified (incl. PS6):** web — **44 files / 267 vitest pass** (+`placeMode.test.tsx`, +`collectionOverlay.test.tsx`;
-plannerShell now covers the collapse + rail Home), **typecheck + lint clean**; the timeline/collection/dashboard
-route segments **compile on the live dev server** (307 → auth redirect). PS3–PS6 are all web-only — no api change. (+`dashboardModel.test.ts`: roll-up nets
-payments/excludes draft+void · next-action priority · timing format; +`dashboard.test.tsx`: hero+edit gate ·
-money owed/pay-link/line-deep-link · next-action · role split), **typecheck + lint clean**; the new
-`dashboard`/`timeline` route segments **compile on the live dev server** (307 → auth redirect, no 500). PS3 is
-**web-only** — no api/api-client change, so the api suite is unchanged from PS4 (863 pytest, mypy + ruff clean).
-A full authenticated **browser UAT** of the hero splash + roll-up visuals is the remaining craft-line sign-off.
+**Verified (current, incl. PS3–PS6):** web — **44 files / 267 vitest pass**, **typecheck + lint clean**. New
+coverage this session: `dashboardModel.test.ts` (roll-up nets payments / excludes draft+void · next-action
+priority · timing format) + `dashboard.test.tsx` (hero+edit gate · money owed/pay-link/line-deep-link ·
+next-action · role split); `placeMode.test.tsx` (hold/place/undo slice · Schedule gating · PlaceModeLayer
+chip/Esc/toast/undo + slide-to-timeline); `collectionOverlay.test.tsx` (summon → drawer → Close/Esc, focus-into,
+auto-close on hold); `plannerShell.test.tsx` now covers the Q5 collapse + rail **Home**. The
+dashboard/timeline/collection **route segments compile on the live dev server** (307 → auth redirect, no 500).
+**PS3–PS6 are all web-only — no api/api-client change**, so the api suite is unchanged from PS4 (863 pytest,
+mypy + ruff clean). Still owed before M006 "done": a full authenticated **browser UAT** (hero splash + roll-up
+visuals, place-mode drag/tap, mobile) — a running `next dev` held `.next`, so `next build` was skipped (the
+known prerender collision) and typecheck + full vitest + live route-compile probes stood in.
 **Prior (PS4):** api — 863 pytest pass (the 2 `test_me` onboarding failures below are pre-existing); web
 `cardDetail.test.tsx` (facets · money read · booking status · missing-node · ask→chip).
-**e2e (Playwright, against the live mproc stack):** new `e2e/traveler-flows/card-detail.spec.ts` —
+**e2e (Playwright, against the live mproc stack, PS4):** `e2e/traveler-flows/card-detail.spec.ts` —
 **CARD-1** (deep-link → facets), **CARD-2** (timeline card click → route; needed a `data-testid="timeline-card"`
 hook on the canvas card + a `force` click, since the card is framer-motion-animated), **CARD-3** (ask-about-this
 → Re: chip → a **real live agent turn** on the itinerary path) — **all green**. Every other traveler-flows spec
@@ -141,6 +145,26 @@ needs retiring `ItineraryGraphView`). The front is now **PS7** (general human ch
 ↔ party, gated on Q13=unify + PS2; the larger second track, backend + RLS), with **PS8** (@-mention bridge)
 after it. Cleanup still owed regardless: the pre-existing `chat.spec ONB-2` (basecamp onboarding opener) + the
 two stale `test_me` onboarding assertions.
+
+**PS7 kickoff (for the next agent) — start here:**
+1. **Schema.** Turn the throwaway `scratchpad/00NN_messaging_threads.draft.sql` into the real migration **`0037`**
+   under `supabase/migrations/` (next free number — see §5). Q13 = **UNIFY**: one `threads` / `messages` /
+   `thread_participants` store; `agent_session` becomes the per-thread AI engine (add `agent_session.thread_id`),
+   additive/back-compatible so PS2's sessions keep working. Write **RLS** so a party member sees their itinerary
+   thread and a non-member gets 403; basecamp thread = you ↔ advisor.
+2. **Backend.** New messaging service + router (send/list human messages, **no agent turn**); then
+   `pnpm -C packages/api-client generate` and add the discriminated wrapper in `packages/api-client/src/index.ts`
+   (`src/generated/` is gitignored — commit only `src/index.ts`). Pytest the scope + RLS.
+3. **Frontend.** Wire the **Advisor/party** people-circle in `ConciergeColumn` (currently the disabled PS7
+   placeholder) to the human channel; **unify** `basecamp/_components/RightRailChat` + `basecampChatStore` under
+   `ConciergeColumn`. Mine the sibling **voyage-site** app's human GROUP/ORGANIZATION messaging as prior art.
+4. **Invariant to protect (lands fully in PS8, but design for it now):** an Artemis message summoned into a
+   client-visible thread must stay **client-safe even when an advisor summons** — disclosure follows the
+   *thread's audience*, not the summoner. Keep Dossier/OSINT/net-worth out of any human-thread record (the
+   redaction sweep in `apps/api/tests/test_traveler_context.py` is the pattern).
+5. **Local-dev.** Migration `0036` is already applied to local Supabase (`:54322`); apply `0037` there too.
+   `@integration` DB tests skip when Postgres is down (CI has none). Don't run `next build` while `next dev` holds
+   `.next`.
 
 ---
 
@@ -266,7 +290,7 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1 · **size:** M–L.
 
 ### PS3 — Dashboard view (per-trip home)
-> **DONE** (commit pending, see §0). Index redirects to `dashboard/`; rail/tab **Home** entry added. `DashboardView`
+> **DONE** (`ce28581`, see §0). Index redirects to `dashboard/`; rail/tab **Home** entry added. `DashboardView`
 > composes hero (mood-splash + editable brief via `ItineraryIntake`) · one `deriveNextAction` · money roll-up
 > (`rollupInvoices`, per-currency owed, pay → `/invoices/[id]`, charge-line deep-links to the PS4 card facet) ·
 > travel party (advisor `PartyPanel` / traveler read-only glance). Vault/Invoices/Booking **rehomed** into an
@@ -290,7 +314,7 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1 (links to PS4) · **size:** M.
 
 ### PS4 — Card detail as a route
-> **DONE** (commit pending, see §0). Route is `itinerary/[id]/item/[nodeId]` (nested under the shell so the
+> **DONE** (`59bed60`, see §0). Route is `itinerary/[id]/item/[nodeId]` (nested under the shell so the
 > concierge + store persist beside the takeover). Facet (b) reused the data-driven `NodeZoomCard` (the
 > `prototype/cards/*` are hardcoded fixtures); money facet added `GET …/nodes/{id}/charges` (no schema change);
 > the ask-chip is a new `askContext` store slice + a tiny `ConciergeControl` context (the shell hosts the store
@@ -314,13 +338,14 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1; ask-chip needs PS2; money aligns with PS3 · **size:** M–L.
 
 ### PS5 — Place mode (pick-then-place + Collection as a layer)
-> **DONE** (commit pending, see §0). Store slice `heldItem`/`lastPlacement` (+ `holdItem`/`placeHeldItem`/
+> **DONE** (`f2d56bd`, see §0). Store slice `heldItem`/`lastPlacement` (+ `holdItem`/`placeHeldItem`/
 > `clearHeldItem`/`undoPlacement`, gated `selectCanSchedule`); `placeHeldItem` reuses `moveNode`. **Schedule** on
 > `CollectionCard`; pulsing per-day **tap targets** in `HorizontalCanvas` mapping tapped `clientY` → minute via
 > the drag path's `mapYToMinute`; shell-level **`PlaceModeLayer`** = holding chip + undo toast + Esc + slide-to-
 > timeline (held state survives the nav — the store is shell-hosted, so place-mode is a real cross-surface
-> **layer**, not a route). `CollectionRail` gained `variant="overlay"`. Deferred: mobile tap targets, the
-> overlay-drawer summon, draft-mine lazy-fork on tap, a pointer insertion preview (all → PS6/follow-ups).
+> **layer**, not a route). `CollectionRail` gained `variant="overlay"`. Follow-ups landed in **PS6**: the
+> overlay-drawer summon (`98b4a48`) + the mobile Schedule gating (`1481fc6`). Still deferred: draft-mine
+> lazy-fork on tap, a pointer insertion preview, a native mobile place UI.
 - **goal:** non-drag scheduling as the primary path (drag kept); the Collection floats over other surfaces; a
   held card floats across whatever's underneath.
 - **deliverables:** `heldItem` store slice; a **Schedule** affordance on `CollectionCard`; a floating holding
@@ -337,7 +362,7 @@ and can run late without blocking the traveler-facing shell.
 - **depends:** PS1 · **size:** M.
 
 ### PS6 — Advisor Studio + shell polish
-> **PARTIAL** (commits `962bd49` · `1481fc6` · pending, see §0). **Done:** Q5 concierge collapse
+> **PARTIAL** (commits `962bd49` · `1481fc6` · `98b4a48`, see §0). **Done:** Q5 concierge collapse
 > (`ItineraryShell` `conciergeCollapsed` + `ConciergeColumn` collapse chevron + edge reopen tab); place-mode
 > Schedule button gated `hidden md:block` (mobile scheduling → PS4 card-detail facet, no dead-end); Collection
 > `CollectionOverlay` summon drawer (md–xl) with focus-into-drawer + Esc + `motion-reduce` targets. Studio was
