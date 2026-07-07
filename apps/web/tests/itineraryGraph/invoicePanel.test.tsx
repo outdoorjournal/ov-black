@@ -99,6 +99,7 @@ beforeEach(() => {
     nodes: [NODE],
     edges: [],
     totals: { USD: "1950.00" },
+    party_size: 1,
   } as never);
   vi.mocked(createInvoice).mockResolvedValue({ ok: true, invoice: INVOICE });
   vi.mocked(addInvoiceLineItem).mockResolvedValue({
@@ -165,6 +166,45 @@ test("an adjustment posts a signed negative line", async () => {
   );
 });
 
+test("charging a node with an explicit amount posts a partial charge line", async () => {
+  renderPanel();
+  await screen.findByTestId("invoice-charge-node");
+  fireEvent.change(screen.getByTestId("invoice-charge-node"), {
+    target: { value: "node-2" },
+  });
+  fireEvent.change(screen.getByLabelText("Charge amount"), {
+    target: { value: "400" },
+  });
+  fireEvent.click(screen.getByTestId("invoice-charge-node-add"));
+  await waitFor(() =>
+    expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
+      node_id: "node-2",
+      kind: "charge",
+      amount: "400.00",
+      currency: "USD",
+      description: "Park Hyatt",
+    }),
+  );
+});
+
+test("charging a node with no amount bills its full remaining balance", async () => {
+  renderPanel();
+  await screen.findByTestId("invoice-charge-node");
+  fireEvent.change(screen.getByTestId("invoice-charge-node"), {
+    target: { value: "node-2" },
+  });
+  fireEvent.click(screen.getByTestId("invoice-charge-node-add"));
+  await waitFor(() =>
+    expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
+      node_id: "node-2",
+      kind: "charge",
+      amount: "1200.00",
+      currency: "USD",
+      description: "Park Hyatt",
+    }),
+  );
+});
+
 test("Void on a charge line voids it (append-only reversal)", async () => {
   renderPanel();
   await screen.findByTestId("line-void-ln-charge");
@@ -195,16 +235,18 @@ test("reconciliation strip reconciles trip total vs invoiced + uninvoiced remain
   await screen.findByTestId("invoice-reconcile");
   const row = screen.getByTestId("invoice-reconcile-row");
   expect(row.getAttribute("data-currency")).toBe("USD");
-  // Trip total from the graph `totals`; the draft doesn't count as invoiced, so the
-  // whole 1,950 reads as uninvoiced. node-2 (1,200) is the one uncovered item.
+  // Trip total comes from the graph `totals` (1,950). "Uninvoiced" is now the Σ of
+  // node REMAINING balances: node-2 (1,200) is the only chargeable graph node and
+  // it's unbilled, so 1,200 remains (amount-aware coverage, not tripTotal−invoiced).
   expect(screen.getByTestId("reconcile-trip-total").textContent).toContain("1,950");
-  expect(screen.getByTestId("reconcile-uninvoiced").textContent).toContain("1,950");
+  expect(screen.getByTestId("reconcile-uninvoiced").textContent).toContain("1,200");
 });
 
-test("Bill all uninvoiced seeds a draft and charges each uncovered node", async () => {
+test("Bill all remaining seeds a draft and charges each node's balance", async () => {
   renderPanel();
   const billAll = await screen.findByTestId("invoice-bill-all");
-  // node-1 is already covered by the draft's charge line; node-2 is the only uninvoiced.
+  // node-2 (1,200, unbilled) is the only node with a balance; node-1's draft charge
+  // isn't a graph node here, so it doesn't count.
   expect(billAll.textContent).toContain("(1)");
   fireEvent.click(billAll);
   await waitFor(() =>
@@ -213,10 +255,33 @@ test("Bill all uninvoiced seeds a draft and charges each uncovered node", async 
       currency: "USD",
     }),
   );
+  // Full remaining is posted as an explicit amount, tagged to the node.
   await waitFor(() =>
     expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
       node_id: "node-2",
       kind: "charge",
+      amount: "1200.00",
+      currency: "USD",
+      description: "Park Hyatt",
+    }),
+  );
+});
+
+test("a deposit % bills a fraction of each node's remaining now", async () => {
+  renderPanel();
+  await screen.findByTestId("invoice-bill-all");
+  // Ask for a 25% deposit: node-2's 1,200 balance → a 300.00 charge line.
+  fireEvent.change(screen.getByTestId("invoice-deposit-pct"), {
+    target: { value: "25" },
+  });
+  fireEvent.click(screen.getByTestId("invoice-bill-all"));
+  await waitFor(() =>
+    expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
+      node_id: "node-2",
+      kind: "charge",
+      amount: "300.00",
+      currency: "USD",
+      description: "Park Hyatt",
     }),
   );
 });
@@ -241,6 +306,9 @@ test("supplemental prompt appears once an invoice is issued and seeds the delta"
     expect(addInvoiceLineItem).toHaveBeenCalledWith({}, "inv-1", {
       node_id: "node-2",
       kind: "charge",
+      amount: "1200.00",
+      currency: "USD",
+      description: "Park Hyatt",
     }),
   );
 });

@@ -49,6 +49,13 @@ logger = logging.getLogger("ov_black.invoices")
 
 _ZERO = Decimal("0.00")
 
+# A node may be billed across several charge lines (a deposit now, the balance
+# later — D-PAY amount-aware coverage), but the signed charge total for one node
+# must never exceed its effective cost. A cent of slack absorbs client-side
+# rounding when a "bill the remaining balance" line is posted as an explicit
+# amount, so the exact close-out never trips the guard.
+_OVERBILL_TOLERANCE = Decimal("0.01")
+
 # Kinds an *issued* (append-only) invoice still accepts — corrections that read
 # as journal entries. A fresh ``charge`` must be assembled while the invoice is
 # still a draft.
@@ -98,6 +105,36 @@ async def _invoice_total(session: AsyncSession, invoice_id: uuid.UUID) -> Decima
         await session.execute(
             select(func.coalesce(func.sum(InvoiceLineItem.amount), _ZERO)).where(
                 InvoiceLineItem.invoice_id == invoice_id
+            )
+        )
+    ).scalar_one()
+    return Decimal(total)
+
+
+async def _node_charged_total(session: AsyncSession, node_id: uuid.UUID) -> Decimal:
+    """Σ signed ``charge`` amounts already billed for a node, across EVERY non-void
+    invoice, excluding charge lines a ``reversal`` has cancelled.
+
+    This is the coverage base a node's remaining balance is measured against: a
+    deposit line on one invoice and the balance line on another both count, so the
+    over-billing guard sees the node's whole billed-so-far — not just this
+    invoice's slice. Void invoices and reversed charges drop out (they no longer
+    cover), mirroring the web ``coverageByNode`` derivation exactly.
+    """
+    reversed_ids = (
+        select(InvoiceLineItem.reverses_line_item_id)
+        .where(InvoiceLineItem.reverses_line_item_id.isnot(None))
+        .scalar_subquery()
+    )
+    total = (
+        await session.execute(
+            select(func.coalesce(func.sum(InvoiceLineItem.amount), _ZERO))
+            .join(Invoice, Invoice.id == InvoiceLineItem.invoice_id)
+            .where(
+                InvoiceLineItem.node_id == node_id,
+                InvoiceLineItem.kind == InvoiceLineKind.charge,
+                Invoice.status != InvoiceStatus.void,
+                InvoiceLineItem.id.notin_(reversed_ids),
             )
         )
     ).scalar_one()
@@ -264,6 +301,17 @@ async def add_line_item(
         node = (await session.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
         if node is None or node.itinerary_id != invoice.itinerary_id:
             return _err("node_not_in_itinerary")
+        # Amount-aware coverage (D-PAY): a node may be split across a deposit +
+        # balance, but its running charge total can't exceed its effective cost —
+        # else per-node coverage would over-count. Guards ``charge`` lines only (a
+        # node-tagged discount is a correction, not coverage) and only when the
+        # node carries a cost to measure against.
+        if kind is InvoiceLineKind.charge and node.cost_amount is not None:
+            party_size = await node_cost.resolve_party_size(session, invoice.itinerary_id)
+            effective = node_cost.effective_node_cost(node.cost_amount, node.cost_kind, party_size)
+            already = await _node_charged_total(session, node_id)
+            if already + amount > effective + _OVERBILL_TOLERANCE:
+                return _err("node_overbilled")
 
     line = InvoiceLineItem(
         invoice_id=invoice_id,

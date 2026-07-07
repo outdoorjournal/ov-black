@@ -53,7 +53,7 @@ export function NotesPanel({
           {notes.map((n) => (
             <li
               key={n.id}
-              className="group flex items-start justify-between gap-2 font-serif text-[12px] leading-snug text-ink/85"
+              className="flex items-start justify-between gap-2 font-serif text-[12px] leading-snug text-ink/85"
             >
               <span>{n.title}</span>
               {onDeleteNote ? (
@@ -61,10 +61,11 @@ export function NotesPanel({
                   type="button"
                   data-testid="note-delete"
                   aria-label="Delete note"
+                  title="Delete note"
                   onClick={() => onDeleteNote(n.id)}
-                  className="mt-0.5 shrink-0 rounded-full p-0.5 text-amber-900/40 transition-colors hover:bg-[#8b2a1d]/10 hover:text-[#8b2a1d] focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                  className="-mr-0.5 mt-0.5 shrink-0 rounded-full p-0.5 text-amber-900/50 transition-colors hover:bg-[#8b2a1d]/10 hover:text-[#8b2a1d]"
                 >
-                  <X className="h-3 w-3" aria-hidden />
+                  <X className="h-3.5 w-3.5" aria-hidden />
                 </button>
               ) : null}
             </li>

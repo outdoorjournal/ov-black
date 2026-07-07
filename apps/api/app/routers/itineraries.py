@@ -86,7 +86,11 @@ from app.services.itineraries import (
     update_node,
 )
 from app.services.link_preview import fetch_link_preview
-from app.services.node_cost import cost_from_inventory_item, sum_node_costs
+from app.services.node_cost import (
+    cost_from_inventory_item,
+    resolve_party_size,
+    sum_node_costs,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -318,6 +322,12 @@ class GraphResponse(BaseModel):
     # as strings like ``cost_amount``. Empty when nothing is priced. Populated on
     # the graph-read endpoint; other producers (fork/reconcile) leave it empty.
     totals: dict[str, str] = Field(default_factory=dict)
+    # The itinerary's effective traveler count (floored at 1), matching the party
+    # expansion the money-gate applies to ``per_person`` costs. Surfaced so the
+    # billing UI can compute a node's EFFECTIVE cost (``per_person`` × party) and
+    # thus its per-node remaining balance across a deposit + balance split. Only
+    # the graph-read endpoint populates it; other producers leave the default 1.
+    party_size: int = 1
     # The calling viewer's own OPEN fork of this itinerary, when it is a baseline
     # (``forked_from_id is None``) — the traveler's "My version". Resolved per
     # request in ``get_itinerary_endpoint`` so the two-version toggle switches to
@@ -769,12 +779,15 @@ def _node_response_from_node(node: Any) -> NodeResponse:
     )
 
 
-def _graph_to_response(view: Any, *, totals: dict[str, str] | None = None) -> GraphResponse:
+def _graph_to_response(
+    view: Any, *, totals: dict[str, str] | None = None, party_size: int = 1
+) -> GraphResponse:
     """Assemble a GraphResponse from a service GraphView (itinerary + nodes + edges).
 
     Shared by the graph-read and fork endpoints so fork lineage (on the itinerary
     and every node) serializes identically everywhere. ``totals`` (per-currency
-    price) is supplied only by the graph-read endpoint; fork/reconcile omit it.
+    price) and ``party_size`` are supplied only by the graph-read endpoint;
+    fork/reconcile omit them (party_size defaults to 1).
     """
     return GraphResponse(
         itinerary=_itinerary_to_response(view.itinerary),
@@ -791,6 +804,7 @@ def _graph_to_response(view: Any, *, totals: dict[str, str] | None = None) -> Gr
             for e in view.edges
         ],
         totals=totals or {},
+        party_size=party_size,
     )
 
 
@@ -879,7 +893,8 @@ async def get_itinerary_endpoint(
     # Surface the plan's per-currency price (ADV-10) so the UI can show a total
     # alongside the one-action approve. Decimal → str to match cost_amount.
     totals = {c: str(a) for c, a in (await sum_node_costs(session, itinerary_id)).items()}
-    response = _graph_to_response(result, totals=totals)
+    party_size = await resolve_party_size(session, itinerary_id)
+    response = _graph_to_response(result, totals=totals, party_size=party_size)
     # On a baseline, surface the caller's own OPEN fork so the traveler's
     # two-version toggle ("My version") resolves to it rather than re-forking.
     if result.itinerary.forked_from_id is None:

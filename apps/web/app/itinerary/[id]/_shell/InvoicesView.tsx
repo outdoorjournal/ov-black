@@ -25,17 +25,22 @@ export function InvoicesView() {
     );
   }
 
+  // Own the scroll like DashboardView: the shell's <main> is a fixed-height flex
+  // column with `overflow-hidden`, so the routed destination must be the scroll
+  // container itself (min-h-0 + overflow-y-auto) or its content is clipped.
   return (
     <div
       data-testid="invoices-view"
-      className="mx-auto w-full max-w-3xl px-4 py-6"
+      className="min-h-0 flex-1 overflow-y-auto bg-paper"
     >
-      <InvoicePanel
-        itineraryId={itineraryId}
-        apiBaseUrl={apiBaseUrl}
-        accessToken={accessToken}
-        canManage={role === "advisor"}
-      />
+      <div className="mx-auto w-full max-w-3xl px-4 py-6">
+        <InvoicePanel
+          itineraryId={itineraryId}
+          apiBaseUrl={apiBaseUrl}
+          accessToken={accessToken}
+          canManage={role === "advisor"}
+        />
+      </div>
     </div>
   );
 }

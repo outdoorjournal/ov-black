@@ -1090,7 +1090,7 @@ export function HorizontalView({
               </div>
               {/* Companion rail: notes + (advisor) edit controls fold in here
                   instead of stacking as full-width boxes under the card. */}
-              {expandedNode.type !== "note" || editable ? (
+              {expandedNode.type !== "note" || editable || canLeaveNote ? (
                 <aside className="flex w-full shrink-0 flex-col gap-3 md:w-[300px]">
                   {expandedNode.type !== "note" ? (
                     <NotesPanel
@@ -1103,6 +1103,22 @@ export function HorizontalView({
                           : undefined
                       }
                     />
+                  ) : null}
+                  {/* A free-standing note is the traveler's own feedback — let
+                      them delete it directly (advisors get the same via the edit
+                      panel below, so only offer this on the non-editable path). */}
+                  {expandedNode.type === "note" && canLeaveNote && !editable ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        storeApi.getState().removeNode(expandedNode.id);
+                        setExpandedId(null);
+                      }}
+                      data-testid="itinerary-graph-note-remove"
+                      className="h-8 self-start rounded-md border border-[#8b2a1d]/40 px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-[#8b2a1d] transition-colors hover:bg-[#8b2a1d]/5"
+                    >
+                      Delete note
+                    </button>
                   ) : null}
                   {/* ADV-10 node-by-node approve: firm up this single proposed
                       card (the traveler's card-at-a-time path to the same
@@ -1425,14 +1441,19 @@ function NodeEditPanel({
           {node.cost_kind === "per_person" ? " / person" : ""}
         </p>
       ) : null}
-      <button
-        type="button"
-        onClick={onRemove}
-        data-testid="itinerary-graph-node-remove"
-        className="mt-4 h-8 rounded-md border border-[#8b2a1d]/40 px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-[#8b2a1d] transition-colors hover:bg-[#8b2a1d]/5"
-      >
-        Remove from itinerary
-      </button>
+      {/* A firmed (approved/booked/confirmed) card must be demoted before it can
+          be removed (G1) — hide the control rather than offer a delete the
+          backend will refuse. Notes carry no commitment and stay removable. */}
+      {node.type === "note" || !node.lock_reason ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          data-testid="itinerary-graph-node-remove"
+          className="mt-4 h-8 rounded-md border border-[#8b2a1d]/40 px-3 font-sans text-[11px] uppercase tracking-[0.16em] text-[#8b2a1d] transition-colors hover:bg-[#8b2a1d]/5"
+        >
+          Remove from itinerary
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -167,6 +167,13 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
 
     monkeypatch.setattr(routers_itineraries, "sum_node_costs", _sum_costs)
 
+    # GET also resolves party size (surfaced as `party_size`) with a real query —
+    # stub it off the DB-less session; default 1 unless a test overrides.
+    async def _party_size(_s: Any, _itinerary_id: uuid.UUID) -> int:
+        return int(returns.get("party_size", 1))
+
+    monkeypatch.setattr(routers_itineraries, "resolve_party_size", _party_size)
+
     async def _session_dep() -> Iterator[object]:
         yield object()
 

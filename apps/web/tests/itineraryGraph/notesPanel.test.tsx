@@ -48,4 +48,23 @@ describe("NotesPanel", () => {
     render(<NotesPanel notes={[note("n1", "x")]} onAddNote={vi.fn()} />);
     expect(screen.queryByTestId("note-composer-input")).toBeNull();
   });
+
+  test("no delete control unless onDeleteNote is given", () => {
+    render(<NotesPanel notes={[note("n1", "x")]} />);
+    expect(screen.queryByTestId("note-delete")).toBeNull();
+  });
+
+  test("delete control calls onDeleteNote with the note id", () => {
+    const onDeleteNote = vi.fn();
+    render(
+      <NotesPanel
+        notes={[note("n1", "a"), note("n2", "b")]}
+        onDeleteNote={onDeleteNote}
+      />,
+    );
+    const buttons = screen.getAllByTestId("note-delete");
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1]!);
+    expect(onDeleteNote).toHaveBeenCalledWith("n2");
+  });
 });

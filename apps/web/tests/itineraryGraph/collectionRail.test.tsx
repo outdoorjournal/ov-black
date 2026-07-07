@@ -26,9 +26,10 @@ vi.mock("@ov-black/api-client", () => ({
   createNode: vi.fn(async () => ({ ok: true, node: SAVED_NODE })),
   createNodeFromLink: vi.fn(async () => ({ ok: true, node: SAVED_NODE })),
   updateNode: vi.fn(async () => ({ ok: true })),
+  deleteNode: vi.fn(async () => ({ ok: true })),
 }));
 
-import { createNode, createNodeFromLink } from "@ov-black/api-client";
+import { createNode, createNodeFromLink, deleteNode } from "@ov-black/api-client";
 import type {
   ItineraryResponse,
   NodeResponse,
@@ -165,6 +166,32 @@ describe("CollectionRail · grouping", () => {
       .getAllByTestId("collection-lane")
       .find((l) => l.dataset["lane"] === "cnone");
     expect(within(cnone!).getAllByTestId("collection-card")).toHaveLength(2);
+  });
+});
+
+describe("CollectionRail · remove", () => {
+  test("a non-firmed maybe offers a remove control that soft-deletes it", () => {
+    renderRail([node("wish", { type: "experience", status: "proposed" })]);
+    fireEvent.click(screen.getByTestId("collection-remove"));
+    expect(deleteNode).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ itineraryId: "it-1", nodeId: "wish" }),
+    );
+  });
+
+  test("a firmed card offers no remove control (demote before delete)", () => {
+    renderRail([
+      node("firm", { status: "approved", lock_reason: "status_locked" }),
+    ]);
+    expect(screen.queryByTestId("collection-remove")).toBeNull();
+    expect(deleteNode).not.toHaveBeenCalled();
+  });
+
+  test("a viewer without credentials gets no remove control", () => {
+    renderRail([node("wish", { type: "experience" })], {
+      accessToken: null,
+    });
+    expect(screen.queryByTestId("collection-remove")).toBeNull();
   });
 });
 

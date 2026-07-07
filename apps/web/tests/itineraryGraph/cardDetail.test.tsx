@@ -40,10 +40,12 @@ vi.mock("@/app/itinerary/[id]/_shell/SessionThread", () => ({
 
 const getNodeChargesMock = vi.fn();
 const updateNodeStatusMock = vi.fn();
+const deleteNodeMock = vi.fn();
 vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   getNodeCharges: (...args: unknown[]) => getNodeChargesMock(...args),
   updateNodeStatus: (...args: unknown[]) => updateNodeStatusMock(...args),
+  deleteNode: (...args: unknown[]) => deleteNodeMock(...args),
 }));
 
 import type { ItineraryResponse, NodeResponse } from "@ov-black/api-client";
@@ -153,6 +155,48 @@ beforeEach(() => {
   vi.clearAllMocks();
   getNodeChargesMock.mockResolvedValue({ ok: true, charges: charges() });
   updateNodeStatusMock.mockResolvedValue({ ok: true });
+  deleteNodeMock.mockResolvedValue({ ok: true });
+});
+
+describe("CardDetailView · remove", () => {
+  test("a note shows Delete note and soft-deletes on click", () => {
+    const n = node("note-1", { type: "note", title: "scratch" });
+    renderDetail(<CardDetailView nodeId="note-1" />, [n], { role: "client" });
+    const facet = screen.getByTestId("card-detail-remove");
+    expect(within(facet).getByText("Delete note")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("card-detail-remove-node"));
+    expect(deleteNodeMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ itineraryId: "it-1", nodeId: "note-1" }),
+    );
+  });
+
+  test("a pre-firmed card shows Remove from itinerary", () => {
+    const n = node("n-idea", { type: "hotel", status: "idea" });
+    renderDetail(<CardDetailView nodeId="n-idea" />, [n], { role: "client" });
+    const facet = screen.getByTestId("card-detail-remove");
+    expect(within(facet).getByText("Remove from itinerary")).toBeInTheDocument();
+  });
+
+  test("a firmed card offers no remove facet (demote before delete)", () => {
+    const n = node("n-firm", {
+      type: "hotel",
+      status: "approved",
+      lock_reason: "status_locked",
+    });
+    renderDetail(<CardDetailView nodeId="n-firm" />, [n]);
+    expect(screen.queryByTestId("card-detail-remove")).not.toBeInTheDocument();
+    expect(deleteNodeMock).not.toHaveBeenCalled();
+  });
+
+  test("no remove facet without write credentials", () => {
+    const n = node("note-2", { type: "note", title: "scratch" });
+    renderDetail(<CardDetailView nodeId="note-2" />, [n], {
+      role: "client",
+      accessToken: null,
+    });
+    expect(screen.queryByTestId("card-detail-remove")).not.toBeInTheDocument();
+  });
 });
 
 describe("CardDetailView · facets", () => {

@@ -84,15 +84,19 @@ export function isPayable(inv: InvoiceResponse): boolean {
 export { invoiceOwed };
 
 // ── Billing reconciliation + coverage (advisor cockpit, ADV-11) ───────────────
-// The advisor's three worries, made visible: (1) "what does this invoice cover?"
-// — coverage is derived from each charge line's `node_id`; (2) "did I bill
-// everything / anything twice?" — the uninvoiced set + per-node coverage; (3) the
-// money truth — trip total (Σ approved node costs, the graph `totals`) reconciled
-// against invoiced / paid / outstanding, with the UNINVOICED remainder that the two
-// existing glances never surfaced. All pure so InvoicePanel and the card badge can
-// share one billing truth. NOTE: "invoiced" money vs "covered" items can diverge
-// (a % deposit adjustment invoices money without covering nodes) — we report BOTH,
-// labelled, rather than pretend they're one number.
+// The advisor's three worries, made visible: (1) "what does each invoice cover?";
+// (2) "have I billed everything — and nothing past its cost?"; (3) the money truth
+// — trip total (Σ approved node costs, the graph `totals`) reconciled against
+// invoiced / paid / outstanding, with the UNINVOICED remainder.
+//
+// Coverage is AMOUNT-AWARE (D-PAY deposit/balance): a node's cost may be split
+// across several charge lines / invoices — a 30% deposit now, the 70% balance
+// later — so a node is "covered" only once Σ its (non-void, non-reversed) charge
+// lines meets its EFFECTIVE cost (`per_person` × party size). A partially-billed
+// node keeps a `remaining` balance and stays billable until the sum closes it out.
+// All pure so InvoicePanel and the card badge share one billing truth. NOTE:
+// "invoiced" money (Σ invoice totals, including node-less adjustments) and the
+// "uninvoiced" node remainder can diverge — we report both, labelled.
 
 /** Structural view of a node for billing — NodeResponse satisfies it. */
 export type ChargeableNode = {
@@ -101,6 +105,7 @@ export type ChargeableNode = {
   title?: string | undefined;
   cost_amount?: string | null | undefined;
   cost_currency?: string | null | undefined;
+  cost_kind?: string | null | undefined;
 };
 
 /** An approved node with a cost is chargeable (mirrors InvoicePanel's filter). */
@@ -113,12 +118,31 @@ export function isChargeable(n: ChargeableNode): boolean {
   );
 }
 
-export type NodeCoverage = { invoiceId: string; label: string; status: string };
+/**
+ * A node's EFFECTIVE (billable) cost: a `per_person` quote is expanded by party
+ * size, everything else bills at face value. Mirrors the API's
+ * `effective_node_cost` so the client's remaining balance — and the amounts it
+ * posts for a deposit/balance line — match what the server charges and the money
+ * gate reconciles (a drift would break the coverage invariant).
+ */
+export function effectiveNodeCost(n: ChargeableNode, partySize: number): number {
+  const amount = Number.parseFloat(n.cost_amount ?? "0") || 0;
+  const size = Math.max(partySize, 1);
+  return n.cost_kind === "per_person" ? amount * size : amount;
+}
+
+export type NodeCoverage = {
+  invoiceId: string;
+  label: string;
+  status: string;
+  /** This charge line's amount toward the node (one entry per covering line). */
+  amount: number;
+};
 
 /**
- * node_id → the non-void invoices that currently charge it. A charge line that
- * has been reversed (its id is some reversal line's `reverses_line_item_id`) no
- * longer covers, so the node falls back to uninvoiced.
+ * node_id → the non-void charge lines that bill it, each carrying its amount. A
+ * charge line that has been reversed (its id is some reversal line's
+ * `reverses_line_item_id`) no longer covers, so it drops out.
  */
 export function coverageByNode(
   invoices: InvoiceResponse[],
@@ -140,12 +164,43 @@ export function coverageByNode(
         invoiceId: inv.id,
         label: inv.label || "Invoice",
         status: inv.status,
+        amount: Number.parseFloat(line.amount) || 0,
       });
       map.set(line.node_id, arr);
     }
   }
   return map;
 }
+
+/** node_id → Σ its covering charge amounts (the base for its remaining balance). */
+export function chargedByNode(invoices: InvoiceResponse[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const [nodeId, cov] of coverageByNode(invoices)) {
+    map.set(
+      nodeId,
+      cov.reduce((sum, c) => sum + c.amount, 0),
+    );
+  }
+  return map;
+}
+
+/** A chargeable node with how much of its effective cost is billed vs. remaining. */
+export type NodeBilling = {
+  id: string;
+  title?: string | undefined;
+  currency: string;
+  /** Party-expanded cost — the full amount that must be billed to cover it. */
+  effective: number;
+  /** Σ charge lines so far (across every non-void invoice). */
+  charged: number;
+  /** max(0, effective − charged) — what a balance line would still charge. */
+  remaining: number;
+  /** The invoices (and amounts) currently charging this node. */
+  coverage: NodeCoverage[];
+};
+
+/** Sub-cent slack so a fully-billed node reads as covered despite float noise. */
+const COVERAGE_EPSILON = 0.005;
 
 export type BillingRow = {
   currency: string;
@@ -157,18 +212,18 @@ export type BillingRow = {
   paid: number;
   /** Σ outstanding on issued invoices. */
   outstanding: number;
-  /** max(0, tripTotal − invoiced) — the money not yet billed. */
+  /** Σ remaining node balance in this currency — the node cost not yet billed. */
   uninvoiced: number;
-  /** # chargeable nodes in this currency on no invoice. */
+  /** # chargeable nodes in this currency with a remaining balance. */
   uninvoicedCount: number;
 };
 
 export type BillingSummary = {
   rows: BillingRow[];
-  /** Every chargeable node not covered by any non-void invoice. */
-  uninvoicedNodes: ChargeableNode[];
+  /** Every chargeable node with a remaining balance (fully-billed nodes drop). */
+  billableNodes: NodeBilling[];
   coverage: Map<string, NodeCoverage[]>;
-  /** ≥1 issued/paid invoice exists AND uninvoiced nodes remain → offer a supplemental. */
+  /** ≥1 issued/paid invoice exists AND a node still carries a balance. */
   supplemental: boolean;
 };
 
@@ -176,15 +231,32 @@ export function reconcileBilling(input: {
   totals: Record<string, string> | null | undefined;
   invoices: InvoiceResponse[];
   nodes: ChargeableNode[];
+  /** Effective traveler count (graph `party_size`); expands `per_person` costs. */
+  partySize?: number | undefined;
 }): BillingSummary {
   const { invoices, nodes } = input;
   const totals = input.totals ?? {};
+  const partySize = input.partySize ?? 1;
   const coverage = coverageByNode(invoices);
+  const charged = chargedByNode(invoices);
   const { byCurrency } = rollupInvoices(invoices);
   const rollupByCurrency = new Map(byCurrency.map((r) => [r.currency, r]));
 
   const chargeable = nodes.filter(isChargeable);
-  const uninvoicedNodes = chargeable.filter((n) => !coverage.has(n.id));
+  const billing: NodeBilling[] = chargeable.map((n) => {
+    const effective = effectiveNodeCost(n, partySize);
+    const paid = charged.get(n.id) ?? 0;
+    return {
+      id: n.id,
+      title: n.title,
+      currency: n.cost_currency as string,
+      effective,
+      charged: paid,
+      remaining: Math.max(0, effective - paid),
+      coverage: coverage.get(n.id) ?? [],
+    };
+  });
+  const billableNodes = billing.filter((b) => b.remaining > COVERAGE_EPSILON);
 
   const currencies = new Set<string>([
     ...Object.keys(totals),
@@ -197,17 +269,15 @@ export function reconcileBilling(input: {
     .map((currency) => {
       const tripTotal = Number.parseFloat(totals[currency] ?? "0") || 0;
       const r = rollupByCurrency.get(currency);
-      const invoiced = r?.billed ?? 0;
+      const inCurrency = billableNodes.filter((b) => b.currency === currency);
       return {
         currency,
         tripTotal,
-        invoiced,
+        invoiced: r?.billed ?? 0,
         paid: r?.paid ?? 0,
         outstanding: r?.owed ?? 0,
-        uninvoiced: Math.max(0, tripTotal - invoiced),
-        uninvoicedCount: uninvoicedNodes.filter(
-          (n) => n.cost_currency === currency,
-        ).length,
+        uninvoiced: inCurrency.reduce((sum, b) => sum + b.remaining, 0),
+        uninvoicedCount: inCurrency.length,
       };
     });
 
@@ -217,9 +287,9 @@ export function reconcileBilling(input: {
 
   return {
     rows,
-    uninvoicedNodes,
+    billableNodes,
     coverage,
-    supplemental: hasIssued && uninvoicedNodes.length > 0,
+    supplemental: hasIssued && billableNodes.length > 0,
   };
 }
 

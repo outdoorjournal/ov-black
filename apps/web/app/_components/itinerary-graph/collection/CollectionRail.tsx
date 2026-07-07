@@ -15,6 +15,7 @@
 
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
+import { X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { NodeResponse } from "../model/horizontalTypes";
@@ -331,6 +332,13 @@ function CollectionCard({
   // real editable surface offers it (a draft-mine traveler keeps the drag→lazy-
   // fork path). The card body click stays free for opening the card's detail.
   const canSchedule = itineraryGraphStore.useStore(selectCanSchedule);
+  // Remove a wish-list maybe (soft delete). Offered to anyone who can write
+  // (advisor or the traveler on their own itinerary); a firmed card must be
+  // demoted first (G1), and a placed card is managed from the timeline instead.
+  const canDelete =
+    itineraryGraphStore.useStore(selectCanLeaveNote) &&
+    !node.lock_reason &&
+    !scheduled;
   // A Collection card is the SAME card as the timeline glance of this node
   // (M006 harmonization): shared CardShell substrate + shared CardBody. The
   // drag handle + Schedule overlay stay as chrome around the shell. Collection
@@ -351,6 +359,21 @@ function CollectionCard({
       data-scheduled={scheduled ? "true" : "false"}
       className={"relative " + (scheduled ? "opacity-60" : "")}
     >
+      {/* Remove from the collection (soft delete). Sits top-left as a standing
+          affordance (mirrors the top-right "Place"); a scheduled card hides it —
+          that spot carries the "On timeline" tag and it's managed from there. */}
+      {canDelete ? (
+        <button
+          type="button"
+          onClick={() => storeApi.getState().removeNode(node.id)}
+          data-testid="collection-remove"
+          aria-label={`Remove ${node.title || "this"} from the collection`}
+          title="Remove from collection"
+          className="absolute left-2 top-2 z-10 rounded-full border border-ink/15 bg-paper/95 p-1 text-ink/55 shadow-xs transition-colors hover:bg-[#8b2a1d] hover:text-paper"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ) : null}
       {/* A placed card wears a quiet marker so, when revealed, it reads as
           already on the timeline rather than another loose maybe. */}
       {scheduled ? (

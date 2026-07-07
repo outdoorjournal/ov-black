@@ -8,8 +8,10 @@ import type { InvoiceResponse } from "@ov-black/api-client";
 
 import {
   type ChargeableNode,
+  chargedByNode,
   coverageByNode,
   deriveNextAction,
+  effectiveNodeCost,
   firstUnpaidIssued,
   formatTiming,
   invoiceOwed,
@@ -118,12 +120,14 @@ describe("isChargeable", () => {
 });
 
 describe("coverageByNode", () => {
-  test("maps charge lines to their invoices; skips void invoices", () => {
+  test("maps charge lines to their invoices (with amount); skips void invoices", () => {
     const cov = coverageByNode([
-      invoice({ id: "iv1", lines: [chargeLine({ id: "l1", node_id: "n1" })] }),
+      invoice({ id: "iv1", lines: [chargeLine({ id: "l1", node_id: "n1", amount: "300.00" })] }),
       invoice({ id: "iv2", status: "void", lines: [chargeLine({ id: "l2", node_id: "n2" })] }),
     ]);
-    expect(cov.get("n1")).toEqual([{ invoiceId: "iv1", label: "Deposit", status: "issued" }]);
+    expect(cov.get("n1")).toEqual([
+      { invoiceId: "iv1", label: "Deposit", status: "issued", amount: 300 },
+    ]);
     // A node only charged on a void invoice is not covered.
     expect(cov.has("n2")).toBe(false);
   });
@@ -168,7 +172,7 @@ describe("reconcileBilling", () => {
         payments: [payment("8000.00")],
       }),
     ];
-    const { rows, uninvoicedNodes, supplemental } = reconcileBilling({
+    const { rows, billableNodes, supplemental } = reconcileBilling({
       totals: { USD: "18200.00" },
       invoices,
       nodes,
@@ -178,11 +182,86 @@ describe("reconcileBilling", () => {
     expect(usd?.invoiced).toBeCloseTo(8000);
     expect(usd?.paid).toBeCloseTo(8000);
     expect(usd?.outstanding).toBeCloseTo(0);
-    expect(usd?.uninvoiced).toBeCloseTo(10200); // 18200 − 8000
-    expect(usd?.uninvoicedCount).toBe(2); // n2 + n3 uncovered
-    // n1 is covered (paid deposit); n2/n3 are the supplemental candidates.
-    expect(uninvoicedNodes.map((n) => n.id).sort()).toEqual(["n2", "n3"]);
-    expect(supplemental).toBe(true); // an issued/paid invoice exists + uncovered nodes remain
+    expect(usd?.uninvoiced).toBeCloseTo(10200); // Σ remaining: n2 9000 + n3 1200
+    expect(usd?.uninvoicedCount).toBe(2); // n2 + n3 still owe a balance
+    // n1 is fully covered (paid deposit); n2/n3 still carry a balance.
+    expect(billableNodes.map((n) => n.id).sort()).toEqual(["n2", "n3"]);
+    expect(supplemental).toBe(true); // an issued/paid invoice exists + balances remain
+  });
+
+  test("a node split across a deposit + balance nets to fully covered", () => {
+    const nodes = [node({ id: "n1", cost_amount: "1000.00" })];
+    // 30% on a deposit invoice, 70% on a balance invoice — the SAME node twice.
+    const invoices = [
+      invoice({
+        id: "dep",
+        label: "Deposit",
+        status: "issued",
+        total: "300.00",
+        lines: [chargeLine({ id: "d1", node_id: "n1", amount: "300.00" })],
+      }),
+      invoice({
+        id: "bal",
+        label: "Balance",
+        status: "issued",
+        total: "700.00",
+        lines: [chargeLine({ id: "b1", node_id: "n1", amount: "700.00" })],
+      }),
+    ];
+    const { billableNodes, rows } = reconcileBilling({
+      totals: { USD: "1000.00" },
+      invoices,
+      nodes,
+    });
+    // Fully billed → no remaining balance, drops out of the billable set.
+    expect(billableNodes).toHaveLength(0);
+    expect(rows.find((r) => r.currency === "USD")?.uninvoiced).toBeCloseTo(0);
+  });
+
+  test("a partial deposit leaves the node billable for its remainder", () => {
+    const nodes = [node({ id: "n1", cost_amount: "1000.00" })];
+    const invoices = [
+      invoice({
+        id: "dep",
+        status: "issued",
+        total: "300.00",
+        lines: [chargeLine({ id: "d1", node_id: "n1", amount: "300.00" })],
+      }),
+    ];
+    const { billableNodes } = reconcileBilling({
+      totals: { USD: "1000.00" },
+      invoices,
+      nodes,
+    });
+    expect(billableNodes).toHaveLength(1);
+    expect(billableNodes[0]).toMatchObject({
+      id: "n1",
+      effective: 1000,
+      charged: 300,
+      remaining: 700,
+    });
+  });
+
+  test("per_person cost is party-expanded when measuring remaining", () => {
+    const nodes = [
+      node({ id: "n1", cost_amount: "750.00", cost_kind: "per_person" }),
+    ];
+    // A 750pp guide for a party of 2 costs 1500; a 500 deposit leaves 1000.
+    const invoices = [
+      invoice({
+        id: "dep",
+        status: "issued",
+        total: "500.00",
+        lines: [chargeLine({ id: "d1", node_id: "n1", amount: "500.00" })],
+      }),
+    ];
+    const { billableNodes } = reconcileBilling({
+      totals: { USD: "1500.00" },
+      invoices,
+      nodes,
+      partySize: 2,
+    });
+    expect(billableNodes[0]).toMatchObject({ effective: 1500, remaining: 1000 });
   });
 
   test("no supplemental prompt when nothing is issued yet", () => {
@@ -192,6 +271,24 @@ describe("reconcileBilling", () => {
       nodes: [node({ id: "n1" })],
     });
     expect(supplemental).toBe(false);
+  });
+});
+
+describe("effectiveNodeCost / chargedByNode", () => {
+  test("per_person expands by party size; total bills at face value", () => {
+    expect(effectiveNodeCost(node({ id: "a", cost_amount: "750.00", cost_kind: "per_person" }), 3)).toBe(2250);
+    expect(effectiveNodeCost(node({ id: "b", cost_amount: "750.00", cost_kind: "per_person" }), 0)).toBe(750); // floored at 1
+    expect(effectiveNodeCost(node({ id: "c", cost_amount: "9000.00", cost_kind: "total" }), 4)).toBe(9000);
+    expect(effectiveNodeCost(node({ id: "d", cost_amount: "9000.00" }), 4)).toBe(9000); // unset kind = face value
+  });
+
+  test("sums a node's charge lines across invoices, minus reversed/void", () => {
+    const charged = chargedByNode([
+      invoice({ id: "dep", lines: [chargeLine({ id: "d1", node_id: "n1", amount: "300.00" })] }),
+      invoice({ id: "bal", lines: [chargeLine({ id: "b1", node_id: "n1", amount: "700.00" })] }),
+      invoice({ id: "void", status: "void", lines: [chargeLine({ id: "v1", node_id: "n1", amount: "999.00" })] }),
+    ]);
+    expect(charged.get("n1")).toBeCloseTo(1000);
   });
 });
 

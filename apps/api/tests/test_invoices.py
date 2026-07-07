@@ -316,6 +316,86 @@ async def test_node_without_cost_rejected(db_session: AsyncSession) -> None:
 
 @integration
 @pytest.mark.asyncio
+async def test_node_split_across_deposit_and_balance(db_session: AsyncSession) -> None:
+    """A node's cost may be split across invoices (a deposit + the balance), but the
+    running charge total for that node can't exceed its effective cost."""
+    itin = await create_itinerary(db_session, _actor(), title="split")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
+
+        deposit = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="Deposit", currency="USD"
+        )
+        balance = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="Balance", currency="USD"
+        )
+        assert isinstance(deposit, Invoice)
+        assert isinstance(balance, Invoice)
+
+        # 30% deposit against the node, then the 70% balance on a second invoice —
+        # the SAME node shared across two lines, netting to its full cost.
+        dep_line = await add_line_item(
+            db_session,
+            _actor(),
+            invoice_id=deposit.id,
+            kind=InvoiceLineKind.charge,
+            description="Aman (deposit)",
+            amount=Decimal("300.00"),
+            currency="USD",
+            node_id=node.id,
+        )
+        assert isinstance(dep_line, InvoiceLineItem)
+        assert dep_line.node_id == node.id
+
+        bal_line = await add_line_item(
+            db_session,
+            _actor(),
+            invoice_id=balance.id,
+            kind=InvoiceLineKind.charge,
+            description="Aman (balance)",
+            amount=Decimal("700.00"),
+            currency="USD",
+            node_id=node.id,
+        )
+        assert isinstance(bal_line, InvoiceLineItem)
+
+        # A further charge against the now-fully-billed node is refused.
+        over = await add_line_item(
+            db_session,
+            _actor(),
+            invoice_id=balance.id,
+            kind=InvoiceLineKind.charge,
+            description="Aman (again)",
+            amount=Decimal("100.00"),
+            currency="USD",
+            node_id=node.id,
+        )
+        assert isinstance(over, ItineraryError)
+        assert over.detail == "node_overbilled"
+
+        # Voiding the balance line frees the node's coverage again: a fresh 700
+        # charge is accepted because the reversed line no longer counts.
+        rev = await void_line_item(
+            db_session, _actor(), invoice_id=balance.id, line_item_id=bal_line.id
+        )
+        assert isinstance(rev, InvoiceLineItem)
+        reinstated = await add_line_item(
+            db_session,
+            _actor(),
+            invoice_id=balance.id,
+            kind=InvoiceLineKind.charge,
+            description="Aman (rebilled balance)",
+            amount=Decimal("700.00"),
+            currency="USD",
+            node_id=node.id,
+        )
+        assert isinstance(reinstated, InvoiceLineItem)
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_issue_lifecycle_gates(db_session: AsyncSession) -> None:
     itin = await create_itinerary(db_session, _actor(), title="lifecycle")
     try:

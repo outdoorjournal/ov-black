@@ -290,6 +290,27 @@ describe("editing actions are inert for non-editable viewers", () => {
     expect(nodes[0]!.title).toBe("Original");
   });
 
+  test("a credentialed traveler cannot remove a firmed non-note card", () => {
+    // The client-side G1 guard mirrors the backend: an approved/booked/confirmed
+    // regular card must be demoted first, so removeNode bails BEFORE the network
+    // call even though the traveler holds write credentials.
+    const firmed: NodeResponse = {
+      ...NODE,
+      id: "card-1",
+      type: "hotel",
+      status: "approved",
+      lock_reason: "status_locked",
+    };
+    const { result } = renderStore({
+      timeline: timeline([firmed]),
+      role: "client",
+      apiBaseUrl: "http://x",
+      accessToken: "t",
+    });
+    act(() => result.current.getState().removeNode("card-1"));
+    expect(result.current.getState().nodes).toHaveLength(1);
+  });
+
   test("startLocked seeds locked-by-me; default leaves it unlocked", () => {
     const locked = renderStore({ role: "advisor", startLocked: true });
     expect(locked.result.current.getState().lockStatus).toBe("locked-by-me");

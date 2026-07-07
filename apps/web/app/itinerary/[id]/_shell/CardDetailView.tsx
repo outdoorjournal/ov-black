@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   createApiClient,
@@ -59,6 +60,7 @@ const hhmmToMinute = (s: string): number => {
 export function CardDetailView({ nodeId }: { nodeId: string }) {
   const { openConcierge } = useConciergeControl();
   const { timeline } = useTimelineData();
+  const router = useRouter();
   const tz = timeline.timezoneOffsetHours;
 
   const node = itineraryGraphStore.useStore(
@@ -161,6 +163,11 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
                 notes={notes}
                 canAdd={canLeaveNote}
                 onAddNote={(text) => storeApi.getState().addAttachedNote(node.id, text)}
+                onDeleteNote={
+                  canLeaveNote
+                    ? (noteId) => storeApi.getState().removeNode(noteId)
+                    : undefined
+                }
               />
             ) : null}
             {editable ? (
@@ -180,6 +187,19 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
               accessToken={accessToken}
               nodeHasCost={node.cost_amount != null && node.cost_currency != null}
             />
+            {/* Remove (soft delete). A note is feedback and always removable; any
+                other card only while pre-firmed (a firmed booking must be demoted
+                first — the store guard + backend enforce this, so we simply hide
+                the control). Available to anyone who can write. */}
+            {canLeaveNote && (node.type === "note" || !node.lock_reason) ? (
+              <RemoveFacet
+                isNote={node.type === "note"}
+                onRemove={() => {
+                  storeApi.getState().removeNode(node.id);
+                  router.push(backHref);
+                }}
+              />
+            ) : null}
           </aside>
         </div>
       </div>
@@ -236,6 +256,33 @@ function ProposalFacet({
         className="mt-2 h-9 rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
       >
         Propose this
+      </button>
+    </FacetCard>
+  );
+}
+
+// ── Remove — soft-delete this item (notes always; else pre-firmed only) ─────────
+function RemoveFacet({
+  isNote,
+  onRemove,
+}: {
+  isNote: boolean;
+  onRemove: () => void;
+}) {
+  return (
+    <FacetCard label={isNote ? "Note" : "Remove"} testid="card-detail-remove">
+      <p className="font-serif text-[13px] text-ink/70">
+        {isNote
+          ? "Done with this note? Delete it — it disappears from the plan."
+          : "Remove this item from the itinerary — it disappears from the plan."}
+      </p>
+      <button
+        type="button"
+        onClick={onRemove}
+        data-testid="card-detail-remove-node"
+        className="mt-2 h-9 rounded-md border border-[#8b2a1d]/40 px-4 font-sans text-[11px] uppercase tracking-[0.16em] text-[#8b2a1d] transition-colors hover:bg-[#8b2a1d]/5"
+      >
+        {isNote ? "Delete note" : "Remove from itinerary"}
       </button>
     </FacetCard>
   );

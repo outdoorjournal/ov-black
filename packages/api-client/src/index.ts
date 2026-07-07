@@ -1024,6 +1024,10 @@ export type GetItineraryResult =
       // over priced, non-discarded, selected nodes (per-person expanded by party
       // size). Amounts are strings like `cost_amount`; `{}` when nothing priced.
       totals: Record<string, string>;
+      // The itinerary's effective traveler count (floored at 1), matching the
+      // party expansion applied to `per_person` costs. Lets the billing UI derive
+      // a node's effective cost (and thus its remaining balance) client-side.
+      party_size: number;
       // The caller's own open fork of this baseline ("My version"), when present
       // — drives the traveler's two-version toggle. Null on a fork or when none.
       viewer_open_fork_id: string | null;
@@ -1052,6 +1056,7 @@ export async function getItinerary(
         nodes: data.nodes,
         edges: data.edges,
         totals: data.totals ?? {},
+        party_size: data.party_size ?? 1,
         viewer_open_fork_id: data.viewer_open_fork_id ?? null,
       };
     }

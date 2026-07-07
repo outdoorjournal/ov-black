@@ -18,7 +18,7 @@ import {
 } from "@ov-black/api-client";
 
 import {
-  type ChargeableNode,
+  type NodeBilling,
   reconcileBilling,
 } from "@/app/itinerary/[id]/_shell/dashboardModel";
 
@@ -41,6 +41,7 @@ const ERROR_COPY: Record<string, string> = {
   invoice_closed: "This invoice is closed.",
   currency_mismatch: "That line's currency doesn't match the invoice.",
   node_has_no_cost: "That item has no cost to charge.",
+  node_overbilled: "That would bill more than the item's remaining cost.",
   already_reversed: "That line was already voided.",
   no_line_items: "Add at least one line before issuing.",
   network_error: "Could not reach the server. Try again in a moment.",
@@ -63,6 +64,9 @@ const money = (currency: string, amount: number): string => {
     return `${currency} ${Math.round(amount).toLocaleString()}`;
   }
 };
+
+/** Round a major-unit amount to cents (charge lines are always 2dp). */
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 function Stat({
   label,
@@ -107,18 +111,30 @@ export function InvoicePanel({
   const [invoices, setInvoices] = useState<InvoiceResponse[]>([]);
   const [nodes, setNodes] = useState<NodeResponse[]>([]);
   const [totals, setTotals] = useState<Record<string, string>>({});
+  const [partySize, setPartySize] = useState(1);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState("Deposit");
   const [newCurrency, setNewCurrency] = useState("USD");
+  // Deposit split (blank = bill the whole remaining balance). A value <100 bills
+  // that fraction of each node's remaining cost now, leaving the rest for a later
+  // balance invoice — the SAME node ends up on both lines (amount-aware coverage).
+  const [depositPct, setDepositPct] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // The billing truth: coverage (which node is on which invoice), the uninvoiced
-  // remainder, and the per-currency trip-vs-invoiced-vs-paid reconciliation.
+  // The billing truth: per-node coverage + remaining balance (party-expanded), the
+  // billable set, and the per-currency trip-vs-invoiced-vs-paid reconciliation.
   const summary = useMemo(
-    () => reconcileBilling({ totals, invoices, nodes }),
-    [totals, invoices, nodes],
+    () => reconcileBilling({ totals, invoices, nodes, partySize }),
+    [totals, invoices, nodes, partySize],
   );
+
+  // A deposit fraction in (0, 1]; blank / out-of-range means the full remainder.
+  const depositFraction = useMemo(() => {
+    const pct = Number.parseFloat(depositPct);
+    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) return 1;
+    return pct / 100;
+  }, [depositPct]);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -145,6 +161,7 @@ export function InvoicePanel({
     if (graph.ok) {
       setNodes(graph.nodes);
       setTotals(graph.totals ?? {});
+      setPartySize(graph.party_size ?? 1);
     }
     setLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,13 +189,20 @@ export function InvoicePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itineraryId, newLabel, newCurrency, creating]);
 
-  // Create a draft, then charge each node onto it — the one gesture behind both
-  // "Bill all uninvoiced" (first/balance invoice) and "Issue supplemental" (the
-  // delta since the last issued invoice). One coherent model: invoices partition
-  // the trip's chargeable nodes, so a node is billed on exactly one of them.
+  // Create a draft, then charge a `fraction` of each node's remaining balance onto
+  // it — the one gesture behind "Bill all uninvoiced" (a deposit at <100%, or the
+  // full remainder) and "Issue supplemental". Each line posts an explicit amount
+  // (fraction × remaining, or the exact remainder when fraction ≥ 1 so a balance
+  // closes the node out precisely), tagged to its node so the SAME node can recur
+  // across a deposit + balance — amount-aware coverage nets them against its cost.
   const seedInvoice = useCallback(
-    async (label: string, currency: string, nodeIds: string[]) => {
-      if (!api || creating || nodeIds.length === 0) return;
+    async (
+      label: string,
+      currency: string,
+      targets: NodeBilling[],
+      fraction: number,
+    ) => {
+      if (!api || creating || targets.length === 0) return;
       setCreating(true);
       setError(null);
       try {
@@ -187,10 +211,16 @@ export function InvoicePanel({
           if (mounted.current) setError(copy(created.detail));
           return;
         }
-        for (const nodeId of nodeIds) {
+        for (const target of targets) {
+          const amount =
+            fraction >= 1 ? target.remaining : round2(target.remaining * fraction);
+          if (amount <= 0) continue;
           const line = await addInvoiceLineItem(api, created.invoice.id, {
-            node_id: nodeId,
+            node_id: target.id,
             kind: "charge",
+            amount: amount.toFixed(2),
+            currency,
+            description: target.title ?? "",
           });
           if (!line.ok) {
             if (mounted.current) setError(copy(line.detail));
@@ -206,11 +236,9 @@ export function InvoicePanel({
     [itineraryId, creating],
   );
 
-  const uninvoicedIdsFor = useCallback(
-    (currency: string): string[] =>
-      summary.uninvoicedNodes
-        .filter((n) => n.cost_currency === currency)
-        .map((n) => n.id),
+  const billableFor = useCallback(
+    (currency: string): NodeBilling[] =>
+      summary.billableNodes.filter((n) => n.currency === currency),
     [summary],
   );
 
@@ -282,9 +310,9 @@ export function InvoicePanel({
           className="flex flex-col gap-2 rounded-lg border border-[#8a5a1d]/30 bg-[#8a5a1d]/[0.06] px-3 py-3"
         >
           <p className="font-sans text-xs text-ink/80">
-            {summary.uninvoicedNodes.length === 1
-              ? "1 chargeable item isn’t on any invoice yet."
-              : `${summary.uninvoicedNodes.length} chargeable items aren’t on any invoice yet.`}{" "}
+            {summary.billableNodes.length === 1
+              ? "1 chargeable item still has an unbilled balance."
+              : `${summary.billableNodes.length} chargeable items still have an unbilled balance.`}{" "}
             Issue a supplemental to cover them.
           </p>
           <div className="flex flex-wrap gap-2">
@@ -295,7 +323,7 @@ export function InvoicePanel({
                   key={r.currency}
                   type="button"
                   onClick={() =>
-                    void seedInvoice("Supplemental", r.currency, uninvoicedIdsFor(r.currency))
+                    void seedInvoice("Supplemental", r.currency, billableFor(r.currency), 1)
                   }
                   disabled={creating}
                   data-testid="invoice-supplemental-issue"
@@ -339,23 +367,41 @@ export function InvoicePanel({
               {creating ? "Creating…" : "Create"}
             </button>
           </div>
-          {/* One-click: a draft covering every chargeable node not yet on an
-              invoice, in the entered currency. The fast path to the first invoice. */}
-          {uninvoicedIdsFor(newCurrency.trim().toUpperCase()).length > 0 ? (
+          {/* Deposit split: bill a % of each node's remaining now, the rest later.
+              Blank = the whole remaining balance. */}
+          <label className="flex items-center gap-2 font-sans text-[11px] text-ink/60">
+            <span className="uppercase tracking-[0.14em] text-ink/45">Deposit %</span>
+            <input
+              aria-label="Deposit percent"
+              inputMode="decimal"
+              placeholder="100"
+              value={depositPct}
+              onChange={(e) => setDepositPct(e.target.value)}
+              data-testid="invoice-deposit-pct"
+              className="w-16 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right tabular-nums text-ink"
+            />
+            <span className="text-ink/45">of each item now (blank = full balance)</span>
+          </label>
+          {/* One-click: a draft charging every chargeable node with a balance, at
+              the deposit % (or its full remainder). The fast path to an invoice. */}
+          {billableFor(newCurrency.trim().toUpperCase()).length > 0 ? (
             <button
               type="button"
               onClick={() =>
                 void seedInvoice(
                   newLabel || "Invoice",
                   newCurrency.trim().toUpperCase(),
-                  uninvoicedIdsFor(newCurrency.trim().toUpperCase()),
+                  billableFor(newCurrency.trim().toUpperCase()),
+                  depositFraction,
                 )
               }
               disabled={creating}
               data-testid="invoice-bill-all"
               className="self-start rounded-md border border-ink/20 bg-ink px-3 py-1 font-sans text-[10px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:opacity-40"
             >
-              Bill all uninvoiced ({uninvoicedIdsFor(newCurrency.trim().toUpperCase()).length})
+              {depositFraction < 1
+                ? `Bill ${Math.round(depositFraction * 100)}% deposit (${billableFor(newCurrency.trim().toUpperCase()).length})`
+                : `Bill all remaining (${billableFor(newCurrency.trim().toUpperCase()).length})`}
             </button>
           ) : null}
         </section>
@@ -376,7 +422,7 @@ export function InvoicePanel({
           <InvoiceCard
             key={invoice.id}
             invoice={invoice}
-            uninvoicedNodes={summary.uninvoicedNodes}
+            billableNodes={summary.billableNodes}
             canManage={canManage}
             api={api}
             onChanged={refresh}
@@ -403,14 +449,14 @@ const STATUS_TONE: Record<string, string> = {
 
 function InvoiceCard({
   invoice,
-  uninvoicedNodes,
+  billableNodes,
   canManage,
   api,
   onChanged,
   onError,
 }: {
   invoice: InvoiceResponse;
-  uninvoicedNodes: ChargeableNode[];
+  billableNodes: NodeBilling[];
   canManage: boolean;
   api: ReturnType<typeof createApiClient> | null;
   onChanged: () => Promise<void>;
@@ -421,6 +467,11 @@ function InvoiceCard({
   );
   const [adjAmount, setAdjAmount] = useState("");
   const [adjDesc, setAdjDesc] = useState("");
+  // Per-node charge: pick a node, then optionally type an explicit amount (blank =
+  // its full remaining balance). The two-input form so a deposit can be a precise
+  // figure, not only the panel's whole-invoice %.
+  const [chargeNodeId, setChargeNodeId] = useState("");
+  const [chargeAmount, setChargeAmount] = useState("");
   const [busy, setBusy] = useState(false);
 
   const lines = invoice.lines ?? [];
@@ -448,11 +499,27 @@ function InvoiceCard({
     [busy, onChanged, onError],
   );
 
-  const chargeNode = (nodeId: string) => {
-    if (!api || !nodeId) return;
+  // Charge the picked node: an explicit typed amount if given (a precise deposit),
+  // else its FULL remaining balance (the "balance" action, closing it to zero).
+  // Either way it's tagged to the node, so it nets against the node's cost. The
+  // server guards a charge that would exceed the node's remaining.
+  const submitCharge = (target: NodeBilling | null) => {
+    if (!api || !target) return;
+    const typed = chargeAmount.trim();
+    const amount = typed ? round2(Number.parseFloat(typed)) : target.remaining;
+    if (!Number.isFinite(amount) || amount <= 0) return;
     void run(() =>
-      addInvoiceLineItem(api, invoice.id, { node_id: nodeId, kind: "charge" }),
-    );
+      addInvoiceLineItem(api, invoice.id, {
+        node_id: target.id,
+        kind: "charge",
+        amount: amount.toFixed(2),
+        currency: invoice.currency,
+        description: target.title ?? "",
+      }),
+    ).then(() => {
+      setChargeNodeId("");
+      setChargeAmount("");
+    });
   };
 
   const addAdjustment = () => {
@@ -470,10 +537,10 @@ function InvoiceCard({
     });
   };
 
-  // Only nodes not already on any invoice — the picker can't double-charge.
-  const candidates = uninvoicedNodes.filter(
-    (n) => n.cost_currency === invoice.currency,
-  );
+  // Nodes with a remaining balance in this currency — a partially-billed node
+  // stays here (its balance line closes it out) until fully covered.
+  const candidates = billableNodes.filter((n) => n.currency === invoice.currency);
+  const chargeTarget = candidates.find((c) => c.id === chargeNodeId) ?? null;
 
   return (
     <section
@@ -517,20 +584,20 @@ function InvoiceCard({
 
       {canWrite ? (
         <div className="flex flex-col gap-2 pt-1">
-          {/* Charge an approved node's cost (draft only) */}
+          {/* Charge a node (draft only): pick it, optionally type an amount (blank
+              = its full remaining balance), then Add. Explicit amounts let a
+              deposit be a precise figure per node; the panel's Deposit % does it
+              in bulk. */}
           {invoice.status === "draft" && candidates.length > 0 ? (
-            <label className="flex items-center gap-2 font-sans text-xs text-ink/70">
+            <div className="flex items-center gap-1.5 font-sans text-xs text-ink/70">
               <span className="shrink-0 uppercase tracking-[0.14em] text-ink/45">
                 Charge
               </span>
               <select
                 aria-label="Charge a node"
                 data-testid="invoice-charge-node"
-                defaultValue=""
-                onChange={(e) => {
-                  chargeNode(e.target.value);
-                  e.target.value = "";
-                }}
+                value={chargeNodeId}
+                onChange={(e) => setChargeNodeId(e.target.value)}
                 className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 text-sm text-ink"
               >
                 <option value="" disabled>
@@ -538,11 +605,28 @@ function InvoiceCard({
                 </option>
                 {candidates.map((n) => (
                   <option key={n.id} value={n.id}>
-                    {n.title} · {n.cost_currency} {n.cost_amount}
+                    {n.title} · {money(n.currency, n.remaining)}
+                    {n.charged > 0 ? " remaining" : ""}
                   </option>
                 ))}
               </select>
-            </label>
+              <input
+                aria-label="Charge amount"
+                placeholder={chargeTarget ? chargeTarget.remaining.toFixed(2) : "amount"}
+                value={chargeAmount}
+                onChange={(e) => setChargeAmount(e.target.value)}
+                className="w-24 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right tabular-nums text-ink"
+              />
+              <button
+                type="button"
+                onClick={() => submitCharge(chargeTarget)}
+                disabled={busy || !chargeTarget}
+                data-testid="invoice-charge-node-add"
+                className="rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+              >
+                Add
+              </button>
+            </div>
           ) : null}
 
           {/* Signed adjustment (discount / child / tax / fee) */}

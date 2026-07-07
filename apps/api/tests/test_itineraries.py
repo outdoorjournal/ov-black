@@ -312,12 +312,19 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _sum_costs(_session: Any, _itinerary_id: uuid.UUID, **_kwargs: Any) -> Any:
         return returns.get("totals", {})
 
+    # The graph-read endpoint also resolves party size (surfaced as `party_size`
+    # so the billing UI can expand per_person costs). Stub it off the fake session;
+    # defaults to 1 unless a test sets returns["party_size"].
+    async def _party_size(_session: Any, _itinerary_id: uuid.UUID) -> int:
+        return int(returns.get("party_size", 1))
+
     # Patch the bound names inside the router module — that's the call site.
     from app.routers import itineraries as routers_itineraries
 
     monkeypatch.setattr(routers_itineraries, "create_itinerary", _create)
     monkeypatch.setattr(routers_itineraries, "get_itinerary_graph", _get_graph)
     monkeypatch.setattr(routers_itineraries, "sum_node_costs", _sum_costs)
+    monkeypatch.setattr(routers_itineraries, "resolve_party_size", _party_size)
     monkeypatch.setattr(routers_itineraries, "update_itinerary_details", _update_itinerary)
     monkeypatch.setattr(routers_itineraries, "add_node", _add_node)
     monkeypatch.setattr(routers_itineraries, "update_node", _update_node)
@@ -630,9 +637,13 @@ def test_get_itinerary_surfaces_per_currency_totals(
         "USD": Decimal("450.00"),
         "EUR": Decimal("80.00"),
     }
+    # The effective traveler count rides along so the billing UI can expand
+    # per_person costs into per-node remaining balances (D-PAY deposit/balance).
+    stub_service["returns"]["party_size"] = 3
     resp = client.get(f"/itinerary/{iid}", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["totals"] == {"USD": "450.00", "EUR": "80.00"}
+    assert resp.json()["party_size"] == 3
 
 
 def test_add_node_provenance_asymmetry_returns_400(
