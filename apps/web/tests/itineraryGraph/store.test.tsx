@@ -270,10 +270,12 @@ describe("editing actions are inert for non-editable viewers", () => {
       result.current.getState().editNodeField("n1", "title", "Hacked");
       result.current.getState().addNode({ type: "note", title: "Sneaky" });
       result.current.getState().removeNode("n1");
+      result.current.getState().updateCardDetails("n1", { description: "Sneaky" });
     });
     const { nodes } = result.current.getState();
     expect(nodes).toHaveLength(1);
     expect(nodes[0]!.title).toBe("Original");
+    expect(nodes[0]!.metadata["description"]).toBeUndefined();
   });
 
   test("staff with the lock but no credentials cannot mutate (no token → no-op)", () => {
@@ -284,10 +286,12 @@ describe("editing actions are inert for non-editable viewers", () => {
       result.current.getState().editNodeField("n1", "title", "Hacked");
       result.current.getState().addNode({ type: "note", title: "Sneaky" });
       result.current.getState().removeNode("n1");
+      result.current.getState().updateCardDetails("n1", { description: "Sneaky" });
     });
     const { nodes } = result.current.getState();
     expect(nodes).toHaveLength(1);
     expect(nodes[0]!.title).toBe("Original");
+    expect(nodes[0]!.metadata["description"]).toBeUndefined();
   });
 
   test("a credentialed traveler cannot remove a firmed non-note card", () => {

@@ -20,6 +20,33 @@ import {
 } from "../../model/horizontalTime";
 import type { NodeResponse } from "../../model/horizontalTypes";
 import { getHMeta } from "../../model/horizontalTypes";
+import type { BillingChip } from "@/app/itinerary/[id]/_shell/dashboardModel";
+
+// ADV-15: the advisor's board-glance money state, worn in the type-label row.
+// Tones follow the ledger conventions (amber to-do, blue issued, green settled).
+const BILLING_CHIP_TONE: Record<
+  BillingChip["state"],
+  { label: string; color: string }
+> = {
+  unbilled: { label: "Unbilled", color: "#8a5a1d" },
+  partial: { label: "Part-billed", color: "#8a5a1d" },
+  billed: { label: "Billed", color: "#1d4e8b" },
+  paid: { label: "Paid", color: "#1d6b3a" },
+};
+
+function BillingChipBadge({ chip, nodeId }: { chip: BillingChip; nodeId: string }) {
+  const tone = BILLING_CHIP_TONE[chip.state];
+  return (
+    <span
+      data-testid={`billing-chip-${nodeId}`}
+      data-billing-state={chip.state}
+      className="font-sans text-[9px] uppercase tracking-[0.14em]"
+      style={{ color: tone.color }}
+    >
+      {tone.label}
+    </span>
+  );
+}
 
 interface NodeCardProps {
   node: NodeResponse;
@@ -32,6 +59,8 @@ interface NodeCardProps {
   // Count of `note` nodes attached to this one (0014). When > 0 the card shows
   // a small badge; the notes themselves are read in the expanded detail sheet.
   attachedNoteCount?: number;
+  // ADV-15: the card's billing state (advisor surfaces only). Absent → no chip.
+  billingChip?: BillingChip | null;
 }
 
 export function NodeCard({
@@ -41,6 +70,7 @@ export function NodeCard({
   flash,
   compact = false,
   attachedNoteCount = 0,
+  billingChip = null,
 }: NodeCardProps) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
@@ -71,6 +101,11 @@ export function NodeCard({
         width={width}
         lockReason={node.lock_reason ?? null}
         lockLabel={node.type}
+        headerExtra={
+          billingChip ? (
+            <BillingChipBadge chip={billingChip} nodeId={node.id} />
+          ) : undefined
+        }
       >
         {compact ? (
           <CompactBody

@@ -293,6 +293,56 @@ export function reconcileBilling(input: {
   };
 }
 
+// ── Per-card billing chip (ADV-15) ───────────────────────────────────────────
+// The reverse direction of the cockpit: the BOARD shows each card's money state,
+// so "how do the invoices relate to the inventory" is readable from either side.
+// Pure — the timeline store computes this once per invoices+graph fetch and every
+// card wears the result. A card with no cost and no charge wears nothing.
+
+export type BillingChipState = "unbilled" | "partial" | "billed" | "paid";
+
+export type BillingChip = {
+  state: BillingChipState;
+  /** Deep-link target — the first covering invoice; null while unbilled. */
+  invoiceId: string | null;
+};
+
+/** Statuses whose money state is an advisor concern (post-approval lifecycle). */
+const CHIP_STATUSES = new Set(["approved", "booked", "confirmed"]);
+
+export function billingChipsByNode(input: {
+  invoices: InvoiceResponse[];
+  nodes: (ChargeableNode & { id: string })[];
+  partySize?: number | undefined;
+}): Record<string, BillingChip> {
+  const partySize = input.partySize ?? 1;
+  const coverage = coverageByNode(input.invoices);
+  const chips: Record<string, BillingChip> = {};
+  for (const node of input.nodes) {
+    const cov = coverage.get(node.id) ?? [];
+    const priced = node.cost_amount != null && Boolean(node.cost_currency);
+    if (cov.length === 0) {
+      // Unbilled is only meaningful on a priced card that has entered the
+      // bookable lifecycle — a costless or still-proposed card wears nothing.
+      if (priced && CHIP_STATUSES.has(node.status)) {
+        chips[node.id] = { state: "unbilled", invoiceId: null };
+      }
+      continue;
+    }
+    const charged = cov.reduce((sum, c) => sum + c.amount, 0);
+    const effective = effectiveNodeCost(node, partySize);
+    const invoiceId = cov[0]?.invoiceId ?? null;
+    if (effective - charged > COVERAGE_EPSILON && charged > 0) {
+      chips[node.id] = { state: "partial", invoiceId };
+    } else if (cov.every((c) => c.status === "paid")) {
+      chips[node.id] = { state: "paid", invoiceId };
+    } else {
+      chips[node.id] = { state: "billed", invoiceId };
+    }
+  }
+  return chips;
+}
+
 // ── Next best action ─────────────────────────────────────────────────────────
 // The Dashboard's "you're not lost" anchor (design §4): exactly ONE guided action,
 // chosen from the trip's real state. The target is either a route (deep-link) or a

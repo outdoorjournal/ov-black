@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import Link from "next/link";
+
 import {
   type InvoiceLineItemResponse,
   type InvoiceResponse,
@@ -21,6 +23,7 @@ import {
   type NodeBilling,
   reconcileBilling,
 } from "@/app/itinerary/[id]/_shell/dashboardModel";
+import { TYPE_TOKENS, type CardKind } from "../../shared/cards/tokens";
 
 // Advisor invoicing surface — the itinerary-aside Invoices tab (M005/I1).
 //
@@ -67,6 +70,60 @@ const money = (currency: string, amount: number): string => {
 
 /** Round a major-unit amount to cents (charge lines are always 2dp). */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+// ── Card identity, wherever money references it (ADV-15) ─────────────────────
+// The invoice ↔ inventory relation was previously only legible as ledger text
+// (a line's free-text description). Everywhere money points at a node we now
+// render the CARD's identity — type glyph + title deep-linking to the card
+// detail + its schedule stamp — so an invoice reads as "which cards, when".
+
+const tokenFor = (type: string) =>
+  TYPE_TOKENS[(type in TYPE_TOKENS ? type : "experience") as CardKind];
+
+/** Short schedule stamp — "Wed, Sep 24" — or null while unscheduled. */
+const whenStamp = (node: NodeResponse): string | null => {
+  if (!node.starts_at) return null;
+  const d = new Date(node.starts_at);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+function NodeIdentity({
+  node,
+  itineraryId,
+  dim = false,
+}: {
+  node: NodeResponse;
+  itineraryId: string;
+  dim?: boolean | undefined;
+}) {
+  const token = tokenFor(node.type);
+  const when = whenStamp(node);
+  const Icon = token.Icon;
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <Icon size={12} strokeWidth={1.6} aria-hidden className="shrink-0 text-ink/55" />
+      <Link
+        href={`/itinerary/${itineraryId}/item/${node.id}`}
+        data-testid={`invoice-node-link-${node.id}`}
+        className={`min-w-0 truncate font-sans text-sm underline-offset-2 hover:underline ${
+          dim ? "text-ink/40 line-through" : "text-ink/90"
+        }`}
+      >
+        {node.title}
+      </Link>
+      {when ? (
+        <span className="shrink-0 font-sans text-[10px] uppercase tracking-[0.12em] text-ink/45">
+          {when}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function Stat({
   label,
@@ -128,6 +185,9 @@ export function InvoicePanel({
     () => reconcileBilling({ totals, invoices, nodes, partySize }),
     [totals, invoices, nodes, partySize],
   );
+  // Card identity lookup — every money row that references a node renders the
+  // card (glyph + linked title + when), not just its ledger description.
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   // A deposit fraction in (0, 1]; blank / out-of-range means the full remainder.
   const depositFraction = useMemo(() => {
@@ -302,6 +362,51 @@ export function InvoicePanel({
         </section>
       ) : null}
 
+      {/* The unbilled items THEMSELVES (ADV-15) — the reconcile strip's
+          "uninvoiced" number expanded into identifiable inventory: which cards,
+          when, and how much each still carries. The pointable answer to "am I
+          done billing". */}
+      {canManage && loaded && summary.billableNodes.length > 0 ? (
+        <section
+          data-testid="invoice-unbilled"
+          className="flex flex-col gap-1.5 rounded-lg border border-[#8a5a1d]/25 bg-paper px-3 py-3"
+        >
+          <span className="font-sans text-[11px] uppercase tracking-[0.16em] text-[#8a5a1d]">
+            Not yet billed
+          </span>
+          <ul className="flex flex-col divide-y divide-ink/5">
+            {summary.billableNodes.map((b) => {
+              const node = nodeById.get(b.id);
+              return (
+                <li
+                  key={b.id}
+                  data-testid={`invoice-unbilled-${b.id}`}
+                  className="flex items-center gap-3 py-1.5"
+                >
+                  <span className="min-w-0 flex-1">
+                    {node ? (
+                      <NodeIdentity node={node} itineraryId={itineraryId} />
+                    ) : (
+                      <span className="min-w-0 truncate font-sans text-sm text-ink/90">
+                        {b.title}
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 font-sans text-sm tabular-nums text-ink/80">
+                    {money(b.currency, b.remaining)}
+                    {b.charged > 0 ? (
+                      <span className="ml-1 font-sans text-[10px] uppercase tracking-[0.12em] text-ink/45">
+                        of {money(b.currency, b.effective)}
+                      </span>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       {/* Supplemental prompt — items became chargeable after an invoice went out;
           offer a pre-seeded supplemental over exactly the uncovered nodes. */}
       {canManage && summary.supplemental ? (
@@ -422,6 +527,8 @@ export function InvoicePanel({
           <InvoiceCard
             key={invoice.id}
             invoice={invoice}
+            itineraryId={itineraryId}
+            nodeById={nodeById}
             billableNodes={summary.billableNodes}
             canManage={canManage}
             api={api}
@@ -449,6 +556,8 @@ const STATUS_TONE: Record<string, string> = {
 
 function InvoiceCard({
   invoice,
+  itineraryId,
+  nodeById,
   billableNodes,
   canManage,
   api,
@@ -456,6 +565,8 @@ function InvoiceCard({
   onError,
 }: {
   invoice: InvoiceResponse;
+  itineraryId: string;
+  nodeById: Map<string, NodeResponse>;
   billableNodes: NodeBilling[];
   canManage: boolean;
   api: ReturnType<typeof createApiClient> | null;
@@ -571,6 +682,8 @@ function InvoiceCard({
             <LineRow
               key={line.id}
               line={line}
+              node={line.node_id ? (nodeById.get(line.node_id) ?? null) : null}
+              itineraryId={itineraryId}
               reversed={reversedIds.has(line.id)}
               canWrite={canWrite}
               onVoid={() =>
@@ -702,11 +815,16 @@ function InvoiceCard({
 
 function LineRow({
   line,
+  node,
+  itineraryId,
   reversed,
   canWrite,
   onVoid,
 }: {
   line: InvoiceLineItemResponse;
+  /** The card this line charges, when it's a node-tagged line (ADV-15). */
+  node: NodeResponse | null;
+  itineraryId: string;
   reversed: boolean;
   canWrite: boolean;
   onVoid: () => void;
@@ -716,13 +834,19 @@ function LineRow({
   return (
     <li className="flex items-center gap-3 py-2" data-testid={`line-${line.id}`}>
       <div className="min-w-0 flex-1">
-        <p
-          className={`truncate font-sans text-sm ${
-            reversed ? "text-ink/40 line-through" : "text-ink/90"
-          }`}
-        >
-          {line.description || line.kind}
-        </p>
+        {node ? (
+          // A node-tagged line reads as the CARD it charges — glyph + linked
+          // title + schedule stamp — not as ledger prose.
+          <NodeIdentity node={node} itineraryId={itineraryId} dim={reversed} />
+        ) : (
+          <p
+            className={`truncate font-sans text-sm ${
+              reversed ? "text-ink/40 line-through" : "text-ink/90"
+            }`}
+          >
+            {line.description || line.kind}
+          </p>
+        )}
         <p className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
           {line.kind}
         </p>

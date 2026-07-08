@@ -10,6 +10,8 @@
 //   (d) ask about this — scopes the persistent concierge with a "Re: …" chip
 //   (e) scheduling      — reschedule / unschedule via the store's own actions
 //   (f) money          — this item's charge line, invoice status, paid/owed, booking
+//   (g) edit           — post-creation details (ADV-13): description, price,
+//                        the operator's confirmation number
 // Role-agnostic: a traveler opens + asks too; the edit affordances gate on role.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -19,6 +21,7 @@ import { useRouter } from "next/navigation";
 import {
   createApiClient,
   getNodeCharges,
+  type CostKind,
   type NodeChargesResponse,
 } from "@ov-black/api-client";
 
@@ -178,6 +181,16 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
                 onMove={(dayKey, minute) => storeApi.getState().moveNode(node.id, dayKey, minute)}
                 onUnschedule={() => storeApi.getState().unscheduleNode(node.id)}
                 onEditTitle={(value) => storeApi.getState().editNodeField(node.id, "title", value)}
+              />
+            ) : null}
+            {/* (ADV-13) post-creation details. A note's text IS its title, and
+                cost/confirmation don't apply to it — notes skip the facet. */}
+            {editable && node.type !== "note" ? (
+              <EditFacet
+                node={node}
+                onSave={(input) =>
+                  storeApi.getState().updateCardDetails(node.id, input)
+                }
               />
             ) : null}
             <MoneyFacet
@@ -426,6 +439,166 @@ function ScheduleFacet({
             Unschedule
           </button>
         ) : null}
+      </div>
+    </FacetCard>
+  );
+}
+
+// ── (g) Edit — post-creation card details (ADV-13) ──────────────────────────────
+// Cards were write-once after the composer: title + schedule only. This facet
+// closes the rest — description (renders in every zoom body), first-class price
+// (feeds totals + billing; also how a pasted-link card finally gets priced), and
+// the operator's confirmation number (renders as the booked/confirmed footer
+// serial — the "manually booked off-inventory" reminder in doc/qa/advisor.md).
+
+const COST_KIND_OPTIONS: ReadonlyArray<{ value: CostKind; label: string }> = [
+  { value: "total", label: "Total" },
+  { value: "per_person", label: "Per person" },
+];
+
+function EditFacet({
+  node,
+  onSave,
+}: {
+  node: NodeResponse;
+  onSave: (input: {
+    description?: string;
+    confirmationNumber?: string;
+    cost?: { amount: string; currency: string; kind: CostKind } | null;
+  }) => void;
+}) {
+  const meta = (node.metadata ?? {}) as {
+    description?: unknown;
+    confirmation_number?: unknown;
+  };
+  const seedDescription =
+    typeof meta.description === "string" ? meta.description : "";
+  const seedConfirmation =
+    typeof meta.confirmation_number === "string" ? meta.confirmation_number : "";
+  const seedAmount = node.cost_amount ?? "";
+  const seedCurrency = node.cost_currency ?? "USD";
+  const seedKind: CostKind = node.cost_kind ?? "total";
+
+  const [description, setDescription] = useState(seedDescription);
+  const [confirmation, setConfirmation] = useState(seedConfirmation);
+  const [amount, setAmount] = useState(seedAmount);
+  const [currency, setCurrency] = useState(seedCurrency);
+  const [kind, setKind] = useState<CostKind>(seedKind);
+
+  const amountTrim = amount.trim();
+  const amountValid =
+    amountTrim === "" || Number.isFinite(Number.parseFloat(amountTrim));
+  const costChanged =
+    amountTrim !== seedAmount ||
+    (amountTrim !== "" &&
+      (currency.trim().toUpperCase() !== seedCurrency || kind !== seedKind));
+  const dirty =
+    description !== seedDescription ||
+    confirmation !== seedConfirmation ||
+    costChanged;
+
+  const save = () => {
+    if (!dirty || !amountValid) return;
+    const input: Parameters<typeof onSave>[0] = {};
+    if (description !== seedDescription) input.description = description;
+    if (confirmation !== seedConfirmation) input.confirmationNumber = confirmation;
+    if (costChanged) {
+      input.cost = amountTrim
+        ? {
+            amount: amountTrim,
+            currency: currency.trim().toUpperCase() || "USD",
+            kind,
+          }
+        : null;
+    }
+    onSave(input);
+  };
+
+  const fieldClass =
+    "rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm text-ink";
+
+  return (
+    <FacetCard label="Edit details" testid="card-detail-edit">
+      <div className="flex flex-col gap-2.5">
+        <label className="flex flex-col gap-1">
+          <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+            Description
+          </span>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            data-testid="card-edit-description"
+            className={`${fieldClass} resize-y leading-relaxed`}
+            placeholder="What makes this one special…"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+            Price
+          </span>
+          <span className="flex items-center gap-1.5">
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="1200.00"
+              data-testid="card-edit-amount"
+              className={`${fieldClass} w-28 text-right tabular-nums`}
+            />
+            <input
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              maxLength={3}
+              aria-label="Price currency"
+              data-testid="card-edit-currency"
+              className={`${fieldClass} w-16 uppercase`}
+            />
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as CostKind)}
+              aria-label="Price kind"
+              data-testid="card-edit-kind"
+              className={fieldClass}
+            >
+              {COST_KIND_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </span>
+          <span className="font-serif text-[12px] italic text-ink/45">
+            Clear the amount to remove the price.
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+            Confirmation # / PNR
+          </span>
+          <input
+            value={confirmation}
+            onChange={(e) => setConfirmation(e.target.value)}
+            placeholder="e.g. HX7KQ2"
+            data-testid="card-edit-confirmation"
+            className={`${fieldClass} font-mono`}
+          />
+          <span className="font-serif text-[12px] italic text-ink/45">
+            Shown on the card once this is booked or confirmed.
+          </span>
+        </label>
+
+        <button
+          type="button"
+          onClick={save}
+          disabled={!dirty || !amountValid}
+          data-testid="card-edit-save"
+          className="h-9 self-start rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+        >
+          Save details
+        </button>
       </div>
     </FacetCard>
   );

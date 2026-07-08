@@ -29,7 +29,6 @@ import {
   selectCanApprove,
   selectCanPropose,
   selectCanReopen,
-  selectEditable,
   selectScheduledCount,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
@@ -698,10 +697,10 @@ function AdvisorManagement({
   apiBaseUrl: string | null;
   accessToken: string | null;
 }) {
-  const editable = itineraryGraphStore.useStore(selectEditable);
-  // Invoicing is advisor-only server-side and independent of the graph edit-lock
-  // (it must work on an approved trip), so it gates on role, not `editable`.
-  const canManageInvoices = itineraryGraphStore.useStore((s) => s.canEdit);
+  // Invoicing AND booking are advisor-only server-side and independent of the
+  // graph edit-lock (both must work on a proposed/approved trip, where the
+  // build is frozen), so they gate on role, not `selectEditable` (ADV-12).
+  const canManage = itineraryGraphStore.useStore((s) => s.canEdit);
   const [tab, setTab] = useState<ManageTab>("invoices");
 
   return (
@@ -741,7 +740,7 @@ function AdvisorManagement({
             itineraryId={itineraryId}
             apiBaseUrl={apiBaseUrl}
             accessToken={accessToken}
-            canManage={canManageInvoices}
+            canManage={canManage}
           />
         </div>
         <div className={tab === "booking" ? "" : "hidden"}>
@@ -749,7 +748,7 @@ function AdvisorManagement({
             itineraryId={itineraryId}
             apiBaseUrl={apiBaseUrl}
             accessToken={accessToken}
-            editable={editable}
+            canManage={canManage}
           />
         </div>
       </div>

@@ -8,7 +8,7 @@
 //   - Issue calls issueInvoice,
 //   - without the edit lock the assemble controls are hidden (read-only).
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 
 vi.mock("@ov-black/api-client", () => ({
@@ -311,4 +311,71 @@ test("supplemental prompt appears once an invoice is issued and seeds the delta"
       description: "Park Hyatt",
     }),
   );
+});
+
+// ── ADV-15: invoice ↔ inventory legibility ────────────────────────────────────
+
+test("the unbilled tray lists uncovered cards as identifiable inventory", async () => {
+  renderPanel();
+  const tray = await screen.findByTestId("invoice-unbilled");
+  expect(tray).toBeTruthy();
+  // node-2 (Park Hyatt, $1200, uncharged) is the uncovered card — its row
+  // carries the card identity, deep-linking to the card detail.
+  expect(screen.getByTestId("invoice-unbilled-node-2")).toBeTruthy();
+  const link = screen.getByTestId("invoice-node-link-node-2") as HTMLAnchorElement;
+  expect(link.textContent).toBe("Park Hyatt");
+  expect(link.getAttribute("href")).toBe("/itinerary/itin-1/item/node-2");
+});
+
+test("the unbilled tray is hidden from a read-only (traveler) viewer", async () => {
+  renderPanel(false);
+  await screen.findByTestId("invoice-panel");
+  await waitFor(() => expect(listInvoices).toHaveBeenCalled());
+  expect(screen.queryByTestId("invoice-unbilled")).toBeNull();
+});
+
+test("a node-tagged charge line renders the card's identity with a schedule stamp", async () => {
+  // Put the charged node (node-1) in the graph, scheduled, so the ledger line
+  // resolves to the card rather than falling back to description text.
+  vi.mocked(getItinerary).mockResolvedValue({
+    ok: true,
+    itinerary: {},
+    nodes: [
+      NODE,
+      {
+        ...NODE,
+        id: "node-1",
+        title: "Aman Kyoto",
+        starts_at: "2026-09-24T15:00:00+09:00",
+      },
+    ],
+    edges: [],
+    totals: { USD: "1950.00" },
+    party_size: 1,
+  } as never);
+  renderPanel();
+  // node-1 is only PARTIALLY charged ($1000 of $1200), so its identity renders
+  // in two places — the ledger line AND the unbilled tray (for the remainder).
+  // Scope each assertion to its row.
+  const row = await screen.findByTestId("line-ln-charge");
+  const link = within(row).getByTestId(
+    "invoice-node-link-node-1",
+  ) as HTMLAnchorElement;
+  expect(link.textContent).toBe("Aman Kyoto");
+  expect(link.getAttribute("href")).toBe("/itinerary/itin-1/item/node-1");
+  // The line carries the card's when-stamp (weekday + month + day), so it
+  // reads as inventory ("which card, when"), not ledger prose.
+  expect(row.textContent).toMatch(/Sep/);
+  // And the remainder shows up as a partially-billed tray row.
+  const tray = screen.getByTestId("invoice-unbilled-node-1");
+  expect(tray.textContent).toContain("of");
+});
+
+test("a charged node NOT in the graph still renders its ledger description", async () => {
+  // The default graph carries only node-2, so line ln-charge (node-1) has no
+  // card to resolve — it must fall back to the description, never blank.
+  renderPanel();
+  await screen.findByTestId("invoice-panel");
+  const row = await screen.findByTestId("line-ln-charge");
+  expect(row.textContent).toContain("Aman Kyoto");
 });

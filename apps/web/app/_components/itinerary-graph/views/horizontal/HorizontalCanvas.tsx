@@ -16,6 +16,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef } from "react";
 
 import { NodeCard } from "./NodeCard";
+import type { BillingChip } from "@/app/itinerary/[id]/_shell/dashboardModel";
 import {
   COL_WIDTH,
   DAY_HEADER_HEIGHT,
@@ -86,6 +87,8 @@ interface HorizontalCanvasProps {
   onScrollToNode: (id: string) => void;
   // Host node id → attached `note` nodes, for the per-card note badge.
   attachedNotes?: Map<string, NodeResponse[]>;
+  // ADV-15: node id → its billing chip (advisor surfaces; absent → no chips).
+  billingChips?: Record<string, BillingChip>;
 }
 
 function MeasuredCard({
@@ -134,6 +137,7 @@ export function HorizontalCanvas({
   onMeasureCard,
   onScrollToNode,
   attachedNotes,
+  billingChips,
 }: HorizontalCanvasProps) {
   const positioned = Array.from(layout.positions.values());
   const proposalIds = useMemo(
@@ -441,6 +445,7 @@ export function HorizontalCanvas({
                   tzOffsetHours={tzOffsetHours}
                   compact={p.compact}
                   attachedNoteCount={attachedNotes?.get(p.node.id)?.length ?? 0}
+                  billingChip={billingChips?.[p.node.id] ?? null}
                 />
               );
             })}
@@ -608,6 +613,7 @@ function CardWrap({
   tzOffsetHours,
   compact,
   attachedNoteCount,
+  billingChip,
 }: {
   p: PositionedHNode;
   axisWidth: number;
@@ -625,6 +631,7 @@ function CardWrap({
   tzOffsetHours: number;
   compact: boolean;
   attachedNoteCount: number;
+  billingChip: BillingChip | null;
 }) {
   // Draggable only when staff editing is unlocked AND the node isn't a
   // locked-status (approved/confirmed) row.
@@ -697,6 +704,7 @@ function CardWrap({
               flash={isFlashing}
               compact={compact}
               attachedNoteCount={attachedNoteCount}
+              billingChip={billingChip}
             />
           </motion.div>
           {isProposal ? (

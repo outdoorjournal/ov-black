@@ -153,6 +153,7 @@ export function HorizontalView({
   const pendingProposals = itineraryGraphStore.useStore((s) => s.pendingProposals);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
+  const billingChips = itineraryGraphStore.useStore((s) => s.billingChips);
   const pxPerMinute = itineraryGraphStore.useStore((s) => s.pxPerMinute);
   // Place mode (PS5): a card lifted off the Collection, waiting for a slot. When
   // set, the day columns become pulsing tap targets (see onPlaceTap below).
@@ -866,6 +867,7 @@ export function HorizontalView({
                     onMeasureCard={handleMeasureCard}
                     onScrollToNode={scrollToNode}
                     attachedNotes={attachedNotes}
+                    billingChips={billingChips}
                   />
                 </div>
                 <ScrollHint
@@ -1039,7 +1041,7 @@ export function HorizontalView({
                       itineraryId={timeline.itinerary.id}
                       apiBaseUrl={apiBaseUrl}
                       accessToken={accessToken}
-                      editable={editable}
+                      canManage={canEdit}
                     />
                   </div>
                 </div>

@@ -61,6 +61,7 @@ export function MobileItineraryLayout({
     (s) => s.pendingProposals,
   );
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
+  const billingChips = itineraryGraphStore.useStore((s) => s.billingChips);
   const role = itineraryGraphStore.useStore((s) => s.role);
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
@@ -218,6 +219,7 @@ export function MobileItineraryLayout({
                   attachedNotes={attachedNotes}
                   canLeaveNote={canLeaveNote}
                   onAddDayNote={addFreeStandingNote}
+                  billingChips={billingChips}
                 />
               </section>
             ))}

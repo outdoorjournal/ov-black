@@ -6,6 +6,7 @@
 // card width; the bottom padding clears the peeked concierge sheet.
 
 import { NodeCard } from "../horizontal/NodeCard";
+import type { BillingChip } from "@/app/itinerary/[id]/_shell/dashboardModel";
 import { NotesPanel } from "../../shared/NotesPanel";
 import type { DayGroup } from "../../shared/groupNodesByDay";
 import type { NodeResponse } from "../../model/horizontalTypes";
@@ -21,6 +22,8 @@ interface DayTimelineProps {
   // ("a dinner between these") on this day for staff to act on.
   canLeaveNote?: boolean;
   onAddDayNote?: (dayKey: string, text: string) => void;
+  // ADV-15: node id → its billing chip (advisor surfaces; absent → no chips).
+  billingChips?: Record<string, BillingChip>;
 }
 
 export function DayTimeline({
@@ -31,6 +34,7 @@ export function DayTimeline({
   attachedNotes,
   canLeaveNote = false,
   onAddDayNote,
+  billingChips,
 }: DayTimelineProps) {
   const dayComposer =
     canLeaveNote && onAddDayNote ? (
@@ -67,6 +71,7 @@ export function DayTimeline({
           flash={flashNodeId === node.id}
           onClick={() => onCardClick(node.id)}
           attachedNoteCount={attachedNotes?.get(node.id)?.length ?? 0}
+          billingChip={billingChips?.[node.id] ?? null}
         />
       ))}
       {dayComposer}

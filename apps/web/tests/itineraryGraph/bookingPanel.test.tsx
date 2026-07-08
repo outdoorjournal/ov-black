@@ -1,4 +1,4 @@
-// M005/I3 — advisor booking panel (itinerary-aside Booking tab).
+// M005/I3 — advisor booking panel (dashboard Booking tab).
 //
 // The booking wrappers are mocked so we assert the panel's own wiring:
 //   - on mount it renders bookable nodes + the reconciliation banner,
@@ -7,7 +7,8 @@
 //   - Re-price on a flight calls refreshOffer and shows the held fare,
 //   - Confirm posts the supplier ref via confirmNode,
 //   - an unbalanced report renders the "Not reconciled" banner,
-//   - without the edit lock the book/confirm controls are hidden (read-only).
+//   - without the advisor role the book/confirm controls are hidden (read-only)
+//     — booking gates on role, never the graph edit-lock (ADV-12).
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -121,13 +122,13 @@ beforeEach(() => {
   } as never);
 });
 
-function renderPanel(editable = true) {
+function renderPanel(canManage = true) {
   return render(
     <BookingPanel
       apiBaseUrl="http://api.test"
       accessToken="tok"
       itineraryId="itin-1"
-      editable={editable}
+      canManage={canManage}
     />,
   );
 }
@@ -263,10 +264,10 @@ test("bokun node falls back to a manual book when supplier booking is disabled",
   );
 });
 
-test("read-only without the edit lock — no book/confirm controls", async () => {
+test("read-only without the advisor role — no book/confirm controls", async () => {
   renderPanel(false);
   await screen.findByText("Park Hyatt");
   expect(screen.queryByTestId("book-n-hotel")).toBeNull();
   expect(screen.queryByTestId("confirm-n-booked")).toBeNull();
-  expect(screen.getByText(/Hold the edit lock/)).toBeTruthy();
+  expect(screen.getByText(/managed by your advisor/)).toBeTruthy();
 });

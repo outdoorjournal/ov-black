@@ -36,6 +36,9 @@ interface CardShellProps {
   // status footer band. The chat proposal card uses it for its Must Do /
   // Thumbs Up / Not This Time action row; the timeline/collection cards omit it.
   actions?: ReactNode;
+  // A small right-aligned slot in the type-label header row (glance/zoom only).
+  // ADV-15 uses it for the advisor's per-card billing chip.
+  headerExtra?: ReactNode;
 }
 
 // The card substrate as a tailwind-variants recipe. Structure only — `width`
@@ -86,6 +89,7 @@ export function CardShell({
   lockReason,
   lockLabel,
   actions,
+  headerExtra,
 }: CardShellProps) {
   const token = TYPE_TOKENS[kind];
   const isNote = noteOverride ?? kind === "note";
@@ -143,6 +147,7 @@ export function CardShell({
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-ink/60">
             <token.Icon size={12} strokeWidth={1.6} aria-hidden />
             <span>{token.label}</span>
+            {headerExtra ? <span className="ml-auto">{headerExtra}</span> : null}
           </div>
         )}
         {children}

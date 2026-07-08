@@ -17,6 +17,7 @@ import {
   invoiceOwed,
   isChargeable,
   isPayable,
+  billingChipsByNode,
   reconcileBilling,
   rollupInvoices,
 } from "@/app/itinerary/[id]/_shell/dashboardModel";
@@ -359,5 +360,80 @@ describe("formatTiming", () => {
     expect(formatTiming({ timing_kind: "flexible", timing_note: "not August" })).toBe("not August");
     expect(formatTiming({ timing_kind: "flexible" })).toBe("Dates flexible");
     expect(formatTiming({})).toBe("Dates to be decided");
+  });
+});
+
+describe("billingChipsByNode (ADV-15)", () => {
+  test("a priced bookable card with no charge lines reads unbilled", () => {
+    const chips = billingChipsByNode({
+      invoices: [],
+      nodes: [node({ id: "n1" }), node({ id: "n2", status: "booked" })],
+    });
+    expect(chips["n1"]).toEqual({ state: "unbilled", invoiceId: null });
+    expect(chips["n2"]).toEqual({ state: "unbilled", invoiceId: null });
+  });
+
+  test("a costless or still-proposed card wears no chip", () => {
+    const chips = billingChipsByNode({
+      invoices: [],
+      nodes: [
+        node({ id: "free", cost_amount: null }),
+        node({ id: "pending", status: "proposed" }),
+      ],
+    });
+    expect(chips).toEqual({});
+  });
+
+  test("a deposit-charged card is partial; full coverage on issued is billed", () => {
+    const invoices = [
+      invoice({
+        id: "iv1",
+        lines: [
+          chargeLine({ id: "l1", node_id: "part", amount: "300.00" }),
+          chargeLine({ id: "l2", node_id: "full", amount: "100.00" }),
+        ],
+      }),
+    ];
+    const chips = billingChipsByNode({
+      invoices,
+      nodes: [
+        node({ id: "part", cost_amount: "1000.00" }),
+        node({ id: "full", cost_amount: "100.00" }),
+      ],
+    });
+    expect(chips["part"]).toEqual({ state: "partial", invoiceId: "iv1" });
+    expect(chips["full"]).toEqual({ state: "billed", invoiceId: "iv1" });
+  });
+
+  test("fully covered by PAID invoices reads paid", () => {
+    const chips = billingChipsByNode({
+      invoices: [
+        invoice({
+          id: "iv1",
+          status: "paid",
+          lines: [chargeLine({ id: "l1", node_id: "n1", amount: "100.00" })],
+        }),
+      ],
+      nodes: [node({ id: "n1" })],
+    });
+    expect(chips["n1"]).toEqual({ state: "paid", invoiceId: "iv1" });
+  });
+
+  test("per_person cost is party-expanded before judging coverage", () => {
+    const invoices = [
+      invoice({
+        id: "iv1",
+        lines: [chargeLine({ id: "l1", node_id: "n1", amount: "100.00" })],
+      }),
+    ];
+    const perPerson = node({ id: "n1", cost_kind: "per_person" });
+    // Two travelers: the face-value charge covers only half → partial.
+    expect(
+      billingChipsByNode({ invoices, nodes: [perPerson], partySize: 2 })["n1"],
+    ).toEqual({ state: "partial", invoiceId: "iv1" });
+    // Solo: the same charge closes it out → billed.
+    expect(
+      billingChipsByNode({ invoices, nodes: [perPerson], partySize: 1 })["n1"],
+    ).toEqual({ state: "billed", invoiceId: "iv1" });
   });
 });

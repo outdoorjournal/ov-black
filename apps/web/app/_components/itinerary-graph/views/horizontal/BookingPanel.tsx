@@ -18,7 +18,7 @@ import {
 import { copy } from "./bookingCopy";
 import { SupplierSlotPickerDialog } from "./SupplierSlotPickerDialog";
 
-// Advisor booking surface — the itinerary-aside Booking tab (M005/I3).
+// Advisor booking surface — the dashboard Booking tab (M005/I3).
 //
 // Self-contained like InvoicePanel: it takes the staff credentials the store
 // holds and calls the booking wrappers directly. The money gate lives on the
@@ -26,6 +26,12 @@ import { SupplierSlotPickerDialog } from "./SupplierSlotPickerDialog";
 // (an explicit override books on a merely issued line). Flights re-price their
 // held offer first. A booked node advances to confirmed with a supplier ref. The
 // reconciliation banner reads the server invariant: Σ(paid lines) ⇔ Σ(booked).
+//
+// Like invoicing (ADV-11), booking is financial workflow independent of the
+// graph edit-lock: it must work on a proposed/approved trip, where the build is
+// frozen — so it gates on advisor role (`canManage`), never `selectEditable`
+// (which requires a draft + the held lock and would hide every action exactly
+// when a node is bookable). ADV-12.
 
 const ATTENTION = "#8b2a1d";
 const OK = "#1d6b3a";
@@ -57,12 +63,12 @@ export function BookingPanel({
   apiBaseUrl,
   accessToken,
   itineraryId,
-  editable,
+  canManage,
 }: {
   apiBaseUrl: string | null;
   accessToken: string | null;
   itineraryId: string;
-  editable: boolean;
+  canManage: boolean;
 }) {
   const [nodes, setNodes] = useState<NodeResponse[]>([]);
   const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
@@ -113,9 +119,9 @@ export function BookingPanel({
 
       {recon ? <ReconciliationBanner recon={recon} /> : null}
 
-      {!editable ? (
+      {!canManage ? (
         <p className="font-sans text-xs italic text-ink/50">
-          Hold the edit lock to book and confirm.
+          Booking is managed by your advisor.
         </p>
       ) : null}
 
@@ -132,7 +138,7 @@ export function BookingPanel({
               key={node.id}
               node={node}
               itineraryId={itineraryId}
-              editable={editable}
+              canManage={canManage}
               api={api}
               onChanged={refresh}
               onError={setError}
@@ -195,14 +201,14 @@ function ReconciliationBanner({ recon }: { recon: ReconciliationResponse }) {
 function BookingRow({
   node,
   itineraryId,
-  editable,
+  canManage,
   api,
   onChanged,
   onError,
 }: {
   node: NodeResponse;
   itineraryId: string;
-  editable: boolean;
+  canManage: boolean;
   api: ReturnType<typeof createApiClient> | null;
   onChanged: () => Promise<void>;
   onError: (msg: string | null) => void;
@@ -214,7 +220,7 @@ function BookingRow({
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const canWrite = editable && api !== null;
+  const canWrite = canManage && api !== null;
   const isFlight = node.type === "flight";
   const isSupplierBookable = node.source != null && SUPPLIER_BOOKABLE_SOURCES.has(node.source);
 

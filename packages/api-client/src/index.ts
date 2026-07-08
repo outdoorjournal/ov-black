@@ -167,6 +167,7 @@ import type {
   NodeResponse,
   NodeStatus,
   NodeType,
+  CostKind,
   OnboardingOpenerResponse,
   OpenSessionRequest,
   OpenSessionResponse,
@@ -1253,6 +1254,12 @@ export type UpdateNodePatch = {
   // Free-form node metadata patch — e.g. persisting a node's start_time
   // after a drag-to-reorder. Forwarded as-is to UpdateNodeRequest.metadata.
   metadata?: { [key: string]: unknown } | null;
+  // First-class cost (ADV-13 editable cards). Amount + currency must be
+  // set/cleared together — the service layer + DB CHECK enforce it; the
+  // amount is a decimal string to avoid float precision loss.
+  cost_amount?: string | null;
+  cost_currency?: string | null;
+  cost_kind?: CostKind | null;
 };
 
 export type UpdateNodeArgs = {

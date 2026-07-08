@@ -36,6 +36,8 @@ import {
   fillGap,
   forkItinerary,
   getAnalysis,
+  getItinerary,
+  listInvoices,
   proposeItinerary,
   releaseItineraryLock,
   reopenItinerary,
@@ -54,6 +56,10 @@ import {
 } from "@ov-black/api-client";
 
 import { createStoreContext } from "@/lib/store/createStoreContext";
+import {
+  billingChipsByNode,
+  type BillingChip,
+} from "@/app/itinerary/[id]/_shell/dashboardModel";
 import type { UserRole } from "@/lib/role";
 
 import { offsetHoursOr } from "../model/horizontalTime";
@@ -167,6 +173,10 @@ export type ItineraryGraphState = {
   /** Per-currency price of the plan (ADV-10), `{ currency: amount }` from the
    *  GraphResponse — amounts are strings; empty when nothing is priced. */
   totals: Record<string, string>;
+  /** ADV-15: node id → its billing chip (unbilled / partial / billed / paid),
+   *  the board-side read of "how do the invoices relate to the inventory".
+   *  Populated by `refreshBilling` (advisor only); empty otherwise. */
+  billingChips: Record<string, BillingChip>;
 
   // ── two-version (Official ↔ My version) lifecycle, traveler-facing ──
   /** The viewer's own OPEN fork of this baseline, if any (from the API). Null
@@ -235,11 +245,29 @@ export type ItineraryGraphState = {
   approve: () => void;
   approveNode: (id: string) => void;
   proposeCard: (id: string) => void;
+  /** ADV-15: (re)load the per-card billing chips from the live ledger. Advisor
+   *  only — a no-op for travelers or without credentials. */
+  refreshBilling: () => void;
   setNodes: (nodes: NodeResponse[]) => void;
   editNodeField: (
     id: string,
     field: "title" | "source_id",
     value: string,
+  ) => void;
+  // ADV-13 editable cards: patch a card's details after creation — description
+  // (renders in every zoom body), the operator's confirmation number (renders
+  // as the booked/confirmed footer serial), and first-class cost (feeds totals
+  // + billing; also how a pasted-link card finally gets priced). Fields are
+  // patch-style: `undefined` leaves a field alone; an empty string clears the
+  // metadata key; `cost: null` clears the cost trio. Gated like every other
+  // field edit (`selectEditable` + the server's G1 firmed-node gate).
+  updateCardDetails: (
+    id: string,
+    input: {
+      description?: string;
+      confirmationNumber?: string;
+      cost?: { amount: string; currency: string; kind: CostKind } | null;
+    },
   ) => void;
   // Re-target a node onto a different day (and optionally minute-of-day),
   // updating its start_time and persisting the new metadata when editable.
@@ -691,6 +719,7 @@ export const itineraryGraphStore = createStoreContext<
         approvingNodeId: null,
         proposingNodeId: null,
         totals,
+        billingChips: {},
 
         viewerOpenForkId,
         draftMine: false,
@@ -968,6 +997,30 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ proposingNodeId: null }));
         },
+        // ADV-15: the board's per-card money chips. Advisor-only (billing is
+        // advisor workflow) and self-contained like InvoicePanel's fetch — it
+        // reads the ledger + the FRESH graph (party size expands per_person
+        // costs) rather than trusting the store's node snapshot, so a chip
+        // never drifts from what the cockpit would show.
+        refreshBilling: () => {
+          const s = get();
+          if (s.role !== "advisor") return;
+          const c = client();
+          if (!c) return;
+          void Promise.all([
+            listInvoices(c, s.itineraryId),
+            getItinerary(c, s.itineraryId),
+          ]).then(([inv, graph]) => {
+            if (!inv.ok || !graph.ok) return;
+            set({
+              billingChips: billingChipsByNode({
+                invoices: inv.invoices,
+                nodes: graph.nodes,
+                partySize: graph.party_size ?? 1,
+              }),
+            });
+          });
+        },
         setNodes: (nodes) => set({ nodes }),
         editNodeField: (id, field, value) => {
           const s = get();
@@ -989,6 +1042,96 @@ export const itineraryGraphStore = createStoreContext<
           void updateNode(c, { itineraryId: s.itineraryId, nodeId: id, patch }).then(
             (result) => {
               if (!result.ok) set({ nodes: previousNodes });
+            },
+          );
+        },
+        updateCardDetails: (id, input) => {
+          const s = get();
+          if (!selectEditable(s)) return;
+          const target = s.nodes.find((n) => n.id === id);
+          if (!target) return;
+          const c = client();
+          if (!c) return;
+
+          const patch: Parameters<typeof updateNode>[1]["patch"] = {};
+
+          // Metadata keys patch in place over the node's existing metadata —
+          // the server replaces the whole object, so we must merge client-side.
+          // An empty string clears the key (undefined leaves it alone).
+          let mergedMetadata: { [key: string]: unknown } | undefined;
+          if (
+            input.description !== undefined ||
+            input.confirmationNumber !== undefined
+          ) {
+            mergedMetadata = { ...(target.metadata ?? {}) };
+            if (input.description !== undefined) {
+              if (input.description.trim()) {
+                mergedMetadata["description"] = input.description.trim();
+              } else {
+                delete mergedMetadata["description"];
+              }
+            }
+            if (input.confirmationNumber !== undefined) {
+              if (input.confirmationNumber.trim()) {
+                mergedMetadata["confirmation_number"] =
+                  input.confirmationNumber.trim();
+              } else {
+                delete mergedMetadata["confirmation_number"];
+              }
+            }
+            patch.metadata = mergedMetadata;
+          }
+
+          // Cost: set the trio together, or clear it together (the DB CHECK
+          // refuses a dangling amount/currency).
+          if (input.cost !== undefined) {
+            if (input.cost === null) {
+              patch.cost_amount = null;
+              patch.cost_currency = null;
+              patch.cost_kind = null;
+            } else {
+              patch.cost_amount = input.cost.amount;
+              patch.cost_currency = input.cost.currency.toUpperCase();
+              patch.cost_kind = input.cost.kind;
+            }
+          }
+
+          if (Object.keys(patch).length === 0) return;
+
+          const previousNodes = s.nodes;
+          set({
+            nodes: s.nodes.map((n) =>
+              n.id === id
+                ? {
+                    ...n,
+                    ...(mergedMetadata !== undefined
+                      ? { metadata: mergedMetadata }
+                      : {}),
+                    ...(input.cost !== undefined
+                      ? {
+                          cost_amount: input.cost?.amount ?? null,
+                          cost_currency:
+                            input.cost?.currency.toUpperCase() ?? null,
+                          cost_kind: input.cost?.kind ?? null,
+                        }
+                      : {}),
+                  }
+                : n,
+            ),
+          });
+          void updateNode(c, { itineraryId: s.itineraryId, nodeId: id, patch }).then(
+            (result) => {
+              if (result.ok) {
+                // Adopt the server's canonical node (it normalizes the cost
+                // decimal string), then refresh the billing chips — a price
+                // change moves the card's unbilled remainder.
+                set({
+                  nodes: get().nodes.map((n) => (n.id === id ? result.node : n)),
+                });
+                if (input.cost !== undefined) get().refreshBilling();
+              } else {
+                set({ nodes: previousNodes });
+              }
             },
           );
         },

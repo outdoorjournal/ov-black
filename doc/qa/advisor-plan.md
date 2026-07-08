@@ -301,6 +301,11 @@ per-trip party-attach UI ADV-2B needed.
 
 ### Next up (recommended order for the next hand)
 
+> **Superseded 2026-07-07 by §6 (Course forward)** — a full implementation sweep found the
+> felt gaps live outside the ADV-1…11 ledger: the booking last-mile is gated unreachable,
+> cards are write-once, the agent is money-blind, and there is no advisor awareness layer.
+> §6 is the current ordering; the two items below fold into its parked list.
+
 With G-INVITE-LATER, G-NODE-EDITOR, G-APPROVE-TOTAL, G-ANALYZE-AGENT and G-BILLING-COCKPIT
 closed, **one product gap + one deferred slice remain**. Suggested sequence by leverage-per-effort:
 
@@ -347,3 +352,111 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
   the product decision recorded here — no scenario left claiming ✅ it can't exercise.
 - The pillar suite stays green (the atomic-create default, money gate, and audience isolation
   are not regressed by any gap work).
+
+## §6. Course forward (2026-07-07) — beyond the ADV ledger
+
+> A full sweep of the implementation (web shell, agent tools/prompts/context, api-client
+> surface) against the *felt* advisor experience. The ADV-1…11 ledger above is accurate for
+> what it tracks; these are the gaps it doesn't. Four themes, ordered into waves by leverage.
+
+### The findings
+
+1. **The loop's last mile is unreachable in the browser (bug).** `BookingPanel` has every
+   action (Book, choose-slot, override, confirmation-#, cancel) but the Dashboard passes it
+   `editable={selectEditable}`, and `selectEditable` requires `lockStatus === "locked-by-me"
+   && status === "draft"` — while `bookableNodes` only lists **approved** nodes. On a
+   proposed/approved trip (the only bookable ones) the buttons never render. Identical to the
+   edit-lock coupling ADV-11 fixed for invoices; bookings were missed. Today booking only
+   works via `ovb`/API.
+2. **Cards are write-once.** After the composer, an advisor can edit only title + `source_id`
+   inline (plus schedule/status). No cost edit (so a link card can never be priced), no
+   description, no location, no supplier-confirmation field for manually-booked items (the
+   [advisor.md](./advisor.md) "Reminders for later" note). Soft delete (0040, notes-only) has
+   no restore; the undo toast reverses placement only. Mood/cover fixed at intake (G-COVER).
+3. **No advisor awareness layer.** Nothing surfaces traveler activity — a reconcile request
+   is only visible inside that fork's Studio; approvals, payments, and thread messages require
+   walking into each trip. The client page has no cross-trip invoice/booking roster (a known
+   resume hook) and no "since you last looked."
+4. **The agent reads the graph but can't do half the advisor's job.** No node field-edit tool
+   (title/cost/description); zero money awareness (can't answer "what's uninvoiced," can't
+   explain a money-gate refusal, can't warn an offer is expiring); no per-turn graph digest
+   (must burn `get_itinerary` to learn statuses/totals/the ADV-10 state — and the rubric never
+   teaches the propose flow); no proactivity and no escalation channel (can't post to the
+   human thread).
+
+### The waves
+
+**Wave A — close the loop in the browser** *(small, first)* — **✅ shipped 2026-07-07**
+- ✅ **ADV-12 — Booking decoupled from the edit lock** (S): shipped — `BookingPanel` now
+  takes `canManage` (role-derived, the same gate as `InvoicePanel`) instead of
+  `selectEditable` at both mounts (Dashboard `AdvisorManagement`, prototype aside), so
+  Book / slot-book / confirm-# / cancel render on the proposed/approved trips that are
+  actually bookable. Read-only copy is now "Booking is managed by your advisor."
+  Tested: `bookingPanel.test.tsx` (role gate). *Follow-up:* extend
+  `e2e/advisor/invoicing.spec.ts` with the book → confirm beat against the live stack.
+- ✅ **ADV-15 — Invoice ↔ inventory legibility** (M, founder-flagged 2026-07-07: "invoicing
+  is still largely unusable — I cannot intuitively SEE how the invoices relate to the
+  inventory"): shipped, two halves. (a) **Card-aware invoices** — a node-tagged charge line
+  renders a shared `NodeIdentity` (type glyph + title deep-linking to
+  `/itinerary/[id]/item/[nodeId]` + a "Wed, Sep 24" when-stamp) instead of ledger prose,
+  with a graceful fallback to the description when the node isn't in the graph; a new
+  **"Not yet billed" tray** under the reconcile strip lists every uncovered card as
+  identifiable inventory with its remaining balance ("$200 of $1,200" when part-billed).
+  (b) **Billing state on the inventory** — a pure `billingChipsByNode` in `dashboardModel`
+  (unbilled / partial / billed / paid, party-expanded, coverage-derived) feeds a store
+  `refreshBilling` action (advisor-only, self-contained ledger+graph fetch) loaded on
+  Timeline mount; every timeline/mobile card wears the chip in its type-label row (a new
+  `CardShell.headerExtra` slot). A cost edit re-derives the chips. Tested:
+  `dashboardModel.test.ts` (chip truth table incl. per-person expansion),
+  `invoicePanel.test.tsx` (tray, line identity, fallback, traveler-hidden),
+  `nodeCardBadge.test.tsx` (chip render). *Boundary:* chips load on timeline mount — a
+  billing change made elsewhere shows on next visit, not live.
+- ✅ **ADV-13 — Editable cards** (M): shipped as the card-detail **Edit facet** (facet (g),
+  advisors holding the lock, non-note cards): **description** (`metadata.description` —
+  already rendered in every zoom body), **price** (the first-class cost trio; clearing the
+  amount clears all three — this also finally lets a pasted-link card be priced), and the
+  **confirmation # / PNR** (`metadata.confirmation_number` — already rendered as the
+  booked/confirmed footer serial; closes the "manually booked off-inventory" reminder at
+  the bottom of [advisor.md](./advisor.md)). Store: a new `updateCardDetails` action —
+  client-side metadata **merge** (the server replaces the object wholesale), both-or-
+  neither cost semantics, optimistic + revert, adopts the server's canonical node, and
+  re-derives billing chips after a price change. `UpdateNodePatch` in the api-client
+  gained the cost trio (the generated body already carried them; no regen). Tested:
+  `cardDetail.test.tsx` (patch shape incl. metadata-merge survival of schedule/location
+  keys, cost-clear, role gate), `store.test.tsx` (inert for travelers / no-creds).
+  *Boundaries:* title edit stays in the ScheduleFacet (already existed); a **firmed**
+  card (approved/booked/confirmed) still refuses field edits server-side (G1
+  `demote_before_edit`) — the facet gates on the same `selectEditable` as every other
+  edit affordance, so the demote-first dance is unchanged; type/location editing deferred.
+
+**Wave B — agent eval harness** *(deliberately before agent behavior work)*
+- **EVAL-1 — tool observability + scenario runner** (M): the building blocks exist
+  (`ovb` `Conversation`/`TurnResult` accumulate prose + typed frames; `scenario.py` has
+  `GraphSnapshot`/`GraphDiff`). Add (a) a debug-gated **`tool_trace` SSE frame** — the API's
+  `EventTranslator` already holds the per-turn `toolUseId → name` map, it just never emits
+  it (never on for real browsers); (b) a declarative scenario runner (`ovb agent eval` /
+  pytest marker): turn script + expected tools (set or ordered subset) + a `GraphDiff`
+  assertion + expected frames/shortcodes (place-chips, `card_proposed`) + an optional
+  LLM-judge rubric. Deterministic scenarios run on the mock; semantic ones are
+  Bedrock-gated and isolated (ADV-3 posture).
+
+**Wave C — agent parity** *(measured by the Wave B harness)*
+- **AGT-1 — `update_node` field-edit tool** (S, after ADV-13 settles the field set) + rubric.
+- **AGT-2 — graph digest in the turn context** (S/M): inject itinerary status, node status
+  counts, per-currency totals, locked nodes, uninvoiced count into `/agent/context`; teach
+  the ADV-10 / per-card propose flow in the planning rubric.
+- **AGT-3 — read-only money tools** (M): `get_billing_state` (reconciliation + uninvoiced) and
+  `get_booking_state` (offers/expiry/confirmations). Narrate + nudge, never mutate — the
+  human-in-the-loop boundary stays structural.
+- **AGT-4 — escalation + proactivity** (M, product-flavored): a `post_thread_message` tool and
+  an opening-of-turn convention for material state changes (fresh block findings, a pending
+  reconcile request).
+
+**Wave D — awareness layer**
+- **ADV-14 — needs-attention feed** (M/L): derive from what exists (`reconcile_requested_at`,
+  node_history approvals, payments, unread thread messages) — no new table initially. Surface
+  as command-center roster badges + a per-client "since you last looked" strip; a real
+  notifications model only if that earns it.
+
+**Parked, consciously:** G-COVER (decision-gated), G-SEND (product call), restore-UI for soft
+deletes (bundle with ADV-13 if wanted), advisor-private Collection, money-split deposit.

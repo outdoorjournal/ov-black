@@ -40,12 +40,18 @@ vi.mock("@/app/itinerary/[id]/_shell/SessionThread", () => ({
 
 const getNodeChargesMock = vi.fn();
 const updateNodeStatusMock = vi.fn();
+const updateNodeMock = vi.fn();
 const deleteNodeMock = vi.fn();
+const listInvoicesMock = vi.fn();
+const getItineraryMock = vi.fn();
 vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   getNodeCharges: (...args: unknown[]) => getNodeChargesMock(...args),
   updateNodeStatus: (...args: unknown[]) => updateNodeStatusMock(...args),
+  updateNode: (...args: unknown[]) => updateNodeMock(...args),
   deleteNode: (...args: unknown[]) => deleteNodeMock(...args),
+  listInvoices: (...args: unknown[]) => listInvoicesMock(...args),
+  getItinerary: (...args: unknown[]) => getItineraryMock(...args),
 }));
 
 import type { ItineraryResponse, NodeResponse } from "@ov-black/api-client";
@@ -155,7 +161,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   getNodeChargesMock.mockResolvedValue({ ok: true, charges: charges() });
   updateNodeStatusMock.mockResolvedValue({ ok: true });
+  updateNodeMock.mockImplementation((_c: unknown, args: { nodeId: string; patch: Record<string, unknown> }) =>
+    Promise.resolve({ ok: true, node: { ...HOTEL, id: args.nodeId, ...args.patch } }),
+  );
   deleteNodeMock.mockResolvedValue({ ok: true });
+  // refreshBilling (fired after a cost edit) reads the ledger; an unhappy read
+  // makes it a clean no-op for these wiring tests.
+  listInvoicesMock.mockResolvedValue({ ok: false, detail: "network_error" });
+  getItineraryMock.mockResolvedValue({ ok: false, detail: "network_error" });
 });
 
 describe("CardDetailView · remove", () => {
@@ -337,5 +350,71 @@ describe("CardDetailView · ask about this", () => {
     // The ✕ clears the scope.
     fireEvent.click(screen.getByTestId("concierge-context-clear"));
     expect(screen.queryByTestId("concierge-context-chip")).not.toBeInTheDocument();
+  });
+});
+
+describe("CardDetailView \u00b7 edit facet (ADV-13)", () => {
+  test("an editable advisor patches description, price, and confirmation #", async () => {
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], { startLocked: true });
+    const facet = screen.getByTestId("card-detail-edit");
+
+    // Pristine → save disabled.
+    const save = within(facet).getByTestId("card-edit-save");
+    expect(save).toBeDisabled();
+
+    fireEvent.change(within(facet).getByTestId("card-edit-description"), {
+      target: { value: "Corner suite, garden view" },
+    });
+    fireEvent.change(within(facet).getByTestId("card-edit-amount"), {
+      target: { value: "1450.00" },
+    });
+    fireEvent.change(within(facet).getByTestId("card-edit-kind"), {
+      target: { value: "per_person" },
+    });
+    fireEvent.change(within(facet).getByTestId("card-edit-confirmation"), {
+      target: { value: "HX7KQ2" },
+    });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    await waitFor(() => expect(updateNodeMock).toHaveBeenCalledTimes(1));
+    const { itineraryId, nodeId, patch } = updateNodeMock.mock.calls[0]![1] as {
+      itineraryId: string;
+      nodeId: string;
+      patch: Record<string, unknown>;
+    };
+    expect(itineraryId).toBe("it-1");
+    expect(nodeId).toBe("n-1");
+    // Metadata is MERGED — the schedule + location keys survive the patch.
+    expect(patch["metadata"]).toMatchObject({
+      description: "Corner suite, garden view",
+      confirmation_number: "HX7KQ2",
+      start_time: "2024-06-20T15:00:00+09:00",
+    });
+    expect(patch["cost_amount"]).toBe("1450.00");
+    expect(patch["cost_currency"]).toBe("USD");
+    expect(patch["cost_kind"]).toBe("per_person");
+  });
+
+  test("clearing the amount clears the whole cost trio", async () => {
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], { startLocked: true });
+    const facet = screen.getByTestId("card-detail-edit");
+    fireEvent.change(within(facet).getByTestId("card-edit-amount"), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(facet).getByTestId("card-edit-save"));
+    await waitFor(() => expect(updateNodeMock).toHaveBeenCalledTimes(1));
+    const { patch } = updateNodeMock.mock.calls[0]![1] as {
+      patch: Record<string, unknown>;
+    };
+    expect(patch["cost_amount"]).toBeNull();
+    expect(patch["cost_currency"]).toBeNull();
+    expect(patch["cost_kind"]).toBeNull();
+    expect(patch["metadata"]).toBeUndefined();
+  });
+
+  test("a viewer without the lock gets no edit facet", () => {
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], { role: "client" });
+    expect(screen.queryByTestId("card-detail-edit")).not.toBeInTheDocument();
   });
 });
