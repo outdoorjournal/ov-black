@@ -179,6 +179,15 @@ class EventTranslator:
     Holds a per-turn ``toolUseId → tool_name`` map so a later
     ``ToolResultMessageEvent`` (which only carries ``toolUseId``) can be
     routed to the right SSE frame shape. Construct one per turn.
+
+    ``emit_tool_trace`` (EVAL-1) additionally surfaces that map on the wire:
+    a ``tool_trace`` frame per tool call (``phase="call"``) and per tool
+    result (``phase="result"``, with the Strands success/error status) for
+    **every** tool, including the read-only ones that map to no UI frame.
+    The payload is redaction-safe by construction — tool name, toolUseId and
+    status only, never inputs or outputs (which can carry Dossier/OSINT
+    content). Real browsers drop unknown frame types, so the frame is only
+    consumed by harness clients (ovb / the eval runner).
     """
 
     # Trailing characters that end a clause — after one of these, prose resuming
@@ -186,7 +195,8 @@ class EventTranslator:
     # the em-dash, and the ellipsis.
     _SENTENCE_END = frozenset(".!?:;—…”’\"')]}")
 
-    def __init__(self) -> None:
+    def __init__(self, *, emit_tool_trace: bool = False) -> None:
+        self._emit_tool_trace = emit_tool_trace
         self._tool_names: dict[str, str] = {}
         # Paragraph-break bookkeeping: a tool call splits the model's narration
         # into two assistant messages whose text the API concatenates verbatim,
@@ -268,6 +278,13 @@ class EventTranslator:
                     name = tu.get("name")
                     if isinstance(tuid, str) and isinstance(name, str):
                         self._tool_names[tuid] = name
+                        if self._emit_tool_trace:
+                            yield {
+                                "type": "tool_trace",
+                                "phase": "call",
+                                "tool": name,
+                                "tool_use_id": tuid,
+                            }
         # Second pass: emit frames for any toolResult blocks (user-role
         # messages carrying tool execution results).
         for block in content:
@@ -288,12 +305,22 @@ class EventTranslator:
             or tr.get("toolUseName")
             or tr.get("tool_name")
         )
-        if not isinstance(name, str):
-            tuid = tr.get("toolUseId") or tr.get("tool_use_id")
-            if isinstance(tuid, str):
-                name = self._tool_names.get(tuid)
+        tuid = tr.get("toolUseId") or tr.get("tool_use_id")
+        if not isinstance(name, str) and isinstance(tuid, str):
+            name = self._tool_names.get(tuid)
         if not isinstance(name, str):
             return
+        if self._emit_tool_trace:
+            # Redaction-safe by construction: name + id + status, never the
+            # result payload (it can carry Dossier/OSINT content).
+            status = tr.get("status")
+            yield {
+                "type": "tool_trace",
+                "phase": "result",
+                "tool": name,
+                "tool_use_id": tuid if isinstance(tuid, str) else None,
+                "status": status if isinstance(status, str) else None,
+            }
         if name not in _TOOL_FRAME_TYPES:
             return  # Read-only tools — no UI frame.
 

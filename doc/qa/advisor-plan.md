@@ -429,16 +429,39 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
   `demote_before_edit`) — the facet gates on the same `selectEditable` as every other
   edit affordance, so the demote-first dance is unchanged; type/location editing deferred.
 
-**Wave B — agent eval harness** *(deliberately before agent behavior work)*
-- **EVAL-1 — tool observability + scenario runner** (M): the building blocks exist
-  (`ovb` `Conversation`/`TurnResult` accumulate prose + typed frames; `scenario.py` has
-  `GraphSnapshot`/`GraphDiff`). Add (a) a debug-gated **`tool_trace` SSE frame** — the API's
-  `EventTranslator` already holds the per-turn `toolUseId → name` map, it just never emits
-  it (never on for real browsers); (b) a declarative scenario runner (`ovb agent eval` /
-  pytest marker): turn script + expected tools (set or ordered subset) + a `GraphDiff`
-  assertion + expected frames/shortcodes (place-chips, `card_proposed`) + an optional
-  LLM-judge rubric. Deterministic scenarios run on the mock; semantic ones are
-  Bedrock-gated and isolated (ADV-3 posture).
+**Wave B — agent eval harness** *(deliberately before agent behavior work)* — **✅ shipped 2026-07-07**
+- ✅ **EVAL-1 — tool observability + scenario runner** (M): shipped, both halves, and
+  **run over the REAL agent** (per the founder: the mock lane carries no eval value —
+  deterministic-on-mock was dropped; every eval drives live Bedrock turns).
+  - **`tool_trace` SSE frame** — emitted by the *agent's* `EventTranslator` (the
+    `toolUseId → name` map lives in `apps/agent/src/agent/translate.py`, not the API — the
+    API forwards unknown frames verbatim), one frame per tool **call** and **result**
+    (name + toolUseId + Strands status ONLY; never inputs/outputs — Dossier/OSINT
+    redaction discipline). Debug-gated on a new `EMIT_TOOL_TRACE` agent setting (off by
+    default; the mprocs agent pane, `scripts/restart-agent.sh`, and the gitignored
+    `apps/agent/.env` set it locally). Structurally invisible to real browsers: the web's
+    `KNOWN_FRAME_TYPES` filter drops the unknown type. `ovb` types it (`ToolTraceFrame`),
+    `TurnResult` accumulates `tool_trace`/`tools_called`, and `ovb chat` renders fires
+    inline (`⚙ search_inventory`) + `tools_called` under `--json`.
+  - **Scenario runner** — declarative `ovb.evals` (`EvalScenario`/`TurnSpec`): turn script
+    + expected tools (set-subset or ordered subsequence, plus `forbid_tools`) + a
+    `GraphDiff` spec (`min_nodes_added`/`statuses_to`/`no_change`, snapshotted around every
+    turn) + expected frames (`card_proposed`) + prose markers (fenced shortcodes like
+    ` ```ov-timeline `) + an optional **LLM-judge rubric** (Bedrock Converse; skips
+    honestly without boto3/creds). Surfaced two ways over the same runner: **`ovb agent
+    eval scenarios.json --client-id … [--judge]`** (JSON scenario files, rich/`--json`
+    report, exit 1 on failure) and the **`live_agent` pytest marker**
+    (`tests/e2e/test_agent_eval_e2e.py` — run isolated, ADV-3 posture; self-skips on
+    `upstream_unavailable` or a trace-less agent with the restart hint, never false-green).
+  - **Verified live 2026-07-07:** both e2e evals green against real Bedrock (analyze-
+    conversational: `run_analysis` fires, graph untouched; grounded-build:
+    `search_inventory → propose_card` in order, `card_proposed` frame, +1 node on the
+    graph), and the CLI face + judge lane green end-to-end (judge passed the rubric with a
+    plan-grounded reason). Unit: `apps/agent/tests/test_translate.py` (trace gating,
+    redaction shape, read-only tools trace) + `apps/cli/tests/test_evals.py` (parsing,
+    every check, report aggregation) + sse/agent trace tests.
+  - **Boundary:** evals score invariants (tools/frames/diff), never wording — the rubric
+    judge is the only semantic check and it's opt-in per turn.
 
 **Wave C — agent parity** *(measured by the Wave B harness)*
 - **AGT-1 — `update_node` field-edit tool** (S, after ADV-13 settles the field set) + rubric.

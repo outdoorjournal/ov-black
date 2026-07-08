@@ -14,6 +14,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    # LLM-judge backend for `ovb agent eval --judge` (ovb.evals.bedrock_judge);
+    # imported lazily — the CLI proper never needs it.
+    "boto3>=1.35",
     "pytest>=8.3,<9",
     "pytest-asyncio>=0.24,<0.25",
     "anyio>=4.6,<5",
@@ -40,6 +43,7 @@ asyncio_mode = "auto"
 # `-m "not e2e"` runs the fully-offline suite (unit + SSE parsing).
 markers = [
     "e2e: exercises a live API target (local or staging); skipped without one",
+    "live_agent: drives real Bedrock agent turns (run isolated, ADV-3 posture); self-skips when the agent upstream is unavailable",
 ]
 
 [tool.uv]
@@ -81,5 +85,5 @@ module = ["ovb._generated.*"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = ["typer.*", "respx.*"]
+module = ["typer.*", "respx.*", "boto3.*"]
 ignore_missing_imports = true

@@ -74,6 +74,7 @@ else
     && AWS_PROFILE="${AWS_PROFILE:-tov-sso}" \
        AWS_REGION="${AWS_REGION:-us-west-2}" \
        BACKEND_BASE_URL="${BACKEND_BASE_URL:-http://localhost:8000}" \
+       EMIT_TOOL_TRACE="${EMIT_TOOL_TRACE:-1}" \
        nohup uv run python -m agent >"${LOG}" 2>&1 & )
   echo "restart-agent: logs → ${LOG}"
 fi

@@ -51,6 +51,19 @@ class Settings(BaseSettings):
         description="HTTP timeout per outbound tool call.",
     )
 
+    # ── Observability ──────────────────────────────────────────────────────
+    emit_tool_trace: bool = Field(
+        default=False,
+        description=(
+            "When true, the translator emits a `tool_trace` SSE frame per tool "
+            "call/result (name + toolUseId + status ONLY — never inputs or "
+            "outputs, which can carry Dossier/OSINT content). The browser drops "
+            "unknown frame types, so this is only visible to harness consumers "
+            "(ovb / the eval runner). Debug-gated: off by default; local dev "
+            "turns it on via EMIT_TOOL_TRACE=1."
+        ),
+    )
+
     # ── Prompts / pacing ───────────────────────────────────────────────────
     max_prior_turns: int = Field(
         default=20,

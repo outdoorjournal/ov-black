@@ -93,6 +93,20 @@ class MoodFrame(Frame):
 
 
 @dataclass(frozen=True, slots=True)
+class ToolTraceFrame(Frame):
+    """EVAL-1 observability: one tool call/result, emitted by the agent when
+    ``EMIT_TOOL_TRACE`` is on. Deliberately NOT in ``KNOWN_FRAME_TYPES`` — the
+    browser drops it; only harness consumers (this SDK, the eval runner) see it.
+    Carries the tool name + toolUseId + status only, never inputs/outputs.
+    """
+
+    tool: str = ""
+    phase: str = ""  # "call" | "result"
+    tool_use_id: str = ""
+    status: str | None = None  # Strands "success"/"error"; None on call frames.
+
+
+@dataclass(frozen=True, slots=True)
 class UnknownFrame(Frame):
     """A JSON frame whose ``type`` the UI does not model — kept, not dropped."""
 
@@ -152,6 +166,16 @@ def to_frame(payload: dict[str, Any]) -> Frame:
         )
     if kind == "mood":
         return MoodFrame(type=kind, raw=payload, mood_id=str(payload.get("mood_id", "")))
+    if kind == "tool_trace":
+        status = payload.get("status")
+        return ToolTraceFrame(
+            type=kind,
+            raw=payload,
+            tool=str(payload.get("tool", "")),
+            phase=str(payload.get("phase", "")),
+            tool_use_id=str(payload.get("tool_use_id") or ""),
+            status=status if isinstance(status, str) else None,
+        )
     return UnknownFrame(type=kind, raw=payload)
 
 

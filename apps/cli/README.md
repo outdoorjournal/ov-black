@@ -154,6 +154,49 @@ cd ../api && agent_local_url= bedrock_agentcore_runtime_arn= uv run uvicorn app.
 ovb --api-url http://127.0.0.1:8011 scenario smoke      # green end-to-end
 ```
 
+### Agent evals (EVAL-1 — the LIVE agent, scored)
+
+`ovb agent eval` runs declarative scenarios against the **real** agent and
+scores each turn on invariants, never wording: which tools fired, which SSE
+frames were emitted, what the graph diff was, plus an optional LLM-judge
+rubric (`--judge`, Bedrock — skips honestly without creds).
+
+Tool observability comes from the debug-gated `tool_trace` SSE frame
+(`{"type":"tool_trace","phase":"call|result","tool":...,"status":...}` —
+name + toolUseId + status only, never inputs/outputs). The agent emits it when
+`EMIT_TOOL_TRACE=1` (the mprocs pane and `scripts/restart-agent.sh` set it;
+browsers drop the unknown frame type, so real UIs never see it). `ovb chat`
+also renders the fires inline (`⚙ search_inventory`) and reports
+`tools_called` under `--json`.
+
+```bash
+ovb agent eval scenarios.json --client-id <id> --itinerary-id <id> [--judge]
+```
+
+A scenario file is one object, a list, or `{"scenarios": [...]}`:
+
+```json
+{
+  "name": "analyze-conversational",
+  "audience": "advisor",
+  "turns": [{
+    "say": "Please check this plan for conflicts and tell me what you find.",
+    "expect_tools": ["run_analysis"],
+    "forbid_tools": ["propose_card"],
+    "expect_frames": [],
+    "expect_prose": [],
+    "expect_diff": {"no_change": true},
+    "rubric": "Reports concrete, plan-specific findings — not generic advice."
+  }]
+}
+```
+
+`expect_tools` checks as a set-subset (`"tools_ordered": true` for an ordered
+subsequence); `expect_diff` supports `min_nodes_added` / `min_nodes_removed` /
+`statuses_to` / `no_change`. The same runner backs the pytest lane
+(`tests/e2e/test_agent_eval_e2e.py`, marker `live_agent` — run those isolated,
+they contend for the one local agent).
+
 ## Tests
 
 ```bash

@@ -7,6 +7,7 @@ from ovb.sse import (
     DoneFrame,
     ErrorFrame,
     MoodFrame,
+    ToolTraceFrame,
     UnknownFrame,
     parse_frames,
 )
@@ -68,3 +69,16 @@ def test_card_error_mood_proposed_mapping() -> None:
 def test_data_without_space_is_valid_per_spec() -> None:
     frames, _ = parse_frames('data:{"type":"delta","text":"q"}\n\n')
     assert isinstance(frames[0], DeltaFrame) and frames[0].text == "q"
+
+
+def test_tool_trace_frame_is_typed_not_unknown() -> None:
+    buf = _wire(
+        '{"type":"tool_trace","phase":"call","tool":"run_analysis","tool_use_id":"tu-1"}',
+        '{"type":"tool_trace","phase":"result","tool":"run_analysis",'
+        '"tool_use_id":"tu-1","status":"success"}',
+    )
+    frames, _ = parse_frames(buf)
+    call, result = frames
+    assert isinstance(call, ToolTraceFrame) and call.phase == "call"
+    assert call.tool == "run_analysis" and call.status is None
+    assert isinstance(result, ToolTraceFrame) and result.status == "success"

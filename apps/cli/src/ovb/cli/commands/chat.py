@@ -17,7 +17,7 @@ from ovb.cli import render
 from ovb.cli._run import run_op, state_of
 from ovb.config import Profile
 from ovb.sdk import Ovb
-from ovb.sse import CardFrame, CardProposedFrame, DeltaFrame, Frame, MoodFrame
+from ovb.sse import CardFrame, CardProposedFrame, DeltaFrame, Frame, MoodFrame, ToolTraceFrame
 
 app = typer.Typer(help="Chat with the agent (as traveler or staff) over a session.")
 
@@ -32,6 +32,7 @@ def _turn_json(result: TurnResult) -> dict[str, Any]:
         "cards": [render.to_jsonable(c) for c in result.cards],
         "proposed_nodes": result.proposed_nodes,
         "updated_nodes": result.updated_nodes,
+        "tools_called": result.tools_called,
         "error": result.error.reason if result.error else None,
     }
 
@@ -50,6 +51,9 @@ def _live_printer() -> Any:
             render.console.print(f"\n  [dim]· proposed node {title}[/dim]")
         elif isinstance(frame, MoodFrame):
             render.console.print(f"\n  [dim]· mood → {frame.mood_id}[/dim]")
+        elif isinstance(frame, ToolTraceFrame) and frame.phase == "call":
+            # Only present when the agent runs with EMIT_TOOL_TRACE=1.
+            render.console.print(f"\n  [dim]⚙ {frame.tool}[/dim]")
 
     return on_frame
 

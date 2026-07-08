@@ -83,3 +83,28 @@ async def test_pre_stream_non_200_raises_apierror() -> None:
     with pytest.raises(ApiError) as exc:
         await run_turn(_ovb(resp), "s1", "hi")
     assert exc.value.status == 404 and exc.value.detail == "session_not_found"
+
+
+async def test_run_turn_accumulates_tool_trace_in_call_order() -> None:
+    chunks = [
+        'data: {"type":"tool_trace","phase":"call","tool":"search_inventory",'
+        '"tool_use_id":"tu-1"}\n\n',
+        'data: {"type":"tool_trace","phase":"result","tool":"search_inventory",'
+        '"tool_use_id":"tu-1","status":"success"}\n\n',
+        'data: {"type":"tool_trace","phase":"call","tool":"propose_card","tool_use_id":"tu-2"}\n\n',
+        'data: {"type":"delta","text":"placed."}\n\n',
+        'data: {"type":"done","turn_id":"t3"}\n\n',
+    ]
+    result = await run_turn(_ovb(_FakeResp(200, chunks)), "s1", "hi")
+    assert result.tools_called == ["search_inventory", "propose_card"]
+    assert [f.phase for f in result.tool_trace] == ["call", "result", "call"]
+
+
+async def test_tools_called_falls_back_to_result_phase_traces() -> None:
+    chunks = [
+        'data: {"type":"tool_trace","phase":"result","tool":"get_itinerary",'
+        '"tool_use_id":"tu-1","status":"success"}\n\n',
+        'data: {"type":"done","turn_id":"t4"}\n\n',
+    ]
+    result = await run_turn(_ovb(_FakeResp(200, chunks)), "s1", "hi")
+    assert result.tools_called == ["get_itinerary"]

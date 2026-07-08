@@ -28,6 +28,7 @@ from ovb.sse import (
     Frame,
     MoodFrame,
     NodeUpdatedFrame,
+    ToolTraceFrame,
     parse_frames,
 )
 
@@ -84,6 +85,7 @@ class TurnResult:
     cards: list[CardFrame] = field(default_factory=list)
     proposed_nodes: list[dict[str, Any]] = field(default_factory=list)
     updated_nodes: list[dict[str, Any]] = field(default_factory=list)
+    tool_trace: list[ToolTraceFrame] = field(default_factory=list)
     frames: list[Frame] = field(default_factory=list)
 
     @property
@@ -93,6 +95,17 @@ class TurnResult:
     @property
     def ok(self) -> bool:
         return self.error is None
+
+    @property
+    def tools_called(self) -> list[str]:
+        """Tool names in call order (from ``tool_trace``; empty when the agent
+        runs without ``EMIT_TOOL_TRACE`` — callers should treat that as
+        "unobserved", not "no tools ran")."""
+        names = [f.tool for f in self.tool_trace if f.phase == "call" and f.tool]
+        if names:
+            return names
+        # Older/partial traces may carry results only.
+        return [f.tool for f in self.tool_trace if f.phase == "result" and f.tool]
 
 
 async def run_turn(
@@ -130,6 +143,8 @@ async def run_turn(
             result.updated_nodes.append(frame.node)
         elif isinstance(frame, MoodFrame):
             result.mood_id = frame.mood_id
+        elif isinstance(frame, ToolTraceFrame):
+            result.tool_trace.append(frame)
     if raise_on_error and result.error is not None:
         raise TurnError(result.error.reason)
     return result

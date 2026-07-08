@@ -92,7 +92,7 @@ async def invoke(payload, context=None):  # type: ignore[no-untyped-def]
             for turn in prior
         ]
 
-        translator = EventTranslator()
+        translator = EventTranslator(emit_tool_trace=_settings.emit_tool_trace)
         async for ev in agent.stream_async(req.input_text):
             if not isinstance(ev, dict):
                 continue

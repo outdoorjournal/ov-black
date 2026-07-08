@@ -391,3 +391,56 @@ def test_translator_correlates_when_tool_use_and_result_share_one_message() -> N
     }
     frames = list(translator.translate(event))
     assert frames == [{"type": "mood", "mood_id": "ember"}]
+
+
+# ── tool_trace (EVAL-1) ──────────────────────────────────────────────────────
+
+
+def test_tool_trace_off_by_default() -> None:
+    translator = EventTranslator()
+    frames = list(translator.translate(_assistant_tool_use_event("tu-8", "search_inventory")))
+    frames += list(translator.translate(_tool_result_message_event("tu-8", {"items": []})))
+    assert all(f.get("type") != "tool_trace" for f in frames)
+
+
+def test_tool_trace_emits_call_and_result_for_read_only_tool() -> None:
+    # Read-only tools map to no UI frame, but the trace still surfaces them —
+    # that's the whole point of the eval harness observability.
+    translator = EventTranslator(emit_tool_trace=True)
+    call_frames = list(
+        translator.translate(_assistant_tool_use_event("tu-9", "get_itinerary"))
+    )
+    assert call_frames == [
+        {"type": "tool_trace", "phase": "call", "tool": "get_itinerary", "tool_use_id": "tu-9"}
+    ]
+    result_frames = list(
+        translator.translate(_tool_result_message_event("tu-9", {"nodes": []}))
+    )
+    assert result_frames == [
+        {
+            "type": "tool_trace",
+            "phase": "result",
+            "tool": "get_itinerary",
+            "tool_use_id": "tu-9",
+            "status": "success",
+        }
+    ]
+
+
+def test_tool_trace_precedes_ui_frame_and_carries_no_payload() -> None:
+    translator = EventTranslator(emit_tool_trace=True)
+    list(translator.translate(_assistant_tool_use_event("tu-10", "set_mood")))
+    frames = list(
+        translator.translate(_tool_result_message_event("tu-10", {"mood_id": "ember"}))
+    )
+    assert [f["type"] for f in frames] == ["tool_trace", "mood"]
+    trace = frames[0]
+    # Redaction: the trace never carries the tool's input or output.
+    assert set(trace) == {"type", "phase", "tool", "tool_use_id", "status"}
+
+
+def test_tool_trace_result_without_prior_tool_use_stays_silent() -> None:
+    # Unresolvable name → no trace (nothing meaningful to report) and no crash.
+    translator = EventTranslator(emit_tool_trace=True)
+    frames = list(translator.translate(_tool_result_message_event("tu-11", {"x": 1})))
+    assert frames == []

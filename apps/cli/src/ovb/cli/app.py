@@ -13,6 +13,7 @@ from ovb import __version__
 from ovb.cli._run import CliState
 from ovb.cli.commands import (
     admin,
+    agent_eval,
     analyze,
     bookings,
     chat,
@@ -70,6 +71,7 @@ app.add_typer(analyze.fill_app, name="fill")
 app.add_typer(clients.app, name="clients")
 app.add_typer(clients.facts_app, name="facts")
 app.add_typer(chat.app, name="chat")
+app.add_typer(agent_eval.app, name="agent")
 app.add_typer(scenario.app, name="scenario")
 app.add_typer(admin.configure_app, name="configure")
 app.add_typer(admin.auth_app, name="auth")

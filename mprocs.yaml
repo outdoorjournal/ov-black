@@ -50,6 +50,9 @@ procs:
       AWS_PROFILE: "tov-sso"
       AWS_REGION: "us-west-2"
       BACKEND_BASE_URL: "http://localhost:8000"
+      # tool_trace SSE frames for the eval harness (`ovb agent eval`). Browsers
+      # drop the unknown frame type; only ovb consumes it. Never set in prod.
+      EMIT_TOOL_TRACE: "1"
 
   # Next.js advisor/client UI on :3000. Talks to the API via the generated
   # client; next dev manages its own hot reload.
