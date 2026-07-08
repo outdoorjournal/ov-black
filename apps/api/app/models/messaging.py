@@ -139,9 +139,7 @@ class Message(Base):
         ForeignKey("threads.id", ondelete="CASCADE"),
         nullable=False,
     )
-    author_kind: Mapped[ThreadActorKind] = mapped_column(
-        thread_actor_kind_enum, nullable=False
-    )
+    author_kind: Mapped[ThreadActorKind] = mapped_column(thread_actor_kind_enum, nullable=False)
     # FK to auth.users(id) is enforced DB-side (0037); auth.users is not a
     # mapped table, so no ORM ForeignKey here (mirrors the Client model).
     author_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -195,9 +193,7 @@ class ThreadParticipant(Base):
         UUID(as_uuid=True),
         primary_key=True,
     )
-    actor_kind: Mapped[ThreadActorKind] = mapped_column(
-        thread_actor_kind_enum, nullable=False
-    )
+    actor_kind: Mapped[ThreadActorKind] = mapped_column(thread_actor_kind_enum, nullable=False)
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

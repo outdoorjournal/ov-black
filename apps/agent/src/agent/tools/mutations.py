@@ -46,6 +46,86 @@ async def update_node_status(
 
 
 @tool
+async def update_node_details(
+    node_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    cost_amount: str | None = None,
+    cost_currency: str | None = None,
+    cost_kind: Literal["per_person", "total"] | None = None,
+    confirmation_number: str | None = None,
+) -> dict:
+    """Edit a card's own fields — rename it, set or correct its price, write a
+    description, or record a supplier confirmation number.
+
+    This edits the card's substance; it does NOT approve, discard, or
+    reschedule (``update_node_status`` and ``move_node`` do those). Pass only
+    the fields you're changing:
+
+    - ``title`` — rename the card.
+    - ``description`` — the card's descriptive text, shown on its detail view.
+    - ``cost_amount`` + ``cost_currency`` — the card's price. Both are required
+      together (``"400.00"`` + ``"USD"``); pass ``cost_kind`` to say whether
+      the amount is ``per_person`` or a single ``total`` (it defaults to
+      whatever the card already carries). This is how a pasted-link card
+      finally gets a price.
+    - ``confirmation_number`` — the supplier's booking reference / PNR, for
+      something the advisor booked manually outside our inventory.
+
+    If the itinerary is locked by the advisor, the API returns ``locked`` —
+    surface it, don't retry. A card that is already approved, booked, or
+    confirmed refuses field edits: a non-staff session gets ``status_locked``
+    (explain that firmed cards need an advisor), and an advisor session gets
+    ``demote_before_edit`` (offer to demote the card with ``update_node_status``
+    first, then re-apply the edit, then restore the status — and only do that
+    dance when the advisor confirms).
+
+    Returns the updated node.
+    """
+    pin = pin_ctx.get() or {}
+    itinerary_id = pin.get("itinerary_id")
+    if not itinerary_id:
+        raise BackendError(status=None, reason="missing_itinerary_id")
+
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if cost_amount is not None or cost_currency is not None or cost_kind is not None:
+        # The API's cost columns are both-or-neither; refuse a half pair here
+        # so the model gets a clear reason instead of a 400.
+        if not cost_amount or not cost_currency:
+            raise BackendError(status=None, reason="cost_pair_required")
+        body["cost_amount"] = cost_amount
+        body["cost_currency"] = cost_currency
+        if cost_kind is not None:
+            body["cost_kind"] = cost_kind
+
+    if description is not None or confirmation_number is not None:
+        # The PATCH replaces metadata wholesale (same constraint move_node
+        # handles), so read the node's current metadata and merge — otherwise
+        # we'd wipe its snapshot / start_time / duration.
+        graph = await get_json(f"/itinerary/{itinerary_id}")
+        nodes = (graph or {}).get("nodes", [])
+        current = next((n for n in nodes if str(n.get("id")) == str(node_id)), None)
+        if current is None:
+            raise BackendError(status=None, reason="not_found")
+        metadata: dict[str, Any] = dict(current.get("metadata") or {})
+        if description is not None:
+            metadata["description"] = description
+        if confirmation_number is not None:
+            metadata["confirmation_number"] = confirmation_number
+        body["metadata"] = metadata
+
+    if not body:
+        raise BackendError(status=None, reason="nothing_to_update")
+
+    return await patch_json(
+        f"/itinerary/{itinerary_id}/nodes/{node_id}",
+        json=body,
+    )
+
+
+@tool
 async def move_node(node_id: str, starts_at: str) -> dict:
     """Reschedule a node to a new start time — the timeline equivalent of a drag.
 

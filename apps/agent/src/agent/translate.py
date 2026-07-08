@@ -50,6 +50,9 @@ _TOOL_FRAME_TYPES = {
     "add_collection_note": "card_proposed",
     "assemble_draft": "draft_assembled",
     "update_node_status": "node_updated",
+    # Field edits (AGT-1) return the updated node, same shape as a status flip —
+    # the browser store adopts it and the card re-renders.
+    "update_node_details": "node_updated",
     "update_trip_timing": "itinerary_updated",
     "set_mood": "mood",
     # Materialised into the reply text as a fenced markdown block rather than a

@@ -58,6 +58,18 @@ class SendMessageRequest(BaseModel):
     parent_message_id: uuid.UUID | None = None
 
 
+class AgentThreadMessageRequest(BaseModel):
+    """Body of ``POST /agent/thread-message`` (agent-only, AGT-4).
+
+    The endpoint always stamps ``author_kind=artemis`` server-side, so no
+    attribution field exists here. Same content bounds as the human send.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: Annotated[str, Field(min_length=1, max_length=8000)]
+
+
 class MessageSummary(BaseModel):
     """Row shape for the message list + the just-sent message.
 

@@ -173,6 +173,11 @@ class AgentContext(BaseModel):
     # agent grounds suggestions in it and may reference it naturally. None when
     # the session has no pinned itinerary or no brief has been set yet.
     trip_brief: str | None = None
+    # The pinned itinerary's live plan state (AGT-2), pre-rendered by
+    # app.services.graph_digest: lifecycle status, node counts, totals,
+    # uninvoiced remainder. Same block the per-turn system prompt carries —
+    # None when the session has no pinned itinerary.
+    graph_digest: str | None = None
     dossier: DossierDetail | None
     dossier_facts: list[DossierFactDetail]
     profile_facts: list[ProfileFactDetail]

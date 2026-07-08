@@ -134,6 +134,65 @@ def test_tool_bundles_are_mode_appropriate() -> None:
     assert "search_inventory" not in qa_names
     assert "list_itineraries" in qa_names
 
+    # Field edits (AGT-1) are a planning-mode write — not onboarding (nothing
+    # to edit yet) and not read-mostly Q&A.
+    assert "update_node_details" in planning_names
+    assert "update_node_details" not in onboarding_names
+    assert "update_node_details" not in qa_names
+
+    # Money awareness (AGT-3): read-only, so planning AND Q&A carry both —
+    # "am I paid up?" is classic Q&A. Onboarding has no plan to reconcile.
+    assert {"get_billing_state", "get_booking_state"} <= planning_names
+    assert {"get_billing_state", "get_booking_state"} <= qa_names
+    assert "get_billing_state" not in onboarding_names
+
+    # Escalation (AGT-4): the human-thread channel exists wherever a built
+    # plan is being discussed.
+    assert "post_thread_message" in planning_names
+    assert "post_thread_message" in qa_names
+    assert "post_thread_message" not in onboarding_names
+
+
+def test_planning_prompts_teach_wave_c_capabilities() -> None:
+    """AGT-1..4: both planning rubrics teach the field editor, the propose
+    lifecycle, the money reads, the escalation channel, and the live-state
+    opening convention."""
+    for actor_kind in ("user", "advisor"):
+        prompt = build_prompt(
+            mode=Mode.planning,
+            api_system="VP",
+            actor_kind=actor_kind,
+            itinerary_id_present=True,
+        )
+        assert "update_node_details" in prompt, actor_kind
+        assert "get_billing_state" in prompt, actor_kind
+        assert "get_booking_state" in prompt, actor_kind
+        assert "post_thread_message" in prompt, actor_kind
+        assert "Live plan state" in prompt, actor_kind
+        assert "draft" in prompt and "proposed" in prompt and "approved" in prompt, actor_kind
+
+
+def test_qa_pinned_prompt_teaches_money_reads_and_escalation() -> None:
+    pinned = build_prompt(
+        mode=Mode.qa,
+        api_system="VP",
+        actor_kind="user",
+        itinerary_id_present=True,
+    )
+    assert "get_billing_state" in pinned
+    assert "get_booking_state" in pinned
+    assert "post_thread_message" in pinned
+    # The general (unpinned) variant keeps escalation but not the pinned-only
+    # money reads (they require a pinned itinerary).
+    general = build_prompt(
+        mode=Mode.qa,
+        api_system="VP",
+        actor_kind="user",
+        itinerary_id_present=False,
+    )
+    assert "post_thread_message" in general
+    assert "get_billing_state" not in general
+
 
 def test_turn_payload_rejects_missing_required_fields() -> None:
     import pytest

@@ -162,6 +162,7 @@ def assemble_traveler_context(
     client_full_name: str | None = None,
     alternative_of: str | None = None,
     trip_brief: str | None = None,
+    graph_digest: str | None = None,
 ) -> str:
     """Return the three-tier context block for the system prompt.
 
@@ -194,6 +195,13 @@ def assemble_traveler_context(
     # timing frame every proposal. Non-private, unlike the tiers below.
     if trip_brief:
         sections.append(trip_brief)
+
+    # ── Graph digest (AGT-2) ──────────────────────────────────────────────
+    # The pinned plan's live state (status, counts, totals, uninvoiced),
+    # pre-rendered by app.services.graph_digest and refreshed every turn —
+    # the prompt is rebuilt per turn, so exactly one snapshot is ever present.
+    if graph_digest:
+        sections.append(graph_digest)
 
     # ── Dossier ──────────────────────────────────────────────────────────
     dossier_body: list[str] = []

@@ -190,5 +190,6 @@ the live app" section).
 | Itinerary Builder | `ITB` | [itinerary-builder.md](./itinerary-builder.md) |
 | Collection (Wish List) | `COL` | [collection.md](./collection.md) |
 | Advisor Experience | `ADV` | [advisor.md](./advisor.md) (plan: [advisor-plan.md](./advisor-plan.md)) |
+| Agent Parity (behavior evals) | `AGT` | [agent-parity.md](./agent-parity.md) — a different *kind* of scenario: no screen; asserted via the Wave B eval harness (tools fired / frames / graph diff over the **real** agent), live-Bedrock-gated with honest skips |
 
 _Add a row when you start a new area file._

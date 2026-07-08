@@ -83,6 +83,44 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(agent_internal_module, "_resolve_session_trip_brief", _fake_trip_brief)
 
+    # Default: no pinned itinerary → no graph digest (AGT-2). Tests override to
+    # assert the digest flows into the AgentContext payload.
+    async def _fake_graph_digest(_session: Any, _session_id: Any) -> str | None:
+        return None
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_graph_digest", _fake_graph_digest)
+
+    async def _fake_pinned_itinerary(_session: Any, _session_id: Any) -> Any:
+        return None
+
+    monkeypatch.setattr(
+        agent_internal_module, "_resolve_session_pinned_itinerary", _fake_pinned_itinerary
+    )
+
+    # Default: the escalation write succeeds onto a fresh thread (AGT-4).
+    from datetime import datetime as _dt
+
+    async def _fake_post_thread_message(_session: Any, **kwargs: Any):
+        from app.models import Message, ThreadActorKind
+        from app.services.messaging import MessagingOutcome
+
+        message = Message(
+            id=uuid.uuid4(),
+            thread_id=uuid.uuid4(),
+            author_kind=ThreadActorKind.artemis,
+            author_id=None,
+            content=kwargs["content"],
+            proposed_node_id=None,
+            parent_message_id=None,
+            created_at=_dt.now(UTC),
+            edited_at=None,
+        )
+        return (MessagingOutcome.OK, message)
+
+    monkeypatch.setattr(
+        agent_internal_module, "post_agent_thread_message", _fake_post_thread_message
+    )
+
     # Side-by-side stubs for the two write paths. The stamp the routes
     # validate via DossierFactDetail / ProfileFactDetail expects every
     # timestamp populated, so the stubs fill them eagerly.
@@ -448,3 +486,77 @@ def test_patch_party_member_unknown_id_returns_404(
 def test_patch_party_member_without_token_returns_401(client: TestClient) -> None:
     resp = client.patch(f"/agent/party-members/{uuid.uuid4()}", json={"full_name": "Quinn"})
     assert resp.status_code == 401
+
+
+# ── graph digest in GET /agent/context (AGT-2) ────────────────────────────
+
+
+def test_get_context_surfaces_graph_digest(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AGT-2: the pinned itinerary's live plan state flows into the payload."""
+
+    async def _digest(_session: Any, _session_id: Any) -> str | None:
+        return "Live plan state (auto-refreshed every turn ...):\n- Status: draft"
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_graph_digest", _digest)
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
+    assert resp.status_code == 200
+    assert "Live plan state" in resp.json()["graph_digest"]
+
+
+def test_get_context_graph_digest_defaults_none(client: TestClient) -> None:
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
+    assert resp.status_code == 200
+    assert resp.json()["graph_digest"] is None
+
+
+# ── POST /agent/thread-message (AGT-4) ────────────────────────────────────
+
+
+def test_post_thread_message_with_valid_token_returns_artemis_message(
+    client: TestClient,
+) -> None:
+    resp = client.post(
+        "/agent/thread-message",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"content": "Client asks about a private chef evening."},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    # Attribution is pinned server-side — the agent can never post as a human.
+    assert body["author_kind"] == "artemis"
+    assert body["author_id"] is None
+    assert body["content"] == "Client asks about a private chef evening."
+
+
+def test_post_thread_message_failure_collapses_to_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.messaging import MessagingOutcome
+
+    async def _refused(_session: Any, **_kwargs: Any):
+        return (MessagingOutcome.FORBIDDEN, None)
+
+    monkeypatch.setattr(agent_internal_module, "post_agent_thread_message", _refused)
+    resp = client.post(
+        "/agent/thread-message",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"content": "hello"},
+    )
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "thread_not_found"}
+
+
+def test_post_thread_message_without_token_returns_401(client: TestClient) -> None:
+    resp = client.post("/agent/thread-message", json={"content": "hello"})
+    assert resp.status_code == 401
+
+
+def test_post_thread_message_empty_content_returns_422(client: TestClient) -> None:
+    resp = client.post(
+        "/agent/thread-message",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"content": ""},
+    )
+    assert resp.status_code == 422

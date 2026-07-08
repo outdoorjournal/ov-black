@@ -233,6 +233,7 @@ app.add_middleware(
         "/agent/profile/facts",
         "/agent/dossier/facts",
         "/agent/party-members",
+        "/agent/thread-message",
         # Places photo proxy — loaded by a browser <img> tag (no bearer
         # header possible), so it gates on its own HS256-signed photo token
         # instead of the Supabase JWT. See routers/integrations/google_places.

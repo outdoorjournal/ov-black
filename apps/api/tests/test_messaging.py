@@ -106,9 +106,7 @@ async def _world() -> AsyncIterator[SimpleNamespace]:
             owner=owner,
             traveler_uid=traveler,
             advisor=ActorContext(user_id=owner, actor_kind="advisor", actor_id=str(owner)),
-            traveler=ActorContext(
-                user_id=traveler, actor_kind="user", actor_id=str(traveler)
-            ),
+            traveler=ActorContext(user_id=traveler, actor_kind="user", actor_id=str(traveler)),
             stranger_advisor=ActorContext(
                 user_id=stranger_owner, actor_kind="advisor", actor_id=str(stranger_owner)
             ),
@@ -297,3 +295,50 @@ async def test_rls_participant_sees_thread_nonmember_blind() -> None:
         assert await _visible_as(w.traveler_uid) == 1  # participant traveler sees it
         assert await _visible_as(uuid.uuid4()) == 0  # a non-member is blind
         assert await _visible_as(w.stranger_traveler.user_id) == 0  # stranger blind
+
+
+# ── AGT-4: the agent's escalation write ──────────────────────────────────────
+
+
+@integration
+async def test_agent_escalation_posts_artemis_message_creating_thread() -> None:
+    """post_agent_thread_message get-or-creates the scope thread and posts one
+    author_kind='artemis' message with no human author id."""
+    from app.services.messaging import post_agent_thread_message
+
+    async with _world() as w, w.maker() as s:
+        outcome, message = await post_agent_thread_message(
+            s,
+            client_id=w.cid,
+            itinerary_id=w.itin_a,
+            content="Client asks about a private chef evening in Kyoto.",
+        )
+        assert outcome is MessagingOutcome.OK and message is not None
+        assert message.author_kind is ThreadActorKind.artemis
+        assert message.author_id is None
+
+        # The same scope resolves to the SAME thread the humans use — the
+        # advisor opening it afterwards sees the escalation.
+        ok, thread = await open_or_create_human_thread(
+            s, actor=w.advisor, client_id=w.cid, itinerary_id=w.itin_a
+        )
+        assert ok is MessagingOutcome.OK and thread is not None
+        assert thread.id == message.thread_id
+        _, rows = await list_messages(s, actor=w.advisor, thread_id=thread.id)
+        assert [m.id for m in rows] == [message.id]
+
+
+@integration
+async def test_agent_escalation_refuses_foreign_itinerary() -> None:
+    """A mis-pinned session cannot post into another client's trip thread."""
+    from app.services.messaging import post_agent_thread_message
+
+    async with _world() as w, w.maker() as s:
+        foreign_itin = await insert_itinerary(
+            s, title="Foreign", created_by=w.stranger_advisor.user_id, client_id=None
+        )
+        await s.commit()
+        outcome, message = await post_agent_thread_message(
+            s, client_id=w.cid, itinerary_id=foreign_itin, content="x"
+        )
+        assert outcome is MessagingOutcome.FORBIDDEN and message is None

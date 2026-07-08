@@ -1121,3 +1121,85 @@ async def reconcile_itinerary(
     ]
     balanced = not violations and all(row.balanced for row in rows)
     return ReconciliationReport(rows=rows, violations=violations, balanced=balanced)
+
+
+@dataclass(frozen=True, slots=True)
+class BookingStateRow:
+    """One bookable-lifecycle node's booking + money position (AGT-3 read).
+
+    Rolls the per-node money facet (:func:`node_charges`) together with the
+    node's live booking and its latest held offer — enough for the agent to
+    narrate where each card stands (unpaid → the money gate will refuse,
+    booked-awaiting-confirmation, confirmed with a supplier ref, offer gone
+    stale) without ever mutating anything.
+    """
+
+    node_id: uuid.UUID
+    title: str
+    node_status: NodeStatus
+    currency: str | None
+    billed_amount: Decimal
+    paid_amount: Decimal
+    owed_amount: Decimal
+    booked_amount: Decimal | None
+    supplier_ref: str | None
+    booked_at: datetime | None
+    confirmed_at: datetime | None
+    offer_amount: Decimal | None
+    offer_expires_at: datetime | None
+    offer_expired: bool | None
+
+
+# The bookable lifecycle — approved (money next), booked, confirmed.
+_BOOKING_STATE_STATUSES: tuple[NodeStatus, ...] = (
+    NodeStatus.approved,
+    NodeStatus.booked,
+    NodeStatus.confirmed,
+)
+
+
+async def booking_state(session: AsyncSession, itinerary_id: uuid.UUID) -> list[BookingStateRow]:
+    """Every approved/booked/confirmed node's booking + payment position."""
+    nodes = (
+        (
+            await session.execute(
+                select(Node)
+                .where(
+                    Node.itinerary_id == itinerary_id,
+                    Node.status.in_(list(_BOOKING_STATE_STATUSES)),
+                    Node.is_selected_alt.is_(True),
+                    Node.deleted_at.is_(None),
+                )
+                .order_by(Node.created_at, Node.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    now = _now()
+    rows: list[BookingStateRow] = []
+    for node in nodes:
+        charges = await node_charges(session, itinerary_id, node.id)
+        if isinstance(charges, ItineraryError):  # pragma: no cover — node just loaded
+            continue
+        booking = charges.booking
+        offer = await _latest_offer(session, node.id)
+        rows.append(
+            BookingStateRow(
+                node_id=node.id,
+                title=node.title,
+                node_status=node.status,
+                currency=charges.currency or node.cost_currency,
+                billed_amount=charges.billed_amount,
+                paid_amount=charges.paid_amount,
+                owed_amount=charges.owed_amount,
+                booked_amount=booking.amount if booking else None,
+                supplier_ref=booking.supplier_ref if booking else None,
+                booked_at=booking.booked_at if booking else None,
+                confirmed_at=booking.confirmed_at if booking else None,
+                offer_amount=offer.amount if offer else None,
+                offer_expires_at=offer.expires_at if offer else None,
+                offer_expired=_offer_expired(offer, at=now) if offer else None,
+            )
+        )
+    return rows

@@ -21,12 +21,19 @@ from agent.tools.fill import fill_gap
 from agent.tools.fork import fork_itinerary
 from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
-from agent.tools.mutations import move_node, update_node_status, update_trip_timing
+from agent.tools.money import get_billing_state, get_booking_state
+from agent.tools.mutations import (
+    move_node,
+    update_node_details,
+    update_node_status,
+    update_trip_timing,
+)
 from agent.tools.notes import add_note
 from agent.tools.proposals import assemble_draft, propose_card, propose_flight
 from agent.tools.reconcile import reconcile_alternative
 from agent.tools.request_reconcile import request_reconcile
 from agent.tools.set_mood import set_mood
+from agent.tools.thread import post_thread_message
 from agent.tools.timeline import propose_timeline
 from agent.tools.traveler import (
     get_traveler_context,
@@ -79,6 +86,7 @@ _TOOLS_PLANNING = [
     propose_timeline,
     assemble_draft,
     update_node_status,
+    update_node_details,
     update_trip_timing,
     move_node,
     add_note,
@@ -86,6 +94,11 @@ _TOOLS_PLANNING = [
     request_reconcile,
     reconcile_alternative,
     set_mood,
+    # Money awareness (AGT-3) — read-only; the agent narrates, staff execute.
+    get_billing_state,
+    get_booking_state,
+    # Escalation to the human advisor thread (AGT-4).
+    post_thread_message,
 ]
 
 # Q&A is read-mostly: the traveler is asking, not building. They may still leave
@@ -102,6 +115,12 @@ _TOOLS_QA = [
     fork_itinerary,
     move_node,
     request_reconcile,
+    # Money answers ("am I paid up?", "what's the confirmation #?") are
+    # classic Q&A — both reads, never a money mutation (AGT-3).
+    get_billing_state,
+    get_booking_state,
+    # Escalation to the human advisor thread (AGT-4).
+    post_thread_message,
 ]
 
 

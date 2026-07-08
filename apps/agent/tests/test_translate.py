@@ -115,6 +115,21 @@ def test_tool_result_update_node_status_maps_to_node_updated() -> None:
     }
 
 
+def test_tool_result_update_node_details_maps_to_node_updated() -> None:
+    # AGT-1: a field edit returns the updated node, same frame as a status flip
+    # — the browser store adopts it and the card re-renders.
+    event = {
+        "tool_result": {
+            "name": "update_node_details",
+            "output": {"id": "n1", "title": "Omakase", "cost_amount": "400.00"},
+        }
+    }
+    assert _one(event) == {
+        "type": "node_updated",
+        "node": {"id": "n1", "title": "Omakase", "cost_amount": "400.00"},
+    }
+
+
 def test_tool_result_update_trip_timing_maps_to_itinerary_updated() -> None:
     event = {
         "tool_result": {

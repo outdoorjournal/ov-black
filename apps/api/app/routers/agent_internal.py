@@ -40,6 +40,7 @@ from app.schemas.facts import (
     OsintFactDetail,
     ProfileFactDetail,
 )
+from app.schemas.messaging import AgentThreadMessageRequest, MessageSummary
 from app.schemas.party_members import (
     PartyMemberCreate,
     PartyMemberDetail,
@@ -57,6 +58,8 @@ from app.services.facts import (
     record_agent_dossier_inference,
     record_agent_profile_fact,
 )
+from app.services.graph_digest import graph_digest_for_itinerary
+from app.services.messaging import MessagingOutcome, post_agent_thread_message
 from app.services.party_members import create_party_member, update_party_member
 
 logger = logging.getLogger("ov_black.routers.agent_internal")
@@ -131,6 +134,30 @@ async def _resolve_session_trip_brief(session: AsyncSession, session_id: uuid.UU
     return await trip_brief_for_itinerary(session, pinned_itinerary_id)
 
 
+async def _resolve_session_graph_digest(session: AsyncSession, session_id: uuid.UUID) -> str | None:
+    """The pinned itinerary's live plan state (AGT-2) for this session.
+
+    Extracted so the route tests can stub it, mirroring the trip-brief read.
+    """
+    pinned_itinerary_id = (
+        await session.execute(
+            select(AgentSession.itinerary_id).where(AgentSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+    return await graph_digest_for_itinerary(session, pinned_itinerary_id)
+
+
+async def _resolve_session_pinned_itinerary(
+    session: AsyncSession, session_id: uuid.UUID
+) -> uuid.UUID | None:
+    """The session's pinned itinerary id (the scope an escalation posts into)."""
+    return (
+        await session.execute(
+            select(AgentSession.itinerary_id).where(AgentSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+
+
 @router.get(
     "/context",
     response_model=AgentContext,
@@ -167,10 +194,15 @@ async def get_agent_context_endpoint(
     # agent grounds its suggestions in what they're planning.
     trip_brief = await _resolve_session_trip_brief(session, claims.session_id)
 
+    # Graph digest (AGT-2): the pinned plan's live state, same block the
+    # per-turn system prompt carries.
+    graph_digest = await _resolve_session_graph_digest(session, claims.session_id)
+
     return AgentContext(
         client_id=ctx.client.id,
         client_full_name=ctx.client.full_name,
         trip_brief=trip_brief,
+        graph_digest=graph_digest,
         is_alternative=is_alternative,
         baseline_title=baseline_title,
         reconcile_requested=reconcile_requested,
@@ -234,6 +266,51 @@ async def record_dossier_inference_endpoint(
         source_turn_id=payload.source_turn_id,
     )
     return DossierFactDetail.model_validate(fact, from_attributes=True)
+
+
+@router.post(
+    "/thread-message",
+    status_code=status.HTTP_201_CREATED,
+    response_model=MessageSummary,
+    summary="Post an agent escalation onto the scope's human thread (author=artemis).",
+)
+async def post_thread_message_endpoint(
+    payload: AgentThreadMessageRequest,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> MessageSummary:
+    """The agent's escalation channel (AGT-4).
+
+    Posts one ``author_kind='artemis'`` message onto the human thread for the
+    session's scope — the pinned itinerary's trip thread, or the basecamp
+    (client-level) thread when the session is unpinned — creating the thread if
+    it doesn't exist yet. ``author_kind`` is pinned server-side; the agent
+    cannot impersonate the traveler or the advisor. Content lands on a
+    traveler-visible thread, so the disclosure rules (no Dossier/OSINT/net
+    worth) apply to what the model chooses to write — same invariant as every
+    other traveler-audience surface.
+    """
+    itinerary_id = await _resolve_session_pinned_itinerary(session, claims.session_id)
+    outcome, message = await post_agent_thread_message(
+        session,
+        client_id=claims.client_id,
+        itinerary_id=itinerary_id,
+        content=payload.content,
+    )
+    if outcome is not MessagingOutcome.OK or message is None:
+        # Collapse every failure to the same 404 the human routes use (D015).
+        raise HTTPException(status_code=404, detail="thread_not_found")
+    return MessageSummary(
+        id=message.id,
+        thread_id=message.thread_id,
+        author_kind=message.author_kind,
+        author_id=message.author_id,
+        content=message.content,
+        proposed_node_id=message.proposed_node_id,
+        parent_message_id=message.parent_message_id,
+        created_at=message.created_at,
+        edited_at=message.edited_at,
+    )
 
 
 @router.post(

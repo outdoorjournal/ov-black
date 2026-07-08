@@ -280,7 +280,13 @@ def _check_tools(spec: TurnSpec, result: TurnResult) -> list[CheckResult]:
     if not spec.expect_tools and not spec.forbid_tools:
         return checks
     called = result.tools_called
-    if not result.tool_trace:
+    if spec.expect_tools and not result.tool_trace:
+        # Only an *expectation* can distinguish "traceless agent" from "the
+        # agent genuinely called no tools". A forbid-only turn with an empty
+        # trace passes here — a zero-tool turn is exactly what it asserts —
+        # and the traceless-agent case is caught scenario-wide by
+        # ``EvalReport.trace_available`` (the pytest gate skips on it), so
+        # pair a forbid-only turn with at least one tool-firing turn.
         checks.append(
             CheckResult(
                 name="tools",

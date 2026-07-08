@@ -207,6 +207,29 @@ class ReconciliationResponse(BaseModel):
     violations: list[ReconciliationViolationResponse] = Field(default_factory=list)
 
 
+class BookingStateRowResponse(BaseModel):
+    """One bookable node's booking + money position (AGT-3 read-only roll-up)."""
+
+    node_id: uuid.UUID
+    title: str
+    node_status: NodeStatus
+    currency: str | None = None
+    billed_amount: Decimal
+    paid_amount: Decimal
+    owed_amount: Decimal
+    booked_amount: Decimal | None = None
+    supplier_ref: str | None = None
+    booked_at: datetime | None = None
+    confirmed_at: datetime | None = None
+    offer_amount: Decimal | None = None
+    offer_expires_at: datetime | None = None
+    offer_expired: bool | None = None
+
+
+class BookingStateResponse(BaseModel):
+    rows: list[BookingStateRowResponse] = Field(default_factory=list)
+
+
 # ── Builders + error mapping ───────────────────────────────────────────────
 
 
@@ -531,6 +554,45 @@ async def cancel_node_endpoint(
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
     return _booking_response(result)
+
+
+@router.get(
+    "/itinerary/{itinerary_id}/booking-state",
+    response_model=BookingStateResponse,
+    summary="Every approved/booked/confirmed node's booking + payment position.",
+)
+async def booking_state_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> BookingStateResponse:
+    """The agent-facing booking read (AGT-3): where each bookable card stands —
+    unpaid (the money gate will refuse a book), booked awaiting a supplier
+    confirmation, confirmed with its reference, or holding a stale offer. Same
+    access gate as the reconciliation read (advisor / owning client / creator)."""
+    await _assert_itinerary_access(session, user, itinerary_id)
+    rows = await bookings_svc.booking_state(session, itinerary_id)
+    return BookingStateResponse(
+        rows=[
+            BookingStateRowResponse(
+                node_id=row.node_id,
+                title=row.title,
+                node_status=row.node_status,
+                currency=row.currency,
+                billed_amount=row.billed_amount,
+                paid_amount=row.paid_amount,
+                owed_amount=row.owed_amount,
+                booked_amount=row.booked_amount,
+                supplier_ref=row.supplier_ref,
+                booked_at=row.booked_at,
+                confirmed_at=row.confirmed_at,
+                offer_amount=row.offer_amount,
+                offer_expires_at=row.offer_expires_at,
+                offer_expired=row.offer_expired,
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.get(

@@ -279,9 +279,7 @@ class Ovb:
 
     async def list_invoices(self, itinerary_id: str) -> list[gm.InvoiceResponse]:
         """List an itinerary's invoices (advisor or owning client)."""
-        return await self._list(
-            gm.InvoiceResponse, "GET", f"/itinerary/{itinerary_id}/invoices"
-        )
+        return await self._list(gm.InvoiceResponse, "GET", f"/itinerary/{itinerary_id}/invoices")
 
     async def get_invoice(self, invoice_id: str) -> gm.InvoiceResponse:
         """Get an invoice with its ledger + total."""
@@ -312,9 +310,7 @@ class Ovb:
             json_body=body,
         )
 
-    async def void_invoice_line(
-        self, invoice_id: str, line_id: str
-    ) -> gm.InvoiceLineItemResponse:
+    async def void_invoice_line(self, invoice_id: str, line_id: str) -> gm.InvoiceLineItemResponse:
         """Void a line by appending a reversal (advisor)."""
         return await self._model(
             gm.InvoiceLineItemResponse,
@@ -418,6 +414,20 @@ class Ovb:
             json_body=body,
         )
 
+    async def get_billing_state(self, itinerary_id: str) -> gm.BillingStateResponse:
+        """Itinerary-wide money truth (AGT-3): trip total vs invoiced/paid +
+        the per-node uninvoiced remainder — the same read the agent's
+        ``get_billing_state`` tool makes."""
+        return await self._model(
+            gm.BillingStateResponse, "GET", f"/itinerary/{itinerary_id}/billing"
+        )
+
+    async def get_booking_state(self, itinerary_id: str) -> gm.BookingStateResponse:
+        """Every bookable node's booking + payment position (AGT-3)."""
+        return await self._model(
+            gm.BookingStateResponse, "GET", f"/itinerary/{itinerary_id}/booking-state"
+        )
+
     async def get_reconciliation(self, itinerary_id: str) -> gm.ReconciliationResponse:
         """Reconcile Σ(paid invoice lines) ⇔ Σ(booked node costs) for an itinerary."""
         return await self._model(
@@ -427,6 +437,22 @@ class Ovb:
     async def list_my_invoices(self) -> gm.MyInvoicesResponse:
         """The calling client's invoices across all itineraries (traveler self-service)."""
         return await self._model(gm.MyInvoicesResponse, "GET", "/me/invoices")
+
+    # ── messaging (human threads) ─────────────────────────────────────────
+    async def open_thread(
+        self, *, client_id: str, itinerary_id: str | None = None
+    ) -> gm.ThreadSummary:
+        """Get-or-create the human thread for a scope (M006/PS7)."""
+        return await self._model(
+            gm.ThreadSummary,
+            "POST",
+            "/threads",
+            json_body={"client_id": client_id, "itinerary_id": itinerary_id},
+        )
+
+    async def list_thread_messages(self, thread_id: str) -> list[gm.MessageSummary]:
+        """A thread's human messages, oldest first."""
+        return await self._list(gm.MessageSummary, "GET", f"/threads/{thread_id}/messages")
 
     # ── nodes ────────────────────────────────────────────────────────────
     async def add_node(

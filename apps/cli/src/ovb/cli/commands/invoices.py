@@ -20,9 +20,7 @@ def create(
     state = state_of(ctx)
     res = run_op(
         ctx,
-        lambda ovb: ovb.create_invoice(
-            itinerary_id, label=label, currency=currency, due_at=due_at
-        ),
+        lambda ovb: ovb.create_invoice(itinerary_id, label=label, currency=currency, due_at=due_at),
     )
     render.emit(state.json_mode, res, lambda: render.kv_panel("invoice", res))
 

@@ -240,6 +240,34 @@ def test_assemble_includes_trip_brief_after_client_before_dossier() -> None:
     assert out.index("Alex Stone") < out.index("Trip brief") < out.index("Dossier (private")
 
 
+def test_assemble_includes_graph_digest_after_trip_brief() -> None:
+    """AGT-2: the live plan state rides right behind the trip brief, ahead of
+    the private tiers — the plan's facts frame the turn like the goal does."""
+    digest = "Live plan state (auto-refreshed every turn ...):\n- Status: draft"
+    out = assemble_traveler_context(
+        dossier=_dossier(),
+        dossier_facts=[_dossier_fact("loves heli-skiing")],
+        profile_facts=[],
+        osint_facts=[],
+        client_full_name="Alex Stone",
+        trip_brief="Trip brief (...):\nGoal: Sailing in Greece",
+        graph_digest=digest,
+    )
+    assert "Live plan state" in out
+    assert out.index("Trip brief") < out.index("Live plan state") < out.index("Dossier (private")
+
+
+def test_assemble_omits_graph_digest_when_none() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[_profile_fact("x")],
+        osint_facts=[],
+        graph_digest=None,
+    )
+    assert "Live plan state" not in out
+
+
 def test_assemble_omits_trip_brief_when_none() -> None:
     out = assemble_traveler_context(
         dossier=None,

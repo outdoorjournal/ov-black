@@ -279,7 +279,5 @@ async def test_traveler_cannot_open_advisor_audience(
 
     # But the private advisor workspace is hidden: 404, not 403.
     with pytest.raises(ApiError) as exc_info:
-        await Conversation.open(
-            traveler, client_id=linked_traveler_client_id, audience="advisor"
-        )
+        await Conversation.open(traveler, client_id=linked_traveler_client_id, audience="advisor")
     assert exc_info.value.status == 404, exc_info.value

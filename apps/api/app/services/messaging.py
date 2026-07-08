@@ -97,9 +97,7 @@ async def _enforce_client_access(
         if actor.user_id is None:
             return MessagingOutcome.FORBIDDEN
         if client.auth_user_id is None and backfill:
-            await _jit_backfill_client_auth_user_id(
-                session, client=client, user_id=actor.user_id
-            )
+            await _jit_backfill_client_auth_user_id(session, client=client, user_id=actor.user_id)
         if client.auth_user_id != actor.user_id:
             return MessagingOutcome.FORBIDDEN
         return MessagingOutcome.OK
@@ -135,9 +133,7 @@ async def _ensure_participant(
     try:
         async with session.begin_nested():
             session.add(
-                ThreadParticipant(
-                    thread_id=thread_id, actor_id=actor_id, actor_kind=actor_kind
-                )
+                ThreadParticipant(thread_id=thread_id, actor_id=actor_id, actor_kind=actor_kind)
             )
     except IntegrityError:
         pass  # a concurrent access seeded the same participant — fine.
@@ -190,22 +186,40 @@ async def open_or_create_human_thread(
     if client is None:
         return MessagingOutcome.CLIENT_NOT_FOUND, None
 
-    access = await _enforce_client_access(
-        session, actor=actor, client=client, backfill=True
-    )
+    access = await _enforce_client_access(session, actor=actor, client=client, backfill=True)
     if access is not MessagingOutcome.OK:
         return access, None
 
     if itinerary_id is not None:
         owner_cid = (
-            await session.execute(
-                select(Itinerary.client_id).where(Itinerary.id == itinerary_id)
-            )
+            await session.execute(select(Itinerary.client_id).where(Itinerary.id == itinerary_id))
         ).scalar_one_or_none()
         if owner_cid is None or owner_cid != client_id:
             # Hide a foreign itinerary behind the standard FORBIDDEN → 404.
             return MessagingOutcome.FORBIDDEN, None
 
+    thread = await _get_or_create_scope_thread(
+        session, client_id=client_id, itinerary_id=itinerary_id
+    )
+
+    await _seed_human_participants(session, thread=thread, client=client)
+    await session.commit()
+    return MessagingOutcome.OK, thread
+
+
+async def _get_or_create_scope_thread(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    itinerary_id: uuid.UUID | None,
+) -> Thread:
+    """The stable get-or-create for a scope's single live human thread.
+
+    Extracted from :func:`open_or_create_human_thread` so the agent's
+    escalation write (:func:`post_agent_thread_message`) reuses the same
+    unique-index-backed resolution without the human-caller access gate —
+    the agent token is already scoped to the client.
+    """
     scope_match = (
         Thread.itinerary_id.is_(None)
         if itinerary_id is None
@@ -257,10 +271,7 @@ async def open_or_create_human_thread(
                     "itinerary_scoped": itinerary_id is not None,
                 },
             )
-
-    await _seed_human_participants(session, thread=thread, client=client)
-    await session.commit()
-    return MessagingOutcome.OK, thread
+    return thread
 
 
 # ── load + authz for an existing thread ─────────────────────────────────────
@@ -352,6 +363,61 @@ async def send_message(
         "messaging.message.sent",
         extra={
             "thread_id": str(thread_id),
+            "message_id": str(message.id),
+            "author_kind": message.author_kind.value,
+        },
+    )
+    return MessagingOutcome.OK, message
+
+
+async def post_agent_thread_message(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    itinerary_id: uuid.UUID | None,
+    content: str,
+) -> tuple[MessagingOutcome, Message | None]:
+    """The agent's escalation write (AGT-4): one ``author_kind='artemis'`` message
+    onto the scope's human thread, creating the thread if it doesn't exist yet.
+
+    Unlike :func:`send_message` this takes no human principal — the caller is the
+    agent-internal route, whose per-session token is already bound to
+    ``client_id`` (the same trust model as the fact writes). The itinerary
+    ownership check still runs so a mis-pinned session cannot post into another
+    client's trip thread. Mirrors ``summon_artemis_in_thread``'s message shape
+    (``author_id`` NULL, attribution via ``author_kind``).
+    """
+    client = (
+        await session.execute(select(Client).where(Client.id == client_id))
+    ).scalar_one_or_none()
+    if client is None:
+        return MessagingOutcome.CLIENT_NOT_FOUND, None
+
+    if itinerary_id is not None:
+        owner_cid = (
+            await session.execute(select(Itinerary.client_id).where(Itinerary.id == itinerary_id))
+        ).scalar_one_or_none()
+        if owner_cid is None or owner_cid != client_id:
+            return MessagingOutcome.FORBIDDEN, None
+
+    thread = await _get_or_create_scope_thread(
+        session, client_id=client_id, itinerary_id=itinerary_id
+    )
+    await _seed_human_participants(session, thread=thread, client=client)
+
+    message = Message(
+        thread_id=thread.id,
+        author_kind=ThreadActorKind.artemis,
+        author_id=None,
+        content=content,
+    )
+    session.add(message)
+    await session.commit()
+    await session.refresh(message)
+    logger.info(
+        "messaging.message.sent",
+        extra={
+            "thread_id": str(thread.id),
             "message_id": str(message.id),
             "author_kind": message.author_kind.value,
         },

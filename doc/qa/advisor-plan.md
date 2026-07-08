@@ -463,17 +463,85 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
   - **Boundary:** evals score invariants (tools/frames/diff), never wording — the rubric
     judge is the only semantic check and it's opt-in per turn.
 
-**Wave C — agent parity** *(measured by the Wave B harness)*
-- **AGT-1 — `update_node` field-edit tool** (S, after ADV-13 settles the field set) + rubric.
-- **AGT-2 — graph digest in the turn context** (S/M): inject itinerary status, node status
-  counts, per-currency totals, locked nodes, uninvoiced count into `/agent/context`; teach
-  the ADV-10 / per-card propose flow in the planning rubric.
-- **AGT-3 — read-only money tools** (M): `get_billing_state` (reconciliation + uninvoiced) and
-  `get_booking_state` (offers/expiry/confirmations). Narrate + nudge, never mutate — the
-  human-in-the-loop boundary stays structural.
-- **AGT-4 — escalation + proactivity** (M, product-flavored): a `post_thread_message` tool and
-  an opening-of-turn convention for material state changes (fresh block findings, a pending
-  reconcile request).
+**Wave C — agent parity** *(measured by the Wave B harness)* — **✅ shipped 2026-07-08**
+
+> Each AGT item is now a first-class QA scenario in the new
+> [agent-parity.md](./agent-parity.md) area (code **AGT**) — a different *kind*
+> of doc/qa spec: no screen, asserted via the Wave B eval harness (tools fired /
+> frames / graph diff over the real agent), with the deterministic halves pinned
+> by unit tests. Coverage + Given/When/Then live there; this is the build log.
+
+- ✅ **AGT-1 — `update_node_details` field-edit tool** (S): shipped (named
+  `update_node_details`, not `update_node`, to keep clear water from
+  `update_node_status`). ADV-13's field set — title · description
+  (`metadata.description`, read-merge-write so `start_time`/`snapshot`
+  survive the wholesale metadata PATCH) · the cost trio (both-or-neither
+  guarded tool-side; finally prices a pasted-link card conversationally) ·
+  `metadata.confirmation_number` (the "manually booked off-inventory"
+  reminder). Planning-bundle only; maps to the existing `node_updated` frame
+  so an open board re-renders; docstring teaches the `locked` /
+  `status_locked` / `demote_before_edit` outcomes (demote-first only on
+  advisor confirmation). Taught in both planning rubrics.
+- ✅ **AGT-2 — graph digest in the turn context** (S/M): shipped as a per-turn
+  **"Live plan state"** block — computed by a new
+  `app/services/graph_digest.py` (itinerary status *with its ADV-10 meaning*,
+  node counts by status + locked note, per-currency totals + party size,
+  invoiced/outstanding + the uninvoiced remainder, pending reconcile request,
+  latest analysis block/warn counts) and **injected into the system prompt
+  every turn** by `assemble_traveler_context` (founder call 2026-07-08:
+  append per turn rather than have the agent fetch — the prompt is rebuilt
+  each turn so it never stacks). Mirrored as `AgentContext.graph_digest` on
+  `GET /agent/context`. Both planning rubrics + pinned Q&A teach "trust it
+  over memory; `get_itinerary` only for the cards themselves", and the
+  advisor rubric now teaches the `draft → proposed → approved` flow (the
+  propose gesture stays the advisor's — no propose tool).
+- ✅ **AGT-3 — read-only money tools** (M): shipped. Server-side seams first:
+  `GET /itinerary/{id}/billing` (a new `app/services/billing_summary.py` —
+  `derive_billing_state`, the server port of the ADV-11 cockpit's
+  `reconcileBilling`: coverage net of reversals, per_person × party,
+  issued/paid rollup, per-node uninvoiced remainder) and
+  `GET /itinerary/{id}/booking-state` (`bookings.booking_state`: per
+  approved/booked/confirmed node the billed/paid/owed split, booking +
+  supplier ref + confirmed_at, latest offer + expiry/expired). Both under the
+  invoice read gate (advisor/owner/creator) so either audience's JWT works.
+  Agent tools `get_billing_state` / `get_booking_state` in planning **and**
+  Q&A ("am I paid up?" is Q&A); narrate + nudge, never mutate — the tools are
+  GETs, so the human-in-the-loop boundary stays structural. The reads also
+  let the agent explain a money-gate refusal.
+- ✅ **AGT-4 — escalation + proactivity** (M): shipped. A backend-only
+  `POST /agent/thread-message` (agent-token auth; JWT-middleware
+  whitelisted) posts **one `author_kind='artemis'` message** — attribution
+  pinned server-side — onto the *same* human thread ADV-7/8 use
+  (`post_agent_thread_message` reuses the get-or-create via a
+  `_get_or_create_scope_thread` extraction; foreign-itinerary pins refused;
+  failures collapse to 404). Agent tool `post_thread_message` (planning +
+  Q&A) with disclosure + one-per-request rules in the docstring. Proactivity
+  is the prompt-level **opening-of-turn convention**: the rubrics tell the
+  agent to open with material changes the live plan state shows (pending
+  merge, blocking finding, money newly outstanding) — judged, not gated.
+- **Tested:** agent — `test_wave_c_tools.py` (patch shapes, metadata merge,
+  cost-pair + unpinned guards, route paths), `test_modes.py` (bundle
+  membership + rubric teaching), `test_translate.py` (`update_node_details`
+  → `node_updated`). API — `test_billing_summary.py` (the cockpit-math
+  mirror), `test_graph_digest.py` (render truth table),
+  `test_traveler_context.py` (digest placement), `test_agent_internal_router.py`
+  (digest field + thread-message auth matrix), `test_messaging.py`
+  integration (artemis lands on the humans' thread; foreign pin refused).
+  Evals — four new scenarios in `test_agent_eval_e2e.py` (field-edit fires
+  the editor + frame; digest answers state with `get_itinerary` **forbidden**;
+  money question fires `get_billing_state`, mutations forbidden, graph
+  untouched; escalation fires the tool + an artemis row lands at the API
+  seam). Clients regenerated (`packages/api-client` + the `ovb` SDK, which
+  gained typed `get_billing_state`/`get_booking_state`/`open_thread`/
+  `list_thread_messages`).
+- **Verified live 2026-07-08:** all six evals (the four Wave C + the two
+  Wave B) green against real Bedrock. Two harness learnings folded back in:
+  (a) the Japan demo's cards are mostly firmed, so the field-edit eval seeds
+  its own `proposed` card (the G1 refusal it first hit is P5's subject, not
+  the editor's); (b) a forbid-only eval turn can't distinguish "no tools
+  called" from a traceless agent, so `_check_tools` hard-fails on an empty
+  trace only when tools are *expected*, and the digest eval runs a
+  tool-firing turn first to prove the trace channel live.
 
 **Wave D — awareness layer**
 - **ADV-14 — needs-attention feed** (M/L): derive from what exists (`reconcile_requested_at`,

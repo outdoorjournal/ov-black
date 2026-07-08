@@ -69,6 +69,7 @@ from app.observability import emit_metric
 from app.services import itineraries as itineraries_service
 from app.services.agent_token import AgentTokenError, mint_agent_token
 from app.services.facts import load_agent_context
+from app.services.graph_digest import graph_digest_for_itinerary
 
 logger = logging.getLogger("ov_black.agent.service")
 
@@ -1175,6 +1176,12 @@ async def stream_turn(
         # agent grounds its first suggestions in what they're actually planning.
         trip_brief = await trip_brief_for_itinerary(db, agent_session.itinerary_id)
 
+        # Graph digest (AGT-2): the pinned plan's live state — lifecycle status,
+        # node counts, totals, uninvoiced remainder — computed fresh per turn and
+        # injected into the system prompt so the agent never has to burn a
+        # get_itinerary call just to learn where the plan stands.
+        graph_digest = await graph_digest_for_itinerary(db, agent_session.itinerary_id)
+
         # Assemble prompt + context OUTSIDE the log-safe zone.
         traveler_ctx = assemble_traveler_context(
             dossier=dossier,
@@ -1184,6 +1191,7 @@ async def stream_turn(
             client_full_name=client_row.full_name,
             alternative_of=fork_baseline_title,
             trip_brief=trip_brief,
+            graph_digest=graph_digest,
         )
         system_prompt = build_system_prompt(traveler_ctx)
         agentcore_session_id = agent_session.agentcore_session_id

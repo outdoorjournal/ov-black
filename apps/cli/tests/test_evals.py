@@ -138,6 +138,16 @@ def test_missing_trace_fails_with_actionable_detail() -> None:
     assert "EMIT_TOOL_TRACE" in tools_check.detail
 
 
+def test_forbid_only_turn_with_zero_tool_calls_passes() -> None:
+    """A forbid-only turn asserts "the agent needed NO tool for this" — an
+    empty trace is the *desired* outcome, not a trace-infra failure (that case
+    is covered scenario-wide by ``EvalReport.trace_available``; pair a
+    forbid-only turn with at least one tool-firing turn)."""
+    spec = TurnSpec(say="s", forbid_tools=["get_itinerary"])
+    checks = evaluate_turn(spec, _result(tools=[]), None)
+    assert all(c.outcome != "fail" for c in checks), [c.detail for c in checks]
+
+
 # ── frame / prose / diff checks ──────────────────────────────────────────────
 
 

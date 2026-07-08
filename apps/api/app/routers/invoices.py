@@ -40,6 +40,7 @@ from app.routers.itineraries import (
     _load_itinerary,
     _resolve_client_auth_user_id,
 )
+from app.services import billing_summary as billing_summary_svc
 from app.services import invoices as invoices_svc
 from app.services import payments as payments_svc
 from app.services.invoices import InvoiceView
@@ -135,6 +136,48 @@ class InvoiceResponse(BaseModel):
     created_at: datetime
     lines: list[InvoiceLineItemResponse] = Field(default_factory=list)
     payments: list[PaymentResponse] = Field(default_factory=list)
+
+
+class BillingCurrencyRowResponse(BaseModel):
+    """One currency's reconciliation glance (AGT-3 / the cockpit's strip)."""
+
+    currency: str
+    trip_total: Decimal
+    invoiced: Decimal
+    paid: Decimal
+    outstanding: Decimal
+    uninvoiced: Decimal
+    uninvoiced_count: int
+
+
+class UnbilledNodeResponse(BaseModel):
+    """A chargeable node whose effective cost isn't fully billed yet."""
+
+    node_id: uuid.UUID
+    title: str
+    currency: str
+    effective: Decimal
+    charged: Decimal
+    remaining: Decimal
+
+
+class InvoiceBriefResponse(BaseModel):
+    """An invoice headline (no ledger) for narration."""
+
+    id: uuid.UUID
+    label: str
+    status: InvoiceStatus
+    currency: str
+    total: Decimal
+    paid: Decimal
+
+
+class BillingStateResponse(BaseModel):
+    """Response of ``GET /itinerary/{id}/billing`` — the itinerary's money truth."""
+
+    rows: list[BillingCurrencyRowResponse]
+    unbilled_nodes: list[UnbilledNodeResponse]
+    invoices: list[InvoiceBriefResponse]
 
 
 # ── Builders + helpers ─────────────────────────────────────────────────────
@@ -276,6 +319,59 @@ async def list_invoices_endpoint(
     await _assert_itinerary_access(session, user, itinerary_id)
     views = await invoices_svc.list_invoices(session, itinerary_id)
     return [_invoice_response(v) for v in views]
+
+
+@router.get(
+    "/itinerary/{itinerary_id}/billing",
+    response_model=BillingStateResponse,
+    summary="Itinerary-wide billing state: trip total vs invoiced/paid + uninvoiced remainder.",
+)
+async def billing_state_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> BillingStateResponse:
+    """The server-side reconciliation glance (AGT-3): the same money truth the
+    advisor cockpit derives client-side, readable by the advisor, the owning
+    client, or the creator — the agent calls it with the user's own JWT."""
+    await _assert_itinerary_access(session, user, itinerary_id)
+    state = await billing_summary_svc.billing_state(session, itinerary_id)
+    return BillingStateResponse(
+        rows=[
+            BillingCurrencyRowResponse(
+                currency=row.currency,
+                trip_total=row.trip_total,
+                invoiced=row.invoiced,
+                paid=row.paid,
+                outstanding=row.outstanding,
+                uninvoiced=row.uninvoiced,
+                uninvoiced_count=row.uninvoiced_count,
+            )
+            for row in state.rows
+        ],
+        unbilled_nodes=[
+            UnbilledNodeResponse(
+                node_id=n.node_id,
+                title=n.title,
+                currency=n.currency,
+                effective=n.effective,
+                charged=n.charged,
+                remaining=n.remaining,
+            )
+            for n in state.unbilled_nodes
+        ],
+        invoices=[
+            InvoiceBriefResponse(
+                id=b.invoice_id,
+                label=b.label,
+                status=b.status,
+                currency=b.currency,
+                total=b.total,
+                paid=b.paid,
+            )
+            for b in state.invoices
+        ],
+    )
 
 
 @router.get(

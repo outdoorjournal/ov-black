@@ -37,6 +37,20 @@ class AdvisorItineraryClient(BaseModel):
     email: Annotated[EmailStr, Field(title='Email')]
 
 
+class AgentThreadMessageRequest(BaseModel):
+    """
+    Body of ``POST /agent/thread-message`` (agent-only, AGT-4).
+
+    The endpoint always stamps ``author_kind=artemis`` server-side, so no
+    attribution field exists here. Same content bounds as the human send.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    content: Annotated[str, Field(max_length=8000, min_length=1, title='Content')]
+
+
 class AnalysisDepth(StrEnum):
     """
     Mirrors the public.analysis_depth Postgres enum (0017).
@@ -93,6 +107,33 @@ class AuthedHealthResponse(BaseModel):
     role: Annotated[str | None, Field(title='Role')] = None
 
 
+class BillingCurrencyRowResponse(BaseModel):
+    """
+    One currency's reconciliation glance (AGT-3 / the cockpit's strip).
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    currency: Annotated[str, Field(title='Currency')]
+    trip_total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Trip Total')
+    ]
+    invoiced: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Invoiced')
+    ]
+    paid: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid')
+    ]
+    outstanding: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Outstanding')
+    ]
+    uninvoiced: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Uninvoiced')
+    ]
+    uninvoiced_count: Annotated[int, Field(title='Uninvoiced Count')]
+
+
 class RepriceDelta(RootModel[str]):
     model_config = ConfigDict(
         regex_engine="python-re",
@@ -108,6 +149,24 @@ class RefundAmount(RootModel[str]):
     )
     root: Annotated[
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Refund Amount')
+    ]
+
+
+class BookedAmount(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Booked Amount')
+    ]
+
+
+class OfferAmount(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Offer Amount')
     ]
 
 
@@ -146,6 +205,7 @@ class ClientCreateResponse(BaseModel):
 
 
 class AccessStatus(StrEnum):
+    uninvited = 'uninvited'
     pending = 'pending'
     active = 'active'
 
@@ -187,6 +247,7 @@ class ClientSummary(BaseModel):
     email: Annotated[EmailStr, Field(title='Email')]
     has_dossier: Annotated[bool, Field(title='Has Dossier')]
     access_status: Annotated[AccessStatus, Field(title='Access Status')]
+    invited_at: Annotated[AwareDatetime | None, Field(title='Invited At')]
     accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
@@ -255,6 +316,10 @@ class DurationNights(RootModel[int]):
 
 class TimingNote(RootModel[str]):
     root: Annotated[str, Field(max_length=2000, title='Timing Note')]
+
+
+class Note(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Note')]
 
 
 class CostAmount(RootModel[str]):
@@ -618,10 +683,17 @@ class InvoiceStatus(StrEnum):
 
 class ItineraryStatus(StrEnum):
     """
-    Mirrors the public.itinerary_status Postgres enum (0006).
+    Mirrors the public.itinerary_status Postgres enum (0006, `proposed` 0039).
+
+    Lifecycle: ``draft`` (advisor building) → ``proposed`` (advisor finished and
+    handed the plan to the traveler for review, freezing the build) → ``approved``
+    (the traveler has approved — the itinerary-level ``approved`` is *derived*:
+    it is set once every remaining ``proposed`` node has been actioned). The
+    whole itinerary follows the same ``proposed → approved`` arc as its nodes.
     """
 
     draft = 'draft'
+    proposed = 'proposed'
     approved = 'approved'
 
 
@@ -900,6 +972,22 @@ class SeededOpener(RootModel[str]):
     root: Annotated[str, Field(max_length=500, title='Seeded Opener')]
 
 
+class OpenThreadRequest(BaseModel):
+    """
+    Payload for ``POST /threads`` — get-or-create the human thread for a scope.
+
+    ``itinerary_id`` omitted / None = basecamp scope (you ↔ advisor); provided =
+    that trip's thread (you ↔ advisor ↔ party). Idempotent: callers cannot tell
+    create from reuse.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')] = None
+
+
 class SourceKind1(StrEnum):
     advisor = 'advisor'
     scraper = 'scraper'
@@ -1042,6 +1130,25 @@ class PartyMemberUpdate(BaseModel):
     ] = None
     is_primary: Annotated[bool | None, Field(title='Is Primary')] = None
     notes: Annotated[Notes | None, Field(title='Notes')] = None
+
+
+class Title1(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Title')]
+
+
+class PatchSessionRequest(BaseModel):
+    """
+    Body of ``PATCH /sessions/{session_id}`` — rename and/or (un)archive.
+
+    Both fields are optional; an omitted field means "leave as is". An empty
+    ``title`` clears it (falls back to the auto-derived label on the next turn).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: Annotated[Title1 | None, Field(title='Title')] = None
+    archived: Annotated[bool | None, Field(title='Archived')] = None
 
 
 class PayInvoiceRequest(BaseModel):
@@ -1255,10 +1362,6 @@ class RefundStatus(StrEnum):
     not_applicable = 'not_applicable'
 
 
-class Note(RootModel[str]):
-    root: Annotated[str, Field(max_length=2000, title='Note')]
-
-
 class RequestReconcileRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1283,6 +1386,21 @@ class SearchResponse(BaseModel):
     results: Annotated[list[PlaceSummary], Field(title='Results')]
 
 
+class SendMessageRequest(BaseModel):
+    """
+    Body of ``POST /threads/{thread_id}/messages``.
+
+    ``content`` is bounded to 8000 chars (mirrors the turn cap). Empty is 422.
+    ``parent_message_id`` threads a reply; omit for a top-level message.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    content: Annotated[str, Field(max_length=8000, min_length=1, title='Content')]
+    parent_message_id: Annotated[UUID | None, Field(title='Parent Message Id')] = None
+
+
 class SessionAudience(StrEnum):
     """
     Mirrors the public.session_audience enum from 0018.
@@ -1294,6 +1412,25 @@ class SessionAudience(StrEnum):
 
     traveler = 'traveler'
     advisor = 'advisor'
+
+
+class SessionSummary(BaseModel):
+    """
+    Row shape for ``GET /sessions`` — one scoped, resumable session (PS2).
+
+    The list is scope-filtered (client + audience + itinerary) and excludes
+    archived sessions, so this carries just what the concierge column needs to
+    render the list and resume: an id, a label, and when it started.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    session_id: Annotated[UUID, Field(title='Session Id')]
+    title: Annotated[str | None, Field(title='Title')] = None
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')] = None
+    audience: SessionAudience | None = 'traveler'
+    started_at: Annotated[AwareDatetime, Field(title='Started At')]
 
 
 class StartAnalysisRequest(BaseModel):
@@ -1341,6 +1478,47 @@ class SupplierSelectionRequest(BaseModel):
     currency: Annotated[
         str | None, Field(max_length=3, min_length=3, title='Currency')
     ] = 'USD'
+
+
+class ThreadActorKind(StrEnum):
+    """
+    Mirrors public.thread_actor_kind (0037).
+
+    Who authored a message / who participates. ``artemis`` is the explicit AI
+    attribution (PS8); ``system`` is for automated notices. Shared by
+    ``messages.author_kind`` and ``thread_participants.actor_kind``.
+    """
+
+    traveler = 'traveler'
+    advisor = 'advisor'
+    artemis = 'artemis'
+    system = 'system'
+
+
+class ThreadKind(StrEnum):
+    """
+    Mirrors public.thread_kind (0037): an Artemis engine thread vs a human channel.
+    """
+
+    ai_session = 'ai_session'
+    human = 'human'
+
+
+class ThreadSummary(BaseModel):
+    """
+    Response for ``POST /threads`` — the resolved conversation container.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    thread_id: Annotated[UUID, Field(title='Thread Id')]
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')] = None
+    kind: ThreadKind
+    audience: SessionAudience
+    title: Annotated[str | None, Field(title='Title')] = None
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
 
 class TransitItem(BaseModel):
@@ -1393,6 +1571,32 @@ class TurnRole(StrEnum):
     error = 'error'
 
 
+class UnbilledNodeResponse(BaseModel):
+    """
+    A chargeable node whose effective cost isn't fully billed yet.
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    title: Annotated[str, Field(title='Title')]
+    currency: Annotated[str, Field(title='Currency')]
+    effective: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Effective')
+    ]
+    charged: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Charged')
+    ]
+    remaining: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Remaining')
+    ]
+
+
+class Title2(RootModel[str]):
+    root: Annotated[str, Field(max_length=512, title='Title')]
+
+
 class UpdateItineraryRequest(BaseModel):
     """
     Partial update of an itinerary's title + brief + timing.
@@ -1407,7 +1611,7 @@ class UpdateItineraryRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    title: Annotated[Title | None, Field(title='Title')] = None
+    title: Annotated[Title2 | None, Field(title='Title')] = None
     brief: Annotated[Brief | None, Field(title='Brief')] = None
     timing_kind: ItineraryTimingKind | None = None
     date_start: Annotated[date_aliased | None, Field(title='Date Start')] = None
@@ -1598,6 +1802,38 @@ class BookingResponse(BaseModel):
     refund_amount: Annotated[RefundAmount | None, Field(title='Refund Amount')] = None
 
 
+class BookingStateRowResponse(BaseModel):
+    """
+    One bookable node's booking + money position (AGT-3 read-only roll-up).
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    title: Annotated[str, Field(title='Title')]
+    node_status: NodeStatus
+    currency: Annotated[str | None, Field(title='Currency')] = None
+    billed_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Billed Amount')
+    ]
+    paid_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid Amount')
+    ]
+    owed_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Owed Amount')
+    ]
+    booked_amount: Annotated[BookedAmount | None, Field(title='Booked Amount')] = None
+    supplier_ref: Annotated[str | None, Field(title='Supplier Ref')] = None
+    booked_at: Annotated[AwareDatetime | None, Field(title='Booked At')] = None
+    confirmed_at: Annotated[AwareDatetime | None, Field(title='Confirmed At')] = None
+    offer_amount: Annotated[OfferAmount | None, Field(title='Offer Amount')] = None
+    offer_expires_at: Annotated[
+        AwareDatetime | None, Field(title='Offer Expires At')
+    ] = None
+    offer_expired: Annotated[bool | None, Field(title='Offer Expired')] = None
+
+
 class ClientContactCreate(BaseModel):
     """
     POST body for creating a contact row.
@@ -1677,6 +1913,29 @@ class CreateNodeFromInventoryRequest(BaseModel):
     source: Annotated[str, Field(title='Source')]
     source_id: Annotated[str, Field(title='Source Id')]
     status: NodeStatus | None = 'proposed'
+    parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')] = None
+
+
+class CreateNodeFromLinkRequest(BaseModel):
+    """
+    Save a pasted web link into the Collection as an OpenGraph card.
+
+    The server fetches ``url`` and derives a snapshot (title / image /
+    description) so the saved card looks intentional rather than a bare link;
+    the fetch degrades gracefully to just the URL. ``kind`` files the link under
+    a Collection category (a restaurant → ``meal``, a hotel → ``hotel``) and
+    defaults to ``note`` — an unfiled idea. ``status`` defaults to ``proposed``
+    (a candidate on the board). There is no ``starts_at``: a saved link lands in
+    the Collection, unscheduled, until it's dragged onto the timeline.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    url: Annotated[str, Field(max_length=2048, min_length=1, title='Url')]
+    kind: NodeType | None = 'note'
+    status: NodeStatus | None = 'proposed'
+    note: Annotated[Note | None, Field(title='Note')] = None
     parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')] = None
 
 
@@ -1967,6 +2226,26 @@ class HotelItem(BaseModel):
     stars: Annotated[int | None, Field(title='Stars')] = None
 
 
+class InvoiceBriefResponse(BaseModel):
+    """
+    An invoice headline (no ledger) for narration.
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    label: Annotated[str, Field(title='Label')]
+    status: InvoiceStatus
+    currency: Annotated[str, Field(title='Currency')]
+    total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Total')
+    ]
+    paid: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid')
+    ]
+
+
 class InvoiceLineItemResponse(BaseModel):
     model_config = ConfigDict(
         regex_engine="python-re",
@@ -2017,6 +2296,8 @@ class ItineraryResponse(BaseModel):
     status: ItineraryStatus | None = 'draft'
     approved_by: Annotated[UUID | None, Field(title='Approved By')] = None
     approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')] = None
+    proposed_by: Annotated[UUID | None, Field(title='Proposed By')] = None
+    proposed_at: Annotated[AwareDatetime | None, Field(title='Proposed At')] = None
     forked_from_id: Annotated[UUID | None, Field(title='Forked From Id')] = None
     fork_status: ForkStatus | None = None
     reconcile_requested_at: Annotated[
@@ -2056,12 +2337,62 @@ class MealItem(BaseModel):
     kind: Annotated[Literal['meal'], Field(title='Kind')] = 'meal'
 
 
+class MessageSummary(BaseModel):
+    """
+    Row shape for the message list + the just-sent message.
+
+    ``author_kind`` is the explicit attribution — ``artemis`` marks an AI-authored
+    message once the PS8 bridge lands; PS7 only ever emits human kinds.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    thread_id: Annotated[UUID, Field(title='Thread Id')]
+    author_kind: ThreadActorKind
+    author_id: Annotated[UUID | None, Field(title='Author Id')] = None
+    content: Annotated[str, Field(title='Content')]
+    proposed_node_id: Annotated[UUID | None, Field(title='Proposed Node Id')] = None
+    parent_message_id: Annotated[UUID | None, Field(title='Parent Message Id')] = None
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    edited_at: Annotated[AwareDatetime | None, Field(title='Edited At')] = None
+
+
 class MyItinerariesResponse(BaseModel):
     """
     Envelope for ``GET /me/itineraries``.
     """
 
     itineraries: Annotated[list[MyItinerarySummary], Field(title='Itineraries')]
+
+
+class NodeChargesResponse(BaseModel):
+    """
+    The per-node money facet (M006/PS4) — this item's charge, invoice status,
+    paid/owed split, and its live booking. Read-only; the pay action deep-links
+    to ``invoice_id`` and the booking flow lives on the ``/book`` endpoints.
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    node_status: NodeStatus
+    currency: Annotated[str | None, Field(title='Currency')] = None
+    line_item_id: Annotated[UUID | None, Field(title='Line Item Id')] = None
+    invoice_id: Annotated[UUID | None, Field(title='Invoice Id')] = None
+    invoice_status: InvoiceStatus | None = None
+    billed_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Billed Amount')
+    ]
+    paid_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid Amount')
+    ]
+    owed_amount: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Owed Amount')
+    ]
+    booking: BookingResponse | None = None
 
 
 class NodeResponse(BaseModel):
@@ -2135,6 +2466,7 @@ class OpenSessionRequest(BaseModel):
     itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')] = None
     seeded_opener: Annotated[SeededOpener | None, Field(title='Seeded Opener')] = None
     audience: SessionAudience | None = 'traveler'
+    force_new: Annotated[bool | None, Field(title='Force New')] = False
 
 
 class OpenSessionResponse(BaseModel):
@@ -2322,6 +2654,8 @@ class AgentContext(BaseModel):
     )
     client_id: Annotated[UUID, Field(title='Client Id')]
     client_full_name: Annotated[str, Field(title='Client Full Name')]
+    trip_brief: Annotated[str | None, Field(title='Trip Brief')] = None
+    graph_digest: Annotated[str | None, Field(title='Graph Digest')] = None
     dossier: DossierDetail | None
     dossier_facts: Annotated[list[DossierFactDetail], Field(title='Dossier Facts')]
     profile_facts: Annotated[list[ProfileFactDetail], Field(title='Profile Facts')]
@@ -2348,6 +2682,20 @@ class AnalysisDetailResponse(BaseModel):
     result: Annotated[dict[str, Any] | None, Field(title='Result')]
     external_calls: Annotated[list[Any], Field(title='External Calls')]
     findings: Annotated[list[FindingResponse], Field(title='Findings')]
+
+
+class BillingStateResponse(BaseModel):
+    """
+    Response of ``GET /itinerary/{id}/billing`` — the itinerary's money truth.
+    """
+
+    rows: Annotated[list[BillingCurrencyRowResponse], Field(title='Rows')]
+    unbilled_nodes: Annotated[list[UnbilledNodeResponse], Field(title='Unbilled Nodes')]
+    invoices: Annotated[list[InvoiceBriefResponse], Field(title='Invoices')]
+
+
+class BookingStateResponse(BaseModel):
+    rows: Annotated[list[BookingStateRowResponse] | None, Field(title='Rows')] = None
 
 
 class ClientCreatePayload(BaseModel):
@@ -2378,6 +2726,7 @@ class ClientCreatePayload(BaseModel):
     contacts: Annotated[list[ClientContactCreate] | None, Field(title='Contacts')] = (
         None
     )
+    notify: Annotated[bool | None, Field(title='Notify')] = True
 
 
 class ClientDetail(BaseModel):
@@ -2396,6 +2745,7 @@ class ClientDetail(BaseModel):
     full_name: Annotated[str, Field(title='Full Name')]
     email: Annotated[EmailStr, Field(title='Email')]
     access_status: Annotated[AccessStatus, Field(title='Access Status')]
+    invited_at: Annotated[AwareDatetime | None, Field(title='Invited At')]
     accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
@@ -2414,10 +2764,27 @@ class ClientDetail(BaseModel):
     )
 
 
+class CollectionResponse(BaseModel):
+    """
+    The itinerary's Collection (wish list): unscheduled, non-discarded nodes.
+
+    A Collection item is just a node with no ``starts_at`` — a maybe the
+    traveler/concierge has accumulated but not yet placed on the timeline.
+    Discarded items are excluded. The web derives the same set from the graph it
+    already loads; this endpoint keeps the agent's read cheap (it doesn't need
+    the whole graph to shop the wish list before proposing something new).
+    """
+
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    items: Annotated[list[NodeResponse], Field(title='Items')]
+
+
 class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
     edges: Annotated[list[EdgeResponse], Field(title='Edges')]
+    totals: Annotated[dict[str, str] | None, Field(title='Totals')] = None
+    party_size: Annotated[int | None, Field(title='Party Size')] = 1
     viewer_open_fork_id: Annotated[UUID | None, Field(title='Viewer Open Fork Id')] = (
         None
     )
