@@ -4,9 +4,11 @@ import type { ReactNode } from "react";
 import { getAppHeaderContext } from "@/lib/appHeader";
 import { createServerSupabase } from "@/lib/supabase/server";
 
+import { AdvisorLiveProvider } from "./_components/AdvisorLive";
 import { CommandCenterChrome } from "./_components/CommandCenterChrome";
 import { CommandCenterCrumbProvider } from "./_components/CommandCenterCrumb";
 import { CommandCenterRail } from "./_components/CommandCenterRail";
+import { LiveIndicator } from "./_components/LiveIndicator";
 
 // Auth-gated on every request — this layout wraps every advisor page
 // under /command-center/** and supplies the shared app masthead. Individual
@@ -33,15 +35,21 @@ export default async function CommandCenterLayout({
   return (
     <div className="flex h-dvh flex-col bg-ink text-paper">
       <CommandCenterCrumbProvider>
-        <CommandCenterChrome user={header.user} homeHref={header.homeHref} />
-        {/* Same shape as the itinerary shell: a fixed-height frame so the rail
-            stays put and only the advisor surface scrolls. */}
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          <CommandCenterRail />
-          <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-            {children}
+        <AdvisorLiveProvider>
+          <CommandCenterChrome
+            user={header.user}
+            homeHref={header.homeHref}
+            actions={<LiveIndicator />}
+          />
+          {/* Same shape as the itinerary shell: a fixed-height frame so the rail
+              stays put and only the advisor surface scrolls. */}
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <CommandCenterRail />
+            <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+              {children}
+            </div>
           </div>
-        </div>
+        </AdvisorLiveProvider>
       </CommandCenterCrumbProvider>
     </div>
   );
