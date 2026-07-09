@@ -17,9 +17,12 @@ setup("authenticate as advisor", async ({ page, baseURL }) => {
 
   // Advisors are redirected to /command-center on success. A failed verify
   // would bounce to /?auth_error=… instead, so this assertion is the login
-  // check. (The atelier heading is rendered even if downstream API reads fail.)
+  // check. (The Mission Control heading renders even if downstream API reads
+  // fail.)
   await page.waitForURL(/\/command-center/, { timeout: 30_000 });
-  await expect(page.getByRole("heading", { name: "The atelier" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Mission Control" }),
+  ).toBeVisible();
 
   mkdirSync(path.dirname(ADVISOR_STORAGE_STATE), { recursive: true });
   await page.context().storageState({ path: ADVISOR_STORAGE_STATE });

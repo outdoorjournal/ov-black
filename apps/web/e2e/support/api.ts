@@ -38,14 +38,43 @@ export interface ClientRow {
 export async function findClientByEmail(
   email: string,
 ): Promise<ClientRow | undefined> {
-  const resp = await advisorFetch("/clients");
+  // Wave F: GET /clients is a searchable envelope — `?q=` matches email, so
+  // the lookup no longer scans an unbounded roster.
+  const resp = await advisorFetch(`/clients?q=${encodeURIComponent(email)}`);
   if (!resp.ok) {
     throw new Error(`GET /clients failed (${resp.status})`);
   }
-  const clients = (await resp.json()) as ClientRow[];
+  const { clients } = (await resp.json()) as { clients: ClientRow[] };
   return clients.find(
     (c) => (c.email ?? "").toLowerCase() === email.toLowerCase(),
   );
+}
+
+/**
+ * Any existing session that already has turns, for the read-only replay spec.
+ * Replay is a pure read surface — driving a fresh agent turn just to render it
+ * would drag the whole agent stack into this spec — so it borrows whatever
+ * conversation history the local stack already carries and skips when there is
+ * none (fresh DB).
+ */
+export async function findAnySessionWithTurns(): Promise<
+  { clientId: string; sessionId: string } | undefined
+> {
+  const resp = await advisorFetch("/clients?limit=50");
+  if (!resp.ok) {
+    throw new Error(`GET /clients failed (${resp.status})`);
+  }
+  const { clients } = (await resp.json()) as { clients: ClientRow[] };
+  for (const client of clients) {
+    const sessionsResp = await advisorFetch(`/clients/${client.id}/sessions`);
+    if (!sessionsResp.ok) continue;
+    const { sessions } = (await sessionsResp.json()) as {
+      sessions: Array<{ id: string; turn_count: number }>;
+    };
+    const withTurns = sessions.find((s) => s.turn_count > 0);
+    if (withTurns) return { clientId: client.id, sessionId: withTurns.id };
+  }
+  return undefined;
 }
 
 export interface ItineraryTiming {
@@ -119,7 +148,21 @@ export async function createClientAsAdvisor(
  */
 export async function createItineraryForClientAsAdvisor(
   clientId: string,
-  opts: { title?: string; brief?: string } = {},
+  opts: {
+    title?: string;
+    brief?: string;
+    /**
+     * Optional timing seed (Wave E): a spec that schedules cards on specific
+     * dates should declare the window up front — `days_anchor` stamps from the
+     * window's `date_start`, so Day 1 lands where the cards do rather than on
+     * whatever day the test happened to run.
+     */
+    timing?: {
+      kind: "exact" | "window" | "flexible";
+      dateStart?: string;
+      dateEnd?: string;
+    };
+  } = {},
 ): Promise<string> {
   const resp = await advisorFetch("/itinerary", {
     method: "POST",
@@ -127,6 +170,13 @@ export async function createItineraryForClientAsAdvisor(
       title: opts.title ?? "",
       client_id: clientId,
       ...(opts.brief ? { brief: opts.brief } : {}),
+      ...(opts.timing
+        ? {
+            timing_kind: opts.timing.kind,
+            ...(opts.timing.dateStart ? { date_start: opts.timing.dateStart } : {}),
+            ...(opts.timing.dateEnd ? { date_end: opts.timing.dateEnd } : {}),
+          }
+        : {}),
     }),
   });
   if (!resp.ok) {

@@ -376,9 +376,10 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
 3. **No advisor awareness layer.** *(✅ largely closed by ADV-14 / Wave D.)* Nothing surfaced
    traveler activity — a reconcile request was only visible inside that fork's Studio;
    approvals, payments, and thread messages required walking into each trip. Wave D adds the
-   derived awareness feed (roster badges + per-client attention strip). Still open: a
-   cross-trip invoice/booking roster on the client page, and a persisted "since you last
-   looked" watermark (the recent-activity tier is a rolling window until it earns one).
+   derived awareness feed (roster badges + per-client attention strip). Wave F extends it
+   (money/booking/offer attention kinds, the cross-client Money roster, the live SSE feed).
+   Still open: a persisted "since you last looked" watermark (the recent-activity tier is a
+   rolling window until it earns one).
 4. **The agent reads the graph but can't do half the advisor's job.** No node field-edit tool
    (title/cost/description); zero money awareness (can't answer "what's uninvoiced," can't
    explain a money-gate refusal, can't warn an offer is expiring); no per-turn graph digest
@@ -712,6 +713,100 @@ Two founder calls (2026-07-08) shape the wave:
   the demo); (3) **`arrival_feasibility`** — first Day-1 activity vs realistic flight
   arrival (Duffel offer times once a flight card exists). `external_calls` on the
   analyses row is the reserved, still-empty seam for the live lookups.
+
+**Wave F — Command Center → Mission Control** *(✅ shipped 2026-07-09)*
+
+> The full-stack advisor-surface redesign (one branch, big-bang by design — the
+> `GET /clients` envelope is breaking, so partial merges were ruled out up front).
+> Identity: dark ops room — ink surfaces, serif headlines, mono for figures, orange
+> strictly as live/urgent punctuation. Extends the Wave D awareness layer; never
+> replaces it.
+
+- ✅ **Backend — the advisor read layer** (L): migration `0042`
+  (`node_history`/`edge_history` `(itinerary_id, occurred_at desc, id desc)` indexes — the
+  only unbounded tables on the new hot paths — and `invoices.issued_at`, stamped in
+  `issue_invoice`, so "invoice issued" activity and `invoice_unpaid.at` are honest).
+  Awareness extended **additively**: three new actionable kinds (`offer_expiring` — latest
+  non-superseded offer on a live non-booked node within 24h, always urgent;
+  `invoice_unpaid` — `status='issued'`, urgent past `due_at`; `booking_unconfirmed`) and one
+  windowed (`trip_proposed` — waiting on the *traveler*, so it never badges), plus
+  `urgency`/`deadline`/`node_id` on items and `full_name` on the rollup. New
+  `services/pagination.py` cursor codec (base64url, malformed → 400) shared by every
+  paged read. New routes: `GET /advisor/overview` (pure `derive_portfolio`, ~6 grouped
+  selects, per-invoice outstanding clamped in Python), `GET /advisor/activity` (six
+  per-source queries heap-merged in Python — no UNION view, no activity_log table;
+  keyset `(at DESC, kind ASC, source_id ASC)`; `after=` ascending mode doubles as the
+  SSE tick primitive), `GET /advisor/money` (cross-client invoice roster — closes the
+  finding-3 remainder), `GET /itinerary/{id}/changes` (projected node/edge history —
+  `changed_keys`, never raw before/after JSONB). List reads grew real workloads:
+  `GET /clients` → **breaking** `{clients, next_cursor, total}` envelope +
+  `q/status/sort`; `GET /itineraries` → additive paging/search + **`needs_attention`
+  wired for real** (one grouped query per page, not per-row); `GET /sessions/{id}/turns`
+  → `limit`/`before_index`. Redaction unchanged everywhere: ids/counts/titles/timestamps
+  (+money in authed responses only) — never message/turn/fact text; nothing logged.
+- ✅ **`GET /advisor/feed` — live SSE** (M): **poll-to-push, stateless** (D029). Per-
+  connection generator ticks every `FEED_POLL_SECONDS=4` re-running the activity loader
+  in `after=watermark` ascending mode (short DB session per tick, the `stream_turn`
+  sessionmaker pattern); heartbeats ~20s (ALB idle timeout is 120s); closes
+  `bye{reason:"reauth"}` at min(JWT exp, `FEED_MAX_STREAM_SECONDS=900`); `?cursor=`
+  resumes, so restart/deploy/multi-task all reduce to "client reconnects, snapshots via
+  refresh, resumes". Verified live (hello → heartbeats → activity frame on a mutation).
+- ✅ **Web — the ops shell** (L): dark ink layout (`bg-ink text-paper` frame; client
+  surfaces stay light editorial), 4-item rail (Ops / Clients / Trips / Money), URL-state
+  table kit (`DataTable`/`SortHeader`/`TableToolbar`/`CursorPager`/`EmptyState` +
+  per-route `loading.tsx` skeletons; `?q&status&sort&cursor` is the single source of
+  truth — back/refresh/share all work), three rosters on it. **Ops dashboard** ("Mission
+  Control"): stats band (deep-linking cells, mono numerals), tiered `rankAttention`
+  queue (actionable oldest-first, urgency first; recent-activity dimmer under a "since
+  you were away" hairline), pipeline strip ("The Slate"), sticky live ActivityFeed
+  (SSR-seeded, SSE-prepended, dedup by `source_id+kind`).
+- ✅ **Web — the live layer** (M): pure `feedReducer` (ring buffer cap 100,
+  `liveSessions` derived from `agent_turn` events, 5-min idle eviction) +
+  `useAdvisorFeed` transport (fetch-reader GET — EventSource can't send Authorization;
+  fresh token per connect; 60s heartbeat watchdog; 1s→30s backoff + jitter; degrade to
+  polling after 4 failures, probe SSE every 2min; pause hidden / reconnect visible).
+  **Load-bearing throttle**: server-prop-affecting frames trigger `router.refresh()` at
+  most once per 15s and only when visible — force-dynamic pages re-run their whole fetch
+  set per refresh. `LiveIndicator` in the masthead (orange pulse = live sessions, hollow
+  = idle, mono POLLING = degraded).
+- ✅ **⌘K command palette** (S/M): `cmdk` (the wave's only new dep — correct combobox
+  semantics beat hand-rolling on dropdown-menu). Static nav actions filtered by a pure
+  `filterNavActions`; 150ms-debounced async search over the same `?q=` roster endpoints
+  (no separate search route at boutique scale) with a stale-response ticket guard;
+  browser auth per the AdvisorLive precedent. Masthead trigger composed with
+  LiveIndicator in the AppHeader `actions` slot; hotkey guarded vs editable targets.
+- ✅ **Client workspace recomposition** (M): cockpit header (serif identity + pills +
+  mono quick-stats) → **AttentionStrip exactly where Wave D put it** → sticky
+  `ClientSubNav` (anchor links + IntersectionObserver scroll-spy; active = paper
+  underline, no orange) → existing sections regrouped (FactList / Add*FactForm /
+  contacts / party / vault reused as-is; Panel/SectionHeader consolidated into
+  `_components/panels.tsx`). Trips section now server-filtered
+  (`GET /itineraries?client_id=`); session rows open the replay with a secondary
+  "Live" link to `/chat/{id}`.
+- ✅ **Session replay** (S/M): read-only
+  `clients/[id]/sessions/[sessionId]` — pure `summarizeTurns` telemetry strip (turns,
+  span, avg latency, first-token p50, retries, errors) over `listTurns` paging
+  (`limit`/`before_index`), alternating transcript with per-turn chips (mono latency
+  `1.4s · first 320ms`; `retried ×2` amber; `error:` destructive — **no orange**:
+  diagnostic ≠ urgent).
+- **Tested:** API — `test_awareness.py` (new-kind tiering/urgency/deadline +
+  integration: superseded-offer exclusion, issued-vs-paid, unconfirmed-vs-cancelled,
+  scope isolation), `test_advisor_overview.py` (access-status truth table, clamped
+  outstanding), `test_activity.py` (heap-merge order, cursor round-trip, tie
+  determinism, kinds filter, **no content key ever**), `test_pagination.py`,
+  `test_changes.py`, `test_feed_service.py` + `test_feed_router.py` (scripted
+  generator, 403 non-advisor, headers). Web — `tableParams`, `attentionQueue`,
+  `advisorFeed` reducer + guard, `sse` splitter, `palette` filtering,
+  `summarizeTurns` (+ `attention.test.tsx`/`agentStream.test.ts` kept green —
+  extended, not forked). e2e — `command-center.spec.ts` rewritten to the five beats:
+  Mission Control shell, roster search asserts `?q=`, ⌘K → client, sub-nav anchors,
+  replay chips (borrows existing conversation history; skips honestly on a fresh DB).
+  `e2e/support/api.ts` adopted the clients envelope.
+- **Deferred, consciously:** `analysis_flagged` attention kind (cut-line),
+  TripHistoryDrawer (the `/itinerary/{id}/changes` consumer UI — the endpoint ships
+  first), LISTEN/NOTIFY upgrade (swap the feed's tick trigger only; Supabase's pooler
+  likely breaks it anyway), persisted "last looked" watermark (the Wave D earns-it
+  follow-up, unchanged).
 
 **Parked, consciously:** G-COVER (decision-gated), G-SEND (product call), restore-UI for soft
 deletes (bundle with ADV-13 if wanted), advisor-private Collection, money-split deposit,

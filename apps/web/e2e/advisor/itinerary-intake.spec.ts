@@ -40,13 +40,12 @@ test("ADV-2: advisor stands up an itinerary shell (brief + rough window) for a c
 
   const brief = "7 days in Italy, anniversary, slow and food-forward";
 
-  // The advisor opens this client's command-center page; it lists their
-  // itineraries (none yet) and carries the "New itinerary" affordance.
+  // The advisor opens this client's command-center page; its Trips section
+  // lists their itineraries (none yet) and carries the "New itinerary"
+  // affordance.
   await page.goto(`/command-center/clients/${clientId}`);
-  await expect(
-    page.getByRole("heading", { name: "Itineraries" }),
-  ).toBeVisible();
-  await expect(page.getByText("No itineraries yet.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Trips" })).toBeVisible();
+  await expect(page.getByText("No trips yet.")).toBeVisible();
 
   // Spin up an itinerary FOR THIS CLIENT: the action creates a client-bound
   // shell and redirects the advisor into its first-run intake.

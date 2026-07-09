@@ -158,6 +158,10 @@ test("ADV-4: advisor clicks an empty timeline slot to schedule a new card", asyn
   const itineraryId = await createItineraryForClientAsAdvisor(clientId, {
     title: "Kyoto, bespoke",
     brief: "A few days in Kyoto with a firm evening",
+    // Declare the window the cards live in: days_anchor stamps from
+    // date_start (Wave E), so Day 1 = Aug 1 and the first empty slot the
+    // test clicks is on the seeded card's day — not the day the test ran.
+    timing: { kind: "window", dateStart: "2026-08-01", dateEnd: "2026-08-05" },
   });
   // Seed a scheduled node so the timeline renders a day column to click into.
   await seedScheduledItemAsAdvisor(itineraryId, {

@@ -72,11 +72,12 @@ if [[ -z "$CLIENT_ID" ]]; then
     CLIENT_ID=$(jget "$resp" 'd["client_id"]')
   else
     say "No --client-id given; checking for an existing client…"
+    # Wave F: GET /clients returns a {clients, next_cursor, total} envelope.
     clients=$(curl -fsS "${auth[@]}" "$API_URL/clients")
-    count=$(jget "$clients" 'len(d)')
+    count=$(jget "$clients" 'len(d["clients"])')
     if [[ "$count" -gt 0 ]]; then
-      CLIENT_ID=$(jget "$clients" 'd[0]["id"]')
-      name=$(jget "$clients" 'd[0]["full_name"]')
+      CLIENT_ID=$(jget "$clients" 'd["clients"][0]["id"]')
+      name=$(jget "$clients" 'd["clients"][0]["full_name"]')
       say "Reusing existing client: $name ($CLIENT_ID)"
     else
       CLIENT_EMAIL="japan-demo+$(date +%s)@example.com"

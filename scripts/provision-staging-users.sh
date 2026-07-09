@@ -162,9 +162,11 @@ log "advisor authenticated + authorized (GET /clients → 200)"
 # ── 3. traveler-linked client (POST /clients issues the invite → creates user) ─
 # Must happen BEFORE the traveler auth user exists: Supabase refuses to invite an
 # email that is already a user (502). On re-run the client already exists → skip.
-existing=$(curl -sS "$API_URL/clients" -H "Authorization: Bearer $ADV_JWT" | python3 -c '
+# Wave F: GET /clients is a searchable {clients,…} envelope — ?q= matches email
+# (and keeps the lookup honest now that the roster is paginated).
+existing=$(curl -sS -G --data-urlencode "q=$TRV_EMAIL" "$API_URL/clients" -H "Authorization: Bearer $ADV_JWT" | python3 -c '
 import json, sys
-cs = json.load(sys.stdin)
+cs = json.load(sys.stdin)["clients"]
 print(next((c["id"] for c in cs if c.get("email","").lower()==sys.argv[1].lower()), ""))' "$TRV_EMAIL")
 if [[ -z "$existing" ]]; then
   body=$(python3 -c 'import json,sys; print(json.dumps({"full_name":"E2E Linked Traveler","email":sys.argv[1],"dossier":{"typed":{"contact_preference":"email","travel_party_notes":""}}}))' "$TRV_EMAIL")

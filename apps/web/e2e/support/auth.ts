@@ -262,11 +262,17 @@ async function ensureTravelerLinkedClient(
 ): Promise<void> {
   const auth = { Authorization: `Bearer ${advisorToken}` };
 
-  const listResp = await fetch(`${apiBaseUrl}/clients`, { headers: auth });
+  // Wave F: GET /clients is a searchable envelope — `?q=` matches email.
+  const listResp = await fetch(
+    `${apiBaseUrl}/clients?q=${encodeURIComponent(email)}`,
+    { headers: auth },
+  );
   if (!listResp.ok) {
     throw new Error(`GET /clients failed (${listResp.status})`);
   }
-  const clients = (await listResp.json()) as Array<{ email?: string | null }>;
+  const { clients } = (await listResp.json()) as {
+    clients: Array<{ email?: string | null }>;
+  };
   const linked = clients.some(
     (c) => (c.email ?? "").toLowerCase() === email.toLowerCase(),
   );
