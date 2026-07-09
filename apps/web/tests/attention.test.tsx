@@ -42,6 +42,7 @@ function item(over: Partial<AttentionItemOut> = {}): AttentionItemOut {
 function client(over: Partial<ClientAttentionOut> = {}): ClientAttentionOut {
   return {
     client_id: "c-1",
+    full_name: "Margaret Chen",
     needs_attention: false,
     attention_count: 0,
     items: [],

@@ -54,6 +54,24 @@
   --shadow-sheet-lg: 0 32px 80px -30px rgba(10, 10, 10, 0.45);
   --shadow-float: 0 30px 80px -20px rgba(0, 0, 0, 0.6);
   --shadow-float-lg: 0 40px 100px -20px rgba(0, 0, 0, 0.75);
+
+  /* Wave F (mission control): telemetry/timestamps/counts render in a system
+     mono — no webfont download; the ops surface earns density from type, not
+     new colors. */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* The LIVE dot's slow pulse — restrained (opacity only, no scale). */
+  --animate-pulse-live: pulse-live 2.4s ease-in-out infinite;
+
+  @keyframes pulse-live {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
 }
 
 /*

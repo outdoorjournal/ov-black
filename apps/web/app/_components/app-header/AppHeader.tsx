@@ -50,6 +50,11 @@ export type AppHeaderProps = {
   crumbs?: Crumb[];
   /** Optional sub-row (e.g. command-center nav tabs) on the same ink masthead. */
   secondary?: ReactNode;
+  /**
+   * Wave F: right-aligned masthead extras rendered before the avatar — the
+   * Command Center mounts its ⌘K trigger + LIVE indicator here.
+   */
+  actions?: ReactNode;
 };
 
 function initialsFor(user: AppHeaderUser): string {
@@ -60,7 +65,13 @@ function initialsFor(user: AppHeaderUser): string {
   return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
 }
 
-export function AppHeader({ user, homeHref, crumbs = [], secondary }: AppHeaderProps) {
+export function AppHeader({
+  user,
+  homeHref,
+  crumbs = [],
+  secondary,
+  actions,
+}: AppHeaderProps) {
   const displayName = user.name ?? user.email;
 
   return (
@@ -114,7 +125,9 @@ export function AppHeader({ user, homeHref, crumbs = [], secondary }: AppHeaderP
           ) : null}
         </div>
 
-        <DropdownMenu>
+        <div className="flex shrink-0 items-center gap-4">
+          {actions}
+          <DropdownMenu>
           <DropdownMenuTrigger
             className="flex items-center gap-2 rounded-full outline-hidden ring-offset-2 ring-offset-ink transition focus-visible:ring-2 focus-visible:ring-brand"
             aria-label="Account menu"
@@ -153,7 +166,8 @@ export function AppHeader({ user, homeHref, crumbs = [], secondary }: AppHeaderP
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
-        </DropdownMenu>
+          </DropdownMenu>
+        </div>
       </div>
 
       {secondary}

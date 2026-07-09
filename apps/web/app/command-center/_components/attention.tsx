@@ -23,13 +23,36 @@ export function attentionLine(item: AttentionItemOut): {
       const scope = item.itinerary_title ? ` · ${item.itinerary_title}` : " · Basecamp";
       return { label: `${item.count} new message${s}${scope}`, tone: "action" };
     }
+    // Wave F actionable kinds — open-state, each with a clock or a blocker.
+    case "offer_expiring": {
+      const clock = item.deadline ? ` — ${untilDeadline(item.deadline)}` : "";
+      return { label: `Offer expiring${where}${clock}`, tone: "action" };
+    }
+    case "invoice_unpaid": {
+      const overdue = item.urgency === "urgent" ? " — overdue" : "";
+      return { label: `Invoice awaiting payment${where}${overdue}`, tone: "action" };
+    }
+    case "booking_unconfirmed":
+      return { label: `Booking needs confirmation #${where}`, tone: "action" };
     case "traveler_approved": {
       const s = item.count === 1 ? "" : "s";
       return { label: `Approved ${item.count} card${s}${where}`, tone: "info" };
     }
     case "payment_received":
       return { label: `Payment received${where}`, tone: "info" };
+    case "trip_proposed":
+      return { label: `Proposed to traveler${where}`, tone: "info" };
   }
+}
+
+/** Compact countdown to a deadline ("in 3h", "in 2d"); past reads "lapsed". */
+function untilDeadline(iso: string): string {
+  const mins = Math.floor((new Date(iso).getTime() - Date.now()) / 60000);
+  if (mins <= 0) return "lapsed";
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 48) return `in ${hrs}h`;
+  return `in ${Math.floor(hrs / 24)}d`;
 }
 
 /**

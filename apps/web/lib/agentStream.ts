@@ -51,15 +51,12 @@ export type {
   SseFrame,
 } from "./agentStream.types";
 
+import { parseSseJson } from "./sse";
+
 export type ParseResult = {
   frames: SseFrame[];
   remaining: string;
 };
-
-// Truncate the unknown-frame warning payload so we never echo a full delta
-// into the DevTools console by accident. 80 chars is enough to identify the
-// shape during debugging without leaking content.
-const UNKNOWN_FRAME_LOG_CAP = 80;
 
 const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "first_token",
@@ -114,55 +111,19 @@ function isSseFrame(value: unknown): value is SseFrame {
 }
 
 /**
- * Split a UTF-8-decoded SSE buffer into complete frames plus the trailing
- * partial fragment that must be carried into the next read.
+ * Split a UTF-8-decoded SSE buffer into complete agent frames plus the
+ * trailing partial fragment that must be carried into the next read.
  *
- * A "complete frame" is anything up to the next `\n\n` delimiter. Inside a
- * frame we only honour lines that start with `data: ` — comments (`:`) and
- * unknown fields are silently ignored, matching the SSE spec subset the
- * backend actually uses.
- *
- * This function is pure: no fetch, no DOM, no timers. T06 reuses it as the
- * sole parser under unit test.
+ * The transport-level splitting lives in lib/sse.ts (shared with the Wave F
+ * advisor feed); this wrapper applies the agent channel's KNOWN_FRAME_TYPES
+ * guard. Pure: no fetch, no DOM, no timers. T06 reuses it as the sole parser
+ * under unit test.
  */
 export function parseFrames(buffer: string): ParseResult {
+  const { payloads, remaining } = parseSseJson(buffer, "agentStream");
   const frames: SseFrame[] = [];
-  let cursor = 0;
 
-  while (true) {
-    const delim = buffer.indexOf("\n\n", cursor);
-    if (delim === -1) break;
-
-    const rawFrame = buffer.slice(cursor, delim);
-    cursor = delim + 2;
-
-    // A frame is one or more lines; SSE allows multi-line `data:` payloads,
-    // but the backend only emits single-line data frames. We still join
-    // multiple `data:` lines with `\n` so we stay spec-correct if that ever
-    // changes.
-    const dataPieces: string[] = [];
-    for (const line of rawFrame.split("\n")) {
-      if (line.startsWith("data: ")) {
-        dataPieces.push(line.slice(6));
-      } else if (line.startsWith("data:")) {
-        // `data:` with no space is also valid per spec.
-        dataPieces.push(line.slice(5));
-      }
-      // Any other prefix (comment, event:, id:, blank) is ignored.
-    }
-
-    if (dataPieces.length === 0) continue;
-
-    const payload = dataPieces.join("\n");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      const excerpt = payload.slice(0, UNKNOWN_FRAME_LOG_CAP);
-      console.warn("[agentStream] dropping non-JSON SSE frame", { excerpt });
-      continue;
-    }
-
+  for (const parsed of payloads) {
     if (!isSseFrame(parsed)) {
       const shape =
         parsed && typeof parsed === "object"
@@ -171,11 +132,10 @@ export function parseFrames(buffer: string): ParseResult {
       console.warn("[agentStream] dropping unknown SSE frame", { shape });
       continue;
     }
-
     frames.push(parsed);
   }
 
-  return { frames, remaining: buffer.slice(cursor) };
+  return { frames, remaining };
 }
 
 export type UseAgentStreamOptions = {
