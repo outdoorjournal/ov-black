@@ -8,6 +8,7 @@ from app.inventory.registry import (
     InventoryCtx,
     InventoryProvider,
     InventoryProviderRegistry,
+    ProviderSearchOutcome,
     UnknownSourceError,
     get_registry,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "InventoryItem",
     "InventoryProvider",
     "InventoryProviderRegistry",
+    "ProviderSearchOutcome",
     "UnknownSourceError",
     "get_registry",
 ]

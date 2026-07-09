@@ -122,7 +122,7 @@ async function flush() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(searchInventory).mockResolvedValue({ ok: true, items: [MEAL], count: 1 });
+  vi.mocked(searchInventory).mockResolvedValue({ ok: true, items: [MEAL], count: 1, sources: [] });
 });
 
 describe("unified Add composer — Details / Link / Find / Fill", () => {

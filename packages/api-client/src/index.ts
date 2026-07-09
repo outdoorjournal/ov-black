@@ -107,6 +107,7 @@ import {
   reconcileForkEndpointItineraryForkIdReconcilePost,
   releaseItineraryEndpointItineraryItineraryIdReleasePost,
   requestReconcileEndpointItineraryForkIdRequestReconcilePost,
+  listInventorySourcesEndpointInventorySourcesGet,
   resendWelcomeEndpointClientsClientIdResendWelcomePost,
   searchInventoryEndpointSearchInventoryGet,
   startAnalysisEndpointItineraryItineraryIdAnalysesPost,
@@ -215,6 +216,7 @@ import type {
   RedactRequest,
   SearchInventoryEndpointSearchInventoryGetData,
   SearchInventoryResponse,
+  SearchSourceDiagnostics,
   StartAnalysisRequest,
 } from "./generated/types.gen.js";
 
@@ -258,6 +260,8 @@ export type {
   Range,
   EditorialLink,
   SearchInventoryResponse,
+  SearchSourceDiagnostics,
+  InventorySourcesResponse,
 } from "./generated/types.gen.js";
 
 // Analyze (B5) + Fill (B6) + from-inventory authoring (B7). The advisor
@@ -1959,13 +1963,19 @@ export type SearchInventoryQuery = NonNullable<
 >;
 
 export type SearchInventoryResult =
-  | { ok: true; items: SearchInventoryResponse["items"]; count: number }
+  | {
+      ok: true;
+      items: SearchInventoryResponse["items"];
+      count: number;
+      sources: SearchSourceDiagnostics[];
+    }
   | { ok: false; status: number; detail: SearchInventoryDetail };
 
 /**
  * Typed wrapper for GET /search-inventory. Aggregate fan-out by default; pass
  * `source` / `kinds` / `keyword` (+ flight / hotel / geo-bias params) to
- * scope. 400 → `unknown_source`.
+ * scope. `sources` carries per-provider diagnostics (count, latency, captured
+ * upstream error) for the workbench status strip. 400 → `unknown_source`.
  */
 export async function searchInventory(
   client: Client,
@@ -1975,13 +1985,42 @@ export async function searchInventory(
     const { data, error, response } =
       await searchInventoryEndpointSearchInventoryGet({ client, query });
     if (error === undefined && data !== undefined) {
-      return { ok: true, items: data.items, count: data.count };
+      return {
+        ok: true,
+        items: data.items,
+        count: data.count,
+        sources: data.sources ?? [],
+      };
     }
     return {
       ok: false,
       status: response.status,
       detail: response.status === 400 ? "unknown_source" : "unknown",
     };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ListInventorySourcesResult =
+  | { ok: true; sources: string[] }
+  | { ok: false; status: number; detail: "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for GET /inventory/sources — the registered provider names,
+ * in registration order. Lets the workbench render provider filter pills off
+ * the live registry instead of a hardcoded list.
+ */
+export async function listInventorySources(
+  client: Client,
+): Promise<ListInventorySourcesResult> {
+  try {
+    const { data, error, response } =
+      await listInventorySourcesEndpointInventorySourcesGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, sources: data.sources };
+    }
+    return { ok: false, status: response.status, detail: "unknown" };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

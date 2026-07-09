@@ -17,6 +17,7 @@ from typing import Any
 from app.inventory.registry import (
     InventoryCtx,
     InventoryProviderRegistry,
+    ProviderSearchOutcome,
     UnknownSourceError,
 )
 from app.inventory.schemas import InventoryItem
@@ -25,6 +26,7 @@ __all__ = [
     "InventoryCtx",
     "UnknownSourceError",
     "search_inventory",
+    "search_inventory_detailed",
     "get_inventory_detail",
 ]
 
@@ -56,6 +58,37 @@ async def search_inventory(
         filters=filters,
         ctx=ctx,
     )
+
+
+async def search_inventory_detailed(
+    registry: InventoryProviderRegistry,
+    *,
+    sources: list[str] | None,
+    kinds: list[str] | None,
+    keyword: str | None,
+    filters: dict[str, Any],
+    ctx: InventoryCtx,
+) -> tuple[list[InventoryItem], list[ProviderSearchOutcome]]:
+    """Like ``search_inventory`` but with per-provider diagnostics.
+
+    Provider errors are captured on their outcome instead of propagating, so
+    one misbehaving upstream degrades the search rather than failing it.
+    Item ordering matches ``search_inventory``: a single requested source
+    keeps that provider's own order; aggregate fan-out is stably sorted by
+    (source, source_id).
+    """
+    normalized_sources = sources if sources else None
+    outcomes = await registry.search_all_detailed(
+        sources=normalized_sources,
+        kinds=kinds,
+        keyword=keyword,
+        filters=filters,
+        ctx=ctx,
+    )
+    items = [item for outcome in outcomes for item in outcome.items]
+    if normalized_sources is None or len(normalized_sources) > 1:
+        items.sort(key=lambda item: (item.source, item.source_id))
+    return items, outcomes
 
 
 async def get_inventory_detail(

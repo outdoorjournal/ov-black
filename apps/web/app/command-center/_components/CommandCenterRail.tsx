@@ -8,7 +8,7 @@
 
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
-import { Activity, Landmark, Map, Users } from "lucide-react";
+import { Activity, Landmark, Map, PackageSearch, Users } from "lucide-react";
 
 import { AppRail, type RailItem } from "@/app/_components/shell/AppRail";
 
@@ -41,6 +41,12 @@ export function CommandCenterRail() {
       label: "Money",
       active: pathname.startsWith("/command-center/money"),
       icon: <Landmark size={18} strokeWidth={1.6} aria-hidden />,
+    },
+    {
+      href: "/command-center/inventory" as Route,
+      label: "Inventory",
+      active: pathname.startsWith("/command-center/inventory"),
+      icon: <PackageSearch size={18} strokeWidth={1.6} aria-hidden />,
     },
   ];
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
@@ -79,6 +80,21 @@ class InventoryProvider(ABC):
     ) -> InventoryItem | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderSearchOutcome:
+    """Per-provider result of a detailed fan-out: items OR a captured error.
+
+    ``error`` is a short ``ExcType: message`` string (never a traceback) so
+    the search response can attribute a misbehaving upstream without leaking
+    internals; the full exception goes to the log instead.
+    """
+
+    source: str
+    items: list[InventoryItem]
+    elapsed_ms: int
+    error: str | None = None
+
+
 class InventoryProviderRegistry:
     """Source→provider dispatch table with a parallel fan-out helper."""
 
@@ -136,6 +152,55 @@ class InventoryProviderRegistry:
         flattened: list[InventoryItem] = [item for batch in results for item in batch]
         flattened.sort(key=lambda item: (item.source, item.source_id))
         return flattened
+
+    async def search_all_detailed(
+        self,
+        *,
+        sources: list[str] | None,
+        kinds: list[str] | None,
+        keyword: str | None,
+        filters: dict[str, Any],
+        ctx: InventoryCtx,
+    ) -> list[ProviderSearchOutcome]:
+        """Fan out like ``search_all`` but return per-provider outcomes.
+
+        A provider exception is captured on its outcome (``error`` set,
+        ``items`` empty) instead of failing the whole gather — the inventory
+        workbench wants partial results plus an attribution of which
+        upstream misbehaved. Unknown sources still raise
+        ``UnknownSourceError`` before any provider is called. Outcomes come
+        back in selection order; flattening/sorting is the caller's call.
+        """
+        selected: list[InventoryProvider]
+        if sources is None:
+            selected = list(self._by_source.values())
+        else:
+            selected = [self.get(s) for s in sources]
+
+        async def _outcome(provider: InventoryProvider) -> ProviderSearchOutcome:
+            started = time.perf_counter()
+            try:
+                async with span("inventory.provider.search", metric=True, source=provider.source):
+                    items = await provider.search(
+                        kinds=kinds, keyword=keyword, filters=filters, ctx=ctx
+                    )
+            except Exception as exc:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                logger.warning(
+                    "inventory.provider.search_error",
+                    extra={"source": provider.source, "elapsed_ms": elapsed_ms},
+                    exc_info=exc,
+                )
+                return ProviderSearchOutcome(
+                    source=provider.source,
+                    items=[],
+                    elapsed_ms=elapsed_ms,
+                    error=f"{type(exc).__name__}: {exc}"[:300],
+                )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return ProviderSearchOutcome(source=provider.source, items=items, elapsed_ms=elapsed_ms)
+
+        return list(await asyncio.gather(*(_outcome(provider) for provider in selected)))
 
 
 @lru_cache(maxsize=1)

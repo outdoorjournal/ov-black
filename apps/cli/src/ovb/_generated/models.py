@@ -832,6 +832,10 @@ class HealthResponse(BaseModel):
     status: Annotated[str, Field(title='Status')]
 
 
+class InventorySourcesResponse(BaseModel):
+    sources: Annotated[list[str], Field(title='Sources')]
+
+
 class InvoiceLineKind(StrEnum):
     """
     Mirrors the public.invoice_line_kind Postgres enum (0023).
@@ -1645,6 +1649,17 @@ class SearchRequest(BaseModel):
 
 class SearchResponse(BaseModel):
     results: Annotated[list[PlaceSummary], Field(title='Results')]
+
+
+class SearchSourceDiagnostics(BaseModel):
+    """
+    Per-provider outcome of one search fan-out.
+    """
+
+    source: Annotated[str, Field(title='Source')]
+    count: Annotated[int, Field(title='Count')]
+    elapsed_ms: Annotated[int, Field(title='Elapsed Ms')]
+    error: Annotated[str | None, Field(title='Error')] = None
 
 
 class SendMessageRequest(BaseModel):
@@ -2933,6 +2948,10 @@ class SearchInventoryResponse(BaseModel):
         Field(title='Items'),
     ]
     count: Annotated[int, Field(title='Count')]
+    sources: Annotated[
+        list[SearchSourceDiagnostics] | None,
+        Field(title='Sources', validate_default=True),
+    ] = []
 
 
 class SupplierAvailabilityResponse(BaseModel):

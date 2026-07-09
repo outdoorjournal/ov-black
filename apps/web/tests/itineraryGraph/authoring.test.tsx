@@ -180,6 +180,7 @@ beforeEach(() => {
     ok: true,
     items: [MEAL],
     count: 1,
+    sources: [],
   });
   vi.mocked(createNodeFromInventory).mockResolvedValue({
     ok: true,

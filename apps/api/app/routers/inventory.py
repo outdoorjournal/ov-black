@@ -1,10 +1,14 @@
 """Inventory search + detail HTTP surface (M001/S02 T06).
 
-Two routes:
+Three routes:
 
 - ``GET /search-inventory`` — aggregate or source-scoped search. Returns
-  ``{items, count}`` where each item matches the shared ``InventoryItem``
-  discriminated union regardless of provider.
+  ``{items, count, sources}`` where each item matches the shared
+  ``InventoryItem`` discriminated union regardless of provider and
+  ``sources`` carries per-provider diagnostics (count, latency, captured
+  error) so the workbench can attribute a misbehaving upstream.
+- ``GET /inventory/sources`` — the registered provider names, so UI
+  filter pills track the registry instead of hardcoding it.
 - ``GET /inventory/{source}/{source_id}`` — detail lookup on a single
   provider; 404 when missing, 400 when the source isn't registered.
 
@@ -33,7 +37,7 @@ from app.inventory.registry import (
     get_registry,
 )
 from app.inventory.schemas import InventoryItem
-from app.services.inventory import get_inventory_detail, search_inventory
+from app.services.inventory import get_inventory_detail, search_inventory_detailed
 
 logger = logging.getLogger("ov_black.routers.inventory")
 
@@ -55,9 +59,24 @@ def get_inventory_registry() -> InventoryProviderRegistry:
     return get_registry()
 
 
+class SearchSourceDiagnostics(BaseModel):
+    """Per-provider outcome of one search fan-out."""
+
+    source: str
+    count: int
+    elapsed_ms: int
+    error: str | None = None
+
+
 class SearchInventoryResponse(BaseModel):
     items: list[InventoryItem]
     count: int
+    # One entry per provider the search actually hit, in selection order.
+    sources: list[SearchSourceDiagnostics] = []
+
+
+class InventorySourcesResponse(BaseModel):
+    sources: list[str]
 
 
 def _ctx_from_user(user: AuthenticatedUser) -> InventoryCtx:
@@ -210,7 +229,7 @@ async def search_inventory_endpoint(
         filters["radius_m"] = radius_m
 
     try:
-        items = await search_inventory(
+        items, outcomes = await search_inventory_detailed(
             registry,
             sources=source,
             kinds=kinds,
@@ -227,6 +246,15 @@ async def search_inventory_endpoint(
         )
         raise HTTPException(status_code=400, detail="unknown_source") from exc
 
+    diagnostics = [
+        SearchSourceDiagnostics(
+            source=outcome.source,
+            count=len(outcome.items),
+            elapsed_ms=outcome.elapsed_ms,
+            error=outcome.error,
+        )
+        for outcome in outcomes
+    ]
     logger.info(
         "inventory.search.request",
         extra={
@@ -234,9 +262,22 @@ async def search_inventory_endpoint(
             "kinds": kinds,
             "keyword": keyword,
             "count": len(items),
+            "provider_errors": [d.source for d in diagnostics if d.error],
         },
     )
-    return SearchInventoryResponse(items=items, count=len(items))
+    return SearchInventoryResponse(items=items, count=len(items), sources=diagnostics)
+
+
+@router.get(
+    "/inventory/sources",
+    response_model=InventorySourcesResponse,
+    summary="List the registered inventory providers.",
+)
+async def list_inventory_sources_endpoint(
+    user: AuthenticatedUser = Depends(require_user),
+    registry: InventoryProviderRegistry = Depends(get_inventory_registry),
+) -> InventorySourcesResponse:
+    return InventorySourcesResponse(sources=registry.enabled_sources())
 
 
 @router.get(

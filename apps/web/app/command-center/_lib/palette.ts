@@ -38,6 +38,12 @@ export const PALETTE_NAV_ACTIONS: readonly PaletteNavAction[] = [
     keywords: ["invoices", "billing", "payments", "outstanding"],
   },
   {
+    id: "nav-inventory",
+    label: "Inventory",
+    href: "/command-center/inventory",
+    keywords: ["search", "sources", "providers", "catalog", "workbench"],
+  },
+  {
     id: "nav-new-client",
     label: "New client",
     href: "/command-center/new-client",

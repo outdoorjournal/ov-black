@@ -192,6 +192,71 @@ async def test_search_all_unknown_source_raises() -> None:
         )
 
 
+class _BrokenProvider(_FakeProvider):
+    async def search(
+        self,
+        *,
+        kinds: list[str] | None,
+        keyword: str | None,
+        filters: dict,
+        ctx: InventoryCtx,
+    ) -> list[InventoryItem]:
+        raise RuntimeError("boom")
+
+
+async def test_search_all_detailed_returns_outcomes_in_selection_order() -> None:
+    registry = InventoryProviderRegistry()
+    registry.register(_FakeProvider("ov", [_experience("ov", "1", "Alps")]))
+    registry.register(_FakeProvider("mock", [_experience("mock", "1", "Mock")]))
+
+    outcomes = await registry.search_all_detailed(
+        sources=None,
+        kinds=None,
+        keyword=None,
+        filters={},
+        ctx=InventoryCtx(),
+    )
+
+    assert [o.source for o in outcomes] == ["ov", "mock"]
+    assert all(o.error is None for o in outcomes)
+    assert all(o.elapsed_ms >= 0 for o in outcomes)
+    assert [len(o.items) for o in outcomes] == [1, 1]
+
+
+async def test_search_all_detailed_captures_provider_error() -> None:
+    registry = InventoryProviderRegistry()
+    registry.register(_FakeProvider("ov", [_experience("ov", "1", "Alps")]))
+    registry.register(_BrokenProvider("broken", []))
+
+    outcomes = await registry.search_all_detailed(
+        sources=None,
+        kinds=None,
+        keyword=None,
+        filters={},
+        ctx=InventoryCtx(),
+    )
+
+    by_source = {o.source: o for o in outcomes}
+    assert by_source["ov"].error is None
+    assert by_source["ov"].items
+    assert by_source["broken"].error == "RuntimeError: boom"
+    assert by_source["broken"].items == []
+
+
+async def test_search_all_detailed_unknown_source_raises() -> None:
+    registry = InventoryProviderRegistry()
+    registry.register(_FakeProvider("ov", []))
+
+    with pytest.raises(UnknownSourceError):
+        await registry.search_all_detailed(
+            sources=["nope"],
+            kinds=None,
+            keyword=None,
+            filters={},
+            ctx=InventoryCtx(),
+        )
+
+
 def test_inventory_item_discriminator_parses_experience_kind() -> None:
     adapter = TypeAdapter(InventoryItem)
 

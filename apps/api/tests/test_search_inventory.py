@@ -87,6 +87,30 @@ class FakeMockProvider(FakeOVProvider):
     source = "mock"
 
 
+class FakeBrokenProvider(InventoryProvider):
+    """Provider whose search always raises — the diagnostics-capture case."""
+
+    source = "broken"
+
+    async def search(
+        self,
+        *,
+        kinds: list[str] | None,
+        keyword: str | None,
+        filters: dict,
+        ctx: InventoryCtx,
+    ) -> list[InventoryItem]:
+        raise RuntimeError("upstream exploded")
+
+    async def get_detail(
+        self,
+        *,
+        source_id: str,
+        ctx: InventoryCtx,
+    ) -> InventoryItem | None:
+        return None
+
+
 # ── Test fixtures ──────────────────────────────────────────────────────────
 
 
@@ -485,6 +509,79 @@ def test_search_forwards_actor_context_from_user(
     assert ctx.actor_id == sub
 
 
+# ── Per-provider diagnostics ───────────────────────────────────────────────
+
+
+def test_search_response_includes_per_source_diagnostics(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.get("/search-inventory?keyword=como", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    by_source = {d["source"]: d for d in body["sources"]}
+    assert set(by_source) == {"ov", "mock"}
+    for diag in by_source.values():
+        assert diag["error"] is None
+        assert diag["elapsed_ms"] >= 0
+    # Diagnostics counts reconcile with the flattened item list.
+    assert sum(d["count"] for d in by_source.values()) == body["count"]
+
+
+def test_search_provider_error_is_captured_not_fatal(
+    client: TestClient,
+    fake_registry: InventoryProviderRegistry,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    # One broken upstream degrades the search (its error is attributed in
+    # ``sources``) instead of failing the whole request with a 500.
+    fake_registry.register(FakeBrokenProvider())
+    resp = client.get("/search-inventory?keyword=como", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    by_source = {d["source"]: d for d in body["sources"]}
+    assert by_source["broken"]["count"] == 0
+    assert "RuntimeError" in by_source["broken"]["error"]
+    assert "upstream exploded" in by_source["broken"]["error"]
+    # Healthy providers still return their items.
+    assert {item["source"] for item in body["items"]} == {"ov", "mock"}
+    assert by_source["ov"]["error"] is None
+
+
+def test_search_single_source_diagnostics_scope(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.get("/search-inventory?source=ov", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [d["source"] for d in body["sources"]] == ["ov"]
+    assert body["sources"][0]["count"] == body["count"]
+
+
+# ── Sources listing route ──────────────────────────────────────────────────
+
+
+def test_list_inventory_sources_returns_registered_names(
+    client: TestClient,
+    override_registry: InventoryProviderRegistry,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.get("/inventory/sources", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"sources": ["ov", "mock"]}
+
+
+def test_list_inventory_sources_requires_jwt(
+    client: TestClient, override_registry: InventoryProviderRegistry
+) -> None:
+    resp = client.get("/inventory/sources")
+    assert resp.status_code == 401
+
+
 # ── Detail route ───────────────────────────────────────────────────────────
 
 
@@ -529,4 +626,5 @@ def test_openapi_exposes_inventory_contract(client: TestClient) -> None:
     assert resp.status_code == 200
     paths = resp.json()["paths"]
     assert "/search-inventory" in paths
+    assert "/inventory/sources" in paths
     assert "/inventory/{source}/{source_id}" in paths
