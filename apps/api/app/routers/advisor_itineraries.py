@@ -6,6 +6,12 @@ own, lean shape). Returns a rich row that embeds the owning client so
 the Command Center can render the entire roster in a dense table without
 N+1 lookups.
 
+Wave F: the envelope gains keyset paging (``next_cursor`` + ``total``),
+substring search (``q=`` over title OR client name), status / client filters,
+and sort params — and ``needs_attention`` is real: one awareness pass per page
+(grouped by itinerary, never per-row) lights the rows whose trip carries an
+open-state signal.
+
 Gated by :func:`require_advisor`. Scope is the calling advisor's clients
 (``clients.owner_id = advisor_id``) — orphan itineraries with no client
 (``itineraries.client_id IS NULL``) are intentionally excluded; the
@@ -17,17 +23,19 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, EmailStr
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
 from app.models import Client, Itinerary, ItineraryStatus
-from app.routers.clients import _advisor_id
+from app.routers.clients import _advisor_id, _escape_like
+from app.services.awareness import ACTIONABLE_KINDS, load_advisor_attention
+from app.services.pagination import clamp_limit, encode_cursor, require_cursor
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +69,10 @@ class AdvisorItinerarySummary(BaseModel):
     approved_at: datetime | None
     last_activity_at: datetime
     client: AdvisorItineraryClient
-    needs_attention: Literal[False] = False
+    # True when the trip carries an open-state awareness signal (changes
+    # requested, unread messages, expiring offer, unpaid invoice, unconfirmed
+    # booking) — the roster's brand dot. Wired for real in Wave F.
+    needs_attention: bool = False
 
 
 class AdvisorItinerariesResponse(BaseModel):
@@ -70,27 +81,92 @@ class AdvisorItinerariesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     itineraries: list[AdvisorItinerarySummary]
+    next_cursor: str | None = None
+    total: int = 0
+
+
+_SORT_COLS = {
+    "updated_at": Itinerary.updated_at,
+    "created_at": Itinerary.created_at,
+    "title": Itinerary.title,
+}
 
 
 @router.get(
     "",
     response_model=AdvisorItinerariesResponse,
-    summary="List every itinerary across the calling advisor's clients.",
+    summary="Search/page every itinerary across the calling advisor's clients.",
 )
 async def list_advisor_itineraries_endpoint(
     user: AuthenticatedUser = Depends(require_advisor),
     session: AsyncSession = Depends(get_session),
+    limit: int = 50,
+    cursor: str | None = None,
+    q: str | None = None,
+    status: ItineraryStatus | None = None,
+    client_id: uuid.UUID | None = None,
+    sort: Literal["updated_at", "created_at", "title"] = "updated_at",
+    order: Literal["asc", "desc"] | None = None,
 ) -> AdvisorItinerariesResponse:
     advisor_id = _advisor_id(user)
+    page_limit = clamp_limit(limit)
+    direction = order or ("asc" if sort == "title" else "desc")
+    sort_col = _SORT_COLS[sort]
 
-    stmt = (
-        select(Itinerary, Client)
-        .join(Client, Client.id == Itinerary.client_id)
-        .where(Client.owner_id == advisor_id)
-        .order_by(Itinerary.updated_at.desc())
+    filters: list[Any] = [Client.owner_id == advisor_id]
+    if q:
+        needle = f"%{_escape_like(q)}%"
+        filters.append(
+            or_(
+                Itinerary.title.ilike(needle, escape="\\"),
+                Client.full_name.ilike(needle, escape="\\"),
+            )
+        )
+    if status is not None:
+        filters.append(Itinerary.status == status)
+    if client_id is not None:
+        filters.append(Client.id == client_id)
+
+    total = int(
+        (
+            await session.execute(
+                select(func.count(Itinerary.id))
+                .join(Client, Client.id == Itinerary.client_id)
+                .where(*filters)
+            )
+        ).scalar_one()
     )
-    result = await session.execute(stmt)
-    rows = result.all()
+
+    stmt = select(Itinerary, Client).join(Client, Client.id == Itinerary.client_id).where(*filters)
+    payload = require_cursor(cursor)
+    if payload is not None:
+        cur_id = uuid.UUID(str(payload["id"]))
+        raw_v = str(payload["v"])
+        cur_v: Any = raw_v if sort == "title" else datetime.fromisoformat(raw_v)
+        if direction == "desc":
+            stmt = stmt.where(or_(sort_col < cur_v, and_(sort_col == cur_v, Itinerary.id > cur_id)))
+        else:
+            stmt = stmt.where(or_(sort_col > cur_v, and_(sort_col == cur_v, Itinerary.id > cur_id)))
+    ordered = sort_col.desc() if direction == "desc" else sort_col.asc()
+    stmt = stmt.order_by(ordered, Itinerary.id.asc()).limit(page_limit)
+    rows = (await session.execute(stmt)).all()
+
+    # One awareness pass for the page: itineraries carrying an open-state
+    # signal get the dot. Grouped, never per-row (R2 in the plan).
+    attention_itineraries: set[uuid.UUID] = set()
+    if rows:
+        for summary in await load_advisor_attention(session, advisor_id=advisor_id):
+            if not summary.needs_attention:
+                continue
+            for item in summary.items:
+                if item.itinerary_id is not None and item.kind in ACTIONABLE_KINDS:
+                    attention_itineraries.add(item.itinerary_id)
+
+    next_cursor: str | None = None
+    if len(rows) == page_limit and rows:
+        last = rows[-1][0]
+        last_v = last.title if sort == "title" else getattr(last, sort).isoformat()
+        next_cursor = encode_cursor({"v": last_v, "id": str(last.id)})
 
     return AdvisorItinerariesResponse(
         itineraries=[
@@ -107,7 +183,10 @@ async def list_advisor_itineraries_endpoint(
                     full_name=client.full_name,
                     email=client.email,
                 ),
+                needs_attention=itinerary.id in attention_itineraries,
             )
             for itinerary, client in rows
-        ]
+        ],
+        next_cursor=next_cursor,
+        total=total,
     )

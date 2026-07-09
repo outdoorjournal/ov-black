@@ -101,10 +101,11 @@ AttentionKind = Literal[
 
 Urgency = Literal["urgent", "normal"]
 
-# The open-state signals — these and only these light the roster badge, because
+# The open-state signals — these and only these light the roster badge/dot,
+# because
 # they clear themselves when the advisor acts. Recent-activity signals are strip
 # context, so a glanced-at client doesn't keep a stale count forever.
-_ACTIONABLE_KINDS: frozenset[str] = frozenset(
+ACTIONABLE_KINDS: frozenset[str] = frozenset(
     {
         "changes_requested",
         "unread_messages",
@@ -185,12 +186,12 @@ def build_client_attention(
     ordered = sorted(
         items,
         key=lambda i: (
-            i.kind not in _ACTIONABLE_KINDS,
+            i.kind not in ACTIONABLE_KINDS,
             i.urgency != "urgent",
             -i.at.timestamp(),
         ),
     )
-    actionable = [i for i in ordered if i.kind in _ACTIONABLE_KINDS]
+    actionable = [i for i in ordered if i.kind in ACTIONABLE_KINDS]
     return ClientAttention(
         client_id=client_id,
         full_name=full_name,

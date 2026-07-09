@@ -587,8 +587,16 @@ async def list_turns(
     *,
     actor: ActorContext,
     session_id: uuid.UUID,
+    limit: int | None = None,
+    before_index: int | None = None,
 ) -> list[AgentTurn] | TurnOutcome:
-    """Return every turn in a session ordered by turn_index.
+    """Return a session's turns ordered by turn_index ASC.
+
+    No params → every turn (the pre-Wave-F behavior, kept for the chat replay
+    and the ovb SDK). With ``limit`` the MOST RECENT ``limit`` turns (still
+    returned ascending); ``before_index`` windows to turns strictly below that
+    index — ``turn_index`` is a dense per-session int with a unique
+    constraint, so it doubles as the page cursor with no opaque token.
 
     Returns a ``TurnOutcome`` on failure so the router layer can map to
     404 / 403 without leaking DB internals.
@@ -609,17 +617,22 @@ async def list_turns(
     if agent_session.audience == SessionAudience.advisor and actor.actor_kind != "advisor":
         return TurnOutcome.SESSION_NOT_FOUND
 
-    rows = (
-        (
-            await session.execute(
-                select(AgentTurn)
-                .where(AgentTurn.session_id == session_id)
-                .order_by(AgentTurn.turn_index)
+    stmt = select(AgentTurn).where(AgentTurn.session_id == session_id)
+    if before_index is not None:
+        stmt = stmt.where(AgentTurn.turn_index < before_index)
+    if limit is not None:
+        # Newest `limit` of the window, flipped back to ascending for callers.
+        page = (
+            (
+                await session.execute(
+                    stmt.order_by(AgentTurn.turn_index.desc()).limit(max(1, min(limit, 500)))
+                )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
+        return sorted(page, key=lambda t: t.turn_index)
+    rows = (await session.execute(stmt.order_by(AgentTurn.turn_index))).scalars().all()
     return list(rows)
 
 

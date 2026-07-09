@@ -535,7 +535,9 @@ def test_get_turns_returns_ordered_user_then_assistant(
         first_token_ms=180,
     )
 
-    async def _fake_list(_session: Any, *, actor: ActorContext, session_id: uuid.UUID) -> list[Any]:
+    async def _fake_list(
+        _session: Any, *, actor: ActorContext, session_id: uuid.UUID, **_paging: Any
+    ) -> list[Any]:
         assert actor.actor_kind == "advisor"
         return [user_turn, asst_turn]
 
@@ -562,7 +564,7 @@ def test_get_turns_wrong_caller_returns_404(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _fake_list(
-        _session: Any, *, actor: ActorContext, session_id: uuid.UUID
+        _session: Any, *, actor: ActorContext, session_id: uuid.UUID, **_paging: Any
     ) -> TurnOutcome:
         return TurnOutcome.SESSION_NOT_YOURS
 

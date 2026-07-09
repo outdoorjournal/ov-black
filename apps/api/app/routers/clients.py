@@ -28,11 +28,11 @@ from __future__ import annotations
 import datetime as _datetime
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
@@ -49,6 +49,7 @@ from app.schemas.clients import (
     ClientCreatePayload,
     ClientCreateResponse,
     ClientDetail,
+    ClientsPage,
     ClientSummary,
 )
 from app.schemas.contacts import (
@@ -76,6 +77,7 @@ from app.services.contacts import (
     update_client_contact,
 )
 from app.services.facts import load_agent_context
+from app.services.pagination import clamp_limit, encode_cursor, require_cursor
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -177,25 +179,76 @@ async def create_client_endpoint(
     raise HTTPException(status_code=500, detail="internal_error")
 
 
+def _escape_like(q: str) -> str:
+    """Escape ILIKE wildcards so a literal ``%``/``_`` in the query stays literal."""
+    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _status_predicate(status: AccessStatus) -> Any:
+    """The _access_status truth table as a SQL predicate."""
+    if status == "active":
+        return Client.auth_user_id.is_not(None)
+    if status == "pending":
+        return and_(Client.auth_user_id.is_(None), Client.invited_at.is_not(None))
+    return and_(Client.auth_user_id.is_(None), Client.invited_at.is_(None))
+
+
 @router.get(
     "",
-    response_model=list[ClientSummary],
-    summary="List the calling advisor's clients, newest first.",
+    response_model=ClientsPage,
+    summary="Search/page the calling advisor's clients.",
 )
 async def list_clients_endpoint(
     user: AuthenticatedUser = Depends(require_advisor),
     session: AsyncSession = Depends(get_session),
-) -> list[ClientSummary]:
+    limit: int = 50,
+    cursor: str | None = None,
+    q: str | None = None,
+    status: AccessStatus | None = None,
+    sort: Literal["created_at", "full_name"] = "created_at",
+    order: Literal["asc", "desc"] | None = None,
+) -> ClientsPage:
+    """Wave F: the roster is an envelope (``{clients, next_cursor, total}``)
+    with substring search, status filter, and keyset paging. No params →
+    first page of 50, newest first (the pre-Wave-F ordering).
+    """
     advisor_id = _advisor_id(user)
+    page_limit = clamp_limit(limit)
+    # created_at reads naturally newest-first; names read A→Z.
+    direction = order or ("desc" if sort == "created_at" else "asc")
+    sort_col = Client.created_at if sort == "created_at" else Client.full_name
+
+    filters: list[Any] = [Client.owner_id == advisor_id]
+    if q:
+        needle = f"%{_escape_like(q)}%"
+        filters.append(
+            or_(
+                Client.full_name.ilike(needle, escape="\\"),
+                Client.email.ilike(needle, escape="\\"),
+            )
+        )
+    if status is not None:
+        filters.append(_status_predicate(status))
+
+    total = int((await session.execute(select(func.count(Client.id)).where(*filters))).scalar_one())
 
     stmt = (
         select(Client, Dossier.id)
         .outerjoin(Dossier, Dossier.client_id == Client.id)
-        .where(Client.owner_id == advisor_id)
-        .order_by(Client.created_at.desc())
+        .where(*filters)
     )
-    result = await session.execute(stmt)
-    client_rows = result.all()
+    payload = require_cursor(cursor)
+    if payload is not None:
+        cur_id = uuid.UUID(str(payload["id"]))
+        raw_v = str(payload["v"])
+        cur_v: Any = _datetime.datetime.fromisoformat(raw_v) if sort == "created_at" else raw_v
+        if direction == "desc":
+            stmt = stmt.where(or_(sort_col < cur_v, and_(sort_col == cur_v, Client.id > cur_id)))
+        else:
+            stmt = stmt.where(or_(sort_col > cur_v, and_(sort_col == cur_v, Client.id > cur_id)))
+    ordered = sort_col.desc() if direction == "desc" else sort_col.asc()
+    stmt = stmt.order_by(ordered, Client.id.asc()).limit(page_limit)
+    client_rows = (await session.execute(stmt)).all()
 
     rows: list[ClientSummary] = []
     for client, dossier_id in client_rows:
@@ -211,7 +264,16 @@ async def list_clients_endpoint(
                 created_at=client.created_at,
             )
         )
-    return rows
+
+    next_cursor: str | None = None
+    if len(client_rows) == page_limit and client_rows:
+        last_client = client_rows[-1][0]
+        last_v = (
+            last_client.created_at.isoformat() if sort == "created_at" else last_client.full_name
+        )
+        next_cursor = encode_cursor({"v": last_v, "id": str(last_client.id)})
+
+    return ClientsPage(clients=rows, next_cursor=next_cursor, total=total)
 
 
 def _dossier_detail(dossier: Dossier | None) -> DossierDetail | None:

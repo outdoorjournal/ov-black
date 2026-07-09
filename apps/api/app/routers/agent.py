@@ -326,15 +326,22 @@ async def turn_endpoint(
     responses={
         404: {"description": "No session with this id accessible to the caller."},
     },
-    summary="List every turn on a session, ordered by turn_index ASC.",
+    summary="List a session's turns, ordered by turn_index ASC.",
 )
 async def list_turns_endpoint(
     session_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
+    limit: int | None = None,
+    before_index: int | None = None,
 ) -> list[AgentTurnSummary]:
+    """No params → every turn (unchanged). ``limit`` returns the most recent
+    N (ascending); ``before_index`` pages older — the next page's cursor is
+    the first returned row's ``turn_index`` (Wave F session replay)."""
     actor = await _actor_for_user(user, session)
-    result = await list_turns(session, actor=actor, session_id=session_id)
+    result = await list_turns(
+        session, actor=actor, session_id=session_id, limit=limit, before_index=before_index
+    )
     if isinstance(result, TurnOutcome):
         # Both SESSION_NOT_FOUND and SESSION_NOT_YOURS collapse to 404
         # (D015) — never 403 on cross-tenant, that would leak existence.

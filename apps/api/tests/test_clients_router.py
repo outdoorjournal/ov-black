@@ -49,6 +49,10 @@ class _ExecResult:
 
     rows: list[Any] = field(default_factory=list)
 
+    def scalar_one(self) -> Any:
+        # Used by the Wave F roster count.
+        return self.rows[0]
+
     def scalar_one_or_none(self) -> Any:
         # Used for single-row lookups (GET-by-id client/doll/invite).
         if not self.rows:
@@ -85,6 +89,12 @@ class FakeSession:
         compiled = stmt.compile()
         params = compiled.params
         sql = str(compiled).lower()
+
+        # ── LIST /clients — the Wave F total (count, filters only, no join) ──
+        if "count" in sql and "from clients" in sql and "join" not in sql:
+            advisor_id = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
+            owned = [c for c in self.clients_by_id.values() if c.owner_id == advisor_id]
+            return _ExecResult([len(owned)])
 
         # ── LIST /clients — JOIN with dossiers (access_status comes off the row) ──
         if "from clients" in sql and "join" in sql:
@@ -423,8 +433,11 @@ def test_get_clients_returns_only_own_clients(
 
     resp = client.get("/clients", headers=auth_headers)
     assert resp.status_code == 200
-    body = resp.json()
+    envelope = resp.json()
+    body = envelope["clients"]  # Wave F: the roster is an envelope now
 
+    assert envelope["total"] == 2
+    assert envelope["next_cursor"] is None  # short page → the end
     assert len(body) == 2
     emails = {row["email"] for row in body}
     assert emails == {"a@example.com", "c@example.com"}
@@ -463,7 +476,7 @@ def test_get_clients_renders_uninvited_status(
 
     resp = client.get("/clients", headers=auth_headers)
     assert resp.status_code == 200
-    body = resp.json()
+    body = resp.json()["clients"]
     row = next(r for r in body if r["email"] == "silent@example.com")
     assert row["access_status"] == "uninvited"
     assert row["invited_at"] is None

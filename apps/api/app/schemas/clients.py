@@ -96,6 +96,20 @@ class ClientSummary(BaseModel):
     created_at: datetime
 
 
+class ClientsPage(BaseModel):
+    """Envelope for ``GET /clients`` (Wave F — breaking: was a bare list).
+
+    ``total`` counts every row matching the q/status filters (not the page),
+    so the roster chrome can say "42 clients" without a second call.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    clients: list[ClientSummary]
+    next_cursor: str | None
+    total: int
+
+
 class ClientDetail(BaseModel):
     """Full client + dossier + per-tier fact lists for ``GET /clients/{id}``.
 
