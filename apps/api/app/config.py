@@ -361,6 +361,34 @@ class Settings(BaseSettings):
             "runs don't require a provisioned Memory resource."
         ),
     )
+    feed_poll_seconds: float = Field(
+        default=4.0,
+        ge=0.5,
+        description=(
+            "Tick interval for the advisor SSE feed (/advisor/feed) — each "
+            "connected advisor re-queries the watermarked activity sources "
+            "this often. ~4s reads as live at single-advisor scale without "
+            "meaningful DB load."
+        ),
+    )
+    feed_heartbeat_seconds: float = Field(
+        default=20.0,
+        ge=5.0,
+        description=(
+            "Idle keepalive cadence for the advisor SSE feed. Must stay well "
+            "under the ALB idle timeout (120s in ApiStack) — 20s gives 6x "
+            "margin."
+        ),
+    )
+    feed_max_stream_seconds: int = Field(
+        default=900,
+        ge=60,
+        description=(
+            "Hard lifetime cap on one advisor feed connection. The stream "
+            "closes with a bye frame at min(JWT exp, this cap); the browser "
+            "reconnects with a fresh token."
+        ),
+    )
     analyze_reaper_max_running_seconds: int = Field(
         default=600,
         ge=30,

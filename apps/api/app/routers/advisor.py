@@ -9,6 +9,8 @@ to ``clients.owner_id``:
 - ``GET /advisor/activity`` — the merged, keyset-paged event feed (graph
   mutations, agent turns, messages, payments, invoice/booking beats).
 - ``GET /advisor/money`` — the cross-client invoice roster + currency band.
+- ``GET /advisor/feed`` — the live SSE stream (poll-to-push over the same
+  activity projection; see :mod:`app.services.feed` for the frame contract).
 
 The per-client awareness rollup stays in :mod:`app.routers.awareness`; this
 module is the cross-roster grain.
@@ -17,16 +19,18 @@ module is the cross-roster grain.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
-from app.db import get_session
+from app.config import get_settings
+from app.db import get_session, get_sessionmaker
 from app.models import InvoiceStatus
 from app.routers.clients import _advisor_id
 from app.services.activity import (
@@ -43,6 +47,7 @@ from app.services.advisor_money import (
     next_money_cursor,
 )
 from app.services.advisor_overview import Portfolio, load_advisor_overview
+from app.services.feed import stream_advisor_feed
 from app.services.pagination import clamp_limit, require_cursor
 
 if TYPE_CHECKING:
@@ -346,4 +351,61 @@ async def get_advisor_money_endpoint(
         invoices=[_money_row_out(r) for r in rows],
         summary=[_money_summary_out(s) for s in summary],
         next_cursor=next_money_cursor(rows, page_limit),
+    )
+
+
+# ── live feed (SSE) ───────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/feed",
+    summary="Live advisor activity stream (SSE, data-only JSON frames).",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "text/event-stream of hello / activity / heartbeat / bye "
+                "frames — see app/services/feed.py for the v1 contract."
+            ),
+            "content": {"text/event-stream": {}},
+        }
+    },
+)
+async def advisor_feed_endpoint(
+    user: AuthenticatedUser = Depends(require_advisor),
+    cursor: str | None = Query(
+        default=None,
+        description="ISO-8601 resume watermark (the last seen frame's cursor).",
+    ),
+) -> StreamingResponse:
+    """Auth is validated once at open; the stream self-terminates at
+    min(JWT exp, feed_max_stream_seconds) with a ``bye`` so a stale token
+    can't hold a feed forever. Uses the sessionmaker (short session per tick),
+    never the request-scoped ``get_session``."""
+    advisor_id = _advisor_id(user)
+    resume: datetime | None = None
+    if cursor is not None:
+        try:
+            resume = datetime.fromisoformat(cursor)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_cursor") from None
+
+    exp_claim = user.claims.get("exp")
+    token_exp = (
+        datetime.fromtimestamp(exp_claim, tz=UTC) if isinstance(exp_claim, int | float) else None
+    )
+    body = stream_advisor_feed(
+        get_sessionmaker(),
+        advisor_id=advisor_id,
+        settings=get_settings(),
+        cursor=resume,
+        token_exp=token_exp,
+    )
+    return StreamingResponse(
+        content=body,
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
     )
