@@ -20,7 +20,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NamedTuple, TypedDict
 
@@ -684,6 +684,21 @@ async def update_itinerary_details(
             detail="date_end_before_start",
         )
 
+    # Booking invariant, reverse direction (Wave E / ADV-17): booking is only
+    # possible on pinned (exact) dates, so loosening exact → window/flexible is
+    # refused while booked/confirmed cards exist — their dates are commitments
+    # to suppliers. Cancel the bookings first, then loosen.
+    new_kind = updates.get("timing_kind", itinerary.timing_kind)
+    if (
+        itinerary.timing_kind is ItineraryTimingKind.exact
+        and new_kind is not ItineraryTimingKind.exact
+        and await _has_booked_nodes(session, itinerary.id)
+    ):
+        return ItineraryError(
+            outcome=ItineraryOutcome.CONFLICT,
+            detail="booked_dates_locked",
+        )
+
     changed: list[str] = []
     for key, value in updates.items():
         if key == "title" and value is None:
@@ -706,6 +721,237 @@ async def update_itinerary_details(
         },
     )
     return itinerary
+
+
+async def _has_booked_nodes(session: AsyncSession, itinerary_id: uuid.UUID) -> bool:
+    """True when any live (non-deleted) node is booked or confirmed.
+
+    The Wave E booking invariant's other half: booked cards pin the calendar,
+    so retime / loosening must refuse while any exist.
+    """
+    row = (
+        await session.execute(
+            select(Node.id)
+            .where(
+                Node.itinerary_id == itinerary_id,
+                Node.status.in_([NodeStatus.booked, NodeStatus.confirmed]),
+                Node.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
+async def _maybe_stamp_days_anchor(session: AsyncSession, itinerary_id: uuid.UUID) -> None:
+    """Give "Day 1" a stable identity the first time anything is scheduled (ADV-16).
+
+    On an unpinned trip the cards' absolute dates are provisional coordinates;
+    what matters is their *relative* structure, rendered as Day-N ordinals from
+    this anchor: Day N ≡ days_anchor + (N−1). Without it the anchor was derived
+    from the earliest scheduled card, so deleting the Day-1 card renumbered
+    every day. Stamped once — the window's ``date_start`` when one exists, else
+    the current UTC date (matching the web adapter's ``todayKey`` fallback the
+    first card was laid out against). No commit: rides the caller's transaction.
+    """
+    itinerary = (
+        await session.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
+    if itinerary is None or itinerary.days_anchor is not None:
+        return
+    itinerary.days_anchor = itinerary.date_start or datetime.now(UTC).date()
+    logger.info(
+        "itinerary.days_anchor.stamp",
+        extra={"itinerary_id": str(itinerary_id), "days_anchor": itinerary.days_anchor.isoformat()},
+    )
+
+
+def _node_local_start_date(node: Node) -> date | None:
+    """The node's scheduled LOCAL calendar date, or None when unscheduled.
+
+    Prefers the mirrored ``metadata.start_time`` wall-clock (the same value the
+    web timeline places the card by); falls back to the ``starts_at`` lower
+    bound re-expressed in the recorded ``tz_offset_minutes``.
+    """
+    meta = node.metadata_ if isinstance(node.metadata_, dict) else {}
+    iso = meta.get("start_time")
+    if isinstance(iso, str) and iso:
+        try:
+            return datetime.fromisoformat(iso).date()
+        except ValueError:
+            pass
+    lower = getattr(node.starts_at, "lower", None)
+    if isinstance(lower, datetime):
+        offset = _tz_offset_from_metadata(meta)
+        if offset is not None:
+            return lower.astimezone(timezone(timedelta(minutes=offset))).date()
+        return lower.date()
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class RetimeResult:
+    """Outcome of :func:`retime_itinerary` — the pinned itinerary + what moved."""
+
+    itinerary: Itinerary
+    delta_days: int
+    shifted_node_ids: tuple[uuid.UUID, ...]
+
+
+async def retime_itinerary(
+    session: AsyncSession,
+    actor: ActorContext,
+    itinerary: Itinerary,
+    *,
+    date_start: date,
+    date_end: date | None = None,
+) -> RetimeResult | ItineraryError:
+    """Pin the trip to real dates — the Wave E (ADV-17) retime gesture.
+
+    "Day 1 is March 18, 2027": computes ``delta = date_start − days_anchor``
+    and shifts every scheduled node's ``starts_at`` / ``metadata.start_time``
+    by that many whole days, preserving the wall-clock time and tz offset (a
+    09:00 breakfast stays a 09:00 breakfast). Then flips the itinerary to
+    ``timing_kind=exact`` and re-stamps ``days_anchor = date_start``, so a
+    later re-pin is just another uniform shift. Each moved node gets a
+    node_history row.
+
+    Deliberately trip-level: approved (but unbooked) cards move with the trip —
+    the G1 per-node edit gate does not apply here. What DOES refuse is a shift
+    while booked/confirmed cards exist (``booked_dates_locked``): booking gates
+    on pinned dates, so a booked card's date is a supplier commitment.
+
+    ``date_end`` resolution when omitted: an already-exact trip keeps its span;
+    else ``duration_nights`` counts forward from ``date_start``; else the last
+    scheduled card's (shifted) date; else the trip is a single pinned day.
+    """
+    if date_end is not None and date_end < date_start:
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="date_end_before_start",
+        )
+
+    lock_err = await _check_lock(session, itinerary.id, actor)
+    if lock_err is not None:
+        return lock_err
+
+    nodes = (
+        (
+            await session.execute(
+                select(Node).where(
+                    Node.itinerary_id == itinerary.id,
+                    Node.starts_at.isnot(None),
+                    Node.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # Day 1's current identity. The stamped anchor is authoritative; legacy
+    # trips that predate 0041 fall back to the declared start, then the earliest
+    # scheduled card (the web adapter's old derivation), then the target itself
+    # (nothing scheduled — the "shift" is a pure timing write).
+    anchor = itinerary.days_anchor or itinerary.date_start
+    if anchor is None:
+        scheduled_dates = [d for d in (_node_local_start_date(n) for n in nodes) if d is not None]
+        anchor = min(scheduled_dates) if scheduled_dates else date_start
+
+    delta_days = (date_start - anchor).days
+    if delta_days != 0 and any(
+        n.status in (NodeStatus.booked, NodeStatus.confirmed) for n in nodes
+    ):
+        return ItineraryError(
+            outcome=ItineraryOutcome.CONFLICT,
+            detail="booked_dates_locked",
+        )
+
+    shifted: list[uuid.UUID] = []
+    if delta_days != 0:
+        delta = timedelta(days=delta_days)
+        for node in nodes:
+            before = _snapshot_node(node)
+            meta = node.metadata_ if isinstance(node.metadata_, dict) else {}
+            iso = meta.get("start_time")
+            new_range: Range[datetime] | None = None
+            if isinstance(iso, str) and iso:
+                # Shift the mirrored wall-clock and rebuild the column from it —
+                # the same metadata-first contract as update_node's schedule
+                # sync. A fixed-offset datetime + N days keeps the wall-clock.
+                try:
+                    new_local = datetime.fromisoformat(iso) + delta
+                except ValueError:
+                    new_local = None
+                if new_local is not None:
+                    lower = getattr(node.starts_at, "lower", None)
+                    upper = getattr(node.starts_at, "upper", None)
+                    dur = (
+                        round((upper - lower).total_seconds() / 60)
+                        if isinstance(lower, datetime) and isinstance(upper, datetime)
+                        else None
+                    )
+                    new_iso = new_local.isoformat()
+                    new_range = _build_starts_at(new_iso, dur)
+                    if new_range is not None:
+                        node.metadata_ = {**meta, "start_time": new_iso}
+            if new_range is None:
+                # No (parseable) mirror — shift the raw UTC bounds; whole-day
+                # deltas preserve the wall-clock in any fixed-offset zone.
+                lower = getattr(node.starts_at, "lower", None)
+                upper = getattr(node.starts_at, "upper", None)
+                if not isinstance(lower, datetime):
+                    continue
+                new_range = Range(
+                    lower + delta,
+                    upper + delta if isinstance(upper, datetime) else None,
+                    bounds="[)",
+                )
+            node.starts_at = new_range
+            await _write_node_history(
+                session,
+                node_id=node.id,
+                itinerary_id=itinerary.id,
+                op="update",
+                actor=actor,
+                before=before,
+                after=_snapshot_node(node),
+            )
+            shifted.append(node.id)
+
+    old_start, old_end = itinerary.date_start, itinerary.date_end
+    resolved_end = date_end
+    if resolved_end is None:
+        if itinerary.timing_kind is ItineraryTimingKind.exact and old_start and old_end:
+            resolved_end = date_start + (old_end - old_start)
+        elif itinerary.duration_nights:
+            resolved_end = date_start + timedelta(days=itinerary.duration_nights)
+        else:
+            shifted_dates = [d for d in (_node_local_start_date(n) for n in nodes) if d is not None]
+            resolved_end = max([*shifted_dates, date_start])
+
+    itinerary.timing_kind = ItineraryTimingKind.exact
+    itinerary.date_start = date_start
+    itinerary.date_end = resolved_end
+    itinerary.days_anchor = date_start
+
+    await session.commit()
+    await session.refresh(itinerary)
+    logger.info(
+        "itinerary.retime",
+        extra={
+            "itinerary_id": str(itinerary.id),
+            "actor_kind": actor.kind.value,
+            "actor_id": actor.actor_id,
+            "delta_days": delta_days,
+            "shifted_nodes": len(shifted),
+        },
+    )
+    return RetimeResult(
+        itinerary=itinerary,
+        delta_days=delta_days,
+        shifted_node_ids=tuple(shifted),
+    )
 
 
 async def get_itinerary_graph(
@@ -957,6 +1203,9 @@ async def add_node(
         before=None,
         after=_snapshot_node(node),
     )
+    # First thing on the timeline pins Day 1's identity (ADV-16).
+    if node.starts_at is not None:
+        await _maybe_stamp_days_anchor(session, itinerary_id)
     await session.commit()
     logger.info(
         "itinerary.mutate",
@@ -1085,6 +1334,11 @@ async def update_node(
                     }
         else:
             node.starts_at = None
+
+    # A metadata patch is the drag-to-timeline path — the first card scheduled
+    # pins Day 1's identity (ADV-16). No-op once the anchor is stamped.
+    if "metadata" in updates and node.starts_at is not None:
+        await _maybe_stamp_days_anchor(session, itinerary_id)
 
     try:
         await session.flush()

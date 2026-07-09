@@ -33,7 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.inventory.providers.duffel import summarize_offer
 from app.inventory.registry import InventoryCtx, InventoryProviderRegistry
 from app.inventory.schemas import InventoryItem
-from app.models import EdgeType, Itinerary, ItineraryStatus, NodeStatus, NodeType
+from app.models import (
+    EdgeType,
+    Itinerary,
+    ItineraryStatus,
+    ItineraryTimingKind,
+    NodeStatus,
+    NodeType,
+)
 from app.services.card_mapping import inventory_item_to_card_metadata
 from app.services.inventory_cache import cached_search
 from app.services.itineraries import (
@@ -406,6 +413,7 @@ async def build_live_japan_itinerary(
     sourced: list[str] = []
     skipped: list[str] = []
     ordered_ids: list[uuid.UUID] = []
+    last_day_offset = 0
 
     for stop in _PLAN:
         item = await _search_stop(registry, stop, trip_start_at=trip_start_at, ctx=ctx)
@@ -459,6 +467,7 @@ async def build_live_japan_itinerary(
             continue
 
         ordered_ids.append(result.id)
+        last_day_offset = max(last_day_offset, stop.day)
         sourced.append(f"{stop.label} → {item.title} [{item.source}]")
 
     # Chain the placed nodes chronologically (the plan is already in order).
@@ -474,6 +483,17 @@ async def build_live_japan_itinerary(
         )
         if not isinstance(edge_result, ItineraryError):
             edge_count += 1
+
+    # The seed schedules concrete calendar dates from ``trip_start_at``, so the
+    # trip is born PINNED (Wave E): ``timing_kind=exact`` makes it bookable
+    # (booking gates on pinned dates, ADV-17) and renders real dates instead of
+    # Day-N ordinals. Overwrites the per-node anchor stamp, which — with no
+    # declared dates on the fresh row — defaulted to today rather than Day 1.
+    trip_start_date = trip_start_at.replace(tzinfo=None).date()
+    itinerary.timing_kind = ItineraryTimingKind.exact
+    itinerary.date_start = trip_start_date
+    itinerary.date_end = trip_start_date + timedelta(days=last_day_offset)
+    itinerary.days_anchor = trip_start_date
 
     await session.commit()
     await session.refresh(itinerary)

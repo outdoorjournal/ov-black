@@ -9,6 +9,9 @@ export const ERROR_COPY: Record<string, string> = {
   advisor_only: "Booking is advisor-only.",
   forbidden: "You don't have access to book here.",
   node_not_paid: "Can't book yet — no covering paid invoice line. Pay it first, or override.",
+  dates_not_pinned: "Booking needs real dates — pin the trip's dates first.",
+  booked_dates_locked:
+    "Booked items are committed to these dates — cancel the bookings before moving or loosening them.",
   already_booked: "That item is already booked.",
   node_not_approved: "Only an approved item can be booked.",
   node_not_booked: "Only a booked item can be confirmed.",

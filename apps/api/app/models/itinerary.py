@@ -285,6 +285,13 @@ class Itinerary(Base):
     date_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     duration_nights: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timing_note: Mapped[str | None] = mapped_column(nullable=True)
+    # 0041 — Wave E (ADV-16). The date Day 1 currently maps to, so relative
+    # "Day N" labels on an unpinned trip (timing_kind ≠ exact) are stable:
+    # Day N ≡ days_anchor + (N−1). Stamped when the first card is scheduled
+    # (window date_start, else the current UTC date); re-stamped by retime
+    # (ADV-17, the pinning gesture); kept on unpin so cards stay put. NULL on
+    # a trip with nothing scheduled yet.
+    days_anchor: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -186,7 +186,12 @@ export function MobileItineraryLayout({
       </header>
 
       {showTimeline && !collectionDominant ? (
-        <DayStrip groups={groups} activeIndex={activeDay} onSelect={goToDay} />
+        <DayStrip
+          groups={groups}
+          activeIndex={activeDay}
+          onSelect={goToDay}
+          datesPinned={timeline.itinerary.timing_kind === "exact"}
+        />
       ) : null}
 
       {/* Horizontal pager — one full-width page per day, each scrolls its own

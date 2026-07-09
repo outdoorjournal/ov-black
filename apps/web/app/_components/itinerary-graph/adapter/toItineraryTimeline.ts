@@ -265,9 +265,26 @@ export function toItineraryTimeline(
     itinerary.timing_kind === "exact" && typeof itinerary.date_end === "string"
       ? itinerary.date_end
       : null;
+  // Day-1 anchor (0041, ADV-16): the server-stamped date "Day 1" maps to on an
+  // unpinned trip, so Day-N numbering survives the Day-1 card being deleted.
+  // Read defensively until the generated client carries the field.
+  const rawDaysAnchor = (itinerary as { days_anchor?: string | null }).days_anchor;
+  const daysAnchor = typeof rawDaysAnchor === "string" && rawDaysAnchor ? rawDaysAnchor : null;
+  // An empty unpinned-but-windowed trip lays out from the window's start — the
+  // same date the server will stamp as days_anchor when the first card lands,
+  // so the provisional layout and the stamped anchor agree.
+  const windowStartKey =
+    itinerary.timing_kind === "window" && typeof itinerary.date_start === "string"
+      ? itinerary.date_start
+      : null;
 
   const synthAnchor =
-    opts.synthAnchorDate ?? anchorFromData ?? exactStart ?? todayKey();
+    opts.synthAnchorDate ??
+    exactStart ??
+    daysAnchor ??
+    anchorFromData ??
+    windowStartKey ??
+    todayKey();
 
   const undated = followOrder(
     timed.filter((n) => explicitStart(n) === null),
@@ -310,9 +327,15 @@ export function toItineraryTimeline(
     .map((n) => (n.metadata as NodeMetaTiming).start_time)
     .filter((s): s is string => typeof s === "string")
     .map((s) => localDayKey(s));
+  // The Day-1 anchor joins the span candidates so numbering counts from it
+  // (ADV-16): deleting the earliest card must not renumber every other day. A
+  // card scheduled BEFORE the anchor still extends the span (render everything).
   const firstDay =
-    [...nodeDayKeys, ...(exactStart ? [exactStart] : [])].sort()[0] ??
-    synthAnchor;
+    [
+      ...nodeDayKeys,
+      ...(exactStart ? [exactStart] : []),
+      ...(daysAnchor ? [daysAnchor] : []),
+    ].sort()[0] ?? synthAnchor;
   const lastCandidates = [...nodeDayKeys, ...(exactEnd ? [exactEnd] : [])].sort();
   const lastDay = lastCandidates[lastCandidates.length - 1] ?? firstDay;
   const span = Math.max(0, diffDays(firstDay, lastDay));

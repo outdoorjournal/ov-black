@@ -14,6 +14,7 @@ import {
   cancelReconcileEndpointItineraryForkIdCancelReconcilePost,
   approveItineraryEndpointItineraryItineraryIdApprovePost,
   proposeItineraryEndpointItineraryItineraryIdProposePost,
+  retimeItineraryEndpointItineraryItineraryIdRetimePost,
   reopenItineraryEndpointItineraryItineraryIdReopenPost,
   archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete,
   archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete,
@@ -139,6 +140,7 @@ import type {
   GraphResponse,
   ItineraryResponse,
   UpdateItineraryRequest,
+  RetimeItineraryRequest,
   AddLineItemRequest,
   CreateInvoiceRequest,
   InvoiceResponse,
@@ -208,6 +210,8 @@ export type { Client } from "./generated/client/types.gen.js";
 export type {
   CreateItineraryRequest,
   UpdateItineraryRequest,
+  RetimeItineraryRequest,
+  RetimeItineraryResponse,
   ItineraryResponse,
   ItineraryStatus,
   ItineraryTimingKind,
@@ -1115,6 +1119,9 @@ export type UpdateItineraryDetail =
   // A bad timing payload — reversed date range, non-positive duration, or an
   // unknown field. The intake validates before sending, so this is a backstop.
   | "validation_error"
+  // Wave E (ADV-17): loosening exact → window/flexible is refused while
+  // booked/confirmed cards exist — their dates are supplier commitments.
+  | "booked_dates_locked"
   | "network_error"
   | "unknown";
 
@@ -1147,14 +1154,92 @@ export async function updateItinerary(
     return {
       ok: false,
       status: response.status,
-      detail: parseUpdateItineraryDetail(response.status),
+      detail: parseUpdateItineraryDetail(response.status, error),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }
 }
 
-function parseUpdateItineraryDetail(status: number): UpdateItineraryDetail {
+function parseUpdateItineraryDetail(status: number, error?: unknown): UpdateItineraryDetail {
+  if (status === 404) return "itinerary_not_found";
+  if (status === 403) return "forbidden";
+  if (status === 400 || status === 422) return "validation_error";
+  if (status === 409 && _detailToken(error) === "booked_dates_locked")
+    return "booked_dates_locked";
+  return "unknown";
+}
+
+
+export type RetimeItineraryDetail =
+  | "itinerary_not_found"
+  | "forbidden"
+  | "validation_error"
+  // The trip already has booked/confirmed cards — a non-zero shift would move
+  // supplier-committed dates. Cancel the bookings first.
+  | "booked_dates_locked"
+  // Another advisor holds the editor lock; retime shifts the whole board.
+  | "locked_by_advisor"
+  | "network_error"
+  | "unknown";
+
+export type RetimeItineraryResult =
+  | {
+      ok: true;
+      itinerary: ItineraryResponse;
+      /** Whole days the plan moved (may be negative). */
+      delta_days: number;
+      /** Scheduled cards shifted with it. */
+      shifted_nodes: number;
+    }
+  | { ok: false; status: number; detail: RetimeItineraryDetail };
+
+/**
+ * Typed wrapper for POST /itinerary/{itinerary_id}/retime (Wave E / ADV-17) —
+ * the pinning gesture: "Day 1 is `date_start`". The server shifts every
+ * scheduled card by `date_start − days_anchor` days (wall-clock preserved),
+ * flips the trip to `timing_kind=exact`, and re-stamps the anchor. Symmetric
+ * with loosening via {@link updateItinerary} (which moves nothing); 409
+ * `booked_dates_locked` when booked/confirmed cards pin the calendar.
+ */
+export async function retimeItinerary(
+  client: Client,
+  itineraryId: string,
+  body: RetimeItineraryRequest,
+): Promise<RetimeItineraryResult> {
+  try {
+    const { data, error, response } =
+      await retimeItineraryEndpointItineraryItineraryIdRetimePost({
+        client,
+        path: { itinerary_id: itineraryId },
+        body,
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        itinerary: data.itinerary,
+        delta_days: data.delta_days,
+        shifted_nodes: data.shifted_nodes,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseRetimeDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+function parseRetimeDetail(status: number, error?: unknown): RetimeItineraryDetail {
+  const token = _detailToken(error);
+  if (status === 409) {
+    if (token === "booked_dates_locked") return "booked_dates_locked";
+    if (token === "locked_by_advisor" || token === "already_locked")
+      return "locked_by_advisor";
+    return "unknown";
+  }
   if (status === 404) return "itinerary_not_found";
   if (status === 403) return "forbidden";
   if (status === 400 || status === 422) return "validation_error";
@@ -4211,6 +4296,7 @@ export async function payInvoice(
 export type BookingDetail =
   // 409 — money gate / lifecycle preconditions
   | "node_not_paid"
+  | "dates_not_pinned"
   | "already_booked"
   | "node_not_approved"
   | "node_not_booked"
@@ -4245,6 +4331,7 @@ export type BookingDetail =
 
 const _BOOKING_TOKENS = new Set<BookingDetail>([
   "node_not_paid",
+  "dates_not_pinned",
   "already_booked",
   "node_not_approved",
   "node_not_booked",

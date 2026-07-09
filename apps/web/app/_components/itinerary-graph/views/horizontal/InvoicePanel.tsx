@@ -23,6 +23,7 @@ import {
   type NodeBilling,
   reconcileBilling,
 } from "@/app/itinerary/[id]/_shell/dashboardModel";
+import { formatNodeWhen, type TripTimingLike } from "../../model/time";
 import { TYPE_TOKENS, type CardKind } from "../../shared/cards/tokens";
 
 // Advisor invoicing surface — the itinerary-aside Invoices tab (M005/I1).
@@ -80,29 +81,26 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 const tokenFor = (type: string) =>
   TYPE_TOKENS[(type in TYPE_TOKENS ? type : "experience") as CardKind];
 
-/** Short schedule stamp — "Wed, Sep 24" — or null while unscheduled. */
-const whenStamp = (node: NodeResponse): string | null => {
+/** Short schedule stamp — "Wed, Sep 24" pinned, "Day 3" unpinned (Wave E) —
+ *  or null while unscheduled (or unpinned with nothing anchoring Day 1). */
+const whenStamp = (node: NodeResponse, timing: TripTimingLike | null): string | null => {
   if (!node.starts_at) return null;
-  const d = new Date(node.starts_at);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  return formatNodeWhen(timing, node.starts_at);
 };
 
 function NodeIdentity({
   node,
   itineraryId,
+  timing,
   dim = false,
 }: {
   node: NodeResponse;
   itineraryId: string;
+  timing: TripTimingLike | null;
   dim?: boolean | undefined;
 }) {
   const token = tokenFor(node.type);
-  const when = whenStamp(node);
+  const when = whenStamp(node, timing);
   const Icon = token.Icon;
   return (
     <span className="flex min-w-0 items-center gap-2">
@@ -169,6 +167,9 @@ export function InvoicePanel({
   const [nodes, setNodes] = useState<NodeResponse[]>([]);
   const [totals, setTotals] = useState<Record<string, string>>({});
   const [partySize, setPartySize] = useState(1);
+  // Trip timing (Wave E): drives the when-stamp rule — real dates once pinned,
+  // honest "Day N" ordinals before that.
+  const [timing, setTiming] = useState<TripTimingLike | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState("Deposit");
@@ -222,6 +223,7 @@ export function InvoicePanel({
       setNodes(graph.nodes);
       setTotals(graph.totals ?? {});
       setPartySize(graph.party_size ?? 1);
+      setTiming(graph.itinerary);
     }
     setLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -385,7 +387,7 @@ export function InvoicePanel({
                 >
                   <span className="min-w-0 flex-1">
                     {node ? (
-                      <NodeIdentity node={node} itineraryId={itineraryId} />
+                      <NodeIdentity node={node} itineraryId={itineraryId} timing={timing} />
                     ) : (
                       <span className="min-w-0 truncate font-sans text-sm text-ink/90">
                         {b.title}
@@ -529,6 +531,7 @@ export function InvoicePanel({
             invoice={invoice}
             itineraryId={itineraryId}
             nodeById={nodeById}
+            timing={timing}
             billableNodes={summary.billableNodes}
             canManage={canManage}
             api={api}
@@ -558,6 +561,7 @@ function InvoiceCard({
   invoice,
   itineraryId,
   nodeById,
+  timing,
   billableNodes,
   canManage,
   api,
@@ -567,6 +571,7 @@ function InvoiceCard({
   invoice: InvoiceResponse;
   itineraryId: string;
   nodeById: Map<string, NodeResponse>;
+  timing: TripTimingLike | null;
   billableNodes: NodeBilling[];
   canManage: boolean;
   api: ReturnType<typeof createApiClient> | null;
@@ -684,6 +689,7 @@ function InvoiceCard({
               line={line}
               node={line.node_id ? (nodeById.get(line.node_id) ?? null) : null}
               itineraryId={itineraryId}
+              timing={timing}
               reversed={reversedIds.has(line.id)}
               canWrite={canWrite}
               onVoid={() =>
@@ -817,6 +823,7 @@ function LineRow({
   line,
   node,
   itineraryId,
+  timing,
   reversed,
   canWrite,
   onVoid,
@@ -825,6 +832,7 @@ function LineRow({
   /** The card this line charges, when it's a node-tagged line (ADV-15). */
   node: NodeResponse | null;
   itineraryId: string;
+  timing: TripTimingLike | null;
   reversed: boolean;
   canWrite: boolean;
   onVoid: () => void;
@@ -837,7 +845,12 @@ function LineRow({
         {node ? (
           // A node-tagged line reads as the CARD it charges — glyph + linked
           // title + schedule stamp — not as ledger prose.
-          <NodeIdentity node={node} itineraryId={itineraryId} dim={reversed} />
+          <NodeIdentity
+            node={node}
+            itineraryId={itineraryId}
+            timing={timing}
+            dim={reversed}
+          />
         ) : (
           <p
             className={`truncate font-sans text-sm ${

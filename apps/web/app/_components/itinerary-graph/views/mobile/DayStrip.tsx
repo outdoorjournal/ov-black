@@ -14,9 +14,12 @@ interface DayStripProps {
   groups: DayGroup[];
   activeIndex: number;
   onSelect: (index: number) => void;
+  // Wave E (ADV-16): strictly Day-N until pinned. False → pills show only the
+  // "Day N" ordinal; the weekday/date sub-lines would be fabricated.
+  datesPinned: boolean;
 }
 
-export function DayStrip({ groups, activeIndex, onSelect }: DayStripProps) {
+export function DayStrip({ groups, activeIndex, onSelect, datesPinned }: DayStripProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   // Keep the active pill centered as the selection moves (from taps or swipes).
@@ -52,16 +55,20 @@ export function DayStrip({ groups, activeIndex, onSelect }: DayStripProps) {
                 : "border-ink/10 bg-paper/70 hover:bg-ink/5",
             ].join(" ")}
           >
-            <span className="text-[9px] uppercase tracking-[0.18em] text-ink/50">
-              {weekday}
-            </span>
+            {datesPinned ? (
+              <span className="text-[9px] uppercase tracking-[0.18em] text-ink/50">
+                {weekday}
+              </span>
+            ) : null}
             <span className="font-serif text-[14px] leading-tight text-ink">
               {g.label}
             </span>
             <span className="mt-0.5 text-[9px] text-ink/45">
-              {dayMonth}
-              {g.weather_emoji ? ` · ${g.weather_emoji}` : ""}
-              {g.items.length > 0 ? ` · ${g.items.length}` : ""}
+              {[
+                ...(datesPinned ? [dayMonth] : []),
+                ...(g.weather_emoji ? [g.weather_emoji] : []),
+                ...(g.items.length > 0 ? [String(g.items.length)] : []),
+              ].join(" · ") || "—"}
             </span>
           </button>
         );

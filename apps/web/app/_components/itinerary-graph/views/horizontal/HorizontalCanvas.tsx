@@ -89,6 +89,9 @@ interface HorizontalCanvasProps {
   attachedNotes?: Map<string, NodeResponse[]>;
   // ADV-15: node id → its billing chip (advisor surfaces; absent → no chips).
   billingChips?: Record<string, BillingChip>;
+  // Wave E (ADV-16): strictly Day-N until pinned. False → day tiles show only
+  // the "Day N" ordinal; the weekday/date sub-lines would be fabricated.
+  datesPinned: boolean;
 }
 
 function MeasuredCard({
@@ -138,6 +141,7 @@ export function HorizontalCanvas({
   onScrollToNode,
   attachedNotes,
   billingChips,
+  datesPinned,
 }: HorizontalCanvasProps) {
   const positioned = Array.from(layout.positions.values());
   const proposalIds = useMemo(
@@ -198,7 +202,12 @@ export function HorizontalCanvas({
         style={{ height: DAY_HEADER_HEIGHT, width: innerWidth }}
       >
         {layout.days.map((d) => (
-          <DayHeaderTile key={`hdr-${d.date}`} day={d} colX={colXOf(d)} />
+          <DayHeaderTile
+            key={`hdr-${d.date}`}
+            day={d}
+            colX={colXOf(d)}
+            datesPinned={datesPinned}
+          />
         ))}
       </div>
 
@@ -487,7 +496,15 @@ export function HorizontalCanvas({
   );
 }
 
-function DayHeaderTile({ day, colX }: { day: DayLayout; colX: number }) {
+function DayHeaderTile({
+  day,
+  colX,
+  datesPinned,
+}: {
+  day: DayLayout;
+  colX: number;
+  datesPinned: boolean;
+}) {
   const { weekday, dayMonth } = formatDayTile(day.date);
   return (
     <div
@@ -505,19 +522,36 @@ function DayHeaderTile({ day, colX }: { day: DayLayout; colX: number }) {
           className="pointer-events-none absolute -top-1 left-3 h-2 w-12 -rotate-2 bg-amber-600/40"
           style={{ mixBlendMode: "multiply" }}
         />
-        <div className="text-[9px] uppercase tracking-[0.22em] text-ink/55">
-          {day.label}
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-serif text-[13px] leading-tight text-ink">
-            {weekday} · {dayMonth}
-          </span>
-          {day.weather_emoji ? (
-            <span className="text-[14px] leading-none" aria-hidden>
-              {day.weather_emoji}
+        {datesPinned ? (
+          <>
+            <div className="text-[9px] uppercase tracking-[0.22em] text-ink/55">
+              {day.label}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-serif text-[13px] leading-tight text-ink">
+                {weekday} · {dayMonth}
+              </span>
+              {day.weather_emoji ? (
+                <span className="text-[14px] leading-none" aria-hidden>
+                  {day.weather_emoji}
+                </span>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          // Strictly Day-N until pinned (Wave E): the ordinal IS the identity;
+          // a weekday/date sub-line here would be a fabricated date.
+          <div className="flex items-center justify-between">
+            <span className="font-serif text-[15px] leading-tight text-ink">
+              {day.label}
             </span>
-          ) : null}
-        </div>
+            {day.weather_emoji ? (
+              <span className="text-[14px] leading-none" aria-hidden>
+                {day.weather_emoji}
+              </span>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

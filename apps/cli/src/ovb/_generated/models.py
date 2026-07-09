@@ -1369,6 +1369,23 @@ class RequestReconcileRequest(BaseModel):
     note: Annotated[Note | None, Field(title='Note')] = None
 
 
+class RetimeItineraryRequest(BaseModel):
+    """
+    Pin the trip to real dates (Wave E / ADV-17): "Day 1 is date_start".
+
+    The server shifts every scheduled node by ``date_start − days_anchor`` days
+    (wall-clock preserved) and flips the itinerary to ``timing_kind=exact``.
+    ``date_end`` is optional — omitted, it derives from the current span /
+    ``duration_nights`` / the last scheduled card.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    date_start: Annotated[date_aliased, Field(title='Date Start')]
+    date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
+
+
 class RadiusM(RootModel[int]):
     root: Annotated[int, Field(ge=1, le=50000, title='Radius M')]
 
@@ -2312,6 +2329,7 @@ class ItineraryResponse(BaseModel):
     date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
     duration_nights: Annotated[int | None, Field(title='Duration Nights')] = None
     timing_note: Annotated[str | None, Field(title='Timing Note')] = None
+    days_anchor: Annotated[date_aliased | None, Field(title='Days Anchor')] = None
 
 
 class MealItem(BaseModel):
@@ -2597,6 +2615,12 @@ class ReconciliationResponse(BaseModel):
 class ReleaseLockResponse(BaseModel):
     itinerary: ItineraryResponse
     replayed_count: Annotated[int, Field(title='Replayed Count')]
+
+
+class RetimeItineraryResponse(BaseModel):
+    itinerary: ItineraryResponse
+    delta_days: Annotated[int, Field(title='Delta Days')]
+    shifted_nodes: Annotated[int, Field(title='Shifted Nodes')]
 
 
 class SearchInventoryResponse(BaseModel):

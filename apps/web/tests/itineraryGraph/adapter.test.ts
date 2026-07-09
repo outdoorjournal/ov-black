@@ -260,3 +260,59 @@ describe("toItineraryTimeline — exact trip window (0033)", () => {
     expect(tl.days[0]!.date).toBe("2026-06-15");
   });
 });
+
+describe("toItineraryTimeline — Day-1 anchor (0041, Wave E / ADV-16)", () => {
+  const WINDOWED: ItineraryResponse = {
+    ...ITINERARY,
+    timing_kind: "window",
+    date_start: "2026-06-01",
+    date_end: "2026-08-31",
+    days_anchor: "2026-06-01",
+  };
+
+  test("the stamped anchor wins over the earliest card — Day-N numbering is stable", () => {
+    // Only a "Day 3" card remains (the Day-1 card was deleted). Numbering must
+    // still count from the anchor: the card's day is labeled Day 3, not Day 1.
+    const tl = toItineraryTimeline(
+      WINDOWED,
+      [makeNode("dinner", { starts_at: "2026-06-03T19:00:00+02:00" })],
+      [],
+    );
+    expect(tl.days[0]!.date).toBe("2026-06-01");
+    expect(tl.days.map((d) => d.label)).toEqual(["Day 1", "Day 2", "Day 3"]);
+  });
+
+  test("undated cards land on the anchor day, not the earliest dated card", () => {
+    const tl = toItineraryTimeline(
+      WINDOWED,
+      [
+        makeNode("dated", { starts_at: "2026-06-03T19:00:00+02:00" }),
+        makeNode("undated"),
+      ],
+      [],
+    );
+    expect(meta(tl.nodes[1]!).start_time?.startsWith("2026-06-01")).toBe(true);
+  });
+
+  test("an empty windowed trip with no anchor lays out from the window start", () => {
+    // …the same date the server will stamp as days_anchor when the first card
+    // lands, so the provisional layout and the stamped anchor agree.
+    const { days_anchor: _anchor, ...rest } = WINDOWED;
+    const noAnchor = rest as ItineraryResponse;
+    const tl = toItineraryTimeline(noAnchor, [makeNode("undated")], []);
+    expect(meta(tl.nodes[0]!).start_time?.startsWith("2026-06-01")).toBe(true);
+  });
+
+  test("a legacy windowed trip (cards, no anchor) stays card-driven", () => {
+    const { days_anchor: _anchor, ...rest } = WINDOWED;
+    const noAnchor = rest as ItineraryResponse;
+    const tl = toItineraryTimeline(
+      noAnchor,
+      [makeNode("dated", { starts_at: "2026-07-10T10:00:00+02:00" })],
+      [],
+    );
+    // No anchor stamped → the earliest card anchors, exactly as before 0041.
+    expect(tl.days[0]!.date).toBe("2026-07-10");
+    expect(tl.days[0]!.label).toBe("Day 1");
+  });
+});

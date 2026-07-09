@@ -336,10 +336,11 @@ test("the unbilled tray is hidden from a read-only (traveler) viewer", async () 
 
 test("a node-tagged charge line renders the card's identity with a schedule stamp", async () => {
   // Put the charged node (node-1) in the graph, scheduled, so the ledger line
-  // resolves to the card rather than falling back to description text.
+  // resolves to the card rather than falling back to description text. The
+  // trip is PINNED (exact), so the stamp is a real date (Wave E).
   vi.mocked(getItinerary).mockResolvedValue({
     ok: true,
-    itinerary: {},
+    itinerary: { timing_kind: "exact", date_start: "2026-09-22", date_end: "2026-09-29" },
     nodes: [
       NODE,
       {
@@ -369,6 +370,36 @@ test("a node-tagged charge line renders the card's identity with a schedule stam
   // And the remainder shows up as a partially-billed tray row.
   const tray = screen.getByTestId("invoice-unbilled-node-1");
   expect(tray.textContent).toContain("of");
+});
+
+test("on an unpinned trip the when-stamp is an honest Day-N ordinal (Wave E)", async () => {
+  // Same scheduled card, but the trip is a window with a stamped Day-1 anchor:
+  // the stamp must read "Day 3" — never a fabricated "Wed, Sep 24".
+  vi.mocked(getItinerary).mockResolvedValue({
+    ok: true,
+    itinerary: {
+      timing_kind: "window",
+      date_start: "2026-09-01",
+      date_end: "2026-11-30",
+      days_anchor: "2026-09-22",
+    },
+    nodes: [
+      NODE,
+      {
+        ...NODE,
+        id: "node-1",
+        title: "Aman Kyoto",
+        starts_at: "2026-09-24T15:00:00+09:00",
+      },
+    ],
+    edges: [],
+    totals: { USD: "1950.00" },
+    party_size: 1,
+  } as never);
+  renderPanel();
+  const row = await screen.findByTestId("line-ln-charge");
+  expect(row.textContent).toContain("Day 3");
+  expect(row.textContent).not.toMatch(/Sep/);
 });
 
 test("a charged node NOT in the graph still renders its ledger description", async () => {

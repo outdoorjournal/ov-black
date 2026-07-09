@@ -97,7 +97,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getItinerary).mockResolvedValue({
     ok: true,
-    itinerary: {},
+    // Booking gates on pinned dates (Wave E / ADV-17) — the default fixture is
+    // an exact-dated trip so the action rows render.
+    itinerary: { timing_kind: "exact", date_start: "2027-03-18", date_end: "2027-03-25" },
     nodes: [HOTEL, FLIGHT, BOOKED, BOKUN],
     edges: [],
   } as never);
@@ -139,6 +141,20 @@ test("renders bookable nodes and a balanced reconciliation banner", async () => 
   expect(screen.getByText("Park Hyatt")).toBeTruthy();
   expect(screen.getByText("DL275")).toBeTruthy();
   expect(screen.getByTestId("reconciliation-status").textContent).toContain("Reconciled");
+});
+
+test("unpinned dates hide Book and explain the gate (Wave E / ADV-17)", async () => {
+  vi.mocked(getItinerary).mockResolvedValue({
+    ok: true,
+    itinerary: { timing_kind: "window", date_start: "2027-06-01", date_end: "2027-08-31" },
+    nodes: [HOTEL, FLIGHT, BOOKED, BOKUN],
+    edges: [],
+  } as never);
+  renderPanel();
+  await screen.findByTestId("booking-dates-not-pinned");
+  // No Book / slot-book affordances — the server would only 409 dates_not_pinned.
+  expect(screen.queryByTestId("book-n-hotel")).toBeNull();
+  expect(screen.queryByTestId("book-slot-n-bokun")).toBeNull();
 });
 
 test("Book posts the money gate (no override by default)", async () => {

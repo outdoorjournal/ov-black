@@ -64,6 +64,8 @@ from app.models import (
     InvoiceLineItem,
     InvoiceLineKind,
     InvoiceStatus,
+    Itinerary,
+    ItineraryTimingKind,
     Node,
     NodeOffer,
     NodeStatus,
@@ -99,6 +101,22 @@ _SNAPSHOT_OFFER_TTL = timedelta(minutes=30)
 
 # Booked-promotion is allowed only from this status.
 _BOOKABLE_FROM = NodeStatus.approved
+
+
+async def _dates_pinned(session: AsyncSession, itinerary_id: uuid.UUID) -> bool:
+    """Wave E booking invariant (ADV-17): booking requires pinned (exact) dates.
+
+    A booking commits real calendar dates to a supplier, so it is structurally
+    impossible until the trip's Day-N ordinals have been pinned to the calendar
+    (``timing_kind = exact`` via retime). The reverse guard lives on the timing
+    PATCH: loosening exact → window/flexible refuses while bookings exist.
+    """
+    kind = (
+        await session.execute(select(Itinerary.timing_kind).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
+    return kind is ItineraryTimingKind.exact
+
+
 # Statuses a booking covers — the reconciliation invariant sums over these.
 _BOOKED_STATUSES: tuple[NodeStatus, ...] = (NodeStatus.booked, NodeStatus.confirmed)
 
@@ -608,6 +626,8 @@ async def book_node(
         return _conflict("already_booked")
     if node.status is not _BOOKABLE_FROM:
         return _conflict("node_not_approved")
+    if not await _dates_pinned(session, itinerary_id):
+        return _conflict("dates_not_pinned")
 
     # 1. The booked amount: a flight re-prices off a fresh offer; everything else
     #    books at its static B4 cost, with per-person costs expanded by party size.
@@ -807,6 +827,11 @@ async def record_confirmation(
         return _not_found()
     if node.status is not NodeStatus.booked:
         return _conflict("node_not_booked")
+    # Belt-and-braces: a booked node implies pinned dates (book_node gates on it
+    # and the timing PATCH refuses to loosen past a booking), but confirm is a
+    # supplier commitment too — never record one against unpinned dates.
+    if not await _dates_pinned(session, itinerary_id):
+        return _conflict("dates_not_pinned")
     booking = await _booking_for(session, node_id)
     if booking is None:
         return _conflict("no_booking")

@@ -42,6 +42,7 @@ from app.models import (
     Invoice,
     InvoiceLineItem,
     InvoiceLineKind,
+    ItineraryTimingKind,
     Node,
     NodeOffer,
     NodeStatus,
@@ -75,6 +76,7 @@ from app.services.itineraries import (
     ItineraryError,
     add_node,
     create_itinerary,
+    retime_itinerary,
     update_node,
 )
 from app.services.payments import pay_invoice
@@ -112,6 +114,18 @@ integration = pytest.mark.skipif(
 
 def _actor(kind: ActorKind = ActorKind.ADVISOR) -> ActorContext:
     return ActorContext(user_id=None, kind=kind, actor_id=f"bk-{kind.value}")
+
+
+async def _pinned_itinerary(session: AsyncSession, *, title: str) -> Any:
+    """An exact-dated itinerary — booking gates on pinned dates (Wave E / ADV-17)."""
+    return await create_itinerary(
+        session,
+        _actor(),
+        title=title,
+        timing_kind=ItineraryTimingKind.exact,
+        date_start=date(2027, 3, 18),
+        date_end=date(2027, 3, 25),
+    )
 
 
 # ── Integration harness ──────────────────────────────────────────────────────
@@ -290,7 +304,7 @@ def _registry_with(item: InventoryItem | None) -> InventoryProviderRegistry:
 async def test_money_gate_blocks_unpaid_then_books_paid_and_confirms(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="gate")
+    itin = await _pinned_itinerary(db_session, title="gate")
     try:
         node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
 
@@ -335,6 +349,64 @@ async def test_money_gate_blocks_unpaid_then_books_paid_and_confirms(
         await _cleanup(itin.id)
 
 
+# ── Booking gates on pinned dates (Wave E / ADV-17) ──────────────────────────
+
+
+@integration
+@pytest.mark.asyncio
+async def test_book_refused_until_dates_pinned(db_session: AsyncSession) -> None:
+    """A paid, approved node on a window trip still can't book: dates first."""
+    itin = await create_itinerary(
+        db_session,
+        _actor(),
+        title="unpinned",
+        timing_kind=ItineraryTimingKind.window,
+        date_start=date(2027, 6, 1),
+        date_end=date(2027, 8, 31),
+        duration_nights=7,
+    )
+    try:
+        node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
+        await _pay_node(db_session, itin.id, node.id, paid=True)
+
+        blocked = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(blocked, ItineraryError)
+        assert blocked.detail == "dates_not_pinned"
+
+        # Pin the dates (the retime gesture) → the same book call goes through.
+        pinned = await retime_itinerary(db_session, _actor(), itin, date_start=date(2027, 6, 10))
+        assert not isinstance(pinned, ItineraryError)
+        view = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(view, BookingView)
+        assert view.node_status is NodeStatus.booked
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_confirm_refused_on_unpinned_dates(db_session: AsyncSession) -> None:
+    """Belt-and-braces: confirm also refuses if the dates somehow came unpinned."""
+    itin = await _pinned_itinerary(db_session, title="confirm unpinned")
+    try:
+        node = await _priced_node(db_session, itin.id, amount="500.00")
+        await _pay_node(db_session, itin.id, node.id, paid=True)
+        view = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
+        assert isinstance(view, BookingView)
+
+        # Bypass the PATCH guard (which would refuse) to simulate drifted state.
+        itin.timing_kind = ItineraryTimingKind.window
+        await db_session.commit()
+
+        refused = await record_confirmation(
+            db_session, _actor(), itinerary_id=itin.id, node_id=node.id, supplier_ref="XYZ"
+        )
+        assert isinstance(refused, ItineraryError)
+        assert refused.detail == "dates_not_pinned"
+    finally:
+        await _cleanup(itin.id)
+
+
 # ── Per-node money facet (M006/PS4) ──────────────────────────────────────────
 
 
@@ -345,7 +417,7 @@ async def test_node_charges_tracks_billed_paid_owed_and_booking(
 ) -> None:
     """The per-node money facet walks the ledger: nothing billed → issued (owed) →
     paid (owed clears) → booked (the live booking attaches)."""
-    itin = await create_itinerary(db_session, _actor(), title="charges")
+    itin = await _pinned_itinerary(db_session, title="charges")
     try:
         node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
 
@@ -398,7 +470,7 @@ async def test_node_charges_tracks_billed_paid_owed_and_booking(
 @integration
 @pytest.mark.asyncio
 async def test_node_charges_unknown_node_is_not_found(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="charges-404")
+    itin = await _pinned_itinerary(db_session, title="charges-404")
     try:
         result = await node_charges(db_session, itin.id, uuid.uuid4())
         assert isinstance(result, ItineraryError)
@@ -415,7 +487,7 @@ async def test_per_person_node_books_and_reconciles_expanded_by_party_size(
     """A per_person cost expands consistently across the charge line, the booked
     amount, and reconcile — so the invariant holds and the expansion doesn't read
     as a re-price."""
-    itin = await create_itinerary(db_session, _actor(), title="per-person gate")
+    itin = await _pinned_itinerary(db_session, title="per-person gate")
     try:
         # A party of two travelers.
         party_id = uuid.uuid4()
@@ -497,7 +569,7 @@ async def _reversals_for_node(session: AsyncSession, node_id: uuid.UUID) -> list
 async def test_cancel_refunds_demotes_reverses_and_reconciles(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="cancel")
+    itin = await _pinned_itinerary(db_session, title="cancel")
     try:
         node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
         invoice = await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
@@ -534,7 +606,7 @@ async def test_cancel_override_unpaid_is_not_applicable(
     db_session: AsyncSession,
 ) -> None:
     """A booking made against a merely *issued* line has no money to return."""
-    itin = await create_itinerary(db_session, _actor(), title="cancel override")
+    itin = await _pinned_itinerary(db_session, title="cancel override")
     try:
         node = await _priced_node(db_session, itin.id, amount="500.00", title="Villa")
         # Issue (not pay) a covering line, then book with override.
@@ -569,7 +641,7 @@ async def test_cancel_override_unpaid_is_not_applicable(
 async def test_cancel_fails_closed_on_declined_refund(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="cancel decline")
+    itin = await _pinned_itinerary(db_session, title="cancel decline")
     itin_id = itin.id  # captured before a rollback below expires the ORM objects
     try:
         node = await _priced_node(db_session, itin_id, amount="1000.00", title="Aman")
@@ -596,7 +668,7 @@ async def test_cancel_fails_closed_on_declined_refund(
 async def test_cancel_rolls_back_on_gateway_error(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="cancel error")
+    itin = await _pinned_itinerary(db_session, title="cancel error")
     itin_id = itin.id  # captured before a rollback below expires the ORM objects
     try:
         node = await _priced_node(db_session, itin_id, amount="1000.00", title="Aman")
@@ -622,7 +694,7 @@ async def test_cancel_rolls_back_on_gateway_error(
 async def test_cancel_refuses_unbooked_node(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="cancel unbooked")
+    itin = await _pinned_itinerary(db_session, title="cancel unbooked")
     try:
         node = await _priced_node(db_session, itin.id, amount="100.00", title="Idea")
         res = await cancel_booking(
@@ -640,7 +712,7 @@ async def test_node_can_be_rebooked_after_cancel(
     db_session: AsyncSession,
 ) -> None:
     """The partial unique index allows a fresh booking once the prior is cancelled."""
-    itin = await create_itinerary(db_session, _actor(), title="rebook")
+    itin = await _pinned_itinerary(db_session, title="rebook")
     try:
         node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
         await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
@@ -665,7 +737,7 @@ async def test_node_can_be_rebooked_after_cancel(
 async def test_cancel_does_not_leak_refund_refs_to_logs(
     db_session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="cancel redact")
+    itin = await _pinned_itinerary(db_session, title="cancel redact")
     try:
         node = await _priced_node(db_session, itin.id, amount="1000.00", title="Aman")
         await _pay_node_via_gateway(db_session, itin.id, node.id, FakeGateway())
@@ -690,7 +762,7 @@ async def test_cancel_does_not_leak_refund_refs_to_logs(
 async def test_override_books_on_issued_line_and_reconcile_flags_it(
     db_session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="override")
+    itin = await _pinned_itinerary(db_session, title="override")
     try:
         node = await _priced_node(db_session, itin.id, amount="500.00")
         await _pay_node(db_session, itin.id, node.id, paid=False)  # issued, NOT paid
@@ -725,7 +797,7 @@ async def test_override_books_on_issued_line_and_reconcile_flags_it(
 async def test_flight_requires_fresh_offer_then_books_via_snapshot(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="flight")
+    itin = await _pinned_itinerary(db_session, title="flight")
     try:
         node = await _priced_node(
             db_session, itin.id, amount="800.00", title="DL275", node_type=NodeType.flight
@@ -763,7 +835,7 @@ async def test_flight_requires_fresh_offer_then_books_via_snapshot(
 async def test_flight_reprices_live_via_provider_and_surfaces_delta(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="reprice")
+    itin = await _pinned_itinerary(db_session, title="reprice")
     try:
         node = await _priced_node(
             db_session,
@@ -815,7 +887,7 @@ async def test_flight_reprices_live_via_provider_and_surfaces_delta(
 @integration
 @pytest.mark.asyncio
 async def test_provider_offer_gone_is_conflict(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="gone")
+    itin = await _pinned_itinerary(db_session, title="gone")
     try:
         node = await _priced_node(
             db_session,
@@ -842,7 +914,7 @@ async def test_provider_offer_gone_is_conflict(db_session: AsyncSession) -> None
 @integration
 @pytest.mark.asyncio
 async def test_expired_offer_refuses_booking(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="expired")
+    itin = await _pinned_itinerary(db_session, title="expired")
     try:
         node = await _priced_node(db_session, itin.id, amount="800.00", node_type=NodeType.flight)
         await _pay_node(db_session, itin.id, node.id, paid=True)
@@ -871,7 +943,7 @@ async def test_expired_offer_refuses_booking(db_session: AsyncSession) -> None:
 @integration
 @pytest.mark.asyncio
 async def test_update_node_refuses_direct_booking_bypass(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bypass")
+    itin = await _pinned_itinerary(db_session, title="bypass")
     try:
         node = await _priced_node(db_session, itin.id, amount="100.00")
 
@@ -908,7 +980,7 @@ async def test_update_node_refuses_direct_booking_bypass(db_session: AsyncSessio
 @integration
 @pytest.mark.asyncio
 async def test_non_flight_without_cost_cannot_book(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="nocost")
+    itin = await _pinned_itinerary(db_session, title="nocost")
     try:
         node = await add_node(
             db_session,
@@ -1298,7 +1370,7 @@ async def _node_status(session: AsyncSession, node_id: uuid.UUID) -> NodeStatus:
 async def test_supplier_booking_reserves_confirms_and_records_ref(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bokun-book")
+    itin = await _pinned_itinerary(db_session, title="bokun-book")
     try:
         node = await _supplier_node(db_session, itin.id)
         provider = _StubSupplierProvider()
@@ -1336,7 +1408,7 @@ async def test_supplier_booking_reserves_confirms_and_records_ref(
 async def test_supplier_selection_required_when_supplier_active(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bokun-noselect")
+    itin = await _pinned_itinerary(db_session, title="bokun-noselect")
     try:
         node = await _supplier_node(db_session, itin.id)
         provider = _StubSupplierProvider()
@@ -1360,7 +1432,7 @@ async def test_supplier_selection_required_when_supplier_active(
 @integration
 @pytest.mark.asyncio
 async def test_supplier_reserve_failure_is_fail_closed(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bokun-reserve-fail")
+    itin = await _pinned_itinerary(db_session, title="bokun-reserve-fail")
     try:
         node = await _supplier_node(db_session, itin.id)
         provider = _StubSupplierProvider(reserve_error=True)
@@ -1388,7 +1460,7 @@ async def test_supplier_reserve_failure_is_fail_closed(db_session: AsyncSession)
 async def test_supplier_confirm_failure_aborts_and_fails_closed(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bokun-confirm-fail")
+    itin = await _pinned_itinerary(db_session, title="bokun-confirm-fail")
     try:
         node = await _supplier_node(db_session, itin.id)
         provider = _StubSupplierProvider(confirm_error=True)
@@ -1416,7 +1488,7 @@ async def test_supplier_confirm_failure_aborts_and_fails_closed(
 async def test_cancel_supplier_booking_calls_upstream_then_demotes(
     db_session: AsyncSession,
 ) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bokun-cancel")
+    itin = await _pinned_itinerary(db_session, title="bokun-cancel")
     try:
         node = await _supplier_node(db_session, itin.id)
         provider = _StubSupplierProvider()
@@ -1456,7 +1528,7 @@ async def test_cancel_supplier_booking_calls_upstream_then_demotes(
 @integration
 @pytest.mark.asyncio
 async def test_cancel_supplier_failure_is_fail_closed(db_session: AsyncSession) -> None:
-    itin = await create_itinerary(db_session, _actor(), title="bokun-cancel-fail")
+    itin = await _pinned_itinerary(db_session, title="bokun-cancel-fail")
     try:
         node = await _supplier_node(db_session, itin.id)
         provider = _StubSupplierProvider()

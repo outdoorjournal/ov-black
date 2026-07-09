@@ -72,6 +72,10 @@ export function BookingPanel({
 }) {
   const [nodes, setNodes] = useState<NodeResponse[]>([]);
   const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
+  // Wave E (ADV-17): booking is server-refused until the trip's dates are
+  // pinned (`timing_kind = exact`), so the panel explains the gate instead of
+  // offering Book buttons that can only 409.
+  const [datesPinned, setDatesPinned] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,8 +99,10 @@ export function BookingPanel({
       getReconciliation(api, itineraryId),
     ]);
     if (!mounted.current) return;
-    if (graph.ok) setNodes(graph.nodes);
-    else setError(copy(graph.detail));
+    if (graph.ok) {
+      setNodes(graph.nodes);
+      setDatesPinned(graph.itinerary.timing_kind === "exact");
+    } else setError(copy(graph.detail));
     if (rec.ok) setRecon(rec.reconciliation);
     setLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,6 +131,17 @@ export function BookingPanel({
         </p>
       ) : null}
 
+      {canManage && loaded && !datesPinned ? (
+        <p
+          data-testid="booking-dates-not-pinned"
+          className="rounded-md border border-ink/15 bg-ink/[0.03] px-3 py-2 font-sans text-xs text-ink/70"
+        >
+          Booking unlocks once the trip&apos;s dates are pinned — a booking
+          commits real calendar dates to a supplier. Pin the dates from the
+          trip&apos;s timing, then book.
+        </p>
+      ) : null}
+
       {!loaded ? (
         <p className="font-sans text-sm text-ink/50">Loading…</p>
       ) : candidates.length === 0 ? (
@@ -139,6 +156,7 @@ export function BookingPanel({
               node={node}
               itineraryId={itineraryId}
               canManage={canManage}
+              datesPinned={datesPinned}
               api={api}
               onChanged={refresh}
               onError={setError}
@@ -202,6 +220,7 @@ function BookingRow({
   node,
   itineraryId,
   canManage,
+  datesPinned,
   api,
   onChanged,
   onError,
@@ -209,6 +228,7 @@ function BookingRow({
   node: NodeResponse;
   itineraryId: string;
   canManage: boolean;
+  datesPinned: boolean;
   api: ReturnType<typeof createApiClient> | null;
   onChanged: () => Promise<void>;
   onError: (msg: string | null) => void;
@@ -284,7 +304,7 @@ function BookingRow({
         </p>
       ) : null}
 
-      {canWrite && node.status === "approved" ? (
+      {canWrite && node.status === "approved" && datesPinned ? (
         <div className="flex flex-wrap items-center gap-2">
           {isFlight ? (
             <button

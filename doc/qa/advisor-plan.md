@@ -549,5 +549,135 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
   as command-center roster badges + a per-client "since you last looked" strip; a real
   notifications model only if that earns it.
 
+**Wave E — relative days → pinned dates (the retime spine)** *(designed 2026-07-08 —
+ADV-16 + ADV-17 (the server spine + honest rendering + booking invariant, D028)
+✅ shipped 2026-07-08; ADV-19 / AGT-5 / ADV-18 remain)*
+
+> The workflow: an advisor builds "Day 1 we go here, then stay here" with no date
+> specificity, and later — once family schedules / flight prices settle — pins Day 1 to a
+> real date ("March 18, 2027"), at which point the system should *notice things* (is that
+> restaurant even open? what's the weather?). A codebase sweep found we're already in the
+> right architecture **by accident**: absolute dates underneath (`nodes.starts_at`
+> TSTZRANGE ⇄ `metadata.start_time`), relative "Day N" labels derived on top
+> (`toItineraryTimeline.ts` — anchor falls back to *the day the advisor happened to
+> build*, i.e. `todayKey()`), and the itinerary-level spectrum already first-class
+> (0033's `timing_kind` exact | window | flexible). What's missing: an explicit anchor, a
+> retime operation (`update_trip_timing` moves the trip's *declared* dates but leaves
+> every card parked on its accidental birth date), display honesty (day tiles +
+> when-stamps render fabricated `weekday · dayMonth` on unpinned trips), agent timing
+> awareness (the graph digest has **no timing line**), and the pin-triggered insight pass.
+> **Deliberately NOT a dual relative/absolute node schema** — a `day_offset` column would
+> fork every read path (timeline, linearization, analyze, Fill, invoice when-stamps,
+> agent context); we make the existing absolute-under / relative-on-top pattern honest
+> instead. Precedent: template nodes already do offset-from-anchor →
+> materialize-absolute (`starts_at_offset_minutes`, 0015).
+
+Two founder calls (2026-07-08) shape the wave:
+- **Booking gates on pinned dates** — it should be *impossible* to book a card until
+  `timing_kind = exact`. A new server-side invariant in the booking service (refuse
+  book / slot-book / confirm with a `dates_not_pinned` reason when the itinerary isn't
+  exact) + `BookingPanel` copy. This makes the retime ↔ booked-card conflict
+  structurally impossible rather than a policy to arbitrate — no legacy-data path needed
+  (founder: pre-invariant data will be wiped). Record as a D0xx decision when built.
+- **Strictly Day-N until pinned** — when `timing_kind ≠ exact`, every surface shows
+  "Day 1" / "Day 3" ordinals only (timeline tiles, card when-stamps, `NodeIdentity`,
+  invoice lines); no weekday/date sub-line, no "~Sep 24?" tentative dates. A
+  wrong-but-plausible date is worse than an honest ordinal.
+
+- ✅ **ADV-16 — honest anchor + Day-N rendering** (S/M): shipped 2026-07-08 (D028).
+  `itineraries.days_anchor` (migration `0041`; stamped in `add_node` **and** the
+  `update_node` metadata-patch path — the drag-to-timeline gesture — as the window's
+  `date_start`, else the current UTC date) so **Day N ≡ days_anchor + (N−1)** is
+  stable. Web: the adapter's anchor chain is now `synthAnchorDate ?? exactStart ??
+  days_anchor ?? anchorFromData ?? windowStart ?? today` (an empty windowed trip lays
+  out from the window start — the same date the server will stamp, so provisional
+  layout and stamped anchor agree; legacy no-anchor trips stay card-driven), and the
+  anchor joins the day-span candidates so deleting the Day-1 card doesn't renumber.
+  **Strictly Day-N until pinned** via shared `model/time.ts` helpers (`datesPinned` /
+  `dayAnchorKey` / `dayOrdinal` / `formatNodeWhen`): day tiles (desktop
+  `DayHeaderTile`, mobile `DayStrip`) show only the ordinal, and the invoice
+  `NodeIdentity` when-stamp reads "Day 3" (or hides when nothing anchors Day 1) —
+  real dates render only on `exact`. Tested: `test_retime.py` (stamp rules ×3),
+  `adapter.test.ts` (anchor chain ×4), `dayLabels.test.ts` (helpers),
+  `invoicePanel.test.tsx` (pinned date vs Day-N stamp).
+- ✅ **ADV-17 — retime = the pinning gesture, and the round-trip** (M): shipped
+  2026-07-08 (D028). `POST /itinerary/{id}/retime` (`retime_itinerary` service):
+  `delta = date_start − days_anchor` (legacy fallback: declared start, else earliest
+  card), shifts every scheduled node's `metadata.start_time`+`starts_at` by whole days
+  **preserving wall-clock + tz offset** (metadata-first, same contract as
+  `update_node`'s schedule sync; node_history per move), flips `timing_kind=exact`,
+  re-stamps the anchor; `date_end` derives explicit → prior exact span →
+  `duration_nights` → last scheduled card. Gated like the timing PATCH
+  (owner/creator/advisor + editor lock). **Booking invariant shipped in the same
+  slice**: `book_node` + `record_confirmation` refuse 409 `dates_not_pinned` unless
+  `exact`; the timing PATCH refuses loosening and retime refuses a non-zero shift
+  while booked/confirmed cards exist (409 `booked_dates_locked`). **Symmetry proven
+  in tests**: pin → loosen (cards stay, anchor kept) → re-pin (uniform shift from the
+  kept anchor). Clients: `retimeItinerary` wrapper + `dates_not_pinned` /
+  `booked_dates_locked` tokens in `packages/api-client`, `ovb` SDK `retime()` +
+  timing kwargs on `create_itinerary`, `bookingCopy` strings, and `BookingPanel`
+  explains the gate (+ hides Book) on unpinned trips. **Seeds born pinned**: the
+  Japan template (`instantiate_template`) and live build stamp exact timing + anchor
+  (they materialize concrete dates); `test_bookings` seeds + the full-loop e2e pin
+  up front. Tested: `test_retime.py` (shift math incl. tz, refusals, round-trip,
+  date_end derivation), `test_bookings.py` (gate → retime → books; confirm guard),
+  `bookingPanel.test.tsx` (unpinned hides Book + explains).
+- **ADV-19 — the timing funnel in the browser** (M; the UI face of ADV-16/17 —
+  founder-flagged 2026-07-08: "the brief is a mess and doesn't flow well — hard to find,
+  and completely freeform in ways that don't guide the user to success"). Today the only
+  post-intake edit surface is the Dashboard hero's "Edit the brief" button, which swaps
+  the whole dashboard back into the **full first-run intake** — conflating three jobs
+  that diverge after first-run (brief = prose goal, rarely changes; timing = should move
+  *forward*; constraints note), buried on a surface the advisor rarely lives in, and
+  letting timing regress freely (`exact → flexible` silently clears dates, with zero
+  connection to the cards on the board — the ADV-17 disconnect as UI). The slice:
+  - **Split the jobs.** First-run intake stays as-is (it's good). Post-intake, the brief
+    + constraints note get a small in-place edit (hero pencil → compact editor; no
+    timing controls); timing gets its own affordance.
+  - **A timing chip, everywhere days are shown** — timeline header + dashboard hero
+    eyebrow — rendering the current state ("Day-based · dates not pinned" · "Window:
+    Jun–Aug 2027 · ~7 nights" · "Mar 18 – 25, 2027") and opening the timing panel. Ends
+    "hard to find": the state is visible exactly where its consequences render.
+  - **The timing panel is a guided state machine, not a form.** It shows where the trip
+    is in the funnel and offers the one forward gesture: `flexible` → "Set a window"
+    (bounds + nights); `window` → **"Pin the dates"** — pick Day 1's real date
+    (constrained inside the window; `duration_nights` prefills the end), preview the
+    mapping ("Day 1 → Wed Mar 18 · Day 2 → Thu Mar 19 · … · 6 scheduled cards will
+    move"), confirm = `POST …/retime`; `exact` → the pinned state, plus **"Loosen the
+    dates"** — the first-class reverse gesture (client changed their mind on the range):
+    asks for the new window (or none → flexible), cards stay put, everything re-renders
+    as Day-N. Forward is the guided default; backward is deliberate but never fights the
+    user. No freeform kind-switcher.
+  - **Guardrail (corollary to the booking invariant):** loosening is refused —
+    server-side, on the timing PATCH — once booked/confirmed cards exist; the panel
+    explains why ("2 cards are booked to these dates").
+  - **Next-best-action:** `deriveNextAction` gains a state — an approved-but-unpinned
+    trip's next action is **"Pin the dates"** (it's what unblocks booking, now that
+    booking gates on exact). The guided arc becomes brief → build → propose → approve →
+    **pin** → book → pay.
+  - **Pin payoff surfaced in place:** after retime, the panel (or a toast → the Analyze
+    modal) shows the auto-queued analysis' findings as "now that it's March 18, we
+    noticed…" — the ADV-18 insight moment made tangible.
+- **AGT-5 — agent timing parity** (S/M, the Wave C pattern verbatim): the graph digest
+  gains a **Timing** line ("window: Jun 1 – Aug 31 2027, ~7 nights — dates not pinned;
+  speak in Day 1 / Day 2, never invent calendar dates" vs "exact: Mar 18–25 2027");
+  rubrics teach Day-N speech when unpinned and that pinning is `update_trip_timing →
+  exact` (which now retimes — the tool grows the shift semantics via the server
+  endpoint). Eval (Wave B harness): seed a windowed trip with 3 scheduled cards → "we've
+  settled on March 18" → assert the tool fires, the graph diff shows every `starts_at`
+  shifted by the same delta, `itinerary_updated` frame emitted.
+- **ADV-18 — pin-triggered insight** (M, the payoff; sequence last): retime auto-queues
+  `create_queued_analysis(force_rerun=True)` (the `inputs_hash` changed, so the cache
+  won't lie), and the **deep runner** (today a stub downgrading to standard) grows
+  date-sensitive finding categories — each independently shippable, surfaced unprompted
+  via the existing digest analysis line + AGT-4 opening-of-turn proactivity:
+  (1) **`opening_hours`** first — Places data is already snapshotted on nodes; check the
+  pinned weekday ("closed Mondays — your Day 3 dinner is a Monday"); (2) **`seasonality`**
+  — climate normals vs the pinned month (even a static climate table beats nothing for
+  the demo); (3) **`arrival_feasibility`** — first Day-1 activity vs realistic flight
+  arrival (Duffel offer times once a flight card exists). `external_calls` on the
+  analyses row is the reserved, still-empty seam for the live lookups.
+
 **Parked, consciously:** G-COVER (decision-gated), G-SEND (product call), restore-UI for soft
-deletes (bundle with ADV-13 if wanted), advisor-private Collection, money-split deposit.
+deletes (bundle with ADV-13 if wanted), advisor-private Collection, money-split deposit,
+partial pinning ("flights fixed but the middle flexible" — Wave E pins whole-trip only).

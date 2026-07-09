@@ -868,6 +868,7 @@ export function HorizontalView({
                     onScrollToNode={scrollToNode}
                     attachedNotes={attachedNotes}
                     billingChips={billingChips}
+                    datesPinned={timingKind === "exact"}
                   />
                 </div>
                 <ScrollHint

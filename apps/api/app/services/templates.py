@@ -44,6 +44,7 @@ from app.models import (
     EdgeType,
     Itinerary,
     ItineraryStatus,
+    ItineraryTimingKind,
     NodeRole,
     NodeStatus,
     NodeType,
@@ -352,6 +353,20 @@ async def instantiate_template(
     except IntegrityError:
         await session.rollback()
         raise
+
+    # The template materializes offsets into concrete calendar dates from
+    # ``trip_start_at``, so the itinerary is born PINNED (Wave E): exact timing
+    # makes it bookable (booking gates on pinned dates, ADV-17) and renders real
+    # dates. The span covers the latest materialized start.
+    max_offset = max(
+        (tn.starts_at_offset_minutes for tn in template_nodes if tn.starts_at_offset_minutes),
+        default=0,
+    )
+    trip_start_date = trip_start_at.date()
+    itinerary.timing_kind = ItineraryTimingKind.exact
+    itinerary.date_start = trip_start_date
+    itinerary.date_end = (trip_start_at + timedelta(minutes=max_offset)).date()
+    itinerary.days_anchor = trip_start_date
 
     await session.commit()
     logger.info(

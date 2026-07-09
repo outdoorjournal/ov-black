@@ -69,6 +69,74 @@ export function hourOfDay(iso: string, tzOffsetHours: number): number {
   return d.getUTCHours() + d.getUTCMinutes() / 60;
 }
 
+// ── Wave E (ADV-16): strictly Day-N until pinned ─────────────────────────────
+// On an unpinned trip (timing_kind ≠ "exact") a card's absolute date is a
+// provisional coordinate, not a fact — rendering "Wed, Sep 24" would be a
+// wrong-but-plausible date. Every date-bearing surface routes through these
+// helpers: pinned trips show real dates, unpinned trips show honest "Day N"
+// ordinals anchored at `days_anchor` (Day N ≡ days_anchor + (N−1)).
+
+export type TripTimingLike = {
+  timing_kind?: string | null;
+  date_start?: string | null;
+  // Day-1 anchor (0041). Read defensively until the generated client carries it.
+  days_anchor?: string | null;
+};
+
+export function datesPinned(t: TripTimingLike | null | undefined): boolean {
+  return t?.timing_kind === "exact";
+}
+
+/** The date "Day 1" currently maps to, or null when nothing anchors it yet. */
+export function dayAnchorKey(t: TripTimingLike | null | undefined): string | null {
+  if (!t) return null;
+  if (t.timing_kind === "exact" && typeof t.date_start === "string" && t.date_start)
+    return t.date_start;
+  return typeof t.days_anchor === "string" && t.days_anchor ? t.days_anchor : null;
+}
+
+function diffDayKeys(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split("-").map((s) => Number(s));
+  const [ty, tm, td] = toKey.split("-").map(Number);
+  const a = Date.UTC(fy ?? 1970, (fm ?? 1) - 1, fd ?? 1);
+  const b = Date.UTC(ty ?? 1970, (tm ?? 1) - 1, td ?? 1);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/** 1-based Day ordinal for a YYYY-MM-DD key, or null when it can't be honest. */
+export function dayOrdinal(
+  t: TripTimingLike | null | undefined,
+  dateKey: string,
+): number | null {
+  const anchor = dayAnchorKey(t);
+  if (!anchor) return null;
+  const n = diffDayKeys(anchor, dateKey) + 1;
+  return n >= 1 ? n : null;
+}
+
+/**
+ * The one when-stamp rule (Wave E): a node's scheduled ISO renders as a real
+ * date ("Wed, Sep 24") only on a pinned trip; unpinned it renders the honest
+ * ordinal ("Day 3"), and null when no anchor makes even that honest.
+ */
+export function formatNodeWhen(
+  t: TripTimingLike | null | undefined,
+  iso: string,
+): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  if (datesPinned(t)) {
+    return d.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  }
+  const key = tzDayKey(iso, offsetHoursOf(iso) ?? 0);
+  const n = dayOrdinal(t, key);
+  return n === null ? null : `Day ${n}`;
+}
+
 export function formatDayTile(dateKey: string): { weekday: string; dayMonth: string } {
   const [y, m, d] = dateKey.split("-").map((s) => Number(s));
   const date = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1));

@@ -82,6 +82,7 @@ from app.services.itineraries import (
     propose_itinerary,
     release_lock,
     reopen_itinerary,
+    retime_itinerary,
     update_itinerary_details,
     update_node,
 )
@@ -177,6 +178,33 @@ class ItineraryResponse(BaseModel):
     date_end: date | None = None
     duration_nights: int | None = None
     timing_note: str | None = None
+    # Day-1 anchor (0041, ADV-16). The date "Day 1" currently maps to on an
+    # unpinned trip, so relative Day-N labels are stable. None until the first
+    # card is scheduled; equals date_start once the dates are pinned (retime).
+    days_anchor: date | None = None
+
+
+class RetimeItineraryRequest(BaseModel):
+    """Pin the trip to real dates (Wave E / ADV-17): "Day 1 is date_start".
+
+    The server shifts every scheduled node by ``date_start − days_anchor`` days
+    (wall-clock preserved) and flips the itinerary to ``timing_kind=exact``.
+    ``date_end`` is optional — omitted, it derives from the current span /
+    ``duration_nights`` / the last scheduled card.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_start: date
+    date_end: date | None = None
+
+
+class RetimeItineraryResponse(BaseModel):
+    itinerary: ItineraryResponse
+    # How far the plan moved and how many scheduled cards moved with it — the
+    # UI's "Day 1 → Wed Mar 18 · 6 cards moved" confirmation payload.
+    delta_days: int
+    shifted_nodes: int
 
 
 class CreateNodeRequest(BaseModel):
@@ -964,6 +992,48 @@ async def update_itinerary_endpoint(
 
 
 @router.post(
+    "/{itinerary_id}/retime",
+    response_model=RetimeItineraryResponse,
+    summary="Pin the trip to real dates — shifts every scheduled card with Day 1.",
+)
+async def retime_itinerary_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: RetimeItineraryRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> RetimeItineraryResponse:
+    """The Wave E (ADV-17) pinning gesture: "Day 1 is March 18, 2027".
+
+    Shifts every scheduled node by ``date_start − days_anchor`` days (wall-clock
+    + tz offset preserved, node_history written) and flips the itinerary to
+    ``timing_kind=exact`` with ``days_anchor = date_start``. Symmetric with the
+    PATCH loosen path (exact → window/flexible keeps the anchor and moves
+    nothing), so fuzzy → pinned → fuzzy → re-pinned round-trips cleanly. Gated
+    like the timing PATCH (owner/creator/advisor); 409 ``booked_dates_locked``
+    when a non-zero shift would move booked/confirmed cards.
+    """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
+    actor = _actor_from_user(user)
+    result = await retime_itinerary(
+        session,
+        actor,
+        itinerary,
+        date_start=payload.date_start,
+        date_end=payload.date_end,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return RetimeItineraryResponse(
+        itinerary=_itinerary_to_response(result.itinerary),
+        delta_days=result.delta_days,
+        shifted_nodes=len(result.shifted_node_ids),
+    )
+
+
+@router.post(
     "/{itinerary_id}/nodes",
     status_code=status.HTTP_201_CREATED,
     response_model=NodeResponse,
@@ -1199,6 +1269,7 @@ def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
         date_end=getattr(itinerary, "date_end", None),
         duration_nights=getattr(itinerary, "duration_nights", None),
         timing_note=getattr(itinerary, "timing_note", None),
+        days_anchor=getattr(itinerary, "days_anchor", None),
     )
 
 

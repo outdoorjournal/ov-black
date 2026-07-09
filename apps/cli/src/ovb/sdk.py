@@ -170,10 +170,43 @@ class Ovb:
 
     # ── itineraries ──────────────────────────────────────────────────────
     async def create_itinerary(
-        self, *, title: str = "", client_id: str | None = None
+        self,
+        *,
+        title: str = "",
+        client_id: str | None = None,
+        timing_kind: str | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
+        duration_nights: int | None = None,
     ) -> gm.ItineraryResponse:
-        body = {"title": title, "client_id": client_id}
+        body: dict[str, Any] = {"title": title, "client_id": client_id}
+        # Timing (0033/Wave E): seed pinned dates up front — booking gates on
+        # timing_kind='exact' (ADV-17), so a bookable seed must pin.
+        if timing_kind is not None:
+            body["timing_kind"] = timing_kind
+        if date_start is not None:
+            body["date_start"] = date_start
+        if date_end is not None:
+            body["date_end"] = date_end
+        if duration_nights is not None:
+            body["duration_nights"] = duration_nights
         return await self._model(gm.ItineraryResponse, "POST", "/itinerary", json_body=body)
+
+    async def retime(
+        self, itinerary_id: str, *, date_start: str, date_end: str | None = None
+    ) -> gm.RetimeItineraryResponse:
+        """Pin the trip to real dates (Wave E / ADV-17): 'Day 1 is date_start'.
+
+        Shifts every scheduled card by ``date_start − days_anchor`` days
+        (wall-clock preserved) and flips the trip to ``timing_kind=exact``.
+        409 ``booked_dates_locked`` when booked/confirmed cards pin the calendar.
+        """
+        body: dict[str, Any] = {"date_start": date_start}
+        if date_end is not None:
+            body["date_end"] = date_end
+        return await self._model(
+            gm.RetimeItineraryResponse, "POST", f"/itinerary/{itinerary_id}/retime", json_body=body
+        )
 
     async def get_graph(self, itinerary_id: str) -> gm.GraphResponse:
         return await self._model(gm.GraphResponse, "GET", f"/itinerary/{itinerary_id}")

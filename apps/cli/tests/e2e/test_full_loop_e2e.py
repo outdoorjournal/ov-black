@@ -176,7 +176,15 @@ async def test_loop_detail_to_confirmed_continuation(
         pytest.skip("advisor does not own the linked traveler's client")
 
     # A fresh, isolated trip for this loop run (re-runnable; not the shared demo).
-    itin = await advisor.create_itinerary(title="Loop continuation trip", client_id=client_id)
+    # Born pinned (exact dates): booking gates on pinned dates (Wave E / ADV-17).
+    trip_start = date.today() + timedelta(days=60)
+    itin = await advisor.create_itinerary(
+        title="Loop continuation trip",
+        client_id=client_id,
+        timing_kind="exact",
+        date_start=trip_start.isoformat(),
+        date_end=(trip_start + timedelta(days=7)).isoformat(),
+    )
     itinerary_id = str(itin.id)
     plan_node = await advisor.add_node(
         itinerary_id, type="experience", title="Kyoto temple morning", status="proposed"
