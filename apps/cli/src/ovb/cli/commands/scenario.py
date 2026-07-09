@@ -37,7 +37,7 @@ def smoke(
 
             cid = client_id
             if cid is None:
-                clients = await advisor.list_clients()
+                clients = (await advisor.list_clients()).clients
                 if not clients:
                     raise OvbError("no clients exist; pass --client-id or create one first")
                 cid = str(clients[0].id)

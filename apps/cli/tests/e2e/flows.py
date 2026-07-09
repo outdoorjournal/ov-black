@@ -118,7 +118,7 @@ async def ensure_client(
     except ApiError as exc:
         if exc.status != 409:
             raise
-        for summary in await advisor.list_clients():
+        for summary in (await advisor.list_clients()).clients:
             if str(summary.email).lower() == target.lower():
                 return str(summary.id), target
         raise

@@ -52,7 +52,7 @@ async def test_advisor_adds_client_and_welcome_is_sent(advisor: Ovb) -> None:
     assert detail.accepted_at is None, "a brand-new client has not signed in yet"
 
     # 3. It shows up in the advisor's client list with the same status.
-    listed = {str(c.id): c for c in await advisor.list_clients()}
+    listed = {str(c.id): c for c in (await advisor.list_clients()).clients}
     assert client_id in listed
     assert str(listed[client_id].access_status) == "pending"
 

@@ -11,6 +11,18 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, EmailStr, Field, RootModel
 
 
+class Kind(StrEnum):
+    agent_turn = 'agent_turn'
+    booking_cancelled = 'booking_cancelled'
+    booking_confirmed = 'booking_confirmed'
+    booking_made = 'booking_made'
+    invoice_created = 'invoice_created'
+    invoice_issued = 'invoice_issued'
+    message_posted = 'message_posted'
+    node_changed = 'node_changed'
+    payment = 'payment'
+
+
 class Amount(RootModel[str]):
     model_config = ConfigDict(
         regex_engine="python-re",
@@ -18,6 +30,42 @@ class Amount(RootModel[str]):
     root: Annotated[
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Amount')
     ]
+
+
+class ActivityEventOut(BaseModel):
+    """
+    One projected event — ids/kinds/titles/timestamps, never content.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Annotated[Kind, Field(title='Kind')]
+    at: Annotated[AwareDatetime, Field(title='At')]
+    source_id: Annotated[str, Field(title='Source Id')]
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')]
+    itinerary_title: Annotated[str | None, Field(title='Itinerary Title')]
+    actor_kind: Annotated[str | None, Field(title='Actor Kind')]
+    title: Annotated[str | None, Field(title='Title')]
+    op: Annotated[str | None, Field(title='Op')]
+    status_before: Annotated[str | None, Field(title='Status Before')]
+    status_after: Annotated[str | None, Field(title='Status After')]
+    amount: Annotated[Amount | None, Field(title='Amount')]
+    currency: Annotated[str | None, Field(title='Currency')]
+    ref_id: Annotated[UUID | None, Field(title='Ref Id')]
+
+
+class ActivityResponse(BaseModel):
+    """
+    Envelope for ``GET /advisor/activity`` — newest-first, keyset-paged.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    events: Annotated[list[ActivityEventOut], Field(title='Events')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
 
 
 class Currency(RootModel[str]):
@@ -101,6 +149,40 @@ class AttachPartyMemberRequest(BaseModel):
     party_member_id: Annotated[UUID, Field(title='Party Member Id')]
 
 
+class Kind1(StrEnum):
+    changes_requested = 'changes_requested'
+    unread_messages = 'unread_messages'
+    offer_expiring = 'offer_expiring'
+    invoice_unpaid = 'invoice_unpaid'
+    booking_unconfirmed = 'booking_unconfirmed'
+    traveler_approved = 'traveler_approved'
+    payment_received = 'payment_received'
+    trip_proposed = 'trip_proposed'
+
+
+class Urgency(StrEnum):
+    urgent = 'urgent'
+    normal = 'normal'
+
+
+class AttentionItemOut(BaseModel):
+    """
+    One signal on one (client, itinerary) — a strip/queue row.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Annotated[Kind1, Field(title='Kind')]
+    itinerary_id: Annotated[UUID | None, Field(title='Itinerary Id')]
+    itinerary_title: Annotated[str | None, Field(title='Itinerary Title')]
+    count: Annotated[int, Field(title='Count')]
+    at: Annotated[AwareDatetime, Field(title='At')]
+    node_id: Annotated[UUID | None, Field(title='Node Id')] = None
+    urgency: Annotated[Urgency | None, Field(title='Urgency')] = 'normal'
+    deadline: Annotated[AwareDatetime | None, Field(title='Deadline')] = None
+
+
 class AuthedHealthResponse(BaseModel):
     status: Annotated[str, Field(title='Status')]
     sub: Annotated[str, Field(title='Sub')]
@@ -132,6 +214,27 @@ class BillingCurrencyRowResponse(BaseModel):
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Uninvoiced')
     ]
     uninvoiced_count: Annotated[int, Field(title='Uninvoiced Count')]
+
+
+class BillingRowOut(BaseModel):
+    """
+    One currency's roster-wide money position.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        regex_engine="python-re",
+    )
+    currency: Annotated[str, Field(title='Currency')]
+    invoiced: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Invoiced')
+    ]
+    paid: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid')
+    ]
+    outstanding: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Outstanding')
+    ]
 
 
 class RepriceDelta(RootModel[str]):
@@ -181,12 +284,76 @@ class CancelBookingRequest(BaseModel):
     reason: Annotated[Reason | None, Field(title='Reason')] = None
 
 
+class Entity(StrEnum):
+    node = 'node'
+    edge = 'edge'
+
+
+class ChangeOut(BaseModel):
+    """
+    One projected history row — shape of the change, never its payload.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    id: Annotated[str, Field(title='Id')]
+    entity: Annotated[Entity, Field(title='Entity')]
+    entity_id: Annotated[UUID, Field(title='Entity Id')]
+    op: Annotated[str, Field(title='Op')]
+    actor_kind: Annotated[str, Field(title='Actor Kind')]
+    actor_user_id: Annotated[UUID | None, Field(title='Actor User Id')]
+    occurred_at: Annotated[AwareDatetime, Field(title='Occurred At')]
+    title: Annotated[str | None, Field(title='Title')]
+    status_before: Annotated[str | None, Field(title='Status Before')]
+    status_after: Annotated[str | None, Field(title='Status After')]
+    changed_keys: Annotated[list[str], Field(title='Changed Keys')]
+
+
+class ChangesResponse(BaseModel):
+    """
+    Envelope for ``GET /itinerary/{id}/changes`` — newest-first replay.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    changes: Annotated[list[ChangeOut], Field(title='Changes')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class ClientAttentionOut(BaseModel):
+    """
+    A client's rolled-up attention — the roster badge + the strip feed.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    full_name: Annotated[str, Field(title='Full Name')]
+    needs_attention: Annotated[bool, Field(title='Needs Attention')]
+    attention_count: Annotated[int, Field(title='Attention Count')]
+    items: Annotated[list[AttentionItemOut], Field(title='Items')]
+    latest_at: Annotated[AwareDatetime | None, Field(title='Latest At')]
+
+
 class Value(RootModel[str]):
     root: Annotated[str, Field(max_length=256, min_length=1, title='Value')]
 
 
 class Label(RootModel[str]):
     root: Annotated[str, Field(max_length=64, title='Label')]
+
+
+class ClientCountsOut(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    total: Annotated[int, Field(title='Total')]
+    uninvited: Annotated[int, Field(title='Uninvited')]
+    pending: Annotated[int, Field(title='Pending')]
+    active: Annotated[int, Field(title='Active')]
 
 
 class ClientCreateResponse(BaseModel):
@@ -250,6 +417,22 @@ class ClientSummary(BaseModel):
     invited_at: Annotated[AwareDatetime | None, Field(title='Invited At')]
     accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+
+class ClientsPage(BaseModel):
+    """
+    Envelope for ``GET /clients`` (Wave F — breaking: was a bare list).
+
+    ``total`` counts every row matching the q/status filters (not the page),
+    so the roster chrome can say "42 clients" without a second call.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    clients: Annotated[list[ClientSummary], Field(title='Clients')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+    total: Annotated[int, Field(title='Total')]
 
 
 class ContactChannel(StrEnum):
@@ -681,6 +864,18 @@ class InvoiceStatus(StrEnum):
     void = 'void'
 
 
+class ItineraryCountsOut(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    total: Annotated[int, Field(title='Total')]
+    draft: Annotated[int, Field(title='Draft')]
+    proposed: Annotated[int, Field(title='Proposed')]
+    approved: Annotated[int, Field(title='Approved')]
+    open_forks: Annotated[int, Field(title='Open Forks')]
+    reconcile_requested: Annotated[int, Field(title='Reconcile Requested')]
+
+
 class ItineraryStatus(StrEnum):
     """
     Mirrors the public.itinerary_status Postgres enum (0006, `proposed` 0039).
@@ -789,6 +984,55 @@ class LoyaltyProgram(BaseModel):
     )
     program: Annotated[str, Field(max_length=120, min_length=1, title='Program')]
     number: Annotated[str, Field(max_length=120, min_length=1, title='Number')]
+
+
+class MoneyRowOut(BaseModel):
+    """
+    One invoice, roster-legible (client + trip identity attached).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    client_id: Annotated[UUID, Field(title='Client Id')]
+    client_name: Annotated[str, Field(title='Client Name')]
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    itinerary_title: Annotated[str, Field(title='Itinerary Title')]
+    label: Annotated[str, Field(title='Label')]
+    status: InvoiceStatus
+    currency: Annotated[str, Field(title='Currency')]
+    total: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Total')
+    ]
+    settled: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Settled')
+    ]
+    issued_at: Annotated[AwareDatetime | None, Field(title='Issued At')]
+    due_at: Annotated[AwareDatetime | None, Field(title='Due At')]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+
+class MoneySummaryRowOut(BaseModel):
+    """
+    One currency's whole-roster position (issued+paid only).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        regex_engine="python-re",
+    )
+    currency: Annotated[str, Field(title='Currency')]
+    invoiced: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Invoiced')
+    ]
+    paid: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Paid')
+    ]
+    outstanding: Annotated[
+        str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Outstanding')
+    ]
 
 
 class MyClientResponse(BaseModel):
@@ -1431,6 +1675,16 @@ class SessionAudience(StrEnum):
     advisor = 'advisor'
 
 
+class SessionStatsOut(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    active: Annotated[int, Field(title='Active')]
+    turns_7d: Annotated[int, Field(title='Turns 7D')]
+    errored_turns_7d: Annotated[int, Field(title='Errored Turns 7D')]
+    avg_latency_ms_7d: Annotated[int | None, Field(title='Avg Latency Ms 7D')]
+
+
 class SessionSummary(BaseModel):
     """
     Row shape for ``GET /sessions`` — one scoped, resumable session (PS2).
@@ -1709,7 +1963,35 @@ class AdvisorItinerarySummary(BaseModel):
     approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')]
     last_activity_at: Annotated[AwareDatetime, Field(title='Last Activity At')]
     client: AdvisorItineraryClient
-    needs_attention: Annotated[Literal[False], Field(title='Needs Attention')] = False
+    needs_attention: Annotated[bool | None, Field(title='Needs Attention')] = False
+
+
+class AdvisorMoneyResponse(BaseModel):
+    """
+    Envelope for ``GET /advisor/money``.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    invoices: Annotated[list[MoneyRowOut], Field(title='Invoices')]
+    summary: Annotated[list[MoneySummaryRowOut], Field(title='Summary')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class AdvisorOverviewResponse(BaseModel):
+    """
+    Envelope for ``GET /advisor/overview`` — the Ops glance band.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    clients: ClientCountsOut
+    itineraries: ItineraryCountsOut
+    billing: Annotated[list[BillingRowOut], Field(title='Billing')]
+    sessions: SessionStatsOut
+    generated_at: Annotated[AwareDatetime, Field(title='Generated At')]
 
 
 class AgentRecordDossierInferenceRequest(BaseModel):
@@ -1777,6 +2059,17 @@ class AssembleDraftRequest(BaseModel):
         extra='forbid',
     )
     day_plan: Annotated[list[DaySlotPayload] | None, Field(title='Day Plan')] = None
+
+
+class AwarenessResponse(BaseModel):
+    """
+    Envelope for ``GET /awareness`` — clients with a live signal, newest-first.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    clients: Annotated[list[ClientAttentionOut], Field(title='Clients')]
 
 
 class BookNodeRequest(BaseModel):
@@ -2663,6 +2956,8 @@ class AdvisorItinerariesResponse(BaseModel):
         extra='forbid',
     )
     itineraries: Annotated[list[AdvisorItinerarySummary], Field(title='Itineraries')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')] = None
+    total: Annotated[int | None, Field(title='Total')] = 0
 
 
 class AgentContext(BaseModel):
@@ -2824,6 +3119,7 @@ class InvoiceResponse(BaseModel):
     status: InvoiceStatus
     currency: Annotated[str, Field(title='Currency')]
     due_at: Annotated[AwareDatetime | None, Field(title='Due At')] = None
+    issued_at: Annotated[AwareDatetime | None, Field(title='Issued At')] = None
     total: Annotated[
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Total')
     ]

@@ -94,27 +94,32 @@ async def test_error_response_raises_apierror_with_detail() -> None:
 
 
 @respx.mock
-async def test_list_clients_parses_array() -> None:
+async def test_list_clients_parses_envelope() -> None:
     respx.get(f"{BASE}/clients").mock(
         return_value=httpx.Response(
             200,
-            json=[
-                {
-                    "id": "99999999-9999-9999-9999-999999999999",
-                    "full_name": "Jane",
-                    "email": "jane@x.com",
-                    "has_dossier": True,
-                    "access_status": "active",
-                    "invited_at": "2026-06-21T00:00:00Z",
-                    "accepted_at": "2026-06-21T00:00:00Z",
-                    "created_at": "2026-06-21T00:00:00Z",
-                }
-            ],
+            json={
+                "clients": [
+                    {
+                        "id": "99999999-9999-9999-9999-999999999999",
+                        "full_name": "Jane",
+                        "email": "jane@x.com",
+                        "has_dossier": True,
+                        "access_status": "active",
+                        "invited_at": "2026-06-21T00:00:00Z",
+                        "accepted_at": "2026-06-21T00:00:00Z",
+                        "created_at": "2026-06-21T00:00:00Z",
+                    }
+                ],
+                "next_cursor": None,
+                "total": 1,
+            },
         )
     )
     async with _client() as ovb:
-        clients = await ovb.list_clients()
-    assert len(clients) == 1 and clients[0].full_name == "Jane"
+        page = await ovb.list_clients()
+    assert page.total == 1 and page.clients[0].full_name == "Jane"
+    assert page.next_cursor is None
 
 
 @respx.mock

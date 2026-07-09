@@ -214,6 +214,36 @@ class Ovb:
     async def list_advisor_itineraries(self) -> gm.AdvisorItinerariesResponse:
         return await self._model(gm.AdvisorItinerariesResponse, "GET", "/itineraries")
 
+    # ── Wave F advisor ops surface ──────────────────────────────────────────
+
+    async def advisor_overview(self) -> gm.AdvisorOverviewResponse:
+        """GET /advisor/overview — the Ops dashboard's portfolio stats."""
+        return await self._model(gm.AdvisorOverviewResponse, "GET", "/advisor/overview")
+
+    async def advisor_activity(
+        self, *, limit: int | None = None, cursor: str | None = None
+    ) -> gm.ActivityResponse:
+        """GET /advisor/activity — the merged roster event feed, newest-first."""
+        params: dict[str, QueryValue] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        resp = await self._send("GET", "/advisor/activity", params=params or None)
+        return gm.ActivityResponse.model_validate(resp.json())
+
+    async def advisor_money(
+        self, *, status: str | None = None, cursor: str | None = None
+    ) -> gm.AdvisorMoneyResponse:
+        """GET /advisor/money — the cross-client invoice roster + currency band."""
+        params: dict[str, QueryValue] = {}
+        if status is not None:
+            params["status"] = status
+        if cursor is not None:
+            params["cursor"] = cursor
+        resp = await self._send("GET", "/advisor/money", params=params or None)
+        return gm.AdvisorMoneyResponse.model_validate(resp.json())
+
     async def approve(self, itinerary_id: str) -> gm.ItineraryResponse:
         return await self._model(gm.ItineraryResponse, "POST", f"/itinerary/{itinerary_id}/approve")
 
@@ -667,8 +697,26 @@ class Ovb:
         )
 
     # ── clients ──────────────────────────────────────────────────────────
-    async def list_clients(self) -> list[gm.ClientSummary]:
-        return await self._list(gm.ClientSummary, "GET", "/clients")
+    async def list_clients(
+        self,
+        *,
+        q: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> gm.ClientsPage:
+        """Wave F: /clients returns a searchable, keyset-paged envelope."""
+        params: dict[str, QueryValue] = {}
+        if q is not None:
+            params["q"] = q
+        if status is not None:
+            params["status"] = status
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        resp = await self._send("GET", "/clients", params=params or None)
+        return gm.ClientsPage.model_validate(resp.json())
 
     async def create_client(self, payload: dict[str, Any]) -> gm.ClientCreateResponse:
         return await self._model(gm.ClientCreateResponse, "POST", "/clients", json_body=payload)

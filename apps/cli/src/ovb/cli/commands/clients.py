@@ -16,7 +16,7 @@ def list_(ctx: typer.Context) -> None:
     """List the advisor's clients, newest first."""
     state = state_of(ctx)
     res = run_op(ctx, lambda ovb: ovb.list_clients())
-    render.emit(state.json_mode, res, lambda: render.clients_table(res))
+    render.emit(state.json_mode, res, lambda: render.clients_table(res.clients))
 
 
 @app.command("create")

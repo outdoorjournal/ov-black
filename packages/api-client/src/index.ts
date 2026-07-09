@@ -76,6 +76,10 @@ import {
   updateItineraryEndpointItineraryItineraryIdPatch,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
   getAwarenessEndpointAwarenessGet,
+  getAdvisorOverviewEndpointAdvisorOverviewGet,
+  getAdvisorActivityEndpointAdvisorActivityGet,
+  getAdvisorMoneyEndpointAdvisorMoneyGet,
+  getItineraryChangesEndpointItineraryItineraryIdChangesGet,
   getClientAwarenessEndpointAwarenessClientsClientIdGet,
   initClientDocumentEndpointClientsClientIdDocumentsPost,
   initMyDocumentEndpointMeDocumentsPost,
@@ -125,6 +129,12 @@ import type {
   AttentionItemOut,
   AwarenessResponse,
   ClientAttentionOut,
+  ActivityEventOut,
+  AdvisorMoneyResponse,
+  AdvisorOverviewResponse,
+  ChangeOut,
+  MoneyRowOut,
+  MoneySummaryRowOut,
   ClientContactCreate,
   ClientContactDetail,
   ClientContactUpdate,
@@ -144,6 +154,7 @@ import type {
   ForkDiffResponse,
   GraphResponse,
   ItineraryResponse,
+  ItineraryStatus,
   UpdateItineraryRequest,
   RetimeItineraryRequest,
   AddLineItemRequest,
@@ -599,27 +610,54 @@ export type ListClientsDetail =
   | "network_error"
   | "unknown";
 
+/** Optional roster query params for GET /clients (Wave F). */
+export type ListClientsParams = {
+  limit?: number;
+  cursor?: string;
+  q?: string;
+  status?: AccessStatus;
+  sort?: "created_at" | "full_name";
+  order?: "asc" | "desc";
+};
+
 /**
  * Discriminated result for GET /clients. 403 collapses to `advisor_only`
  * — there is no 409/502 path on the read side.
+ *
+ * Wave F (BREAKING): the roster is an envelope — `clients` plus a keyset
+ * `next_cursor` (null on the last page) and the filter-scoped `total`.
  */
 export type ListClientsResult =
-  | { ok: true; clients: ClientSummary[] }
+  | { ok: true; clients: ClientSummary[]; nextCursor: string | null; total: number }
   | { ok: false; status: number; detail: ListClientsDetail };
 
 /**
- * Typed wrapper for GET /clients — returns the calling advisor's clients
- * newest-first. The generated response is already typed as
- * `ClientSummary[]`; this wrapper only collapses the `{data, error}`
- * shape and the network-failure path.
+ * Typed wrapper for GET /clients — searchable, keyset-paged roster.
+ * No params → first page of 50, newest first.
  */
-export async function listClients(client: Client): Promise<ListClientsResult> {
+export async function listClients(
+  client: Client,
+  params?: ListClientsParams,
+): Promise<ListClientsResult> {
   try {
     const { data, error, response } = await listClientsEndpointClientsGet({
       client,
+      query: {
+        ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+        ...(params?.cursor !== undefined ? { cursor: params.cursor } : {}),
+        ...(params?.q !== undefined ? { q: params.q } : {}),
+        ...(params?.status !== undefined ? { status: params.status } : {}),
+        ...(params?.sort !== undefined ? { sort: params.sort } : {}),
+        ...(params?.order !== undefined ? { order: params.order } : {}),
+      },
     });
     if (error === undefined && data !== undefined) {
-      return { ok: true, clients: data };
+      return {
+        ok: true,
+        clients: data.clients,
+        nextCursor: data.next_cursor ?? null,
+        total: data.total,
+      };
     }
     return {
       ok: false,
@@ -752,6 +790,229 @@ export async function getClientAwareness(
   }
 }
 
+
+// ── Advisor ops surface (Wave F): overview / activity / money / changes ─────
+
+export type {
+  ActivityEventOut,
+  AdvisorMoneyResponse,
+  AdvisorOverviewResponse,
+  ChangeOut,
+  MoneyRowOut,
+  MoneySummaryRowOut,
+};
+
+export type AdvisorOpsDetail =
+  | "advisor_only"
+  | "invalid_cursor"
+  | "network_error"
+  | "unknown";
+
+function _parseAdvisorOpsDetail(status: number, error: unknown): AdvisorOpsDetail {
+  const body = error as { detail?: unknown } | undefined;
+  const raw = body && typeof body.detail === "string" ? body.detail : "";
+  if (raw === "invalid_cursor") return "invalid_cursor";
+  if (status === 403) return "advisor_only";
+  return "unknown";
+}
+
+/** Discriminated result for GET /advisor/overview — the Ops glance band. */
+export type AdvisorOverviewResult =
+  | { ok: true; overview: AdvisorOverviewResponse }
+  | { ok: false; status: number; detail: AdvisorOpsDetail };
+
+/** Typed wrapper for GET /advisor/overview. */
+export async function getAdvisorOverview(
+  client: Client,
+): Promise<AdvisorOverviewResult> {
+  try {
+    const { data, error, response } =
+      await getAdvisorOverviewEndpointAdvisorOverviewGet({ client });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, overview: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseAdvisorOpsDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+/** Optional query params for GET /advisor/activity. */
+export type AdvisorActivityParams = {
+  limit?: number;
+  cursor?: string;
+  clientId?: string;
+  itineraryId?: string;
+  /** Comma-joined server-side; unknown names are a 400. */
+  kinds?: string[];
+};
+
+/** Discriminated result for GET /advisor/activity — the merged event feed. */
+export type AdvisorActivityResult =
+  | { ok: true; events: ActivityEventOut[]; nextCursor: string | null }
+  | { ok: false; status: number; detail: AdvisorOpsDetail };
+
+/**
+ * Typed wrapper for GET /advisor/activity — newest-first merged roster
+ * activity, keyset-paged. The live tail of the same projection streams over
+ * GET /advisor/feed (SSE, consumed by a DIY reader in apps/web).
+ */
+export async function getAdvisorActivity(
+  client: Client,
+  params?: AdvisorActivityParams,
+): Promise<AdvisorActivityResult> {
+  try {
+    const { data, error, response } =
+      await getAdvisorActivityEndpointAdvisorActivityGet({
+        client,
+        query: {
+          ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params?.cursor !== undefined ? { cursor: params.cursor } : {}),
+          ...(params?.clientId !== undefined
+            ? { client_id: params.clientId }
+            : {}),
+          ...(params?.itineraryId !== undefined
+            ? { itinerary_id: params.itineraryId }
+            : {}),
+          ...(params?.kinds !== undefined && params.kinds.length > 0
+            ? { kinds: params.kinds.join(",") }
+            : {}),
+        },
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        events: data.events,
+        nextCursor: data.next_cursor ?? null,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseAdvisorOpsDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+/** Optional query params for GET /advisor/money. */
+export type AdvisorMoneyParams = {
+  limit?: number;
+  cursor?: string;
+  status?: "draft" | "issued" | "paid" | "void";
+  clientId?: string;
+};
+
+/** Discriminated result for GET /advisor/money — the cross-client roster. */
+export type AdvisorMoneyResult =
+  | {
+      ok: true;
+      invoices: MoneyRowOut[];
+      summary: MoneySummaryRowOut[];
+      nextCursor: string | null;
+    }
+  | { ok: false; status: number; detail: AdvisorOpsDetail };
+
+/**
+ * Typed wrapper for GET /advisor/money — every invoice across the roster
+ * with client/trip identity, plus the whole-roster per-currency band.
+ */
+export async function getAdvisorMoney(
+  client: Client,
+  params?: AdvisorMoneyParams,
+): Promise<AdvisorMoneyResult> {
+  try {
+    const { data, error, response } =
+      await getAdvisorMoneyEndpointAdvisorMoneyGet({
+        client,
+        query: {
+          ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params?.cursor !== undefined ? { cursor: params.cursor } : {}),
+          ...(params?.status !== undefined ? { status: params.status } : {}),
+          ...(params?.clientId !== undefined
+            ? { client_id: params.clientId }
+            : {}),
+        },
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        invoices: data.invoices,
+        summary: data.summary,
+        nextCursor: data.next_cursor ?? null,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseAdvisorOpsDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type ItineraryChangesDetail =
+  | "not_found"
+  | "forbidden"
+  | "invalid_cursor"
+  | "network_error"
+  | "unknown";
+
+/** Discriminated result for GET /itinerary/{id}/changes — history replay. */
+export type ItineraryChangesResult =
+  | { ok: true; changes: ChangeOut[]; nextCursor: string | null }
+  | { ok: false; status: number; detail: ItineraryChangesDetail };
+
+/**
+ * Typed wrapper for GET /itinerary/{id}/changes — the graph's audit trail,
+ * newest-first, projected (never raw before/after payloads). Gated exactly
+ * like the graph read.
+ */
+export async function getItineraryChanges(
+  client: Client,
+  itineraryId: string,
+  params?: { limit?: number; cursor?: string; entity?: "node" | "edge" },
+): Promise<ItineraryChangesResult> {
+  try {
+    const { data, error, response } =
+      await getItineraryChangesEndpointItineraryItineraryIdChangesGet({
+        client,
+        path: { itinerary_id: itineraryId },
+        query: {
+          ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params?.cursor !== undefined ? { cursor: params.cursor } : {}),
+          ...(params?.entity !== undefined ? { entity: params.entity } : {}),
+        },
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        changes: data.changes,
+        nextCursor: data.next_cursor ?? null,
+      };
+    }
+    const body = error as { detail?: unknown } | undefined;
+    const raw = body && typeof body.detail === "string" ? body.detail : "";
+    const detail: ItineraryChangesDetail =
+      raw === "invalid_cursor"
+        ? "invalid_cursor"
+        : response.status === 404
+          ? "not_found"
+          : response.status === 403
+            ? "forbidden"
+            : "unknown";
+    return { ok: false, status: response.status, detail };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
 export type CreateSessionDetail =
   | "client_not_found"
   | "validation_error"
@@ -833,19 +1094,27 @@ export type ListTurnsResult =
   | { ok: false; status: number; detail: ListTurnsDetail };
 
 /**
- * Typed wrapper for GET /sessions/{id}/turns — returns every turn on a
- * session in turn_index order. This is the Command Center replay path;
- * the live SSE stream is consumed with a DIY reader in apps/web.
+ * Typed wrapper for GET /sessions/{id}/turns — a session's turns in
+ * turn_index order. No params → every turn (the chat replay path). Wave F:
+ * `limit` returns the most recent N (still ascending); `beforeIndex` pages
+ * older — the next page's cursor is the first returned row's `turn_index`.
  */
 export async function listTurns(
   client: Client,
   sessionId: string,
+  params?: { limit?: number; beforeIndex?: number },
 ): Promise<ListTurnsResult> {
   try {
     const { data, error, response } =
       await listTurnsEndpointSessionsSessionIdTurnsGet({
         client,
         path: { session_id: sessionId },
+        query: {
+          ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params?.beforeIndex !== undefined
+            ? { before_index: params.beforeIndex }
+            : {}),
+        },
       });
     if (error === undefined && data !== undefined) {
       return { ok: true, turns: data };
@@ -2901,22 +3170,59 @@ export type ListAdvisorItinerariesDetail =
   | "unknown";
 
 export type ListAdvisorItinerariesResult =
-  | { ok: true; itineraries: AdvisorItinerarySummary[] }
+  | {
+      ok: true;
+      itineraries: AdvisorItinerarySummary[];
+      nextCursor: string | null;
+      total: number;
+    }
   | { ok: false; status: number; detail: ListAdvisorItinerariesDetail };
+
+/** Optional roster query params for GET /itineraries (Wave F). */
+export type ListAdvisorItinerariesParams = {
+  limit?: number;
+  cursor?: string;
+  q?: string;
+  status?: ItineraryStatus;
+  clientId?: string;
+  sort?: "updated_at" | "created_at" | "title";
+  order?: "asc" | "desc";
+};
 
 /**
  * Typed wrapper for GET /itineraries (advisor). Returns one row per
  * itinerary across the calling advisor's clients, embedding the client
  * block so the Command Center can render a dense roster without N+1.
+ * Wave F: searchable + keyset-paged (`nextCursor`/`total` additive), and
+ * `needs_attention` is real (an open-state awareness signal on the trip).
  */
 export async function listAdvisorItineraries(
   client: Client,
+  params?: ListAdvisorItinerariesParams,
 ): Promise<ListAdvisorItinerariesResult> {
   try {
     const { data, error, response } =
-      await listAdvisorItinerariesEndpointItinerariesGet({ client });
+      await listAdvisorItinerariesEndpointItinerariesGet({
+        client,
+        query: {
+          ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params?.cursor !== undefined ? { cursor: params.cursor } : {}),
+          ...(params?.q !== undefined ? { q: params.q } : {}),
+          ...(params?.status !== undefined ? { status: params.status } : {}),
+          ...(params?.clientId !== undefined
+            ? { client_id: params.clientId }
+            : {}),
+          ...(params?.sort !== undefined ? { sort: params.sort } : {}),
+          ...(params?.order !== undefined ? { order: params.order } : {}),
+        },
+      });
     if (error === undefined && data !== undefined) {
-      return { ok: true, itineraries: data.itineraries };
+      return {
+        ok: true,
+        itineraries: data.itineraries,
+        nextCursor: data.next_cursor ?? null,
+        total: data.total ?? data.itineraries.length,
+      };
     }
     return {
       ok: false,
