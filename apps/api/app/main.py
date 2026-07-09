@@ -29,6 +29,7 @@ from app.observability import (
     instrument_engine,
 )
 from app.payments import build_gateway
+from app.routers.advisor import router as advisor_router
 from app.routers.advisor_itineraries import router as advisor_itineraries_router
 from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
@@ -289,6 +290,7 @@ app.include_router(bookings_router)
 app.include_router(advisor_itineraries_router)
 app.include_router(analyze_router)
 app.include_router(awareness_router)
+app.include_router(advisor_router)
 app.include_router(fill_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)

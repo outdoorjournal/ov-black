@@ -22,7 +22,7 @@ import logging
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +48,7 @@ from app.models import (
 from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
 from app.services.card_mapping import inventory_item_to_card_metadata
+from app.services.changes import load_itinerary_changes, next_changes_cursor
 from app.services.fork import (
     ForkDiff,
     NodeChange,
@@ -92,6 +93,7 @@ from app.services.node_cost import (
     resolve_party_size,
     sum_node_costs,
 )
+from app.services.pagination import clamp_limit, require_cursor
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -1683,3 +1685,81 @@ async def delete_edge_endpoint(
     if err is not None:
         _raise_for_error(err)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── change replay (Wave F) ────────────────────────────────────────────────────
+
+
+class ChangeOut(BaseModel):
+    """One projected history row — shape of the change, never its payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    entity: Literal["node", "edge"]
+    entity_id: uuid.UUID
+    op: str
+    actor_kind: str
+    actor_user_id: uuid.UUID | None
+    occurred_at: datetime
+    title: str | None
+    status_before: str | None
+    status_after: str | None
+    changed_keys: list[str]
+
+
+class ChangesResponse(BaseModel):
+    """Envelope for ``GET /itinerary/{id}/changes`` — newest-first replay."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    changes: list[ChangeOut]
+    next_cursor: str | None
+
+
+@router.get(
+    "/{itinerary_id}/changes",
+    response_model=ChangesResponse,
+    summary="Replay the itinerary's node/edge history, newest-first.",
+)
+async def get_itinerary_changes_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+    limit: int = 50,
+    cursor: str | None = None,
+    entity: Literal["node", "edge"] | None = None,
+) -> ChangesResponse:
+    """History of a graph the caller can read is not a new exposure — the gate
+    is exactly the graph read's (``assert_itinerary_readable``)."""
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_readable(session, user, itinerary)
+    page_limit = clamp_limit(limit)
+    changes = await load_itinerary_changes(
+        session,
+        itinerary_id=itinerary_id,
+        limit=page_limit,
+        cursor=require_cursor(cursor),
+        entity=entity,
+    )
+    return ChangesResponse(
+        changes=[
+            ChangeOut(
+                id=c.id,
+                entity=c.entity,
+                entity_id=c.entity_id,
+                op=c.op,
+                actor_kind=c.actor_kind,
+                actor_user_id=c.actor_user_id,
+                occurred_at=c.occurred_at,
+                title=c.title,
+                status_before=c.status_before,
+                status_after=c.status_after,
+                changed_keys=c.changed_keys,
+            )
+            for c in changes
+        ],
+        next_cursor=next_changes_cursor(changes, page_limit),
+    )
