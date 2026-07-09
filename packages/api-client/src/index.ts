@@ -75,6 +75,8 @@ import {
   getItineraryEndpointItineraryItineraryIdGet,
   updateItineraryEndpointItineraryItineraryIdPatch,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
+  getAwarenessEndpointAwarenessGet,
+  getClientAwarenessEndpointAwarenessClientsClientIdGet,
   initClientDocumentEndpointClientsClientIdDocumentsPost,
   initMyDocumentEndpointMeDocumentsPost,
   listAdvisorItinerariesEndpointItinerariesGet,
@@ -120,6 +122,9 @@ import type {
   AnalysisCreatedResponse,
   AnalysisDetailResponse,
   AnalysisSummaryResponse,
+  AttentionItemOut,
+  AwarenessResponse,
+  ClientAttentionOut,
   ClientContactCreate,
   ClientContactDetail,
   ClientContactUpdate,
@@ -675,6 +680,76 @@ function parseGetClientDetail(status: number): GetClientDetail {
   if (status === 404) return "client_not_found";
   if (status === 403) return "advisor_only";
   return "unknown";
+}
+
+export type { AttentionItemOut, AwarenessResponse, ClientAttentionOut };
+
+export type AwarenessDetail = "advisor_only" | "network_error" | "unknown";
+
+/**
+ * Discriminated result for GET /awareness — the advisor's per-client
+ * attention rollup (ADV-14). 403 collapses to `advisor_only`.
+ */
+export type AwarenessResult =
+  | { ok: true; clients: ClientAttentionOut[] }
+  | { ok: false; status: number; detail: AwarenessDetail };
+
+/**
+ * Typed wrapper for GET /awareness — every client of the calling advisor with
+ * a live attention signal, newest-first. Powers the Command Center roster
+ * badges; the caller merges by `client_id` onto its roster rows.
+ */
+export async function getAwareness(client: Client): Promise<AwarenessResult> {
+  try {
+    const { data, error, response } = await getAwarenessEndpointAwarenessGet({
+      client,
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, clients: data.clients };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 403 ? "advisor_only" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+/**
+ * Discriminated result for GET /awareness/clients/{client_id} — one client's
+ * attention feed (empty when nothing is pending). Powers the client-detail
+ * strip.
+ */
+export type ClientAwarenessResult =
+  | { ok: true; attention: ClientAttentionOut }
+  | { ok: false; status: number; detail: AwarenessDetail };
+
+/**
+ * Typed wrapper for GET /awareness/clients/{client_id}.
+ */
+export async function getClientAwareness(
+  client: Client,
+  clientId: string,
+): Promise<ClientAwarenessResult> {
+  try {
+    const { data, error, response } =
+      await getClientAwarenessEndpointAwarenessClientsClientIdGet({
+        client,
+        path: { client_id: clientId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, attention: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 403 ? "advisor_only" : "unknown",
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }
 
 export type CreateSessionDetail =

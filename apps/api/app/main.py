@@ -34,6 +34,7 @@ from app.routers.agent import router as agent_router
 from app.routers.agent_internal import router as agent_internal_router
 from app.routers.analyze import router as analyze_router
 from app.routers.auth import router as auth_router
+from app.routers.awareness import router as awareness_router
 from app.routers.bookings import router as bookings_router
 from app.routers.client_documents import router as client_documents_router
 from app.routers.clients import router as clients_router
@@ -287,6 +288,7 @@ app.include_router(invoices_router)
 app.include_router(bookings_router)
 app.include_router(advisor_itineraries_router)
 app.include_router(analyze_router)
+app.include_router(awareness_router)
 app.include_router(fill_router)
 app.include_router(inventory_router)
 app.include_router(clients_router)

@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import {
   type AccessStatus,
   type AdvisorItinerarySummary,
+  type ClientAttentionOut,
   type ClientSummary,
   createApiClient,
+  getAwareness,
   listAdvisorItineraries,
   listClients,
 } from "@ov-black/api-client";
@@ -13,6 +15,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
+
+import { AttentionBadge } from "./_components/attention";
 
 export const dynamic = "force-dynamic";
 
@@ -36,14 +40,35 @@ export default async function CommandCenterPage() {
     accessToken ? { baseUrl: apiBaseUrl, accessToken } : { baseUrl: apiBaseUrl },
   );
 
-  // Two reads in parallel — both gates are advisor-only and identical-key.
-  const [clientsResult, itinerariesResult] = await Promise.all([
+  // Three reads in parallel — all advisor-only, identical-key. Awareness
+  // (ADV-14) is best-effort: a failure just means no badges, never a broken page.
+  const [clientsResult, itinerariesResult, awarenessResult] = await Promise.all([
     listClients(api),
     listAdvisorItineraries(api),
+    getAwareness(api),
   ]);
 
   const clients = clientsResult.ok ? clientsResult.clients : [];
   const itineraries = itinerariesResult.ok ? itinerariesResult.itineraries : [];
+
+  // client_id → its attention rollup, plus the set of itineraries with an
+  // actionable (open-state) signal so we can badge the itinerary roster too.
+  const attentionByClient = new Map<string, ClientAttentionOut>();
+  const attentionItineraries = new Set<string>();
+  if (awarenessResult.ok) {
+    for (const c of awarenessResult.clients) {
+      attentionByClient.set(c.client_id, c);
+      if (!c.needs_attention) continue;
+      for (const item of c.items) {
+        if (
+          item.itinerary_id &&
+          (item.kind === "changes_requested" || item.kind === "unread_messages")
+        ) {
+          attentionItineraries.add(item.itinerary_id);
+        }
+      }
+    }
+  }
 
   const today = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
@@ -107,7 +132,7 @@ export default async function CommandCenterPage() {
         {itineraries.length === 0 ? (
           <EmptyNote>No itineraries yet — they appear as soon as a client&rsquo;s first session is opened.</EmptyNote>
         ) : (
-          <ItinerariesTable rows={itineraries} />
+          <ItinerariesTable rows={itineraries} attentionItineraries={attentionItineraries} />
         )}
       </Panel>
 
@@ -122,7 +147,7 @@ export default async function CommandCenterPage() {
             The atelier is quiet. Add the first client to begin.
           </EmptyNote>
         ) : (
-          <ClientsTable rows={clients} />
+          <ClientsTable rows={clients} attentionByClient={attentionByClient} />
         )}
       </Panel>
     </main>
@@ -180,7 +205,13 @@ function Metric({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
+function ItinerariesTable({
+  rows,
+  attentionItineraries,
+}: {
+  rows: AdvisorItinerarySummary[];
+  attentionItineraries: Set<string>;
+}) {
   return (
     <div className="-mx-5 overflow-x-auto sm:-mx-7">
       <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
@@ -200,12 +231,21 @@ function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
               className="group transition-colors hover:bg-paper/8"
             >
               <Td className="pl-5 sm:pl-7">
-                <Link
-                  href={`/itinerary/${row.id}`}
-                  className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
-                >
-                  {row.title || "Untitled draft"}
-                </Link>
+                <span className="flex items-center gap-2">
+                  {attentionItineraries.has(row.id) ? (
+                    <span
+                      aria-label="Needs attention"
+                      title="Needs attention"
+                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand"
+                    />
+                  ) : null}
+                  <Link
+                    href={`/itinerary/${row.id}`}
+                    className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
+                  >
+                    {row.title || "Untitled draft"}
+                  </Link>
+                </span>
               </Td>
               <Td>
                 <Link
@@ -232,7 +272,13 @@ function ItinerariesTable({ rows }: { rows: AdvisorItinerarySummary[] }) {
   );
 }
 
-function ClientsTable({ rows }: { rows: ClientSummary[] }) {
+function ClientsTable({
+  rows,
+  attentionByClient,
+}: {
+  rows: ClientSummary[];
+  attentionByClient: Map<string, ClientAttentionOut>;
+}) {
   return (
     <div className="-mx-5 overflow-x-auto sm:-mx-7">
       <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
@@ -253,12 +299,15 @@ function ClientsTable({ rows }: { rows: ClientSummary[] }) {
               className="group transition-colors hover:bg-paper/8"
             >
               <Td className="pl-5 sm:pl-7">
-                <Link
-                  href={`/command-center/clients/${c.id}`}
-                  className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
-                >
-                  {c.full_name}
-                </Link>
+                <span className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/command-center/clients/${c.id}`}
+                    className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
+                  >
+                    {c.full_name}
+                  </Link>
+                  <AttentionBadge attention={attentionByClient.get(c.id)} />
+                </span>
               </Td>
               <Td className="hidden truncate text-paper/60 md:table-cell">
                 {c.email}

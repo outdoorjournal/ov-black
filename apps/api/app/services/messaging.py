@@ -26,7 +26,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -299,13 +299,51 @@ async def _load_thread(
     return MessagingOutcome.OK, ThreadContext(thread=thread, client=client)
 
 
+async def _mark_thread_read(
+    session: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    actor: ActorContext,
+) -> None:
+    """Stamp the reading actor's ``last_read_at = now()`` (ADV-14 unread signal).
+
+    A thread counts as *unread* for a participant while messages authored by
+    *others* are newer than their ``last_read_at`` — the advisor awareness feed
+    reads exactly that to know a client is waiting on a reply. Marking on list
+    keeps the clear-on-read zero-UI: opening the thread in the ``HumanThread``
+    panel (which lists messages) is what silences the badge. Best-effort — the
+    reader may not be seeded yet (e.g. an itinerary thread the counterpart
+    opened), so we ensure the row first, then stamp.
+    """
+    assert actor.user_id is not None
+    await _ensure_participant(
+        session,
+        thread_id=thread_id,
+        actor_id=actor.user_id,
+        actor_kind=_author_kind_for(actor),
+    )
+    await session.execute(
+        update(ThreadParticipant)
+        .where(
+            ThreadParticipant.thread_id == thread_id,
+            ThreadParticipant.actor_id == actor.user_id,
+        )
+        .values(last_read_at=func.now())
+    )
+    await session.commit()
+
+
 async def list_messages(
     session: AsyncSession,
     *,
     actor: ActorContext,
     thread_id: uuid.UUID,
 ) -> tuple[MessagingOutcome, list[Message]]:
-    """Every non-removed message in a thread, oldest first."""
+    """Every non-removed message in a thread, oldest first.
+
+    Listing a thread marks it read for the caller (``last_read_at``) so the
+    ADV-14 awareness feed's unread count self-clears when the advisor opens it.
+    """
     outcome, ctx = await _load_thread(session, actor=actor, thread_id=thread_id)
     if ctx is None:
         return outcome, []
@@ -323,6 +361,8 @@ async def list_messages(
         .scalars()
         .all()
     )
+    if actor.user_id is not None:
+        await _mark_thread_read(session, thread_id=thread_id, actor=actor)
     return MessagingOutcome.OK, list(rows)
 
 

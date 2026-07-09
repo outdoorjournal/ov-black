@@ -373,10 +373,12 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
    description, no location, no supplier-confirmation field for manually-booked items (the
    [advisor.md](./advisor.md) "Reminders for later" note). Soft delete (0040, notes-only) has
    no restore; the undo toast reverses placement only. Mood/cover fixed at intake (G-COVER).
-3. **No advisor awareness layer.** Nothing surfaces traveler activity — a reconcile request
-   is only visible inside that fork's Studio; approvals, payments, and thread messages require
-   walking into each trip. The client page has no cross-trip invoice/booking roster (a known
-   resume hook) and no "since you last looked."
+3. **No advisor awareness layer.** *(✅ largely closed by ADV-14 / Wave D.)* Nothing surfaced
+   traveler activity — a reconcile request was only visible inside that fork's Studio;
+   approvals, payments, and thread messages required walking into each trip. Wave D adds the
+   derived awareness feed (roster badges + per-client attention strip). Still open: a
+   cross-trip invoice/booking roster on the client page, and a persisted "since you last
+   looked" watermark (the recent-activity tier is a rolling window until it earns one).
 4. **The agent reads the graph but can't do half the advisor's job.** No node field-edit tool
    (title/cost/description); zero money awareness (can't answer "what's uninvoiced," can't
    explain a money-gate refusal, can't warn an offer is expiring); no per-turn graph digest
@@ -543,11 +545,44 @@ Mirror the pillar suite's discipline: skip with a reason, never false-green.
   trace only when tools are *expected*, and the digest eval runs a
   tool-firing turn first to prove the trace channel live.
 
-**Wave D — awareness layer**
-- **ADV-14 — needs-attention feed** (M/L): derive from what exists (`reconcile_requested_at`,
-  node_history approvals, payments, unread thread messages) — no new table initially. Surface
-  as command-center roster badges + a per-client "since you last looked" strip; a real
-  notifications model only if that earns it.
+**Wave D — awareness layer** *(✅ shipped 2026-07-08)*
+- ✅ **ADV-14 — needs-attention feed** (M/L): shipped, **derived — no new table, no
+  new column, no watermark** (the plan's "derive from what exists" taken literally). A
+  new `app/services/awareness.py` (pure `build_client_attention` + async
+  `load_advisor_attention`, the billing_summary/graph_digest split) reads four
+  already-persisted signals scoped to `clients.owner_id` and rolls them up per client,
+  in **two tiers**:
+  - **Actionable (open-state)** — these and only these light the roster badge, because
+    they self-clear when the advisor does the work, so a badge never goes stale:
+    `changes_requested` (an open reconcile — `itineraries.reconcile_requested_at`,
+    cleared on merge/withdraw) and `unread_messages` (human-thread messages authored by
+    someone other than the advisor, newer than the advisor's
+    `thread_participants.last_read_at`).
+  - **Recent activity (event-style, rolling 14-day window)** — strip context only, not
+    the badge: `traveler_approved` (`node_history` `actor_kind='traveler'`, a genuine
+    transition *into* `approved`) and `payment_received` (a succeeded payment).
+  - **`last_read_at` wired** (defined since 0037, never written): `messaging.list_messages`
+    now stamps the reading actor's read watermark, so "unread" is honest and clears the
+    moment the advisor opens the thread — zero UI, the `HumanThread` panel already lists.
+  - **Surfaces:** `GET /awareness` (advisor-wide rollup, `require_advisor`) badges the
+    Command Center roster — a brand "N waiting" pill on client rows + a dot on the
+    itinerary rows whose trip has an open-state signal; `GET /awareness/clients/{id}`
+    feeds a per-client **attention strip** on the client-detail page ("Needs attention"
+    when actionable, else "Since you were away"), each row deep-linking to its trip.
+    Both reads are best-effort in the page (a failure just hides badges, never breaks).
+  - **Tested:** API — `test_awareness.py` (pure tiering math ×5 + `@integration` ×3: the
+    four signal queries with advisor-scope isolation, the excluded-approval cases —
+    wrong actor / out-of-window / re-save — the client scope, and the unread
+    round-trip that clears when the advisor lists the thread); the read-marking rides
+    the same `list_messages` path the messaging suite already exercises. Web —
+    `attention.test.tsx` (the copy/tone map per kind, badge lights only on actionable,
+    strip feed + deep links + actionable-vs-recent header framing).
+  - **Boundary / earns-it follow-up:** no persisted "last looked" watermark yet, so the
+    *recent-activity* tier is a rolling window (informational), not literally "since you
+    last looked" — the open-state tier is what's genuinely self-clearing. A real
+    notifications model (or a `clients.advisor_last_viewed_at` watermark that turns
+    approvals/payments into self-clearing attention) is the next step **only if it earns
+    it**.
 
 **Wave E — relative days → pinned dates (the retime spine)** *(designed 2026-07-08 —
 ADV-16 + ADV-17 (the server spine + honest rendering + booking invariant, D028)

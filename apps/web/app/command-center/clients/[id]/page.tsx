@@ -11,6 +11,7 @@ import {
   type PartyMemberDetail,
   createApiClient,
   getClient,
+  getClientAwareness,
   listAdvisorItineraries,
   listClientDocuments,
   listClientPartyMembers,
@@ -21,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
 
+import { AttentionStrip } from "@/app/command-center/_components/attention";
 import { SetClientCrumb } from "@/app/command-center/_components/CommandCenterCrumb";
 
 import { ClientContactsSection } from "./_components/ClientContactsSection";
@@ -64,12 +66,14 @@ export default async function ClientDetailPage({
     sessionsResult,
     partyResult,
     documentsResult,
+    awarenessResult,
   ] = await Promise.all([
     getClient(api, id),
     listAdvisorItineraries(api),
     listClientSessions(api, id),
     listClientPartyMembers(api, id),
     listClientDocuments(api, id),
+    getClientAwareness(api, id),
   ]);
 
   if (!clientResult.ok) {
@@ -105,6 +109,8 @@ export default async function ClientDetailPage({
   const documents: DocumentDetail[] = documentsResult.ok
     ? documentsResult.documents
     : [];
+  // ADV-14 — best-effort: a failure just hides the strip, never breaks the page.
+  const attention = awarenessResult.ok ? awarenessResult.attention : undefined;
 
   return (
     <main className="flex w-full flex-1 flex-col gap-12 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
@@ -131,6 +137,8 @@ export default async function ClientDetailPage({
           </div>
         </div>
       </header>
+
+      <AttentionStrip attention={attention} />
 
       {client.dossier ? (
         <Panel aria-labelledby="basics-heading">
