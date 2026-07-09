@@ -12,6 +12,10 @@ import { CommandCenterRail } from "./_components/CommandCenterRail";
 // under /command-center/** and supplies the shared app masthead. Individual
 // pages still call getUser() for their own needs (access token lookups);
 // Supabase's SSR helpers reuse the validated session within the request.
+//
+// Wave F: the whole advisor shell is ink — the ops-room identity. Client
+// surfaces stay light editorial; the advisor works in the dark. Pages stop
+// painting their own bg and inherit this frame.
 export const dynamic = "force-dynamic";
 
 export default async function CommandCenterLayout({
@@ -27,7 +31,7 @@ export default async function CommandCenterLayout({
   }
 
   return (
-    <div className="flex h-dvh flex-col bg-paper text-ink">
+    <div className="flex h-dvh flex-col bg-ink text-paper">
       <CommandCenterCrumbProvider>
         <CommandCenterChrome user={header.user} homeHref={header.homeHref} />
         {/* Same shape as the itinerary shell: a fixed-height frame so the rail

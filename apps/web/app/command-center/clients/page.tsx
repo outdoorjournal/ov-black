@@ -1,47 +1,73 @@
+import type { Route } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 import {
-  type AccessStatus,
+  type ClientAttentionOut,
   type ClientSummary,
-  createApiClient,
+  getAwareness,
   listClients,
 } from "@ov-black/api-client";
 
 import { Button } from "@/components/ui/button";
-import { publicEnv } from "@/lib/env";
-import { createServerSupabase } from "@/lib/supabase/server";
 
+import { AttentionBadge } from "../_components/attention";
+import {
+  EmptyNote,
+  ErrorBanner,
+  InvitePill,
+  Panel,
+  relativeDay,
+} from "../_components/panels";
+import { CursorPager } from "../_components/table/CursorPager";
+import { type ColumnDef, DataTable } from "../_components/table/DataTable";
+import { EmptyState } from "../_components/table/EmptyState";
+import { SortHeader } from "../_components/table/SortHeader";
+import { TableToolbar } from "../_components/table/TableToolbar";
 import { InviteActions } from "../_components/invite-actions";
+import { advisorApi } from "../_lib/api";
+import {
+  type SearchParamsShape,
+  type TableParams,
+  parseTableParams,
+} from "../_lib/tableParams";
 
 // Always render per-request — the advisor's roster must never be cached
 // across sessions.
 export const dynamic = "force-dynamic";
 
-export default async function ClientsPage() {
-  const supabase = await createServerSupabase();
+const BASE = "/command-center/clients" as Route;
+const PARAMS_CONFIG = {
+  statuses: ["uninvited", "pending", "active"],
+  sorts: ["created_at", "full_name"],
+} as const;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    redirect("/");
+export default async function ClientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParamsShape>;
+}) {
+  const params = parseTableParams(await searchParams, PARAMS_CONFIG);
+  const api = await advisorApi();
+
+  const [result, awarenessResult] = await Promise.all([
+    listClients(api, {
+      ...(params.q ? { q: params.q } : {}),
+      ...(params.status ? { status: params.status as "uninvited" | "pending" | "active" } : {}),
+      ...(params.sort ? { sort: params.sort as "created_at" | "full_name" } : {}),
+      ...(params.order ? { order: params.order } : {}),
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+    }),
+    getAwareness(api), // best-effort: a failure just hides badges
+  ]);
+
+  const clients = result.ok ? result.clients : [];
+  const attentionByClient = new Map<string, ClientAttentionOut>();
+  if (awarenessResult.ok) {
+    for (const c of awarenessResult.clients) attentionByClient.set(c.client_id, c);
   }
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const accessToken = session?.access_token;
-
-  const { apiBaseUrl } = publicEnv();
-  const api = createApiClient(
-    accessToken ? { baseUrl: apiBaseUrl, accessToken } : { baseUrl: apiBaseUrl },
-  );
-  const result = await listClients(api);
-  const clients = result.ok ? result.clients : [];
-
   return (
-    <main className="flex w-full flex-1 flex-col gap-10 bg-ink px-6 py-10 text-paper sm:px-10 sm:py-12">
+    <main className="flex w-full flex-1 flex-col gap-10 px-6 py-10 sm:px-10 sm:py-12">
       <header className="flex flex-col gap-4 border-b border-paper/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-sans text-[10px] uppercase tracking-eyebrow text-paper/55">
@@ -57,151 +83,126 @@ export default async function ClientsPage() {
       </header>
 
       {!result.ok ? (
-        <div className="border border-destructive/40 bg-destructive/10 p-4 font-sans text-sm text-destructive-foreground">
-          Could not load clients — {errorCopy(result.detail)}
-        </div>
+        <ErrorBanner>Could not load clients — {errorCopy(result.detail)}</ErrorBanner>
       ) : null}
 
-      <section className="flex flex-col gap-4 rounded-md border border-paper/10 bg-paper/5 p-5 sm:p-7">
-        {clients.length === 0 ? (
-          <p className="font-sans text-sm italic text-paper/55">
-            No clients yet — click <em>New Client</em> to add your first one.
-          </p>
+      <Panel aria-label="Client roster">
+        <TableToolbar
+          base={BASE}
+          params={params}
+          total={result.ok ? result.total : 0}
+          noun="client"
+          searchPlaceholder="Search name or email…"
+          statuses={[
+            { value: "active", label: "Active" },
+            { value: "pending", label: "Pending" },
+            { value: "uninvited", label: "Uninvited" },
+          ]}
+        />
+        {result.ok && clients.length === 0 ? (
+          <EmptyState
+            base={BASE}
+            params={params}
+            emptyTitle="The atelier is quiet."
+            emptyHint="Add the first client to begin."
+          />
+        ) : !result.ok ? (
+          <EmptyNote>Nothing to show.</EmptyNote>
         ) : (
-          <ClientList clients={clients} />
+          <DataTable
+            columns={columns(params, attentionByClient)}
+            rows={clients}
+            rowKey={(c) => c.id}
+          />
         )}
-      </section>
+        <CursorPager
+          base={BASE}
+          params={params}
+          nextCursor={result.ok ? result.nextCursor : null}
+        />
+      </Panel>
     </main>
   );
 }
 
-function ClientList({ clients }: { clients: ClientSummary[] }) {
-  return (
-    <div className="-mx-5 overflow-x-auto sm:-mx-7">
-      <table className="w-full border-y border-paper/10 text-left font-sans text-sm">
-        <thead className="bg-paper/6 text-[10px] uppercase tracking-label text-paper/55">
-          <tr>
-            <Th className="pl-5 sm:pl-7">Name</Th>
-            <Th className="hidden md:table-cell">Email</Th>
-            <Th>Status</Th>
-            <Th>Dossier</Th>
-            <Th>Added</Th>
-            <Th>Signed in</Th>
-            <Th className="pr-5 text-right sm:pr-7" />
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-paper/10">
-          {clients.map((c) => (
-            <tr key={c.id} className="group transition-colors hover:bg-paper/8">
-              <Td className="pl-5 sm:pl-7">
-                <Link
-                  href={`/command-center/clients/${c.id}`}
-                  className="font-serif text-base tracking-tight text-paper underline-offset-4 group-hover:underline"
-                >
-                  {c.full_name}
-                </Link>
-              </Td>
-              <Td className="hidden truncate text-paper/60 md:table-cell">
-                {c.email}
-              </Td>
-              <Td>
-                <InvitePill status={c.access_status} />
-              </Td>
-              <Td className="text-paper/60">
-                {c.has_dossier ? "On file" : "—"}
-              </Td>
-              <Td className="whitespace-nowrap text-paper/60">
-                {relativeDay(c.created_at)}
-              </Td>
-              <Td className="whitespace-nowrap text-paper/60">
-                {c.accepted_at ? relativeDay(c.accepted_at) : "—"}
-              </Td>
-              <Td className="pr-5 text-right sm:pr-7">
-                <InviteActions
-                  clientId={c.id}
-                  accessStatus={c.access_status}
-                />
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Th({
-  children,
-  className = "",
-}: {
-  children?: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th
-      scope="col"
-      className={`whitespace-nowrap px-3 py-3 font-sans font-normal ${className}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className = "",
-}: {
-  children?: React.ReactNode;
-  className?: string;
-}) {
-  return <td className={`px-3 py-3 align-middle ${className}`}>{children}</td>;
-}
-
-function InvitePill({ status }: { status: AccessStatus }) {
-  const copy =
-    status === "active"
-      ? "Active"
-      : status === "pending"
-        ? "Pending"
-        : "Uninvited";
-  const tone =
-    status === "active"
-      ? "border-paper/40 text-paper"
-      : status === "pending"
-        ? "border-brand/40 text-brand"
-        : "border-paper/20 text-paper/50";
-  return (
-    <span
-      className={`inline-block rounded-full border px-2 py-0.5 font-sans text-[10px] uppercase tracking-[0.25em] ${tone}`}
-    >
-      {copy}
-    </span>
-  );
-}
-
-function relativeDay(iso: string): string {
-  const then = new Date(iso);
-  const now = new Date();
-  const days = Math.floor(
-    (now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24),
-  );
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(then);
+function columns(
+  params: TableParams,
+  attentionByClient: Map<string, ClientAttentionOut>,
+): ColumnDef<ClientSummary>[] {
+  return [
+    {
+      key: "name",
+      header: "Name",
+      headerCell: (
+        <SortHeader base={BASE} params={params} sortKey="full_name">
+          Name
+        </SortHeader>
+      ),
+      cell: (c) => (
+        <span className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/command-center/clients/${c.id}`}
+            className="font-serif text-base tracking-tight text-paper underline-offset-4 focus-visible:underline group-hover:underline"
+          >
+            {c.full_name}
+          </Link>
+          <AttentionBadge attention={attentionByClient.get(c.id)} />
+        </span>
+      ),
+    },
+    {
+      key: "email",
+      header: "Email",
+      hideBelow: "md",
+      className: "truncate text-paper/60",
+      cell: (c) => c.email,
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (c) => <InvitePill status={c.access_status} />,
+    },
+    {
+      key: "dossier",
+      header: "Dossier",
+      hideBelow: "lg",
+      className: "text-paper/60",
+      cell: (c) => (c.has_dossier ? "On file" : "—"),
+    },
+    {
+      key: "added",
+      header: "Added",
+      headerCell: (
+        <SortHeader base={BASE} params={params} sortKey="created_at" defaultOrder="desc">
+          Added
+        </SortHeader>
+      ),
+      className: "whitespace-nowrap text-paper/60",
+      cell: (c) => relativeDay(c.created_at),
+    },
+    {
+      key: "signed_in",
+      header: "Signed in",
+      hideBelow: "lg",
+      className: "whitespace-nowrap text-paper/60",
+      cell: (c) => (c.accepted_at ? relativeDay(c.accepted_at) : "—"),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      className: "pr-5 sm:pr-7",
+      cell: (c) => <InviteActions clientId={c.id} accessStatus={c.access_status} />,
+    },
+  ];
 }
 
 function errorCopy(detail: string): string {
-  switch (detail) {
-    case "advisor_only":
-      return "this workspace is advisor-only.";
-    case "network_error":
-      return "could not reach the server.";
-    default:
-      return "try again in a moment.";
+  if (detail === "advisor_only") {
+    return "this account does not have advisor access.";
   }
+  if (detail === "network_error") {
+    return "the API is unreachable. Is it running?";
+  }
+  return "an unexpected error occurred.";
 }

@@ -1,15 +1,16 @@
 "use client";
 
 // Advisor-section chrome: the shared black AppHeader (wordmark + breadcrumbs +
-// avatar menu). The primary nav now lives in the shared left rail
-// (CommandCenterRail) rather than horizontal masthead tabs, so command-center
-// navigates identically to the itinerary builder and basecamp.
+// avatar menu). The primary nav lives in the shared left rail
+// (CommandCenterRail); Wave F adds the masthead actions — the ⌘K search
+// trigger and the LIVE feed indicator — via AppHeader's actions slot.
 //
 // Crumbs are derived from the pathname here (a client component) so the server
 // layout can render this once and every /command-center page lands in the right
 // place without prop-drilling.
 
 import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { AppHeader, type Crumb } from "@/app/_components/app-header/AppHeader";
 import type { AppHeaderUser } from "@/lib/appHeader";
@@ -23,7 +24,9 @@ import { useCommandCenterCrumb } from "./CommandCenterCrumb";
  * meaningless "Client".
  */
 function crumbsFor(pathname: string, clientLabel: string | null): Crumb[] {
-  if (pathname === "/command-center") return [{ label: "Overview" }];
+  if (pathname === "/command-center") return [{ label: "Ops" }];
+  if (pathname.startsWith("/command-center/trips")) return [{ label: "Trips" }];
+  if (pathname.startsWith("/command-center/money")) return [{ label: "Money" }];
 
   if (
     pathname.startsWith("/command-center/clients") ||
@@ -41,7 +44,16 @@ function crumbsFor(pathname: string, clientLabel: string | null): Crumb[] {
         .filter(Boolean);
       // On a specific client, show its name; until the page registers it, leave
       // the trailing crumb off rather than showing a generic placeholder.
-      if (rest.length > 0 && clientLabel) crumbs.push({ label: clientLabel });
+      if (rest.length > 0 && clientLabel) {
+        if (rest.includes("sessions")) {
+          crumbs.push(
+            { label: clientLabel, href: `/command-center/clients/${rest[0]}` },
+            { label: "Session" },
+          );
+        } else {
+          crumbs.push({ label: clientLabel });
+        }
+      }
     }
     return crumbs;
   }
@@ -52,9 +64,11 @@ function crumbsFor(pathname: string, clientLabel: string | null): Crumb[] {
 export function CommandCenterChrome({
   user,
   homeHref,
+  actions,
 }: {
   user: AppHeaderUser;
   homeHref: string;
+  actions?: ReactNode;
 }) {
   const pathname = usePathname() ?? "";
   const { clientLabel } = useCommandCenterCrumb();
@@ -64,6 +78,7 @@ export function CommandCenterChrome({
       user={user}
       homeHref={homeHref}
       crumbs={crumbsFor(pathname, clientLabel)}
+      {...(actions !== undefined ? { actions } : {})}
     />
   );
 }
