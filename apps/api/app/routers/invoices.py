@@ -132,6 +132,7 @@ class InvoiceResponse(BaseModel):
     status: InvoiceStatus
     currency: str
     due_at: datetime | None = None
+    issued_at: datetime | None = None
     total: Decimal
     created_at: datetime
     lines: list[InvoiceLineItemResponse] = Field(default_factory=list)
@@ -221,6 +222,7 @@ def _invoice_response(view: InvoiceView) -> InvoiceResponse:
         status=inv.status,
         currency=inv.currency,
         due_at=inv.due_at,
+        issued_at=inv.issued_at,
         total=view.total,
         created_at=inv.created_at,
         lines=[_line_response(line) for line in view.lines],

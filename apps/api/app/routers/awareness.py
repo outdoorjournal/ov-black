@@ -30,6 +30,7 @@ from app.routers.clients import _advisor_id
 from app.services.awareness import (
     AttentionKind,
     ClientAttention,
+    Urgency,
     load_advisor_attention,
 )
 
@@ -40,7 +41,7 @@ router = APIRouter(prefix="/awareness", tags=["awareness"])
 
 
 class AttentionItemOut(BaseModel):
-    """One signal on one (client, itinerary) — a strip row."""
+    """One signal on one (client, itinerary) — a strip/queue row."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -49,6 +50,11 @@ class AttentionItemOut(BaseModel):
     itinerary_title: str | None
     count: int
     at: datetime
+    # Wave F: node-scoped signals name their node; clocked signals carry the
+    # countdown timestamp and an urgency the Ops queue ranks by.
+    node_id: uuid.UUID | None = None
+    urgency: Urgency = "normal"
+    deadline: datetime | None = None
 
 
 class ClientAttentionOut(BaseModel):
@@ -57,6 +63,9 @@ class ClientAttentionOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_id: uuid.UUID
+    # Empty string when unknown (the no-signal / foreign-id empty feed) — the
+    # D015 existence-hiding posture leaks no name a caller didn't already have.
+    full_name: str
     needs_attention: bool
     attention_count: int
     items: list[AttentionItemOut]
@@ -74,6 +83,7 @@ class AwarenessResponse(BaseModel):
 def _to_out(attention: ClientAttention) -> ClientAttentionOut:
     return ClientAttentionOut(
         client_id=attention.client_id,
+        full_name=attention.full_name,
         needs_attention=attention.needs_attention,
         attention_count=attention.attention_count,
         items=[
@@ -83,6 +93,9 @@ def _to_out(attention: ClientAttention) -> ClientAttentionOut:
                 itinerary_title=item.itinerary_title,
                 count=item.count,
                 at=item.at,
+                node_id=item.node_id,
+                urgency=item.urgency,
+                deadline=item.deadline,
             )
             for item in attention.items
         ],
@@ -121,6 +134,7 @@ async def get_client_awareness_endpoint(
     # No signal (or a client this advisor doesn't own) → the empty feed.
     return ClientAttentionOut(
         client_id=client_id,
+        full_name="",
         needs_attention=False,
         attention_count=0,
         items=[],

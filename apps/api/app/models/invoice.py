@@ -144,6 +144,9 @@ class Invoice(Base):
     )
     currency: Mapped[str] = mapped_column(nullable=False)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the invoice went out (draft → issued), stamped by issue_invoice()
+    # since 0042. NULL on drafts and on invoices issued before the column.
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         nullable=True,

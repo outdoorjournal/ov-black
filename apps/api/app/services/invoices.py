@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -505,6 +505,7 @@ async def issue_invoice(
         return _err("no_line_items")
 
     invoice.status = InvoiceStatus.issued
+    invoice.issued_at = datetime.now(UTC)
     await session.commit()
     logger.info(
         "invoice.issue",
