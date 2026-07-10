@@ -135,11 +135,22 @@ export function AgentSurface({
             }}
             transition={{ duration: 0.26, ease: "easeOut" }}
             className={cn(
-              "pointer-events-auto flex h-full w-full flex-col bg-paper shadow-float",
+              "pointer-events-auto relative flex h-full w-full flex-col bg-paper shadow-float",
               "ring-1 ring-ink/10",
               side === "right" ? "rounded-r-md" : "rounded-l-md",
             )}
           >
+            {/* The seam: the chat window's edge casts a shadow onto the panel,
+                selling the slide-out-from-underneath. */}
+            <div
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute inset-y-0 z-10 w-3",
+                side === "right"
+                  ? "left-0 bg-gradient-to-r from-ink/20 to-transparent"
+                  : "right-0 bg-gradient-to-l from-ink/20 to-transparent",
+              )}
+            />
             <header className="flex items-center justify-between border-b border-ink/10 px-6 py-3">
               <p className="font-sans text-[10px] uppercase tracking-[0.24em] text-ink/45">
                 {KIND_LABEL[surface.kind]}

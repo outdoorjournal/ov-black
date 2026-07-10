@@ -4,7 +4,13 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type { Marker as MapboxMarker } from "mapbox-gl";
 import { useEffect, useRef, useState } from "react";
 
-import { getMapboxToken, loadMapbox, type MapboxMap } from "../model/mapbox";
+import {
+  applyOvMapTheme,
+  getMapboxToken,
+  loadMapbox,
+  OV_MAP_STYLE,
+  type MapboxMap,
+} from "../model/mapbox";
 
 export interface MapFocus {
   lat: number;
@@ -43,7 +49,7 @@ export function MapFlyer({ focus, arc = null }: MapFlyerProps) {
       if (cancelled || !containerRef.current) return;
       const opts: Record<string, unknown> = {
         container: containerRef.current,
-        style: "mapbox://styles/mapbox/light-v11",
+        style: OV_MAP_STYLE,
         center: DEFAULT_CENTER,
         zoom: 4,
         interactive: false,
@@ -52,7 +58,10 @@ export function MapFlyer({ focus, arc = null }: MapFlyerProps) {
       if (token) opts["accessToken"] = token;
       const map = new mapbox.Map(opts as ConstructorParameters<typeof mapbox.Map>[0]);
       mapRef.current = map;
-      map.on("load", () => setReady(true));
+      map.on("load", () => {
+        applyOvMapTheme(map);
+        setReady(true);
+      });
     });
     return () => {
       cancelled = true;

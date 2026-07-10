@@ -219,6 +219,7 @@ export function SessionThread({
           {...(boundId ? { sessionId: boundId } : {})}
           {...(intro ? { intro } : {})}
           onSessionOpened={handleOpened}
+          surfaceSide="right"
         />
       </div>
     </div>

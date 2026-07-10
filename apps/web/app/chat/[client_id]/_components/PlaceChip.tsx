@@ -22,8 +22,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  applyOvMapTheme,
   getMapboxToken,
   loadMapbox,
+  OV_MAP_STYLE,
   type MapboxMap,
 } from "@/app/_components/itinerary-graph/model/mapbox";
 import type { GeocodeResult } from "@/lib/chat/geocode";
@@ -163,7 +165,7 @@ function ChipMap({ lookup }: { lookup: LookupState }) {
       if (cancelled || !containerRef.current) return;
       const opts: Record<string, unknown> = {
         container: containerRef.current,
-        style: "mapbox://styles/mapbox/light-v11",
+        style: OV_MAP_STYLE,
         center: [lng, lat],
         zoom: 8,
         interactive: false,
@@ -174,6 +176,7 @@ function ChipMap({ lookup }: { lookup: LookupState }) {
       mapRef.current = map;
       map.on("load", () => {
         if (cancelled) return;
+        applyOvMapTheme(map);
         new mapbox.Marker({ color: "#F5701F" }).setLngLat([lng, lat]).addTo(map);
       });
     });

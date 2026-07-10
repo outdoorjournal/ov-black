@@ -5,12 +5,19 @@
 // traveler actually explore; degrades to the same quiet compass placeholder
 // when there's no token or nothing to draw.
 
+// Mapbox's stylesheet must ride along wherever this map renders: without it
+// the canvas isn't absolutely positioned (the view drifts off-center) and
+// markers aren't clipped to the container (the pin floats over the brief).
+import "mapbox-gl/dist/mapbox-gl.css";
+
 import { MapPin } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import {
+  applyOvMapTheme,
   getMapboxToken,
   loadMapbox,
+  OV_MAP_STYLE,
   type MapboxMap,
 } from "@/app/_components/itinerary-graph/model/mapbox";
 import type { LngLat } from "@/lib/chat/polyline";
@@ -44,7 +51,7 @@ export function SurfaceMap({ markers = [], line, className }: SurfaceMapProps) {
       if (!focus) return;
       const opts: Record<string, unknown> = {
         container: containerRef.current,
-        style: "mapbox://styles/mapbox/light-v11",
+        style: OV_MAP_STYLE,
         center: focus,
         zoom: line ? 9 : 11,
         attributionControl: false,
@@ -55,6 +62,7 @@ export function SurfaceMap({ markers = [], line, className }: SurfaceMapProps) {
 
       map.on("load", () => {
         if (cancelled) return;
+        applyOvMapTheme(map);
         for (const marker of markers) {
           new mapbox.Marker({ color: BRAND }).setLngLat(marker).addTo(map);
         }
@@ -103,7 +111,7 @@ export function SurfaceMap({ markers = [], line, className }: SurfaceMapProps) {
       <div
         ref={containerRef}
         data-testid="surface-map"
-        className={cn("h-64 w-full bg-ink/5", className)}
+        className={cn("relative h-64 w-full overflow-hidden bg-ink/5", className)}
       />
     );
   }

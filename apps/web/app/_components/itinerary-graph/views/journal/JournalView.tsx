@@ -594,15 +594,27 @@ function DaySection({
   );
 
   return (
-    <section data-testid="journal-day" data-date={section.date}>
-      <DayHeader label={section.label} date={section.date} datesPinned={pinned} />
-      <div className="relative flex flex-col gap-2 py-3" style={spineColStyle}>
-        {/* The continuous spine — one line the circles sit on. */}
+    <section data-testid="journal-day" data-date={section.date} className="relative">
+      {/* Alternate days wear a whisper of a wash — a reading aid, keyed to the
+          scaffold index so the alternation tracks calendar days even across
+          elisions. Painted as an overhanging layer so the grid stays put. */}
+      {section.index % 2 === 1 ? (
         <span
           aria-hidden
-          className="absolute bottom-0 top-0 w-px bg-ink/15"
-          style={{ left: SPINE_COL_PX / 2 }}
+          data-testid="journal-day-tint"
+          className="absolute -inset-x-3 inset-y-0 rounded-lg bg-ink/[0.03]"
         />
+      ) : null}
+      {/* The continuous spine — one line the circles sit on. It spans the
+          whole section (behind the day rule, which crosses it) and reaches
+          into the gap below so the line never breaks at a day boundary. */}
+      <span
+        aria-hidden
+        className="absolute -bottom-2 top-0 w-px bg-ink/15"
+        style={{ left: SPINE_COL_PX / 2 }}
+      />
+      <DayHeader label={section.label} date={section.date} datesPinned={pinned} />
+      <div className="relative flex flex-col gap-2 py-3" style={spineColStyle}>
         {/* Diff mode's diverged-region cue: a second, dashed thread running
             alongside the spine through this day. */}
         {hasDivergence ? (

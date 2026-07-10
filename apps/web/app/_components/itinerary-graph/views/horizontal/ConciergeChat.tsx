@@ -61,6 +61,10 @@ type ConciergeChatProps = {
    *  via `sessionId` or lazily created on the first turn. Lets a host (the
    *  concierge column) refresh its session list. */
   onSessionOpened?: (sessionId: string) => void;
+  /** Which side of this chat the drawer flyout emerges toward. Defaults to
+   *  "left" (the HorizontalView prototype's right-hand aside); the routed
+   *  shell's ConciergeColumn sits on the LEFT, so it passes "right". */
+  surfaceSide?: "left" | "right";
 };
 
 export function ConciergeChat({
@@ -75,6 +79,7 @@ export function ConciergeChat({
   hideHeader = false,
   sessionId,
   onSessionOpened,
+  surfaceSide = "left",
 }: ConciergeChatProps) {
   const pendingProposals = itineraryGraphStore.useStore(
     (s) => s.pendingProposals,
@@ -98,8 +103,8 @@ export function ConciergeChat({
   const sessionIdRef = useRef<string | null>(sessionId ?? null);
   const streamingIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  // This chat lives in the right-hand aside of the itinerary view, so the
-  // drawer flyout anchors here and slides out to the LEFT — over the canvas.
+  // The drawer flyout anchors here and slides out toward `surfaceSide`,
+  // over whatever sits beside this chat.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
   const canChat = Boolean(apiBaseUrl && accessToken && clientId);
@@ -329,7 +334,7 @@ export function ConciergeChat({
         onClose={close}
         onChooseOption={onChooseOption}
         anchorRef={panelRef}
-        side="left"
+        side={surfaceSide}
       />
     </div>
   );
