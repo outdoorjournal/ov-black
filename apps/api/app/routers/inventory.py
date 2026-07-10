@@ -184,6 +184,56 @@ async def search_inventory_endpoint(
         le=50_000,
         description="Google Places location-bias radius in metres (default 5km).",
     ),
+    regions: list[str] | None = Query(
+        default=None,
+        description=(
+            "Repeatable adventure-region filter (OV): ``Europe`` | ``Asia`` | "
+            "``Africa`` | ``North America`` | ``South America`` | ``Oceania``."
+        ),
+    ),
+    activity_kinds: list[str] | None = Query(
+        default=None,
+        description=(
+            "Repeatable OV activity-kind filter: ``Air`` | ``Land`` | ``Water`` "
+            "| ``Motor`` | ``Snow`` | ``Lodging``."
+        ),
+    ),
+    activities: list[str] | None = Query(
+        default=None,
+        description=(
+            "Repeatable OV activity-name filter (e.g. ``Hiking``, ``Rafting``, ``Kayaking``)."
+        ),
+    ),
+    min_price: int | None = Query(
+        default=None,
+        ge=0,
+        description="Adventure minimum price, USD major units (OV).",
+    ),
+    max_price: int | None = Query(
+        default=None,
+        ge=0,
+        description="Adventure maximum price, USD major units (OV, upstream cap 5000).",
+    ),
+    min_difficulty: int | None = Query(
+        default=None,
+        ge=1,
+        le=10,
+        description="Adventure minimum difficulty, 1–10 (OV).",
+    ),
+    max_difficulty: int | None = Query(
+        default=None,
+        ge=1,
+        le=10,
+        description="Adventure maximum difficulty, 1–10 (OV).",
+    ),
+    page: int | None = Query(
+        default=None,
+        ge=1,
+        description=(
+            "Adventure result page (OV serves 9 per page). Omit to let the "
+            "provider satisfy ``limit`` by walking pages."
+        ),
+    ),
     user: AuthenticatedUser = Depends(require_user),
     registry: InventoryProviderRegistry = Depends(get_inventory_registry),
 ) -> SearchInventoryResponse:
@@ -227,6 +277,23 @@ async def search_inventory_endpoint(
         filters["near_lng"] = near_lng
     if radius_m is not None:
         filters["radius_m"] = radius_m
+    # OV adventure filters — repeatable taxonomy lists + numeric ranges.
+    if regions:
+        filters["regions"] = regions
+    if activity_kinds:
+        filters["activity_kinds"] = activity_kinds
+    if activities:
+        filters["activities"] = activities
+    if min_price is not None:
+        filters["min_price"] = min_price
+    if max_price is not None:
+        filters["max_price"] = max_price
+    if min_difficulty is not None:
+        filters["min_difficulty"] = min_difficulty
+    if max_difficulty is not None:
+        filters["max_difficulty"] = max_difficulty
+    if page is not None:
+        filters["page"] = page
 
     try:
         items, outcomes = await search_inventory_detailed(

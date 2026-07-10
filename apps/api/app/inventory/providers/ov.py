@@ -5,6 +5,22 @@ Hits the public OV search + detail endpoints, maps each
 failures into log + empty-list (search) or typed error (get_detail) so
 router code never sees raw ``httpx`` exceptions.
 
+Upstream contract (voyage-site ``/api/search``, verified live 2026-07):
+- Multi-value filters are **repeated** query params (``regions=Asia&regions=Europe``);
+  a comma-joined value silently matches nothing.
+- ``regions`` matches ``countries.region`` — the six continents (``Europe``,
+  ``Asia``, ``Africa``, ``North America``, ``South America``, ``Oceania``).
+- ``activityKinds`` matches the OV taxonomy (``Air``, ``Land``, ``Water``,
+  ``Motor``, ``Snow``, ``Lodging``); ``activities`` matches individual
+  activity names (``Hiking``, ``Rafting``, …).
+- ``minPrice``/``maxPrice`` (USD major units, 0–5000) and
+  ``minDifficulty``/``maxDifficulty`` (1–10) bound the range fields.
+- The endpoint **ignores** ``limit`` and returns a fixed 9-trip page;
+  ``page`` selects the page and ``tripsTotalCount`` carries the total, so
+  honoring a caller's ``limit`` means walking pages client-side.
+- ``extraTrips`` are off-filter fillers returned only when fewer than 9
+  trips matched — related suggestions, kept so a narrow query isn't empty.
+
 Design notes:
 - One ``httpx.AsyncClient`` per provider instance. Tests swap it for one
   backed by ``httpx.MockTransport`` so the suite stays offline.
@@ -55,6 +71,38 @@ class ProviderUpstreamError(Exception):
 
 
 _DEFAULT_TIMEOUT = httpx.Timeout(5.0)
+
+# Upstream page size (voyage-site SEARCH_PAGE_MAX_ITEMS) — /api/search ignores
+# ``limit`` and always returns at most this many on-filter trips per page.
+_PAGE_SIZE = 9
+# Auto-pagination ceiling: enough pages to satisfy the router's 50-item cap.
+_MAX_PAGES = 6
+
+# ``filters`` keys (snake_case, shared router vocabulary) → OV query params.
+_LIST_FILTERS: tuple[tuple[str, str], ...] = (
+    ("regions", "regions"),
+    ("activity_kinds", "activityKinds"),
+    ("activities", "activities"),
+)
+_SCALAR_FILTERS: tuple[tuple[str, str], ...] = (
+    ("min_price", "minPrice"),
+    ("max_price", "maxPrice"),
+    ("min_difficulty", "minDifficulty"),
+    ("max_difficulty", "maxDifficulty"),
+)
+
+
+# httpx's query-param pair type — repeated pairs serialize as repeated params.
+_QueryPairs = list[tuple[str, str | int | float | bool | None]]
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Coerce a filter value to a clean list of non-empty strings."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
 
 
 def _extract_photos(entry: dict[str, Any]) -> list[str]:
@@ -226,24 +274,8 @@ class OVProvider(InventoryProvider):
             return {"x-api-key": self._api_key}
         return {}
 
-    async def search(
-        self,
-        *,
-        kinds: list[str] | None,
-        keyword: str | None,
-        filters: dict[str, Any],
-        ctx: InventoryCtx,
-    ) -> list[InventoryItem]:
-        """Return matching :class:`ExperienceItem` records; [] on upstream error."""
-        params: dict[str, str] = {}
-        if keyword:
-            params["keyword"] = keyword
-        if kinds:
-            params["activityKinds[]"] = ",".join(kinds)
-        limit = filters.get("limit") if isinstance(filters, dict) else None
-        if isinstance(limit, int) and limit > 0:
-            params["limit"] = str(limit)
-
+    async def _fetch_search_page(self, params: _QueryPairs) -> dict[str, Any] | None:
+        """One GET against ``/api/search``; parsed body or ``None`` on failure."""
         url = f"{self._base_url}/api/search"
         try:
             resp = await self._client.get(url, params=params, headers=self._headers())
@@ -252,7 +284,7 @@ class OVProvider(InventoryProvider):
                 "inventory.provider.error",
                 extra={"source": "ov", "upstream_status": None, "reason": "timeout"},
             )
-            return []
+            return None
         except httpx.HTTPError as exc:
             logger.warning(
                 "inventory.provider.error",
@@ -262,7 +294,7 @@ class OVProvider(InventoryProvider):
                     "reason": exc.__class__.__name__,
                 },
             )
-            return []
+            return None
 
         if resp.status_code >= 400:
             logger.warning(
@@ -273,7 +305,7 @@ class OVProvider(InventoryProvider):
                     "reason": "non_2xx",
                 },
             )
-            return []
+            return None
 
         try:
             body = resp.json()
@@ -286,14 +318,68 @@ class OVProvider(InventoryProvider):
                     "reason": "invalid_json",
                 },
             )
+            return None
+        return body if isinstance(body, dict) else None
+
+    async def search(
+        self,
+        *,
+        kinds: list[str] | None,
+        keyword: str | None,
+        filters: dict[str, Any],
+        ctx: InventoryCtx,
+    ) -> list[InventoryItem]:
+        """Return matching :class:`ExperienceItem` records; [] on upstream error.
+
+        OV serves adventure trips only, so a ``kinds`` filter that excludes
+        ``experience`` short-circuits without a network call. A caller-supplied
+        ``page`` means manual pagination (exactly that page); otherwise a
+        ``limit`` beyond the upstream 9-per-page is satisfied by walking pages.
+        """
+        if kinds and "experience" not in kinds:
             return []
 
+        base_params: _QueryPairs = []
+        if keyword:
+            base_params.append(("keyword", keyword))
+        for filter_key, ov_param in _LIST_FILTERS:
+            for item in _as_str_list(filters.get(filter_key)):
+                base_params.append((ov_param, item))
+        for filter_key, ov_param in _SCALAR_FILTERS:
+            scalar = filters.get(filter_key)
+            if isinstance(scalar, (int, float)):
+                base_params.append((ov_param, str(scalar)))
+
+        limit = filters.get("limit")
+        desired = limit if isinstance(limit, int) and limit > 0 else None
+        explicit_page = filters.get("page")
+        pages: list[int]
+        if isinstance(explicit_page, int) and explicit_page > 0:
+            pages = [explicit_page]
+        else:
+            page_budget = min(_MAX_PAGES, -(-desired // _PAGE_SIZE)) if desired is not None else 1
+            pages = list(range(1, page_budget + 1))
+
         entries: list[dict[str, Any]] = []
-        if isinstance(body, dict):
-            for key in ("trips", "extraTrips"):
-                items = body.get(key)
-                if isinstance(items, list):
-                    entries.extend(item for item in items if isinstance(item, dict))
+        for page_index, page in enumerate(pages):
+            body = await self._fetch_search_page([*base_params, ("page", str(page))])
+            if body is None:
+                # First-page failure ⇒ empty result; a mid-walk failure keeps
+                # what earlier pages already returned.
+                break
+            trips = body.get("trips")
+            trips = [t for t in trips if isinstance(t, dict)] if isinstance(trips, list) else []
+            entries.extend(trips)
+            if page_index == 0:
+                # Off-filter fillers only accompany a short first page — once
+                # pagination is in play there are none upstream.
+                extras = body.get("extraTrips")
+                if isinstance(extras, list):
+                    entries.extend(t for t in extras if isinstance(t, dict))
+            if len(trips) < _PAGE_SIZE:
+                break  # upstream ran out of on-filter results
+            if desired is not None and len(entries) >= desired:
+                break
 
         results: list[InventoryItem] = []
         for entry in entries:
@@ -309,6 +395,8 @@ class OVProvider(InventoryProvider):
                     },
                 )
                 continue
+        if desired is not None:
+            results = results[:desired]
 
         logger.info(
             "inventory.provider.search",

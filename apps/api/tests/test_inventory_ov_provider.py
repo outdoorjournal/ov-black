@@ -145,6 +145,199 @@ async def test_search_includes_trips_and_extra_trips(
     assert len(items) == expected
 
 
+# ── search(): OV filter passthrough + kinds gate ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_forwards_ov_filters_as_repeated_params(
+    ov_fixture: dict[str, Any],
+) -> None:
+    """Multi-value filters go out as repeated params — comma-joining matches
+    nothing upstream (verified live)."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["qp"] = request.url.params
+        return httpx.Response(200, json=ov_fixture)
+
+    provider = _build_provider(handler)
+    try:
+        await provider.search(
+            kinds=["experience"],
+            keyword="rafting",
+            filters={
+                "regions": ["Asia", "Europe"],
+                "activity_kinds": ["Water"],
+                "activities": ["Rafting", "Kayaking"],
+                "min_price": 100,
+                "max_price": 2000,
+                "min_difficulty": 2,
+                "max_difficulty": 8,
+            },
+            ctx=InventoryCtx(),
+        )
+    finally:
+        await provider.aclose()
+
+    qp = captured["qp"]
+    assert qp.get_list("regions") == ["Asia", "Europe"]
+    assert qp.get_list("activityKinds") == ["Water"]
+    assert qp.get_list("activities") == ["Rafting", "Kayaking"]
+    assert qp["minPrice"] == "100"
+    assert qp["maxPrice"] == "2000"
+    assert qp["minDifficulty"] == "2"
+    assert qp["maxDifficulty"] == "8"
+    assert qp["keyword"] == "rafting"
+    assert qp["page"] == "1"
+    # The legacy comma-joined param must be gone.
+    assert "activityKinds[]" not in qp
+
+
+@pytest.mark.asyncio
+async def test_search_non_experience_kinds_short_circuits() -> None:
+    """OV serves adventures only — kinds excluding ``experience`` means no
+    network call and an empty result."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no request expected")
+
+    provider = _build_provider(handler)
+    try:
+        items = await provider.search(
+            kinds=["hotel", "flight"], keyword=None, filters={}, ctx=InventoryCtx()
+        )
+    finally:
+        await provider.aclose()
+
+    assert items == []
+
+
+# ── search(): pagination ───────────────────────────────────────────────────
+
+
+def _page_body(
+    base_entry: dict[str, Any],
+    *,
+    page: int,
+    count: int = 9,
+    total: int = 30,
+) -> dict[str, Any]:
+    """Synthesize a full upstream page of ``count`` distinct trips."""
+    trips = []
+    for i in range(count):
+        entry = copy.deepcopy(base_entry)
+        entry["id"] = f"trip-{page}-{i}"
+        trips.append(entry)
+    return {
+        "trips": trips,
+        "extraTrips": [],
+        "extraTripsCount": 0,
+        "tripsTotalCount": total,
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_limit_beyond_page_size_walks_pages(
+    ov_fixture: dict[str, Any],
+) -> None:
+    base_entry = ov_fixture["trips"][0]
+    requested_pages: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = request.url.params["page"]
+        requested_pages.append(page)
+        return httpx.Response(200, json=_page_body(base_entry, page=int(page)))
+
+    provider = _build_provider(handler)
+    try:
+        items = await provider.search(
+            kinds=None, keyword=None, filters={"limit": 20}, ctx=InventoryCtx()
+        )
+    finally:
+        await provider.aclose()
+
+    assert requested_pages == ["1", "2", "3"]
+    assert len(items) == 20
+    # Distinct trips from consecutive pages, truncated to the limit.
+    assert items[0].source_id == "trip-1-0"
+    assert items[9].source_id == "trip-2-0"
+
+
+@pytest.mark.asyncio
+async def test_search_short_page_stops_walk(ov_fixture: dict[str, Any]) -> None:
+    """A page with fewer than 9 trips means upstream ran out — no next fetch."""
+    base_entry = ov_fixture["trips"][0]
+    requested_pages: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_pages.append(request.url.params["page"])
+        return httpx.Response(200, json=_page_body(base_entry, page=1, count=4, total=4))
+
+    provider = _build_provider(handler)
+    try:
+        items = await provider.search(
+            kinds=None, keyword=None, filters={"limit": 30}, ctx=InventoryCtx()
+        )
+    finally:
+        await provider.aclose()
+
+    assert requested_pages == ["1"]
+    assert len(items) == 4
+
+
+@pytest.mark.asyncio
+async def test_search_explicit_page_disables_walk(
+    ov_fixture: dict[str, Any],
+) -> None:
+    base_entry = ov_fixture["trips"][0]
+    requested_pages: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = request.url.params["page"]
+        requested_pages.append(page)
+        return httpx.Response(200, json=_page_body(base_entry, page=int(page)))
+
+    provider = _build_provider(handler)
+    try:
+        items = await provider.search(
+            kinds=None,
+            keyword=None,
+            filters={"page": 3, "limit": 50},
+            ctx=InventoryCtx(),
+        )
+    finally:
+        await provider.aclose()
+
+    assert requested_pages == ["3"]
+    assert len(items) == 9
+    assert items[0].source_id == "trip-3-0"
+
+
+@pytest.mark.asyncio
+async def test_search_mid_walk_failure_keeps_earlier_pages(
+    ov_fixture: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    base_entry = ov_fixture["trips"][0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["page"] == "1":
+            return httpx.Response(200, json=_page_body(base_entry, page=1))
+        return httpx.Response(500, json={"error": "boom"})
+
+    provider = _build_provider(handler)
+    caplog.set_level(logging.WARNING, logger="ov_black.inventory.ov")
+    try:
+        items = await provider.search(
+            kinds=None, keyword=None, filters={"limit": 20}, ctx=InventoryCtx()
+        )
+    finally:
+        await provider.aclose()
+
+    assert len(items) == 9
+    assert any(rec.message == "inventory.provider.error" for rec in caplog.records)
+
+
 # ── search(): malformed entries ────────────────────────────────────────────
 
 

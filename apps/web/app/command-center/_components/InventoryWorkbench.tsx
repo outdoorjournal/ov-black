@@ -29,6 +29,8 @@ import { createBrowserSupabase } from "@/lib/supabase/client";
 import {
   CABIN_CLASSES,
   INVENTORY_KINDS,
+  OV_ACTIVITY_KINDS,
+  OV_REGIONS,
   type InventoryQueryState,
   hasInventoryQuery,
   toSearchQuery,
@@ -160,7 +162,10 @@ export function InventoryWorkbench({
     value: InventoryQueryState[K],
   ) => setForm((cur) => ({ ...cur, [field]: value }));
 
-  const toggle = (field: "sources" | "kinds", value: string) =>
+  const toggle = (
+    field: "sources" | "kinds" | "regions" | "activityKinds",
+    value: string,
+  ) =>
     setForm((cur) => ({
       ...cur,
       [field]: cur[field].includes(value)
@@ -435,6 +440,116 @@ export function InventoryWorkbench({
               onChange={(e) => set("radiusM", e.target.value)}
               onKeyDown={onEnter}
               placeholder="5000"
+              className={fieldInputClass}
+            />
+          </Field>
+        </ParamGroup>
+
+        <ParamGroup
+          summary="Adventure params — Outdoor Voyage regions, activities, price, difficulty"
+          defaultOpen={Boolean(
+            form.regions.length > 0 ||
+              form.activityKinds.length > 0 ||
+              form.activities ||
+              form.minPrice ||
+              form.maxPrice,
+          )}
+        >
+          <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+            <FilterRow label="Regions">
+              {OV_REGIONS.map((region) => (
+                <button
+                  key={region}
+                  type="button"
+                  onClick={() => toggle("regions", region)}
+                  data-testid={`inventory-region-${region.replaceAll(" ", "-")}`}
+                  className={pillClass(form.regions.includes(region))}
+                >
+                  {region}
+                </button>
+              ))}
+            </FilterRow>
+          </div>
+          <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+            <FilterRow label="Activity">
+              {OV_ACTIVITY_KINDS.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => toggle("activityKinds", kind)}
+                  data-testid={`inventory-activity-kind-${kind}`}
+                  className={pillClass(form.activityKinds.includes(kind))}
+                >
+                  {kind}
+                </button>
+              ))}
+            </FilterRow>
+          </div>
+          <Field label="Activities (comma-separated)">
+            <input
+              type="text"
+              value={form.activities}
+              onChange={(e) => set("activities", e.target.value)}
+              onKeyDown={onEnter}
+              placeholder="Hiking, Rafting"
+              className={fieldInputClass}
+            />
+          </Field>
+          <Field label="Min price (USD)">
+            <input
+              type="number"
+              min={0}
+              value={form.minPrice}
+              onChange={(e) => set("minPrice", e.target.value)}
+              onKeyDown={onEnter}
+              placeholder="0"
+              className={fieldInputClass}
+            />
+          </Field>
+          <Field label="Max price (USD)">
+            <input
+              type="number"
+              min={0}
+              max={5000}
+              value={form.maxPrice}
+              onChange={(e) => set("maxPrice", e.target.value)}
+              onKeyDown={onEnter}
+              placeholder="5000"
+              className={fieldInputClass}
+            />
+          </Field>
+          <Field label="Min difficulty (1–10)">
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={form.minDifficulty}
+              onChange={(e) => set("minDifficulty", e.target.value)}
+              onKeyDown={onEnter}
+              placeholder="1"
+              className={fieldInputClass}
+            />
+          </Field>
+          <Field label="Max difficulty (1–10)">
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={form.maxDifficulty}
+              onChange={(e) => set("maxDifficulty", e.target.value)}
+              onKeyDown={onEnter}
+              placeholder="10"
+              className={fieldInputClass}
+            />
+          </Field>
+          <Field label="Page (9 per page)">
+            <input
+              type="number"
+              min={1}
+              value={form.page}
+              onChange={(e) => set("page", e.target.value)}
+              onKeyDown={onEnter}
+              placeholder="auto"
               className={fieldInputClass}
             />
           </Field>

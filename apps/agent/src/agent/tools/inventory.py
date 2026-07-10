@@ -29,6 +29,14 @@ async def search_inventory(
     near_lat: float | None = None,
     near_lng: float | None = None,
     radius_m: int | None = None,
+    regions: list[str] | None = None,
+    activity_kinds: list[str] | None = None,
+    activities: list[str] | None = None,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    min_difficulty: int | None = None,
+    max_difficulty: int | None = None,
+    page: int | None = None,
 ) -> dict:
     """Search travel inventory for candidate experiences, hotels, flights, or places.
 
@@ -61,6 +69,21 @@ async def search_inventory(
             Optional — biases meal/experience results toward this point.
         near_lng: Google Places location-bias longitude (paired with near_lat).
         radius_m: Google Places location-bias radius in metres (default 5km).
+        regions: Adventure-trip continent filter (OV). One or more of
+            ``Europe`` | ``Asia`` | ``Africa`` | ``North America`` |
+            ``South America`` | ``Oceania``.
+        activity_kinds: OV activity-kind filter. One or more of ``Air`` |
+            ``Land`` | ``Water`` | ``Motor`` | ``Snow`` | ``Lodging``.
+        activities: OV activity-name filter, e.g. ``Hiking``, ``Trekking``,
+            ``Rafting``, ``Kayaking``, ``Surfing``, ``Safari``, ``Climbing``,
+            ``Skiing & Snowsports``, ``Hot Air Ballooning``.
+        min_price: Adventure minimum price, USD major units (OV).
+        max_price: Adventure maximum price, USD major units (OV, cap 5000).
+        min_difficulty: Adventure minimum difficulty, 1 (easy) – 10 (extreme).
+        max_difficulty: Adventure maximum difficulty, 1–10.
+        page: Adventure result page (9 per page). Usually omit — set a
+            ``limit`` instead and paging is handled for you; pass it only to
+            fetch *more* results after exhausting an earlier search.
 
     For flights, set ``source='duffel'`` (or ``kinds=['flight']``) and supply
     the route + date params; ``keyword`` does not drive flight search. For
@@ -70,7 +93,12 @@ async def search_inventory(
     restaurants / things to do, set
     ``kinds=['meal']`` and/or ``kinds=['experience']`` (Google Places) with a
     descriptive ``keyword`` (which drives the search, e.g. "omakase sushi in
-    Roppongi"); optionally pass near_lat + near_lng to bias by location.
+    Roppongi"); optionally pass near_lat + near_lng to bias by location. For
+    multi-day guided adventures and expeditions (treks, rafting, safaris,
+    ski touring), search the Outdoor Voyage catalog: ``source='ov'`` with any
+    of ``regions`` / ``activity_kinds`` / ``activities`` / price / difficulty
+    filters — e.g. ``regions=['Asia'], activity_kinds=['Water']`` — plus an
+    optional ``keyword``; combine filters rather than relying on keyword alone.
 
     Returns a dict with ``items`` (list) and ``count`` (int). Each item
     carries a stable ``source`` + ``source_id`` pair — pass them to
@@ -118,6 +146,22 @@ async def search_inventory(
         params["near_lng"] = near_lng
     if radius_m is not None:
         params["radius_m"] = radius_m
+    if regions:
+        params["regions"] = regions
+    if activity_kinds:
+        params["activity_kinds"] = activity_kinds
+    if activities:
+        params["activities"] = activities
+    if min_price is not None:
+        params["min_price"] = min_price
+    if max_price is not None:
+        params["max_price"] = max_price
+    if min_difficulty is not None:
+        params["min_difficulty"] = min_difficulty
+    if max_difficulty is not None:
+        params["max_difficulty"] = max_difficulty
+    if page is not None:
+        params["page"] = page
     return await get_json("/search-inventory", params=params)
 
 
