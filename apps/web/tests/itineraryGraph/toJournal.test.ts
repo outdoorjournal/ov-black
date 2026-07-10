@@ -406,3 +406,55 @@ describe("toJournal · empty days and elision", () => {
     expect(result.nodeCount).toBe(0);
   });
 });
+
+// ── grouped_with brackets (phase 3) ───────────────────────────────────────────
+describe("toJournal · grouped_with brackets", () => {
+  test("consecutive grouped cards mark start/mid/end; the loner stays unmarked", () => {
+    const result = journal(
+      [
+        node("a", "2024-06-20T09:00:00+09:00"),
+        node("b", "2024-06-20T10:00:00+09:00"),
+        node("c", "2024-06-20T11:00:00+09:00"),
+        node("d", "2024-06-20T12:00:00+09:00"),
+      ],
+      {
+        edges: [
+          edge("g1", "a", "b", "grouped_with"),
+          edge("g2", "b", "c", "grouped_with"),
+        ],
+        dayCount: 1,
+      },
+    );
+    const entries = daySection(result, 0).entries.filter(
+      (e) => e.kind === "node",
+    );
+    const roles = entries.map((e) =>
+      e.kind === "node" ? [e.node.id, e.groupedWith ?? null] : [],
+    );
+    expect(roles).toEqual([
+      ["a", "start"],
+      ["b", "mid"],
+      ["c", "end"],
+      ["d", null],
+    ]);
+  });
+
+  test("a group of one never brackets, and alternatives don't bracket", () => {
+    const result = journal(
+      [
+        node("a", "2024-06-20T09:00:00+09:00"),
+        node("x", "2024-06-20T13:00:00+09:00"),
+        node("y", "2024-06-20T13:30:00+09:00"),
+      ],
+      {
+        edges: [edge("alt", "y", "x", "alternative_to")],
+        dayCount: 1,
+      },
+    );
+    const entries = daySection(result, 0).entries;
+    for (const e of entries) {
+      if (e.kind === "node") expect(e.groupedWith).toBeUndefined();
+    }
+    expect(kinds(entries)).toContain("alt");
+  });
+});

@@ -26,11 +26,16 @@ export const ELISION_MIN_DAYS = 2;
 
 export type QuietPeriod = "morning" | "afternoon" | "evening" | "day";
 
+/** This card's position inside a `grouped_with` run — drives the bracket
+ *  spanning the group (phase 3). Only runs of ≥2 consecutive cards mark. */
+export type GroupedRole = "start" | "mid" | "end";
+
 export type JournalEntry =
-  /** A real graph node, rendered as a card on the spine. */
-  | { kind: "node"; node: NodeResponse }
-  /** An alternative group ("choose one of these") — grouping data only in
-   *  phase 1; members are ordered by start time. */
+  /** A real graph node, rendered as a card on the spine. `groupedWith` marks
+   *  membership in a consecutive `grouped_with` run (the bracket). */
+  | { kind: "node"; node: NodeResponse; groupedWith?: GroupedRole }
+  /** An alternative group ("choose one of these") — members ordered by start
+   *  time; rendered as the spine splitting (fork-in-the-spine, phase 3). */
   | { kind: "alt"; groupKey: string; nodes: NodeResponse[] }
   /** A short-but-visible gap: rendered as a plain, slightly longer spine
    *  segment (no marker, no card). */
@@ -131,6 +136,28 @@ function altGroupsOf(
   return groupByNode;
 }
 
+// ── grouped_with groups ───────────────────────────────────────────────────────
+// Union `grouped_with` edges into one key per group — the "these belong
+// together" bracket (never a choice; alternatives are the split).
+function groupedWithOf(
+  nodes: NodeResponse[],
+  edges: EdgeResponse[],
+): Map<string, string> {
+  const byId = new Set(nodes.map((n) => n.id));
+  const groupByNode = new Map<string, string>();
+  for (const e of edges) {
+    if (e.type !== "grouped_with") continue;
+    if (!byId.has(e.from_node_id) || !byId.has(e.to_node_id)) continue;
+    const groupKey =
+      groupByNode.get(e.to_node_id) ??
+      groupByNode.get(e.from_node_id) ??
+      `grp-${e.to_node_id}`;
+    groupByNode.set(e.to_node_id, groupKey);
+    groupByNode.set(e.from_node_id, groupKey);
+  }
+  return groupByNode;
+}
+
 // ── Timing helpers ────────────────────────────────────────────────────────────
 /** Absolute start instant (epoch ms) — offsets are baked into the ISO string. */
 function startMsOf(node: NodeResponse): number {
@@ -180,6 +207,7 @@ export function toJournal(input: ToJournalInput): Journal {
   const nightBars = visible.filter((n) => getVerticalMeta(n).night_bar === true);
   const cards = visible.filter((n) => getVerticalMeta(n).night_bar !== true);
   const groupByNode = altGroupsOf(cards, edges);
+  const groupedByNode = groupedWithOf(cards, edges);
 
   // Bucket by local calendar day (each node placed by its OWN offset — the
   // trip can span timezones), keeping only days on the scaffold.
@@ -239,10 +267,42 @@ export function toJournal(input: ToJournalInput): Journal {
       });
     }
 
+    // Bracket roles: runs of ≥2 CONSECUTIVE folded node entries sharing a
+    // `grouped_with` group get start/mid/end marks (the spanning bracket).
+    const bracketRoles = new Map<number, GroupedRole>();
+    {
+      let runKey: string | null = null;
+      let runStart = -1;
+      const flush = (endExclusive: number) => {
+        if (runKey !== null && endExclusive - runStart >= 2) {
+          for (let k = runStart; k < endExclusive; k += 1) {
+            bracketRoles.set(
+              k,
+              k === runStart ? "start" : k === endExclusive - 1 ? "end" : "mid",
+            );
+          }
+        }
+        runKey = null;
+        runStart = -1;
+      };
+      folded.forEach((f, idx) => {
+        const key =
+          f.kind === "node" ? (groupedByNode.get(f.node.id) ?? null) : null;
+        if (key !== runKey) {
+          flush(idx);
+          if (key !== null) {
+            runKey = key;
+            runStart = idx;
+          }
+        }
+      });
+      flush(folded.length);
+    }
+
     // Interleave gap buckets between consecutive entries.
     const entries: JournalEntry[] = [];
     let prev: (typeof folded)[number] | null = null;
-    for (const entry of folded) {
+    for (const [foldIdx, entry] of folded.entries()) {
       if (prev) {
         const gapMin = Math.round((entry.startMs - prev.endMs) / 60_000);
         if (gapMin >= LONG_GAP_MIN) {
@@ -264,7 +324,12 @@ export function toJournal(input: ToJournalInput): Journal {
         }
       }
       if (entry.kind === "node") {
-        entries.push({ kind: "node", node: entry.node });
+        const role = bracketRoles.get(foldIdx);
+        entries.push({
+          kind: "node",
+          node: entry.node,
+          ...(role ? { groupedWith: role } : {}),
+        });
         nodeCount += 1;
       } else {
         entries.push({

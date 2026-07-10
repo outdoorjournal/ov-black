@@ -14,21 +14,34 @@
 //                  (beside it on desktop, tucked under it below lg) + the
 //                  quiet ✎ hover affordance to leave a new one
 //   SpineNoteCard  a free-standing day note ON the spine (it IS a node)
-//   AddNoteOnLine  the `+`-on-the-line at a day's end — on the trunk, Note is
-//                  the ONLY thing the line offers a traveler (phase 3 extends
-//                  the offer with content inserts on an editable fork)
+//   AddNoteOnLine  the `+`-on-the-line at a day's end. On the trunk, Note is
+//                  the ONLY thing the line offers (feedback is trunk-safe by
+//                  design). On an EDITABLE fork (phase 3) the offer grows into
+//                  the insert picker: the Collection first (placing wish-list
+//                  items is the #1 traveler edit), then "describe it to
+//                  Artemis" (deep-link to the existing chat surface), then
+//                  Note, then a blank card. Content writes go through the
+//                  existing store flows (moveNode / authorNode) — no new
+//                  persistence paths.
 //
 // A viewer's own notes are editable in place (tap → textarea, save on blur)
 // and always deletable — mirroring the backend's notes-always-removable rule.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
 
 import type { NodeResponse } from "../../model/types";
 import {
+  collectionItemsOf,
+  isNodeScheduled,
   itineraryGraphStore,
   selectCanLeaveNote,
+  selectEditable,
+  selectTravelerEditable,
 } from "../../store/itineraryGraphStore";
 
+import { SLOT_EMPTY_DAY_MIN } from "./journalEditing";
 import { SPINE_COL_PX } from "./Spine";
 
 const spineColStyle = {
@@ -222,9 +235,13 @@ function NoteDelete({ noteId }: { noteId: string }) {
 export function MarginNotes({
   hostId,
   notes,
+  inline = false,
 }: {
   hostId: string;
   notes: NodeResponse[];
+  /** Keep the notes in-flow under the card (alt branches — the absolute
+   *  margin would overlay the neighbouring branch's card). */
+  inline?: boolean;
 }) {
   const canWrite = itineraryGraphStore.useStore(selectCanLeaveNote);
   const storeApi = itineraryGraphStore.useStoreApi();
@@ -236,7 +253,12 @@ export function MarginNotes({
     <div
       data-testid="journal-margin"
       data-host-id={hostId}
-      className="mt-1.5 flex w-full flex-col items-start gap-1.5 lg:absolute lg:left-full lg:top-2 lg:ml-5 lg:mt-0 lg:w-[220px]"
+      className={
+        "mt-1.5 flex w-full flex-col items-start gap-1.5" +
+        (inline
+          ? ""
+          : " lg:absolute lg:left-full lg:top-2 lg:ml-5 lg:mt-0 lg:w-[220px]")
+      }
     >
       {notes.map((n) => (
         <div
@@ -309,16 +331,70 @@ export function SpineNoteCard({ node }: { node: NodeResponse }) {
 }
 
 // ── The `+`-on-the-line: a day's insert affordance ───────────────────────────
-// Phase 2 offers exactly one thing — Note — which is also everything the trunk
-// ever offers a traveler. Phase 3 extends the `offering` state with content
-// inserts (Collection-first picker) on an editable fork; add options there,
-// keep the Note chip as the constant.
-export function AddNoteOnLine({ dayKey }: { dayKey: string }) {
+// On the trunk the line offers exactly one thing — Note — which keeps the
+// feedback channel discoverable where the urge strikes AND makes the edit
+// boundary legible (content inserts live on your version, not here). On an
+// editable fork the `offering` state grows into the full insert picker,
+// Collection first. The Note chip is the constant across both.
+const OPTION_CHIP =
+  "rounded-full border px-3 py-1 font-sans text-[10px] uppercase tracking-[0.16em] transition-colors";
+
+export function AddNoteOnLine({
+  dayKey,
+  insertMinute = SLOT_EMPTY_DAY_MIN,
+}: {
+  dayKey: string;
+  /** Where a content insert lands in the day — the sensible after-the-last-
+   *  card slot the view derives (`endOfDayMinute`); defaults to noon. */
+  insertMinute?: number;
+}) {
   const canWrite = itineraryGraphStore.useStore(selectCanLeaveNote);
+  // Content inserts need an editable fork — advisor working copy or the
+  // traveler's own version. Role (via the selectors) is the source of truth.
+  const contentEditable = itineraryGraphStore.useStore(
+    (s) => selectEditable(s) || selectTravelerEditable(s),
+  );
+  const nodes = itineraryGraphStore.useStore((s) => s.nodes);
+  const pendingProposals = itineraryGraphStore.useStore(
+    (s) => s.pendingProposals,
+  );
   const storeApi = itineraryGraphStore.useStoreApi();
-  const [state, setState] = useState<"idle" | "offering" | "composing">("idle");
+  const { openConcierge } = useConciergeControl();
+  const [state, setState] = useState<
+    "idle" | "offering" | "composing" | "collection" | "blank"
+  >("idle");
+  const [blankTitle, setBlankTitle] = useState("");
+
+  // The Collection (wish list) = unscheduled, non-discarded nodes — placing
+  // one is the #1 traveler edit, so it leads the picker. Placed items STAY in
+  // the Collection view (it's a view over the graph, not a parallel store);
+  // `isNodeScheduled` (start_synthesized-aware) is what "unscheduled" means.
+  const collection = useMemo(
+    () =>
+      collectionItemsOf(nodes, pendingProposals).filter(
+        (n) => !isNodeScheduled(n) && n.type !== "note",
+      ),
+    [nodes, pendingProposals],
+  );
 
   if (!canWrite) return null;
+
+  const placeFromCollection = (nodeId: string) => {
+    storeApi.getState().moveNode(nodeId, dayKey, insertMinute);
+    setState("idle");
+  };
+
+  const addBlankCard = () => {
+    const title = blankTitle.trim();
+    if (!title) return;
+    storeApi.getState().authorNode({
+      type: "experience",
+      title,
+      schedule: { dayKey, minute: insertMinute },
+    });
+    setBlankTitle("");
+    setState("idle");
+  };
 
   return (
     <div
@@ -341,14 +417,50 @@ export function AddNoteOnLine({ dayKey }: { dayKey: string }) {
       </div>
       <div className="max-w-[420px]">
         {state === "offering" ? (
-          <button
-            type="button"
-            data-testid="journal-add-note-option"
-            onClick={() => setState("composing")}
-            className="rounded-full border border-amber-900/25 bg-[#fbf1c7]/70 px-3 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-amber-900/80 transition-colors hover:border-amber-900/50"
-          >
-            ✎ Note
-          </button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {contentEditable ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="journal-insert-collection"
+                  onClick={() => setState("collection")}
+                  className={`${OPTION_CHIP} border-ink/25 bg-paper text-ink/70 hover:border-brand hover:text-brand`}
+                >
+                  From your collection
+                  {collection.length > 0 ? ` · ${collection.length}` : ""}
+                </button>
+                <button
+                  type="button"
+                  data-testid="journal-insert-artemis"
+                  onClick={() => {
+                    openConcierge();
+                    setState("idle");
+                  }}
+                  className={`${OPTION_CHIP} border-ink/25 bg-paper text-ink/70 hover:border-brand hover:text-brand`}
+                >
+                  Describe it to Artemis
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              data-testid="journal-add-note-option"
+              onClick={() => setState("composing")}
+              className={`${OPTION_CHIP} border-amber-900/25 bg-[#fbf1c7]/70 text-amber-900/80 hover:border-amber-900/50`}
+            >
+              ✎ Note
+            </button>
+            {contentEditable ? (
+              <button
+                type="button"
+                data-testid="journal-insert-blank"
+                onClick={() => setState("blank")}
+                className={`${OPTION_CHIP} border-ink/20 bg-paper text-ink/55 hover:border-ink/45 hover:text-ink`}
+              >
+                Blank card
+              </button>
+            ) : null}
+          </div>
         ) : state === "composing" ? (
           <NoteComposer
             placeholder="Something for this day? Tell your advisor…"
@@ -360,6 +472,77 @@ export function AddNoteOnLine({ dayKey }: { dayKey: string }) {
             }}
             onCancel={() => setState("idle")}
           />
+        ) : state === "collection" ? (
+          <div
+            data-testid="journal-insert-collection-list"
+            className="flex w-full flex-col gap-1 rounded-md border border-ink/10 bg-white/70 p-2"
+          >
+            {collection.length === 0 ? (
+              <p className="px-1 py-0.5 font-serif text-[12px] italic text-ink/45">
+                Your collection is empty — save ideas as you find them, and
+                they&rsquo;ll be here to place.
+              </p>
+            ) : (
+              collection.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  data-testid="journal-insert-collection-item"
+                  data-node-id={n.id}
+                  onClick={() => placeFromCollection(n.id)}
+                  className="flex items-baseline justify-between gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-ink/5"
+                >
+                  <span className="min-w-0 truncate font-serif text-[13px] text-ink/85">
+                    {n.title || n.type}
+                  </span>
+                  <span className="shrink-0 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/40">
+                    {n.type}
+                  </span>
+                </button>
+              ))
+            )}
+            <button
+              type="button"
+              onClick={() => setState("idle")}
+              className="self-end px-1 font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45 transition-colors hover:text-ink"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : state === "blank" ? (
+          <div
+            data-testid="journal-insert-blank-form"
+            className="flex w-full items-center gap-2 rounded-md border border-ink/10 bg-white/70 p-2"
+          >
+            <input
+              autoFocus
+              type="text"
+              value={blankTitle}
+              onChange={(e) => setBlankTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  setBlankTitle("");
+                  setState("idle");
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  addBlankCard();
+                }
+              }}
+              placeholder="Name the idea…"
+              data-testid="journal-insert-blank-title"
+              className="h-7 w-full border-0 border-b border-ink/15 bg-transparent p-0 font-serif text-[13px] text-ink outline-none placeholder:text-ink/35 focus:border-ink/40 focus:ring-0"
+            />
+            <button
+              type="button"
+              onClick={addBlankCard}
+              disabled={blankTitle.trim().length === 0}
+              data-testid="journal-insert-blank-submit"
+              className="shrink-0 rounded-full bg-ink px-3 py-1 font-sans text-[10px] uppercase tracking-[0.14em] text-paper transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              Add
+            </button>
+          </div>
         ) : null}
       </div>
     </div>

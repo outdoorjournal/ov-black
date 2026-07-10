@@ -24,8 +24,18 @@ export const SPINE_COL_PX = 44;
 //   booked     solid ink ring + ⚿ badge
 //   confirmed  double ring + ◉ badge
 //   discarded  grayscale, dashed feel via opacity
-function ringShadow(status: StatusKind, accent: string, active: boolean): string {
+function ringShadow(
+  status: StatusKind,
+  accent: string,
+  active: boolean,
+  problem: boolean,
+): string {
   const activeGlow = active ? `, 0 0 0 5px rgba(${BRAND_RGB}, 0.28)` : "";
+  // Problem state: the RED ring outranks the status ring (the status still
+  // reads from the badge glyph). Color is never the only cue — the ⚠ glyph
+  // sits outside the circle (rendered by JournalNode) and a one-line caption
+  // runs under the card.
+  if (problem) return `0 0 0 2px #b3261e${activeGlow}`;
   switch (status) {
     case "approved":
       return `0 0 0 2px ${accent}${activeGlow}`;
@@ -48,19 +58,23 @@ export function SpineCircle({
   kind,
   status,
   active,
+  problem = false,
 }: {
   kind: CardKind;
   status: StatusKind;
   active: boolean;
+  /** Problem state: red ring (the non-color cues live beside the circle). */
+  problem?: boolean;
 }) {
   const token = TYPE_TOKENS[kind];
   return (
     <span
       role="img"
-      aria-label={`${token.label} — ${STATUS_TOKENS[status].label}`}
+      aria-label={`${token.label} — ${STATUS_TOKENS[status].label}${problem ? " — needs attention" : ""}`}
       data-testid="journal-spine-circle"
       data-kind={kind}
       data-status={status}
+      data-problem={problem ? "true" : undefined}
       className={[
         "relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-paper",
         "transition-transform duration-200",
@@ -69,7 +83,7 @@ export function SpineCircle({
       ].join(" ")}
       style={{
         backgroundColor: token.accent,
-        boxShadow: ringShadow(status, token.accent, active),
+        boxShadow: ringShadow(status, token.accent, active, problem),
       }}
     >
       <token.Icon size={13} strokeWidth={1.8} aria-hidden />

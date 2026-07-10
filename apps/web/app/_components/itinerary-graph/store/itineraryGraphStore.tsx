@@ -287,11 +287,13 @@ export type ItineraryGraphState = {
     title: string;
     metadata?: Record<string, unknown>;
   }) => void;
-  // Advisor hand-authoring (ADV-4): create a bespoke card the inventory
+  // Hand-authoring (ADV-4): create a bespoke card the inventory
   // providers don't carry. Two shapes: a typed + optionally priced card
   // (→ POST /nodes, status `proposed`), or a pasted link whose OpenGraph
   // preview the server fetches (→ POST /nodes/from-link). Gated by
-  // `selectEditable` (needs the edit lock). `cost` is a both-or-neither
+  // `selectEditable || selectTravelerEditable` (an editable fork surface —
+  // the Journal's blank-card insert works on the traveler's own version
+  // too). `cost` is a both-or-neither
   // amount+currency with a per_person|total kind; it applies to the typed
   // shape only (from-link carries no cost). `schedule` (a day + minute-of-day)
   // places the typed card ON the timeline at that time (Outlook-style
@@ -993,9 +995,14 @@ export const itineraryGraphStore = createStoreContext<
           });
         },
         setNodes: (nodes) => set({ nodes }),
+        // Field edits work on any EDITABLE FORK surface: the advisor's working
+        // copy (`selectEditable`) or the traveler's own version
+        // (`selectTravelerEditable`) — the Journal's rail lets a traveler own
+        // title/description on their fork (phase 3). The backend's fork/trunk
+        // write gates stay the real authority.
         editNodeField: (id, field, value) => {
           const s = get();
-          if (!selectEditable(s)) return;
+          if (!selectEditable(s) && !selectTravelerEditable(s)) return;
           const target = s.nodes.find((n) => n.id === id);
           if (!target) return;
           const current = field === "title" ? target.title : target.source_id;
@@ -1018,7 +1025,9 @@ export const itineraryGraphStore = createStoreContext<
         },
         updateCardDetails: (id, input) => {
           const s = get();
-          if (!selectEditable(s)) return;
+          // Editable-fork gate (advisor working copy OR traveler's version) —
+          // same rule as editNodeField; see the note there.
+          if (!selectEditable(s) && !selectTravelerEditable(s)) return;
           const target = s.nodes.find((n) => n.id === id);
           if (!target) return;
           const c = client();
@@ -1184,7 +1193,9 @@ export const itineraryGraphStore = createStoreContext<
         },
         authorNode: ({ type, title, url, note, cost, schedule }) => {
           const s = get();
-          if (!selectEditable(s)) return;
+          // Editable-fork gate: the advisor's working copy, or the traveler on
+          // their own version (the Journal's "blank card" insert, phase 3).
+          if (!selectEditable(s) && !selectTravelerEditable(s)) return;
           const c = client();
           if (!c) return;
 
