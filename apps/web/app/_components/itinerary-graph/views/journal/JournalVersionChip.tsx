@@ -31,6 +31,7 @@ export function JournalVersionChip() {
   );
   const diffMode = itineraryGraphStore.useStore((s) => s.diffMode);
   const setDiffMode = itineraryGraphStore.useStore((s) => s.setDiffMode);
+  const cinemaMode = itineraryGraphStore.useStore((s) => s.cinemaMode);
   const hasCreds = itineraryGraphStore.useStore((s) =>
     Boolean(s.apiBaseUrl && s.accessToken),
   );
@@ -49,7 +50,8 @@ export function JournalVersionChip() {
     if (params.get("compare") === "1") setDiffMode(true);
   }, [isFork, setDiffMode]);
 
-  if (!hasCreds) return null;
+  // Cinema fades the chrome — the chip (and its compare entry) sits out.
+  if (!hasCreds || cinemaMode) return null;
 
   const chip =
     "inline-flex items-center gap-1.5 rounded-full border border-ink/20 bg-paper/80 px-3 py-1 font-sans text-[11px] font-medium text-ink/80";

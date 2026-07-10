@@ -234,6 +234,13 @@ export type ItineraryGraphState = {
    *  override lives in the Timeline's Diff tab (the full panel). */
   diffBlocked: boolean;
 
+  // ── cinema mode (phase 5): the Journal's autoscroll reading ──
+  /** Cinema — a mode FLAG over the same Journal DOM (never a view): chrome
+   *  fades out, the ambient layer goes full-bleed, and a rAF scroll driver
+   *  eases from node to node. Mutually exclusive with `diffMode` — both are
+   *  reading modes over the same DOM and their vocabularies would collide. */
+  cinemaMode: boolean;
+
   // ── horizontal-view UI state ──
   pxPerMinute: number;
 
@@ -396,6 +403,11 @@ export type ItineraryGraphState = {
    *  (`refused_booked` — G1 immutable) stay honest: outcomes recorded, the
    *  diff refreshed, the fork stays open. */
   applyDiffDecisions: (navigate: (id: string) => void) => void;
+
+  // ── cinema mode actions (phase 5) ──
+  /** Enter/leave cinema. Entering exits compare (`setDiffMode(true)` exits
+   *  cinema symmetrically) — the two modes are mutually exclusive. */
+  setCinemaMode: (on: boolean) => void;
 
   // ── authoring (B7): inventory search · analyze · fill ──
   // Reads (search/analyze/fill) gate on `canEdit`; the two writes
@@ -1523,7 +1535,8 @@ export const itineraryGraphStore = createStoreContext<
           // Compare is inherently pairwise: this fork against its baseline —
           // there is nothing to diff on the trunk or without credentials.
           if (!s.sample.itinerary?.forked_from_id || !client()) return;
-          set({ diffMode: true, diffBlocked: false });
+          // Compare and cinema are mutually exclusive reading modes.
+          set({ diffMode: true, diffBlocked: false, cinemaMode: false });
           s.refreshDiff();
         },
         refreshDiff: () => {
@@ -1611,6 +1624,18 @@ export const itineraryGraphStore = createStoreContext<
               get().refreshDiff();
             })
             .finally(() => set({ diffApplying: false }));
+        },
+
+        // ── cinema mode (phase 5) ───────────────────────────────────────────
+        cinemaMode: false,
+        setCinemaMode: (on) => {
+          if (!on) {
+            set({ cinemaMode: false });
+            return;
+          }
+          // Cinema and compare are both mode flags over the SAME Journal DOM —
+          // never both: entering one exits the other (setDiffMode mirrors this).
+          set({ cinemaMode: true, diffMode: false });
         },
 
         editNoteText: (id, text) => {

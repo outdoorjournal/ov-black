@@ -56,6 +56,11 @@ export interface JournalDiffView {
   /** ghost id → the synthesized trunk-only node (the rail's active lookup —
    *  ghosts never live in the store's `nodes`). */
   ghosts: Map<string, NodeResponse>;
+  /** Scaffold dates whose day carries ANY divergence (an annotated card, an
+   *  alt member, or a ghost) — the dashed second-thread region cue and the
+   *  day rail's divergence dots both read from this one derivation, so the
+   *  two surfaces can never disagree. */
+  divergedDays: Set<string>;
   counts: JournalDiffCounts;
   /** Total changes in the diff (spine-visible or not). */
   total: number;
@@ -197,6 +202,21 @@ export function toJournalDiff(input: ToJournalDiffInput): JournalDiffView {
     };
   });
 
+  // The diverged-day set — one derivation for the second-thread region cue
+  // AND the day rail's dots (phase 5), so they always agree.
+  const divergedDays = new Set<string>();
+  for (const section of sections) {
+    if (section.kind !== "day") continue;
+    const diverged = section.entries.some(
+      (entry) =>
+        entry.kind === "ghost" ||
+        (entry.kind === "node" && annotations.has(entry.node.id)) ||
+        (entry.kind === "alt" &&
+          entry.nodes.some((n) => annotations.has(n.id))),
+    );
+    if (diverged) divergedDays.add(section.date);
+  }
+
   const counts: JournalDiffCounts = {
     added: diff.added.length,
     removed: diff.removed.length,
@@ -209,6 +229,7 @@ export function toJournalDiff(input: ToJournalDiffInput): JournalDiffView {
     journal: { ...journal, sections },
     annotations,
     ghosts,
+    divergedDays,
     counts,
     total,
     summary: diffSummaryOf(counts),

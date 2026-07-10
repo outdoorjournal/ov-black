@@ -56,6 +56,20 @@ const spineColStyle = {
   "--spine-col": `${SPINE_COL_PX}px`,
 } as React.CSSProperties;
 
+// Windowed rendering (phase 5): a long journal skips layout/paint for
+// offscreen rows via `content-visibility: auto` + an intrinsic-size estimate
+// (scrollbar stays honest; IntersectionObserver keeps seeing the box, so the
+// scroll-active system is unaffected). CAVEAT: the style induces PAINT
+// containment, which clips anything drawn outside the row's box — and the
+// margin channel is absolutely positioned off the card wrapper and can
+// overflow it (a tall note stack on a short card). Rows carrying margin notes
+// therefore opt out; everything else windows. (In-flow `marginInline` notes
+// contribute height and are safe.)
+const WINDOWED_STYLE = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "auto 140px",
+} as React.CSSProperties;
+
 export function JournalNode({
   node,
   tzOffsetHours,
@@ -128,7 +142,12 @@ export function JournalNode({
         "group/jnode grid grid-cols-[var(--spine-col)_minmax(0,1fr)] items-start gap-x-4",
         isDragging ? "opacity-40" : "",
       ].join(" ")}
-      style={spineColStyle}
+      style={{
+        ...spineColStyle,
+        // Windowed rendering — except where the absolute margin channel could
+        // overflow the row's box (paint containment would clip the notes).
+        ...(attachedNotes.length === 0 || marginInline ? WINDOWED_STYLE : {}),
+      }}
     >
       <div className="relative flex justify-center pt-3">
         {/* "New in this version" — a dashed brand STITCH over the spine
@@ -484,7 +503,7 @@ export function JournalGhostNode({
       data-active={active ? "true" : undefined}
       data-diff="removed"
       className="grid grid-cols-[var(--spine-col)_minmax(0,1fr)] items-start gap-x-4"
-      style={spineColStyle}
+      style={{ ...spineColStyle, ...WINDOWED_STYLE }}
     >
       <div className="relative flex justify-center pt-3">
         {/* The dashed circle — the type still reads, the presence doesn't. */}

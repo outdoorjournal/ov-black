@@ -25,6 +25,12 @@
 // the alternatives vocabulary). Diff mode is a reading/deciding mode: content
 // gestures (drag, insert, in-place edit) sit out; notes stay open.
 //
+// Phase 5 adds ATMOSPHERE & SCALE: the ambient layer behind the paper (mounted
+// by the dashboard host), the floating day rail + more-below tail cue, elision
+// polish, windowed rendering on the card rows, and CINEMA MODE — a second mode
+// flag over this same DOM (mutually exclusive with diff mode; the store
+// enforces it) where the chrome fades and a rAF driver plays the journey.
+//
 // Same screen, responsive: below lg the rail column disappears, the Journal
 // goes full-width, and activating a card deep-links to /item/[nodeId] (the
 // existing full-detail destination) instead of driving the rail.
@@ -55,7 +61,9 @@ import { useTimelineData } from "../../TimelineDataContext";
 import { datesPinned } from "../../model/time";
 import { NodeCard } from "../horizontal/NodeCard";
 
+import { CinemaDriver } from "./Cinema";
 import { DayHeader } from "./DayHeader";
+import { DayRail } from "./DayRail";
 import {
   cardBoundsOf,
   dropSlotMinutes,
@@ -67,6 +75,7 @@ import {
 } from "./journalEditing";
 import { JournalAltGroup, JournalGhostNode, JournalNode } from "./JournalNode";
 import { AddNoteOnLine } from "./JournalNotes";
+import { MoreBelowCue } from "./MoreBelow";
 import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
 import { NightSegment, SPINE_COL_PX } from "./Spine";
@@ -114,6 +123,7 @@ export function JournalView({
   const role = itineraryGraphStore.useStore((s) => s.role);
   const diffMode = itineraryGraphStore.useStore((s) => s.diffMode);
   const diff = itineraryGraphStore.useStore((s) => s.diff);
+  const cinemaMode = itineraryGraphStore.useStore((s) => s.cinemaMode);
   // What a spine drop DOES here — role (via the selectors) is the source of
   // truth: move on an editable fork, lazy-fork on the draft preview, offer the
   // fork on the trunk, nothing at all otherwise (no drag affordance).
@@ -140,6 +150,7 @@ export function JournalView({
       journal: toJournal(base),
       annotations: new Map(),
       ghosts: new Map(),
+      divergedDays: new Set<string>(),
       counts: { added: 0, removed: 0, changed: 0, moved: 0 },
       total: 0,
       summary: "",
@@ -174,7 +185,8 @@ export function JournalView({
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [forkOffer, setForkOffer] = useState<ForkOffer | null>(null);
   // Diff mode is a reading/deciding mode — the content gestures sit out.
-  const dragEnabled = !diffActive && dropMode !== "none";
+  // Cinema is pure reading; gestures sit out there too.
+  const dragEnabled = !diffActive && !cinemaMode && dropMode !== "none";
 
   const activeDragNode = useMemo(
     () =>
@@ -287,13 +299,23 @@ export function JournalView({
             <EmptyJournal awaitingProposal={awaitingProposal} />
           ) : (
             <div className="flex flex-col gap-2">
-              {journal.sections.map((section) =>
-                section.kind === "elision" ? (
-                  <ElisionMarker
-                    key={`elide-${section.startDate}`}
-                    elision={section}
-                  />
-                ) : (
+              {journal.sections.map((section, idx) => {
+                if (section.kind === "elision") {
+                  // The skip affordance points past the span — at the day
+                  // section that follows (none when the elision closes the
+                  // journey).
+                  const next = journal.sections[idx + 1];
+                  return (
+                    <ElisionMarker
+                      key={`elide-${section.startDate}`}
+                      elision={section}
+                      jumpLabel={
+                        next && next.kind === "day" ? next.label : null
+                      }
+                    />
+                  );
+                }
+                return (
                   <DaySection
                     key={section.date}
                     section={section}
@@ -308,14 +330,15 @@ export function JournalView({
                     dragging={activeDragId !== null}
                     diffs={diffView?.annotations ?? null}
                     diffActive={diffActive}
+                    diverged={diffView?.divergedDays.has(section.date) ?? false}
                     ghostCaption={
                       role === "advisor"
                         ? "not in this version"
                         : "not in your version"
                     }
                   />
-                ),
-              )}
+                );
+              })}
               <p className="mt-6 pl-[var(--spine-col)] font-serif text-[12px] italic text-ink/35" style={spineColStyle}>
                 — the end of the journey —
               </p>
@@ -325,16 +348,32 @@ export function JournalView({
 
         {/* The right rail — fixed beside the story on desktop. Below lg it
             collapses to the idle glance above the Journal (node detail
-            deep-links to /item/[nodeId] instead) — same screen, responsive. */}
+            deep-links to /item/[nodeId] instead) — same screen, responsive.
+            Cinema fades it out with the rest of the chrome. */}
         <aside
           data-testid="journal-rail"
-          className="w-full lg:order-2 lg:w-[340px] lg:shrink-0"
+          className={[
+            "w-full transition-opacity duration-500 lg:order-2 lg:w-[340px] lg:shrink-0",
+            cinemaMode ? "pointer-events-none opacity-0" : "opacity-100",
+          ].join(" ")}
         >
           <div className="lg:sticky lg:top-4">
             <RightRail idle={railIdle} diffView={diffView} />
           </div>
         </aside>
       </div>
+
+      {/* Phase-5 furniture — the floating day minimap, the more-below tail
+          cue, and cinema's scroll driver (all chrome-aware: cinema fades or
+          hides them). */}
+      <DayRail
+        journal={journal}
+        totalDays={timeline.days.length}
+        divergedDays={diffView?.divergedDays ?? null}
+        scrollRootRef={scrollRootRef}
+      />
+      <MoreBelowCue journal={journal} scrollRootRef={scrollRootRef} />
+      <CinemaDriver scrollRootRef={scrollRootRef} />
 
       {/* The dragged card follows the cursor as a clone — the source only
           dims, so the absolute margin channel never breaks. */}
@@ -402,6 +441,7 @@ function DaySection({
   dragging,
   diffs = null,
   diffActive = false,
+  diverged = false,
   ghostCaption = "not in your version",
 }: {
   section: JournalDaySection;
@@ -422,6 +462,9 @@ function DaySection({
   diffs?: Map<string, JournalNodeDiff> | null;
   /** Diff mode is on — insert affordances sit out (a reading/deciding mode). */
   diffActive?: boolean;
+  /** This day diverges from the baseline (toJournalDiff's `divergedDays` —
+   *  the same set the day rail's dots read) — wears the second thread. */
+  diverged?: boolean;
   /** Role-aware ghost caption ("not in your/this version"). */
   ghostCaption?: string;
 }) {
@@ -523,15 +566,9 @@ function DaySection({
 
   // A diverged day (any annotated card or ghost) wears the slim dashed SECOND
   // THREAD beside the spine — a region cue, never a split (that vocabulary
-  // belongs to alternatives).
-  const hasDivergence =
-    diffs !== null &&
-    section.entries.some(
-      (entry) =>
-        entry.kind === "ghost" ||
-        (entry.kind === "node" && diffs.has(entry.node.id)) ||
-        (entry.kind === "alt" && entry.nodes.some((n) => diffs.has(n.id))),
-    );
+  // belongs to alternatives). Lifted into toJournalDiff (phase 5) so the day
+  // rail's divergence dots read the exact same derivation.
+  const hasDivergence = diverged;
 
   return (
     <section data-testid="journal-day" data-date={section.date}>

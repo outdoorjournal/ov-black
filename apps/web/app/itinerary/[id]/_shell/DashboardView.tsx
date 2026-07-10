@@ -29,6 +29,7 @@ import {
   selectScheduledCount,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
+import { AmbientLayer } from "@/app/_components/itinerary-graph/views/journal/AmbientLayer";
 import { JournalVersionChip } from "@/app/_components/itinerary-graph/views/journal/JournalVersionChip";
 import { JournalView } from "@/app/_components/itinerary-graph/views/journal/JournalView";
 import { BookingPanel } from "@/app/_components/itinerary-graph/views/horizontal/BookingPanel";
@@ -116,52 +117,59 @@ export function DashboardView() {
       data-testid="dashboard"
       className="min-h-0 flex-1 overflow-y-auto bg-paper"
     >
-      {/* Edit-in-place hero (phase 2) — title/brief/timing are their own
-          inline editors; the intake overlay is first-run only (ItineraryShell's
-          brief gate), never the edit path. */}
-      <DashboardHero />
+      {/* The ambient layer (phase 5) — behind the paper: the active node's
+          watermark wash (mood tint fallback), fixed to the viewport while the
+          story scrolls. The content wrapper below sits at z-[1] so everything
+          reads above it. */}
+      <AmbientLayer />
+      <div className="relative z-[1]">
+        {/* Edit-in-place hero (phase 2) — title/brief/timing are their own
+            inline editors; the intake overlay is first-run only (ItineraryShell's
+            brief gate), never the edit path. */}
+        <DashboardHero />
 
-      {/* The version chip near the hero (phase 4) — names which version this
-          is and carries the *Compare with the trip* toggle (diff mode: a
-          toggle over the Journal DOM below, never a route). */}
-      <div className="mx-auto w-full max-w-6xl px-4 pt-4 sm:px-6">
-        <JournalVersionChip />
-      </div>
+        {/* The version chip near the hero (phase 4) — names which version this
+            is and carries the *Compare with the trip* toggle (diff mode: a
+            toggle over the Journal DOM below, never a route). */}
+        <div className="mx-auto w-full max-w-6xl px-4 pt-4 sm:px-6">
+          <JournalVersionChip />
+        </div>
 
-      {/* The Journal — the trip read as a story. Its right rail rests on the
-          relocated "trip at a glance" (next action · approval · balance). */}
-      <JournalView
-        scrollRootRef={scrollRef}
-        railIdle={
-          <>
-            <NextActionCard action={nextAction} onConcierge={openConcierge} />
-            <ApprovalSection />
-            <BalanceGlance state={money} />
-          </>
-        }
-      />
+        {/* The Journal — the trip read as a story. Its right rail rests on the
+            relocated "trip at a glance" (next action · approval · balance). */}
+        <JournalView
+          scrollRootRef={scrollRef}
+          railIdle={
+            <>
+              <NextActionCard action={nextAction} onConcierge={openConcierge} />
+              <ApprovalSection />
+              <BalanceGlance state={money} />
+            </>
+          }
+        />
 
-      {/* The practical part — money · party · advisor management, after the
-          end of the journey so invoices never interrupt the story mid-scroll. */}
-      <div data-testid="dashboard-practical" className="border-t border-ink/10">
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
-          <h2 className="font-serif text-xl text-ink">The practical part</h2>
-          <MoneySection state={money} role={isAdvisor ? "advisor" : "client"} itineraryId={itineraryId} />
-          <PartySection
-            isAdvisor={isAdvisor}
-            clientId={clientId}
-            itineraryId={itineraryId}
-            apiBaseUrl={apiBaseUrl}
-            accessToken={accessToken}
-          />
-          {isAdvisor ? (
-            <AdvisorManagement
-              itineraryId={itineraryId}
+        {/* The practical part — money · party · advisor management, after the
+            end of the journey so invoices never interrupt the story mid-scroll. */}
+        <div data-testid="dashboard-practical" className="border-t border-ink/10">
+          <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
+            <h2 className="font-serif text-xl text-ink">The practical part</h2>
+            <MoneySection state={money} role={isAdvisor ? "advisor" : "client"} itineraryId={itineraryId} />
+            <PartySection
+              isAdvisor={isAdvisor}
               clientId={clientId}
+              itineraryId={itineraryId}
               apiBaseUrl={apiBaseUrl}
               accessToken={accessToken}
             />
-          ) : null}
+            {isAdvisor ? (
+              <AdvisorManagement
+                itineraryId={itineraryId}
+                clientId={clientId}
+                apiBaseUrl={apiBaseUrl}
+                accessToken={accessToken}
+              />
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

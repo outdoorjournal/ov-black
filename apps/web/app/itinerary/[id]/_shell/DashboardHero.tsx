@@ -43,6 +43,7 @@ import {
   timingValueFrom,
   type TimingValue,
 } from "@/app/_components/itinerary-graph/intake/TimingFields";
+import { CinemaPlayButton } from "@/app/_components/itinerary-graph/views/journal/Cinema";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
 import { DEFAULT_MOOD, MOODS, type MoodEntry } from "@/lib/atmos/moods";
@@ -107,6 +108,12 @@ export function DashboardHero() {
         aria-hidden
         className="absolute inset-0 -z-10 bg-linear-to-t from-black/75 via-black/35 to-black/15"
       />
+      {/* Cinema's entry (phase 5) — a small quiet Play in the hero's corner.
+          It hides itself in diff mode, under reduced motion, and while
+          already playing. */}
+      <div className="pointer-events-none absolute bottom-4 right-4 sm:bottom-6 sm:right-6">
+        <CinemaPlayButton />
+      </div>
       <div className="mx-auto w-full max-w-5xl">
         <TimingInline itinerary={it} canEdit={canEdit} onSave={save} />
         <TitleInline
