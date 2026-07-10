@@ -127,6 +127,13 @@ const DEFAULT_KIND: Record<Tier, string> = {
   osint: "linkedin",
 };
 
+// Dark ops-shell field styling. The base Input/Select/Textarea primitives are
+// tuned for the light client surfaces (cream bg, ink text); on the ink
+// Command Center frame they need transparent fills + paper text, matching the
+// detail-page Add forms (AddDossierFactForm et al.).
+const FIELD_DARK =
+  "border-paper/20 bg-transparent text-paper placeholder:text-paper/40 focus-visible:ring-paper/30";
+
 const factSchema = z.object({
   tier: z.enum(TIERS),
   kind: z.string().min(1),
@@ -300,7 +307,11 @@ export function DossierForm() {
                 <FormItem>
                   <FormLabel>Full name</FormLabel>
                   <FormControl>
-                    <Input placeholder="Jane Doe" {...field} />
+                    <Input
+                      placeholder="Jane Doe"
+                      className={FIELD_DARK}
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -316,6 +327,7 @@ export function DossierForm() {
                     <Input
                       type="email"
                       placeholder="jane@example.com"
+                      className={FIELD_DARK}
                       {...field}
                     />
                   </FormControl>
@@ -331,7 +343,7 @@ export function DossierForm() {
                   <FormLabel>Preferred contact</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger className={FIELD_DARK}>
                         <SelectValue placeholder="Select a channel" />
                       </SelectTrigger>
                     </FormControl>
@@ -353,7 +365,7 @@ export function DossierForm() {
             control={form.control}
             name="notify"
             render={({ field }) => (
-              <FormItem className="flex flex-row items-start gap-3 rounded-md border border-border p-4">
+              <FormItem className="flex flex-row items-start gap-3 rounded-md border border-paper/15 p-4">
                 <FormControl>
                   <input
                     type="checkbox"
@@ -364,7 +376,7 @@ export function DossierForm() {
                 </FormControl>
                 <div className="space-y-1 leading-none">
                   <FormLabel>Send a welcome email now</FormLabel>
-                  <FormDescription>
+                  <FormDescription className="text-paper/55">
                     On by default. Uncheck to create the client silently and
                     build for them first — you can send the invite later from
                     the roster.
@@ -387,9 +399,13 @@ export function DossierForm() {
                 <FormItem>
                   <FormLabel>Children&rsquo;s ages</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g. 7, 10, 14" {...field} />
+                    <Input
+                      placeholder="e.g. 7, 10, 14"
+                      className={FIELD_DARK}
+                      {...field}
+                    />
                   </FormControl>
-                  <FormDescription>
+                  <FormDescription className="text-paper/55">
                     Comma or space separated. Ages 0–25.
                   </FormDescription>
                   <FormMessage />
@@ -403,7 +419,7 @@ export function DossierForm() {
                 <FormItem>
                   <FormLabel>Notes</FormLabel>
                   <FormControl>
-                    <Textarea rows={3} {...field} />
+                    <Textarea rows={3} className={FIELD_DARK} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -419,10 +435,11 @@ export function DossierForm() {
                     <Input
                       inputMode="numeric"
                       placeholder="Optional — e.g. 250,000,000"
+                      className={FIELD_DARK}
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
+                  <FormDescription className="text-paper/55">
                     Private. Never rendered back to the client.
                   </FormDescription>
                   <FormMessage />
@@ -438,7 +455,7 @@ export function DossierForm() {
         >
           <div className="flex flex-col gap-3">
             {contacts.fields.length === 0 ? (
-              <p className="font-sans text-sm italic text-ink/55">
+              <p className="font-sans text-sm italic text-paper/55">
                 No contacts yet. Add some now or skip — you can add them on
                 the client detail page anytime.
               </p>
@@ -447,7 +464,7 @@ export function DossierForm() {
             {contacts.fields.map((row, i) => (
               <div
                 key={row.id}
-                className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-[8rem_1fr_8rem_auto]"
+                className="grid gap-2 rounded-md border border-paper/15 p-3 sm:grid-cols-[8rem_1fr_8rem_auto]"
               >
                 <FormField
                   control={form.control}
@@ -459,7 +476,7 @@ export function DossierForm() {
                         value={field.value ?? "phone_cell"}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className={FIELD_DARK}>
                             <SelectValue />
                           </SelectTrigger>
                         </FormControl>
@@ -482,6 +499,7 @@ export function DossierForm() {
                       <FormControl>
                         <Input
                           placeholder="Number or handle"
+                          className={FIELD_DARK}
                           {...field}
                         />
                       </FormControl>
@@ -497,6 +515,7 @@ export function DossierForm() {
                       <FormControl>
                         <Input
                           placeholder="Label (optional)"
+                          className={FIELD_DARK}
                           {...field}
                         />
                       </FormControl>
@@ -507,7 +526,7 @@ export function DossierForm() {
                   <button
                     type="button"
                     onClick={() => contacts.remove(i)}
-                    className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/55 transition-colors hover:text-destructive"
+                    className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-destructive"
                   >
                     Remove
                   </button>
@@ -519,6 +538,7 @@ export function DossierForm() {
               <Button
                 type="button"
                 variant="outline"
+                className="border-paper/20 bg-transparent text-paper hover:bg-paper/10 hover:text-paper"
                 onClick={() =>
                   contacts.append({
                     kind: "phone_cell",
@@ -539,7 +559,7 @@ export function DossierForm() {
         >
           <div className="flex flex-col gap-3">
             {facts.fields.length === 0 ? (
-              <p className="font-sans text-sm italic text-ink/55">
+              <p className="font-sans text-sm italic text-paper/55">
                 No seeds yet. Add some now or skip — you can record facts on
                 the client detail page anytime.
               </p>
@@ -554,7 +574,7 @@ export function DossierForm() {
               return (
                 <div
                   key={row.id}
-                  className="flex flex-col gap-2 rounded-md border border-border p-3"
+                  className="flex flex-col gap-2 rounded-md border border-paper/15 p-3"
                 >
                   <div
                     className={`grid gap-2 ${isOsint ? "sm:grid-cols-[7rem_8rem_1fr_1fr_auto]" : "sm:grid-cols-[7rem_8rem_1fr_auto]"}`}
@@ -577,7 +597,7 @@ export function DossierForm() {
                             value={field.value ?? "dossier"}
                           >
                             <FormControl>
-                              <SelectTrigger>
+                              <SelectTrigger className={FIELD_DARK}>
                                 <SelectValue />
                               </SelectTrigger>
                             </FormControl>
@@ -602,7 +622,7 @@ export function DossierForm() {
                             value={field.value ?? DEFAULT_KIND[tier]}
                           >
                             <FormControl>
-                              <SelectTrigger>
+                              <SelectTrigger className={FIELD_DARK}>
                                 <SelectValue />
                               </SelectTrigger>
                             </FormControl>
@@ -623,7 +643,11 @@ export function DossierForm() {
                       render={({ field }) => (
                         <FormItem>
                           <FormControl>
-                            <Input placeholder="Fact text…" {...field} />
+                            <Input
+                              placeholder="Fact text…"
+                              className={FIELD_DARK}
+                              {...field}
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -638,6 +662,7 @@ export function DossierForm() {
                             <FormControl>
                               <Input
                                 placeholder="Source URL (optional)"
+                                className={FIELD_DARK}
                                 {...field}
                               />
                             </FormControl>
@@ -649,13 +674,13 @@ export function DossierForm() {
                       <button
                         type="button"
                         onClick={() => facts.remove(i)}
-                        className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/55 transition-colors hover:text-destructive"
+                        className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/55 transition-colors hover:text-destructive"
                       >
                         Remove
                       </button>
                     </div>
                   </div>
-                  <p className="font-sans text-[10px] uppercase tracking-[0.25em] text-ink/45">
+                  <p className="font-sans text-[10px] uppercase tracking-[0.25em] text-paper/45">
                     {TIER_RULES[tier]}
                   </p>
                 </div>
@@ -666,6 +691,7 @@ export function DossierForm() {
               <Button
                 type="button"
                 variant="outline"
+                className="border-paper/20 bg-transparent text-paper hover:bg-paper/10 hover:text-paper"
                 onClick={() =>
                   facts.append({
                     tier: "dossier",
@@ -711,9 +737,9 @@ function Section({
 }) {
   return (
     <section className="flex flex-col gap-5">
-      <header className="border-b border-ink/10 pb-3">
-        <h2 className="font-serif text-xl tracking-tight text-ink">{title}</h2>
-        <p className="mt-1 font-sans text-sm text-ink/65">{description}</p>
+      <header className="border-b border-paper/10 pb-3">
+        <h2 className="font-serif text-xl tracking-tight text-paper">{title}</h2>
+        <p className="mt-1 font-sans text-sm text-paper/65">{description}</p>
       </header>
       {children}
     </section>

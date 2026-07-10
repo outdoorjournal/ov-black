@@ -25,8 +25,10 @@ import {
   type AgentTurnSummary,
 } from "@ov-black/api-client";
 
-import { ConversationStream } from "@/app/chat/[client_id]/_components/ConversationStream";
-import { Composer } from "@/app/chat/[client_id]/_components/Composer";
+import {
+  ConversationPanel,
+  type ConversationMessage,
+} from "@/app/_components/concierge/ConversationPanel";
 import {
   useAgentStream,
   type DeltaFrame,
@@ -215,10 +217,30 @@ function RightRailChatInner({
     };
   }, []);
 
+  // Normalise the basecamp turn model onto the shared ConversationPanel shape.
+  // AgentTurnView.role is a superset of ConversationRole (they share
+  // user/assistant/system/tool/error/milestone), so roles pass straight
+  // through; the in-flight buffer becomes a trailing streaming bubble.
+  const messages: ConversationMessage[] = turns.map((t) => ({
+    id: t.id,
+    role: t.role,
+    text: t.content,
+  }));
+  if (streaming) {
+    messages.push({
+      id: `streaming-${streaming.turnIndex}`,
+      role: "assistant",
+      text: streaming.buffer,
+      streaming: true,
+    });
+  }
+
   // Flat paper column — the SAME chrome as the itinerary ConciergeColumn (no
   // frosted/floating card, no AtmosFrame). The host (BasecampShell) provides the
   // bounded height + border, so this just fills it, exactly like the itinerary
-  // concierge fills its aside.
+  // concierge fills its aside. The Artemis body now renders the SHARED
+  // ConversationPanel (bubbles) — the same window the advisor sees, not the
+  // /chat prose stream — so both surfaces read identically.
   return (
     <div
       data-testid="basecamp-concierge"
@@ -243,10 +265,13 @@ function RightRailChatInner({
             channel === "artemis" ? "absolute inset-0 flex flex-col" : "hidden"
           }
         >
-          <div className="min-h-0 flex-1 [&>section]:h-full">
-            <ConversationStream turns={turns} streaming={streaming} />
-          </div>
-          <Composer disabled={streaming !== null} onSend={onSend} />
+          <ConversationPanel
+            messages={messages}
+            onSubmit={onSend}
+            disabled={streaming !== null}
+            hideHeader
+            placeholder="Write to your concierge"
+          />
         </div>
         {channel === "human" ? (
           <div className="absolute inset-0 flex flex-col">

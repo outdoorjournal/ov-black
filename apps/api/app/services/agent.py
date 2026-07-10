@@ -1413,15 +1413,25 @@ async def stream_turn(
                 payload=payload,
             )
             async with aclosing(stream) as events:
-                async for event in events:
-                    # First-token deadline: if we have not yet seen any event
-                    # from the runtime by ``first_token_deadline``, fall into
-                    # the retry envelope with ``first_token_timeout``.
-                    if (
-                        first_token_ms is None
-                        and (time.monotonic() - started) > first_token_deadline
-                    ):
-                        raise TimeoutError("first_token_timeout")
+                events_iter = aiter(events)
+                while True:
+                    # First-token liveness deadline: until the model streams
+                    # its first text token, bound the wait for EACH upstream
+                    # event. Any event — tool activity, cards, unknown frames
+                    # — proves the runtime is alive and re-arms the window,
+                    # so a tool-first turn is never cut while visibly
+                    # working. A silent gap longer than the deadline falls
+                    # into the retry envelope as ``first_token_timeout``,
+                    # and each retry attempt gets a fresh window (the old
+                    # wall-clock check doomed every retry on arrival).
+                    try:
+                        if first_token_ms is None:
+                            with anyio.fail_after(first_token_deadline):
+                                event = await anext(events_iter)
+                        else:
+                            event = await anext(events_iter)
+                    except StopAsyncIteration:
+                        break
 
                     kind = event.get("type")
                     if kind == "first_token":

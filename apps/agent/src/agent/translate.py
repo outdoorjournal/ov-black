@@ -191,6 +191,15 @@ class EventTranslator:
     status only, never inputs or outputs (which can carry Dossier/OSINT
     content). Real browsers drop unknown frame types, so the frame is only
     consumed by harness clients (ovb / the eval runner).
+
+    Independently of the trace flag, every tool call/result ALWAYS emits an
+    ``activity`` frame carrying nothing but ``phase`` — no tool name, id,
+    status or payload. Even a tool's *name* can disclose private machinery
+    to a traveler (``record_dossier_inference``), so the browser-facing
+    pulse is anonymous by construction. It serves two consumers: the chat
+    surface animates "the concierge is working" during a tool-first
+    preamble, and the API's first-token liveness deadline re-arms on any
+    upstream event, so long tool work is never mistaken for a dead runtime.
     """
 
     # Trailing characters that end a clause — after one of these, prose resuming
@@ -277,6 +286,7 @@ class EventTranslator:
                 tu = block.get("toolUse") or block.get("tool_use")
                 if isinstance(tu, dict):
                     self._tool_boundary = True
+                    yield {"type": "activity", "phase": "call"}
                     tuid = tu.get("toolUseId") or tu.get("tool_use_id")
                     name = tu.get("name")
                     if isinstance(tuid, str) and isinstance(name, str):
@@ -300,6 +310,7 @@ class EventTranslator:
         # A tool result is a prose boundary too (covers the legacy top-level
         # path where no separate assistant toolUse message was seen).
         self._tool_boundary = True
+        yield {"type": "activity", "phase": "result"}
         # Resolve the tool name. Real Strands toolResult blocks have only
         # toolUseId; legacy/test shapes may carry an explicit name.
         name = (

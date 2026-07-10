@@ -340,8 +340,11 @@ class Settings(BaseSettings):
         default=8.0,
         ge=0.1,
         description=(
-            "Hard ceiling on time-to-first-token before we cut the upstream "
-            "and fall into the retry envelope. Belt for the 2 s R015 target."
+            "Hard ceiling on a silent upstream gap before the first text "
+            "token: any runtime event (tool activity, cards) re-arms the "
+            "window, so tool-first turns aren't cut while visibly working. "
+            "On expiry we cut the stream and fall into the retry envelope. "
+            "Belt for the 2 s R015 target."
         ),
     )
     agent_max_retries: int = Field(

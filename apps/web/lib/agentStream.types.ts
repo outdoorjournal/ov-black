@@ -111,6 +111,18 @@ export type MoodFrame = {
   mood_id: string;
 };
 
+// Anonymous tool-activity pulse, emitted by the agent runtime for every tool
+// call and result. Deliberately carries NOTHING but the phase — no tool name,
+// id, status or payload — because even a tool's name can disclose private
+// machinery to a traveler (record_dossier_inference). Chat surfaces use it to
+// show "the concierge is working" during a tool-first preamble; the named,
+// dev-only tool_trace frame is a separate harness channel and never part of
+// this union.
+export type ActivityFrame = {
+  type: "activity";
+  phase: "call" | "result";
+};
+
 export type SseFrame =
   | FirstTokenFrame
   | DeltaFrame
@@ -121,4 +133,5 @@ export type SseFrame =
   | DraftAssembledFrame
   | NodeUpdatedFrame
   | ItineraryUpdatedFrame
-  | MoodFrame;
+  | MoodFrame
+  | ActivityFrame;

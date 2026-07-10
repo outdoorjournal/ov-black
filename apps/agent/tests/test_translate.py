@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import json
 
+from collections.abc import Iterable
+
 from agent.translate import EventTranslator, translate_event
 
 
+def _ui(frames: Iterable[dict]) -> list[dict]:
+    """The UI-frame view: drop the unconditional anonymous ``activity`` pulse."""
+    return [f for f in frames if f.get("type") != "activity"]
+
+
 def _one(event: dict) -> dict | None:
-    frames = list(translate_event(event))
+    frames = _ui(translate_event(event))
     return frames[0] if frames else None
 
 
@@ -156,7 +163,7 @@ def test_tool_result_update_trip_timing_maps_to_itinerary_updated() -> None:
 def test_tool_result_read_only_tool_has_no_ui_frame() -> None:
     # get_traveler_context is a read — no SSE frame for the browser.
     event = {"tool_result": {"name": "get_traveler_context", "output": {"profile_facts": []}}}
-    assert list(translate_event(event)) == []
+    assert _ui(translate_event(event)) == []
 
 
 def test_prose_resumes_with_paragraph_break_after_tool() -> None:
@@ -242,7 +249,7 @@ def test_bedrock_converse_tool_result_nested_form() -> None:
 def test_set_mood_paired_messages_emits_mood_frame() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-1", "set_mood", {"mood_id": "kyoto-zen"})))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event(
                 "tu-1", {"mood_id": "kyoto-zen", "description": "Kyoto stillness."}
@@ -255,7 +262,7 @@ def test_set_mood_paired_messages_emits_mood_frame() -> None:
 def test_set_mood_unknown_id_payload_drops_frame() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-2", "set_mood", {"mood_id": "bogus"})))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event("tu-2", {"error": "unknown_mood", "mood_id": "bogus"})
         )
@@ -266,7 +273,7 @@ def test_set_mood_unknown_id_payload_drops_frame() -> None:
 def test_propose_card_paired_messages_emits_card_proposed() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-3", "propose_card")))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event("tu-3", {"id": "node-1", "title": "Dolomites trek"})
         )
@@ -279,7 +286,7 @@ def test_propose_card_paired_messages_emits_card_proposed() -> None:
 def test_assemble_draft_paired_messages_counts_edges() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-4", "assemble_draft")))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event("tu-4", {"edges": [{"id": "e1"}, {"id": "e2"}]})
         )
@@ -290,7 +297,7 @@ def test_assemble_draft_paired_messages_counts_edges() -> None:
 def test_update_node_status_paired_messages_emits_node_updated() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-5", "update_node_status")))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event("tu-5", {"id": "node-2", "status": "approved"})
         )
@@ -303,7 +310,7 @@ def test_update_node_status_paired_messages_emits_node_updated() -> None:
 def test_update_trip_timing_paired_messages_emits_itinerary_updated() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-8", "update_trip_timing")))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event(
                 "tu-8",
@@ -336,7 +343,7 @@ def test_propose_timeline_materializes_ov_timeline_delta() -> None:
             {"label": "Days 2–3", "title": "North toward Lefkada"},
         ],
     }
-    frames = list(translator.translate(_tool_result_message_event("tu-tl", payload)))
+    frames = _ui(translator.translate(_tool_result_message_event("tu-tl", payload)))
 
     assert len(frames) == 1
     frame = frames[0]
@@ -357,7 +364,7 @@ def test_propose_timeline_materializes_ov_timeline_delta() -> None:
 def test_propose_timeline_error_payload_drops_block() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-tlx", "propose_timeline")))
-    frames = list(
+    frames = _ui(
         translator.translate(
             _tool_result_message_event("tu-tlx", {"error": "invalid_timeline"})
         )
@@ -370,7 +377,7 @@ def test_tool_result_without_prior_tool_use_is_dropped() -> None:
     # has no name to correlate with, so it cannot be routed to a frame.
     # This is a defensive case — it should never happen in practice.
     translator = EventTranslator()
-    frames = list(
+    frames = _ui(
         translator.translate(_tool_result_message_event("tu-orphan", {"mood_id": "alpine"}))
     )
     assert frames == []
@@ -379,7 +386,7 @@ def test_tool_result_without_prior_tool_use_is_dropped() -> None:
 def test_read_only_tool_paired_messages_emits_no_frame() -> None:
     translator = EventTranslator()
     list(translator.translate(_assistant_tool_use_event("tu-6", "get_traveler_context")))
-    frames = list(
+    frames = _ui(
         translator.translate(_tool_result_message_event("tu-6", {"profile_facts": []}))
     )
     assert frames == []
@@ -404,7 +411,7 @@ def test_translator_correlates_when_tool_use_and_result_share_one_message() -> N
             ]
         }
     }
-    frames = list(translator.translate(event))
+    frames = _ui(translator.translate(event))
     assert frames == [{"type": "mood", "mood_id": "ember"}]
 
 
@@ -426,19 +433,21 @@ def test_tool_trace_emits_call_and_result_for_read_only_tool() -> None:
         translator.translate(_assistant_tool_use_event("tu-9", "get_itinerary"))
     )
     assert call_frames == [
-        {"type": "tool_trace", "phase": "call", "tool": "get_itinerary", "tool_use_id": "tu-9"}
+        {"type": "activity", "phase": "call"},
+        {"type": "tool_trace", "phase": "call", "tool": "get_itinerary", "tool_use_id": "tu-9"},
     ]
     result_frames = list(
         translator.translate(_tool_result_message_event("tu-9", {"nodes": []}))
     )
     assert result_frames == [
+        {"type": "activity", "phase": "result"},
         {
             "type": "tool_trace",
             "phase": "result",
             "tool": "get_itinerary",
             "tool_use_id": "tu-9",
             "status": "success",
-        }
+        },
     ]
 
 
@@ -448,14 +457,46 @@ def test_tool_trace_precedes_ui_frame_and_carries_no_payload() -> None:
     frames = list(
         translator.translate(_tool_result_message_event("tu-10", {"mood_id": "ember"}))
     )
-    assert [f["type"] for f in frames] == ["tool_trace", "mood"]
-    trace = frames[0]
+    assert [f["type"] for f in frames] == ["activity", "tool_trace", "mood"]
+    trace = frames[1]
     # Redaction: the trace never carries the tool's input or output.
     assert set(trace) == {"type", "phase", "tool", "tool_use_id", "status"}
 
 
 def test_tool_trace_result_without_prior_tool_use_stays_silent() -> None:
     # Unresolvable name → no trace (nothing meaningful to report) and no crash.
+    # The anonymous activity pulse still fires — a tool result DID happen.
     translator = EventTranslator(emit_tool_trace=True)
     frames = list(translator.translate(_tool_result_message_event("tu-11", {"x": 1})))
-    assert frames == []
+    assert frames == [{"type": "activity", "phase": "result"}]
+
+
+# ── activity (anonymous tool pulse) ──────────────────────────────────────────
+
+
+def test_activity_pulse_always_on() -> None:
+    # Emitted with NO trace flag: the browser-facing "concierge is working"
+    # signal must exist in every environment, not just eval runs.
+    translator = EventTranslator()
+    call_frames = list(
+        translator.translate(_assistant_tool_use_event("tu-12", "get_traveler_context"))
+    )
+    assert call_frames == [{"type": "activity", "phase": "call"}]
+    result_frames = list(
+        translator.translate(_tool_result_message_event("tu-12", {"profile_facts": []}))
+    )
+    assert result_frames == [{"type": "activity", "phase": "result"}]
+
+
+def test_activity_pulse_never_identifies_the_tool() -> None:
+    # Redaction: even a tool NAME can disclose private machinery to a traveler
+    # (record_dossier_inference). The pulse carries type + phase and nothing else.
+    translator = EventTranslator()
+    frames = list(
+        translator.translate(_assistant_tool_use_event("tu-13", "record_dossier_inference"))
+    )
+    frames += list(translator.translate(_tool_result_message_event("tu-13", {"ok": True})))
+    activity = [f for f in frames if f.get("type") == "activity"]
+    assert len(activity) == 2
+    for frame in activity:
+        assert set(frame) == {"type", "phase"}

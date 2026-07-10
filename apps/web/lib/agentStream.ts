@@ -20,6 +20,7 @@
 import { useCallback, useRef } from "react";
 
 import type {
+  ActivityFrame,
   AgentNode,
   CardFrame,
   CardProposedFrame,
@@ -36,6 +37,7 @@ import type {
 } from "./agentStream.types";
 
 export type {
+  ActivityFrame,
   AgentNode,
   CardFrame,
   CardProposedFrame,
@@ -69,7 +71,13 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "node_updated",
   "itinerary_updated",
   "mood",
+  "activity",
 ]);
+
+// Frames the agent emits for harness clients (ovb / the eval runner), not for
+// the browser. Known-and-discarded: dropped without the unknown-frame warning
+// so a dev stack running EMIT_TOOL_TRACE=1 doesn't spam the console.
+const IGNORED_FRAME_TYPES: ReadonlySet<string> = new Set(["tool_trace"]);
 
 function isSseFrame(value: unknown): value is SseFrame {
   if (!value || typeof value !== "object") return false;
@@ -106,6 +114,10 @@ function isSseFrame(value: unknown): value is SseFrame {
     const v = value as { mood_id?: unknown };
     if (typeof v.mood_id !== "string") return false;
   }
+  if (type === "activity") {
+    const v = value as { phase?: unknown };
+    if (v.phase !== "call" && v.phase !== "result") return false;
+  }
 
   return true;
 }
@@ -125,6 +137,11 @@ export function parseFrames(buffer: string): ParseResult {
 
   for (const parsed of payloads) {
     if (!isSseFrame(parsed)) {
+      const type =
+        parsed && typeof parsed === "object"
+          ? (parsed as { type?: unknown }).type
+          : undefined;
+      if (typeof type === "string" && IGNORED_FRAME_TYPES.has(type)) continue;
       const shape =
         parsed && typeof parsed === "object"
           ? Object.keys(parsed as Record<string, unknown>).slice(0, 5)
@@ -188,6 +205,14 @@ export type UseAgentStreamOptions = {
    * AtmosFrame then crossfades to. Off-basecamp surfaces can ignore.
    */
   onMood?: (frame: MoodFrame) => void;
+  /**
+   * Fires on every anonymous tool-activity pulse (``phase: "call" |
+   * "result"``). Chat surfaces use it to show a working indicator during a
+   * tool-first preamble — the pulse carries no tool identity by design, so
+   * there is nothing to render beyond "the concierge is doing something".
+   * Clear the indicator on the next delta / done / error.
+   */
+  onActivity?: (frame: ActivityFrame) => void;
   /**
    * Caller-owned abort controller ref. The hook writes a fresh
    * AbortController into this ref at the start of every stream so the caller
@@ -341,6 +366,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "mood":
                 current.onMood?.(frame);
                 break;
+              case "activity":
+                current.onActivity?.(frame);
+                break;
             }
             if (terminated) break;
           }
@@ -401,6 +429,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "mood":
         current.onMood?.(frame);
+        break;
+      case "activity":
+        current.onActivity?.(frame);
         break;
     }
   }

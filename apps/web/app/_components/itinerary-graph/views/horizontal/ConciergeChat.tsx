@@ -31,7 +31,7 @@ import {
   type ChatMessage,
 } from "../../store/itineraryGraphStore";
 
-import { ChatPanel } from "./ChatPanel";
+import { ConversationPanel } from "@/app/_components/concierge/ConversationPanel";
 
 type ConciergeChatProps = {
   audience: "traveler" | "advisor";
@@ -81,6 +81,10 @@ export function ConciergeChat({
       : [],
   );
   const [streaming, setStreaming] = useState(false);
+  // True while the agent is off calling tools and hasn't streamed text yet —
+  // drives the map-fold "working" indicator in the streaming bubble. Set by
+  // the anonymous `activity` pulse, cleared by the next delta / done / error.
+  const [working, setWorking] = useState(false);
 
   // Seed from an explicit resume target (PS2) so ensureSession returns it
   // without ever creating a session.
@@ -119,11 +123,16 @@ export function ConciergeChat({
     getAccessToken,
     apiBaseUrl: apiBaseUrl ?? "",
     abortRef,
+    onActivity: () => {
+      if (streamingIdRef.current) setWorking(true);
+    },
     onDelta: (frame) => {
+      setWorking(false);
       const id = streamingIdRef.current;
       if (id) appendDelta(id, frame.text);
     },
     onDone: () => {
+      setWorking(false);
       const id = streamingIdRef.current;
       if (id) {
         setMessages((prev) =>
@@ -134,6 +143,7 @@ export function ConciergeChat({
       setStreaming(false);
     },
     onError: () => {
+      setWorking(false);
       const id = streamingIdRef.current;
       if (id) {
         appendDelta(
@@ -274,15 +284,16 @@ export function ConciergeChat({
   );
 
   return (
-    <ChatPanel
+    <ConversationPanel
       messages={messages}
-      pendingProposals={pendingProposals}
+      proposals={pendingProposals}
       onAccept={(id) => storeApi.getState().acceptProposal(id)}
       onDismiss={(id) => storeApi.getState().dismissProposal(id)}
       onSubmit={handleSubmit}
       {...(onScrollToNode ? { onScrollToNode } : {})}
       disabled={!canChat || streaming}
       hideHeader={hideHeader}
+      working={working}
     />
   );
 }

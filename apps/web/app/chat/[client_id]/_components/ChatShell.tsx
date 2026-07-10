@@ -12,7 +12,7 @@
 // column (left) and an empty mood-board aside (right) that's ready to host
 // imagery in a later slice.
 
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   useAgentStream,
@@ -112,6 +112,11 @@ function ChatShellInner({
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // True while the agent is off calling tools mid-turn — drives the map-fold
+  // "working" indicator on the streaming row. Set by the anonymous `activity`
+  // pulse, cleared by the next delta / done / error.
+  const [working, setWorking] = useState(false);
+
   // Build a per-call token provider. The browser Supabase client is
   // configured by @supabase/ssr to auto-refresh the session, so its
   // getSession() returns a freshly-minted access token when the previous one
@@ -146,13 +151,19 @@ function ChatShellInner({
       // first_token arrival is observable via the streaming row appearing
       // in the DOM; no dedicated callback work needed here.
     },
+    onActivity: () => {
+      setWorking(true);
+    },
     onDelta: (frame: DeltaFrame) => {
+      setWorking(false);
       storeApi.getState().appendDelta(frame.text);
     },
     onDone: (frame: DoneFrame) => {
+      setWorking(false);
       storeApi.getState().finishStream(frame);
     },
     onError: (frame: ErrorFrame) => {
+      setWorking(false);
       storeApi.getState().errorStream(frame);
     },
     onCard: (frame: CardFrame) => {
@@ -290,7 +301,7 @@ function ChatShellInner({
                 </h1>
               </div>
             </header>
-            <ConversationStream turns={turns} streaming={streaming} />
+            <ConversationStream turns={turns} streaming={streaming} working={working} />
             <Composer
               disabled={streaming !== null}
               onSend={(content) => submit(content)}

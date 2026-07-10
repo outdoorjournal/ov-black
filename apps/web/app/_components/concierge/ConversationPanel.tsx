@@ -1,40 +1,83 @@
 "use client";
 
-// Right-side concierge chat. Mirrors the vertical prototype's panel — same
-// MessageBubble look, same proposed-card stub, same input — but typed against
-// horizontal's ChatMessage shape.
+// The one concierge conversation surface, shared by every chat window so the
+// advisor's trip-view concierge and the traveler's basecamp rail look and behave
+// the same (M006/PS7 finish: unify the message rendering, not just the chrome).
+//
+// It renders the canonical "bubble" look lifted from the itinerary ChatPanel —
+// ink user bubbles on the right, paper assistant bubbles on the left, an inline
+// proposed-card stub, and a single-line composer. Callers normalise their own
+// turn model into `ConversationMessage[]`; itinerary-specific extras (proposed
+// cards, "show on timeline") are optional, so a surface with none just omits
+// them.
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
+import { MapFoldIndicator } from "@/app/_components/MapFoldIndicator";
+import { CRAFTED_FALLBACK_COPY } from "@/app/chat/[client_id]/_components/ConversationStream";
+import { OnboardingMilestoneCard } from "@/app/chat/[client_id]/_components/OnboardingMilestoneCard";
 import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
 
-import type { NodeResponse } from "../../model/horizontalTypes";
-import type { ChatMessage } from "../../store/itineraryGraphStore";
+// A single conversation row. `role` is the union across every surface: the
+// itinerary concierge only ever produces user/assistant/system; basecamp adds
+// the client-synthesized `milestone` card and the `error` fallback row. `tool`
+// rows are agent plumbing — rendered quietly, kept in the DOM for parity.
+export type ConversationRole =
+  | "user"
+  | "assistant"
+  | "system"
+  | "tool"
+  | "error"
+  | "milestone";
 
-interface ChatPanelProps {
-  messages: ChatMessage[];
-  pendingProposals: NodeResponse[];
-  onAccept: (id: string) => void;
-  onDismiss: (id: string) => void;
+export type ConversationMessage = {
+  id: string;
+  role: ConversationRole;
+  text: string;
+  streaming?: boolean;
+};
+
+// A proposed graph node awaiting accept/dismiss. A structural subset of the
+// itinerary NodeResponse, so the itinerary surface passes its rows straight in;
+// surfaces without proposals omit the prop.
+export type ConversationProposal = {
+  id: string;
+  type: string;
+  title: string;
+};
+
+export interface ConversationPanelProps {
+  messages: ConversationMessage[];
   onSubmit: (text: string) => void;
+  proposals?: ConversationProposal[];
+  onAccept?: (id: string) => void;
+  onDismiss?: (id: string) => void;
   onScrollToNode?: (id: string) => void;
   disabled?: boolean;
-  // Hide the panel's own "Concierge" header — used when a host (e.g. the mobile
-  // bottom sheet) already provides one in its drag handle.
+  // Hide the panel's own "Concierge" header — used when a host already provides
+  // one (the mobile bottom sheet's drag handle, or basecamp's people-circles).
   hideHeader?: boolean;
+  // Composer placeholder — differs per surface ("Ask me to propose…" for the
+  // advisor, "Write to your concierge" for the traveler).
+  placeholder?: string;
+  // The concierge is off calling tools (anonymous `activity` pulse) — the
+  // streaming bubble shows the map-fold indicator instead of the text caret.
+  working?: boolean;
 }
 
-export function ChatPanel({
+export function ConversationPanel({
   messages,
-  pendingProposals,
+  onSubmit,
+  proposals = [],
   onAccept,
   onDismiss,
-  onSubmit,
   onScrollToNode,
   disabled = false,
   hideHeader = false,
-}: ChatPanelProps) {
+  placeholder = "Ask me to propose, assemble, or swap…",
+  working = false,
+}: ConversationPanelProps) {
   const [text, setText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -42,7 +85,7 @@ export function ChatPanel({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, pendingProposals.length]);
+  }, [messages, proposals.length]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +96,10 @@ export function ChatPanel({
   };
 
   return (
-    <div className="relative z-20 flex h-full flex-col bg-paper/80 backdrop-blur-md">
+    <div
+      data-testid="conversation-panel"
+      className="relative z-20 flex h-full min-h-0 flex-col bg-paper/80 backdrop-blur-md"
+    >
       {hideHeader ? null : (
         <div className="border-b border-ink/10 px-4 py-2.5">
           <div className="text-[10px] uppercase tracking-[0.24em] text-ink/55">
@@ -67,9 +113,9 @@ export function ChatPanel({
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 bg-white">
         <AnimatePresence initial={false}>
           {messages.map((m) => (
-            <MessageBubble key={m.id} message={m} />
+            <MessageBubble key={m.id} message={m} working={working} />
           ))}
-          {pendingProposals.map((p) => (
+          {proposals.map((p) => (
             <motion.div
               key={`inline-${p.id}`}
               initial={{ opacity: 0, y: 6 }}
@@ -97,14 +143,14 @@ export function ChatPanel({
               <div className="mt-2 flex gap-1.5">
                 <button
                   type="button"
-                  onClick={() => onAccept(p.id)}
+                  onClick={() => onAccept?.(p.id)}
                   className="rounded-md bg-ink px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-paper"
                 >
                   Accept
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDismiss(p.id)}
+                  onClick={() => onDismiss?.(p.id)}
                   className="rounded-md border border-ink/20 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-ink/70"
                 >
                   Dismiss
@@ -120,7 +166,7 @@ export function ChatPanel({
       >
         <input
           className="flex-1 rounded-md border border-ink/15 bg-paper/90 px-3 py-2 text-[13px] outline-hidden focus:border-ink/40"
-          placeholder="Ask me to propose, assemble, or swap…"
+          placeholder={placeholder}
           value={text}
           onChange={(e) => setText(e.target.value)}
           disabled={disabled}
@@ -137,7 +183,30 @@ export function ChatPanel({
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  working = false,
+}: {
+  message: ConversationMessage;
+  working?: boolean;
+}) {
+  // The client-synthesized onboarding celebration — a card, not a bubble.
+  if (message.role === "milestone") {
+    return <OnboardingMilestoneCard />;
+  }
+
+  // The D015 fallback row: render the crafted copy, never the raw reason code.
+  if (message.role === "error") {
+    return (
+      <div
+        data-role="error"
+        className="font-sans text-[12px] leading-relaxed text-ink/70"
+      >
+        {CRAFTED_FALLBACK_COPY}
+      </div>
+    );
+  }
+
   if (message.role === "system") {
     return (
       <div className="rounded-md border border-dashed border-ink/15 bg-paper/60 px-3 py-2 text-[11px] italic text-ink/60">
@@ -145,11 +214,22 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       </div>
     );
   }
+
+  // `tool` rows are agent plumbing — kept quiet, mirroring the craft shell.
+  if (message.role === "tool") {
+    return (
+      <div className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/40">
+        {message.text}
+      </div>
+    );
+  }
+
   const isUser = message.role === "user";
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
+      data-role={message.role}
       className={[
         "max-w-[86%] rounded-lg px-3 py-2 text-[13px] leading-relaxed",
         isUser ? "ml-auto bg-ink text-paper" : "bg-ink/5 text-ink",
@@ -159,7 +239,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           render as markdown + embeds. */}
       {isUser ? message.text : <ProseMessage content={message.text} />}
       {message.streaming ? (
-        <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-px bg-current align-middle opacity-70" />
+        working ? (
+          <span className={message.text ? "mt-1 block" : "block"}>
+            <MapFoldIndicator />
+          </span>
+        ) : (
+          <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-px bg-current align-middle opacity-70" />
+        )
       ) : null}
     </motion.div>
   );

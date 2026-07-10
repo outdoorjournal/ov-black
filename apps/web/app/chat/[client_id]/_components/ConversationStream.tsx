@@ -11,6 +11,8 @@
 
 import { useEffect, useRef } from "react";
 
+import { MapFoldIndicator } from "@/app/_components/MapFoldIndicator";
+
 import { OnboardingMilestoneCard } from "./OnboardingMilestoneCard";
 import { ProseMessage } from "./ProseMessage";
 import type { AgentTurnView, StreamState } from "./types";
@@ -23,11 +25,15 @@ const AUTO_SCROLL_THRESHOLD_PX = 40;
 export type ConversationStreamProps = {
   turns: AgentTurnView[];
   streaming: StreamState | null;
+  // The concierge is off calling tools (anonymous `activity` pulse) — the
+  // streaming row shows the map-fold indicator until text arrives.
+  working?: boolean;
 };
 
 export function ConversationStream({
   turns,
   streaming,
+  working = false,
 }: ConversationStreamProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Remember whether the user was already pinned to the bottom BEFORE the
@@ -70,7 +76,16 @@ export function ConversationStream({
             className="font-serif text-[21px] leading-relaxed text-ink"
           >
             {streaming.buffer.trim() ? (
-              <ProseMessage content={streaming.buffer} />
+              <>
+                <ProseMessage content={streaming.buffer} />
+                {working ? (
+                  <div className="mt-2">
+                    <MapFoldIndicator />
+                  </div>
+                ) : null}
+              </>
+            ) : working ? (
+              <MapFoldIndicator />
             ) : (
               "\u00a0"
             )}

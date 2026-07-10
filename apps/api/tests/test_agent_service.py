@@ -712,6 +712,130 @@ async def test_stream_turn_first_token_timeout_fires_fallback(
     assert error_row.error_reason == "upstream_unavailable"
 
 
+async def test_stream_turn_tool_activity_rearms_first_token_deadline(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """Non-text upstream events re-arm the first-token window.
+
+    A tool-first turn (the agent calls e.g. get_traveler_context before
+    speaking) takes longer than the deadline to reach its first text token,
+    but every silent gap stays under it — the turn must survive.
+    """
+    tight = Settings(
+        bedrock_agentcore_runtime_arn=settings.bedrock_agentcore_runtime_arn,
+        agent_first_token_timeout_seconds=0.3,
+        agent_max_retries=0,
+    )
+
+    async def tool_first_stream() -> AsyncIterator[dict]:
+        import anyio as _anyio
+
+        await _anyio.sleep(0.15)
+        yield {"type": "tool_trace", "phase": "call", "tool": "get_traveler_context"}
+        await _anyio.sleep(0.15)
+        yield {"type": "tool_trace", "phase": "result", "tool": "get_traveler_context"}
+        await _anyio.sleep(0.15)  # total 0.45 s > 0.3 s deadline; each gap < it
+        yield {"type": "delta", "text": "Here is the plan."}
+        yield {"type": "done"}
+
+    class ToolFirstRuntime:
+        calls: list[dict] = []
+
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
+            self.calls.append({"payload": payload})
+            return tool_first_stream()
+
+        async def create_event(self, **_: Any) -> None:
+            return None
+
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            ToolFirstRuntime(),
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="Lay out a 3 day sailing trip in Greece",
+            settings=tight,
+        )
+    )
+    joined = b"".join(frames)
+    assert b'"type":"error"' not in joined
+    assert b'"type":"delta","text":"Here is the plan."' in joined
+    # The tool activity itself is forwarded verbatim.
+    assert joined.count(b'"type":"tool_trace"') == 2
+
+    turns = [r for r in factory.turns if isinstance(r, AgentTurn)]
+    assistant = next(t for t in turns if t.role is TurnRole.assistant)
+    assert assistant.error_reason is None
+    assert assistant.content == "Here is the plan."
+
+
+async def test_stream_turn_retry_gets_fresh_first_token_window(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """A first-token-timeout retry must not inherit the first attempt's clock.
+
+    The old wall-clock check measured from before attempt #1, so by the time
+    the retry produced its first event the deadline was already blown and the
+    retry died on arrival. The retry attempt gets a full fresh window.
+    """
+    tight = Settings(
+        bedrock_agentcore_runtime_arn=settings.bedrock_agentcore_runtime_arn,
+        agent_first_token_timeout_seconds=0.2,
+        agent_max_retries=1,
+    )
+
+    async def silent_stream() -> AsyncIterator[dict]:
+        import anyio as _anyio
+
+        await _anyio.sleep(0.6)  # well past the 0.2 s deadline
+        yield {"type": "delta", "text": "too late"}
+        yield {"type": "done"}
+
+    async def fast_stream() -> AsyncIterator[dict]:
+        yield {"type": "delta", "text": "second try"}
+        yield {"type": "done"}
+
+    class SilentThenFastRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
+            self.calls.append({"payload": payload})
+            return silent_stream() if len(self.calls) == 1 else fast_stream()
+
+        async def create_event(self, **_: Any) -> None:
+            return None
+
+    runtime = SilentThenFastRuntime()
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="hi",
+            settings=tight,
+        )
+    )
+    joined = b"".join(frames)
+    assert len(runtime.calls) == 2
+    assert b'"type":"error"' not in joined
+    assert b'"type":"delta","text":"second try"' in joined
+
+    turns = [r for r in factory.turns if isinstance(r, AgentTurn)]
+    assistant = next(t for t in turns if t.role is TurnRole.assistant)
+    assert assistant.retried == 1
+    assert assistant.content == "second try"
+    assert assistant.error_reason is None
+
+
 async def test_stream_turn_memory_write_failure_does_not_fail_turn(
     factory: FakeFactory,
     advisor_actor: ActorContext,

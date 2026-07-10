@@ -155,6 +155,7 @@ async def test_get_collection_without_target_raises() -> None:
 )
 def test_collection_writes_map_to_card_proposed(tool_name: str) -> None:
     event = {"tool_result": {"name": tool_name, "output": {"id": "n1", "title": "Kikunoi"}}}
-    assert list(translate_event(event)) == [
+    frames = list(translate_event(event))
+    assert [f for f in frames if f.get("type") != "activity"] == [
         {"type": "card_proposed", "node": {"id": "n1", "title": "Kikunoi"}}
     ]

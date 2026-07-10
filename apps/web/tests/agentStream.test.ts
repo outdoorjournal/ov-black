@@ -108,6 +108,39 @@ describe("parseFrames (card frames)", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  test("accepts activity frames (anonymous tool pulse)", () => {
+    const buffer =
+      encodeFrame({ type: "activity", phase: "call" }) +
+      encodeFrame({ type: "activity", phase: "result" });
+
+    const { frames } = parseFrames(buffer);
+
+    expect(frames).toEqual([
+      { type: "activity", phase: "call" },
+      { type: "activity", phase: "result" },
+    ]);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  test("drops an activity frame with a bogus phase", () => {
+    const { frames } = parseFrames(encodeFrame({ type: "activity", phase: "??" }));
+    expect(frames).toHaveLength(0);
+  });
+
+  test("silently ignores tool_trace frames (dev harness channel, no warn)", () => {
+    const trace = {
+      type: "tool_trace",
+      phase: "call",
+      tool: "get_traveler_context",
+      tool_use_id: "tu-1",
+    };
+
+    const { frames } = parseFrames(encodeFrame(trace) + encodeFrame({ type: "delta", text: "hi" }));
+
+    expect(frames).toEqual([{ type: "delta", text: "hi" }]);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
 });
 
 describe("useAgentStream (onCard dispatch)", () => {
