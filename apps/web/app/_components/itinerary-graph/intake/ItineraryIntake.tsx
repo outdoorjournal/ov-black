@@ -20,6 +20,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 
+import {
+  TimingFields,
+  timingDatesReversed,
+  timingPatch,
+  timingValueFrom,
+} from "./TimingFields";
+
 export type ItineraryIntakeInitial = {
   brief?: string | null;
   timingKind?: ItineraryTimingKind | null;
@@ -40,12 +47,6 @@ export type ItineraryIntakeProps = {
   onSkip?: () => void;
 };
 
-const TIMING_MODES: ReadonlyArray<{ id: ItineraryTimingKind; label: string; hint: string }> = [
-  { id: "exact", label: "Exact dates", hint: "You know the days." },
-  { id: "window", label: "A rough window", hint: "Roughly when, for about so long." },
-  { id: "flexible", label: "Flexible", hint: "No dates yet — just constraints." },
-];
-
 export function ItineraryIntake({
   itineraryId,
   apiBaseUrl,
@@ -56,14 +57,7 @@ export function ItineraryIntake({
   onSkip,
 }: ItineraryIntakeProps) {
   const [brief, setBrief] = useState(initial?.brief ?? "");
-  const [mode, setMode] = useState<ItineraryTimingKind>(
-    initial?.timingKind ?? "window",
-  );
-  const [dateStart, setDateStart] = useState(initial?.dateStart ?? "");
-  const [dateEnd, setDateEnd] = useState(initial?.dateEnd ?? "");
-  const [durationNights, setDurationNights] = useState(
-    initial?.durationNights != null ? String(initial.durationNights) : "",
-  );
+  const [timing, setTiming] = useState(() => timingValueFrom(initial));
   const [note, setNote] = useState(initial?.timingNote ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,11 +84,7 @@ export function ItineraryIntake({
   }, [accessToken]);
 
   const briefValid = brief.trim().length > 0;
-  const datesReversed =
-    mode !== "flexible" &&
-    dateStart !== "" &&
-    dateEnd !== "" &&
-    dateEnd < dateStart;
+  const datesReversed = timingDatesReversed(timing);
   const canSave = briefValid && !datesReversed && !saving;
 
   const save = useCallback(async () => {
@@ -102,19 +92,12 @@ export function ItineraryIntake({
     setSaving(true);
     setError(null);
 
-    // Build a partial payload: send only the fields this mode owns, and send
-    // explicit nulls to clear the others (so re-running the intake in a
-    // different mode doesn't leave stale dates behind).
+    // Build a partial payload: the brief plus the timing fields (timingPatch
+    // owns the null-clearing semantics so re-running the intake in a different
+    // mode doesn't leave stale dates behind).
     const body: UpdateItineraryRequest = {
       brief: brief.trim(),
-      timing_kind: mode,
-      timing_note: note.trim() === "" ? null : note.trim(),
-      date_start: mode === "flexible" ? null : dateStart === "" ? null : dateStart,
-      date_end: mode === "flexible" ? null : dateEnd === "" ? null : dateEnd,
-      duration_nights:
-        mode === "window" && durationNights.trim() !== ""
-          ? Number(durationNights)
-          : null,
+      ...timingPatch(timing, note),
     };
 
     const token = await getAccessToken();
@@ -139,16 +122,13 @@ export function ItineraryIntake({
     apiBaseUrl,
     brief,
     briefValid,
-    dateEnd,
-    dateStart,
     datesReversed,
-    durationNights,
     getAccessToken,
     itineraryId,
-    mode,
     note,
     onSaved,
     saving,
+    timing,
   ]);
 
   const heading =
@@ -188,83 +168,12 @@ export function ItineraryIntake({
             />
           </div>
 
-          {/* When */}
+          {/* When — the shared timing controls (also the hero popover's). */}
           <div className="space-y-3">
             <span className="font-sans text-xs uppercase tracking-[0.22em] text-ink/55">
               When?
             </span>
-            <div className="flex flex-wrap gap-2">
-              {TIMING_MODES.map((m) => {
-                const active = mode === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setMode(m.id)}
-                    aria-pressed={active}
-                    className={
-                      "rounded-full border px-4 py-1.5 font-sans text-sm transition " +
-                      (active
-                        ? "border-brand bg-brand/10 text-ink"
-                        : "border-ink/15 text-ink/60 hover:border-ink/40 hover:text-ink")
-                    }
-                  >
-                    {m.label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="font-sans text-xs text-ink/45">
-              {TIMING_MODES.find((m) => m.id === mode)?.hint}
-            </p>
-
-            {mode !== "flexible" ? (
-              <div className="flex flex-wrap items-end gap-4 pt-1">
-                <label className="flex flex-col gap-1">
-                  <span className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/45">
-                    {mode === "window" ? "No earlier than" : "Start"}
-                  </span>
-                  <input
-                    type="date"
-                    value={dateStart}
-                    onChange={(e) => setDateStart(e.target.value)}
-                    className="rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/45">
-                    {mode === "window" ? "No later than" : "End"}
-                  </span>
-                  <input
-                    type="date"
-                    value={dateEnd}
-                    onChange={(e) => setDateEnd(e.target.value)}
-                    className="rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
-                  />
-                </label>
-                {mode === "window" ? (
-                  <label className="flex flex-col gap-1">
-                    <span className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/45">
-                      About how many nights
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={365}
-                      value={durationNights}
-                      onChange={(e) => setDurationNights(e.target.value)}
-                      placeholder="7"
-                      className="w-28 rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink placeholder:text-ink/30 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
-                    />
-                  </label>
-                ) : null}
-              </div>
-            ) : null}
-            {datesReversed ? (
-              <p className="font-sans text-xs text-brand">
-                The end can’t be before the start.
-              </p>
-            ) : null}
+            <TimingFields value={timing} onChange={setTiming} />
           </div>
 
           {/* Constraints note */}

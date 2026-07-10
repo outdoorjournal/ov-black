@@ -1,11 +1,13 @@
 "use client";
 
 // The Journal — the traveler's narrative reading of the itinerary graph
-// (traveler-journal design, phase 1). Event-proportional, not time-
-// proportional: a spine of cards grouped by day, gaps bucketed (plain segment /
-// quiet moment / night / elision), with a right rail that reacts to whatever
-// moment the reader is looking at. Read-only in this phase; one Journal for
-// every role (advisors land here too — Studio stays the workbench).
+// (traveler-journal design). Event-proportional, not time-proportional: a
+// spine of cards grouped by day, gaps bucketed (plain segment / quiet moment /
+// night / elision), with a right rail that reacts to whatever moment the
+// reader is looking at. One Journal for every role (advisors land here too —
+// Studio stays the workbench). Phase 2 opens the margin channel: attached
+// notes annotate their host card, free-standing day notes sit on the spine,
+// and the `+`-on-the-line offers Note everywhere — including the trunk.
 //
 // Same screen, responsive: below lg the rail column disappears, the Journal
 // goes full-width, and activating a card deep-links to /item/[nodeId] (the
@@ -22,6 +24,7 @@ import { datesPinned } from "../../model/time";
 
 import { DayHeader } from "./DayHeader";
 import { JournalAltGroup, JournalNode } from "./JournalNode";
+import { AddNoteOnLine } from "./JournalNotes";
 import { RightRail } from "./RightRail";
 import { NightSegment, SPINE_COL_PX } from "./Spine";
 import { toJournal, type JournalDaySection } from "./toJournal";
@@ -173,9 +176,7 @@ function DaySection({
                   node={entry.node}
                   tzOffsetHours={tz}
                   active={focusedNodeId === entry.node.id}
-                  attachedNoteCount={
-                    attachedNotes.get(entry.node.id)?.length ?? 0
-                  }
+                  attachedNotes={attachedNotes.get(entry.node.id) ?? []}
                   onActivate={onActivate}
                   observeRef={observe(entry.node.id)}
                 />
@@ -206,6 +207,11 @@ function DaySection({
               );
           }
         })}
+        {/* The `+`-on-the-line (phase 2): each day closes with the quiet
+            insert affordance. On the trunk it offers exactly one thing — a
+            note — so the feedback channel is discoverable right where the
+            urge strikes; phase 3 extends the offer on an editable fork. */}
+        <AddNoteOnLine dayKey={section.date} />
         {section.night ? (
           <NightSegment title={section.night.node?.title} />
         ) : null}

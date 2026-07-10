@@ -1,18 +1,18 @@
 "use client";
 
 // The per-trip Dashboard — the itinerary index lands here, and the Journal IS
-// the dashboard (traveler-journal design, phase 1): the editable brief/splash
-// HERO, then the narrative Journal (spine of cards + reactive right rail). The
-// old modules relocate rather than vanish — next action + approve-all +
-// balance become the rail's RESTING state, and the money ledger, travel party,
-// and advisor Vault/Invoices/Booking panels move to a quiet footer after the
-// journey ("The practical part"). Role-agnostic: both roles land here (Studio
-// stays one click away as the workbench); affordances differ by `role`.
+// the dashboard (traveler-journal design): the edit-in-place HERO (title /
+// brief / timing inline editors — see DashboardHero), then the narrative
+// Journal (spine of cards + reactive right rail). The old modules relocate
+// rather than vanish — next action + approve-all + balance become the rail's
+// RESTING state, and the money ledger, travel party, and advisor
+// Vault/Invoices/Booking panels move to a quiet footer after the journey
+// ("The practical part"). Role-agnostic: both roles land here (Studio stays
+// one click away as the workbench); affordances differ by `role`.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 import {
   createApiClient,
@@ -23,7 +23,6 @@ import {
   type ItineraryPartyEntry,
 } from "@ov-black/api-client";
 
-import { ItineraryIntake } from "@/app/_components/itinerary-graph/intake/ItineraryIntake";
 import {
   itineraryGraphStore,
   selectCanApprove,
@@ -35,13 +34,12 @@ import { BookingPanel } from "@/app/_components/itinerary-graph/views/horizontal
 import { InvoicePanel } from "@/app/_components/itinerary-graph/views/horizontal/InvoicePanel";
 import { PartyPanel } from "@/app/_components/itinerary-graph/views/horizontal/PartyPanel";
 import { VaultPanel } from "@/app/_components/itinerary-graph/views/horizontal/VaultPanel";
-import { DEFAULT_MOOD, MOODS, type MoodEntry } from "@/lib/atmos/moods";
 
 import { useConciergeControl } from "./ConciergeControl";
+import { DashboardHero } from "./DashboardHero";
 import {
   deriveNextAction,
   firstUnpaidIssued,
-  formatTiming,
   invoiceOwed,
   isPayable,
   rollupInvoices,
@@ -55,7 +53,6 @@ type MoneyState =
   | { kind: "ready"; invoices: InvoiceResponse[] };
 
 export function DashboardView() {
-  const router = useRouter();
   const { timeline } = useTimelineData();
   const { openConcierge } = useConciergeControl();
 
@@ -70,7 +67,6 @@ export function DashboardView() {
   const it = timeline.itinerary;
   const clientId = it.client_id;
 
-  const [editing, setEditing] = useState(false);
   const [money, setMoney] = useState<MoneyState>({ kind: "loading" });
   // The dashboard's scroll container — the Journal's scroll-active center band
   // is measured against it.
@@ -113,46 +109,16 @@ export function DashboardView() {
     [isAdvisor, scheduledCount, pendingCount, firstUnpaid, itineraryId],
   );
 
-  // Editing the brief re-runs the intake prefilled; the brief/timing are a server
-  // prop, so a save must refresh the route to pull the new value back down.
-  if (editing && apiBaseUrl && accessToken) {
-    return (
-      <ItineraryIntake
-        itineraryId={itineraryId}
-        apiBaseUrl={apiBaseUrl}
-        accessToken={accessToken}
-        audience={isAdvisor ? "advisor" : "traveler"}
-        initial={{
-          brief: it.brief ?? null,
-          timingKind: it.timing_kind ?? null,
-          dateStart: it.date_start ?? null,
-          dateEnd: it.date_end ?? null,
-          durationNights: it.duration_nights ?? null,
-          timingNote: it.timing_note ?? null,
-        }}
-        onSaved={() => {
-          setEditing(false);
-          router.refresh();
-        }}
-        onSkip={() => setEditing(false)}
-      />
-    );
-  }
-
   return (
     <div
       ref={scrollRef}
       data-testid="dashboard"
       className="min-h-0 flex-1 overflow-y-auto bg-paper"
     >
-      <Hero
-        title={it.title?.trim() || "Your trip"}
-        brief={it.brief ?? null}
-        timing={formatTiming(it)}
-        mood={timeline.mood}
-        canEdit={apiBaseUrl !== null && accessToken !== null}
-        onEdit={() => setEditing(true)}
-      />
+      {/* Edit-in-place hero (phase 2) — title/brief/timing are their own
+          inline editors; the intake overlay is first-run only (ItineraryShell's
+          brief gate), never the edit path. */}
+      <DashboardHero />
 
       {/* The Journal — the trip read as a story. Its right rail rests on the
           relocated "trip at a glance" (next action · approval · balance). */}
@@ -212,66 +178,6 @@ function BalanceGlance({ state }: { state: MoneyState }) {
         </p>
       </div>
     </SectionCard>
-  );
-}
-
-// ── Hero — brief · splash · timing ───────────────────────────────────────────
-function Hero({
-  title,
-  brief,
-  timing,
-  mood,
-  canEdit,
-  onEdit,
-}: {
-  title: string;
-  brief: string | null;
-  timing: string;
-  mood: string;
-  canEdit: boolean;
-  onEdit: () => void;
-}) {
-  const entry = (MOODS as Record<string, MoodEntry>)[mood];
-  const imageUrl = entry?.imageUrl ?? MOODS[DEFAULT_MOOD].imageUrl;
-
-  return (
-    <section
-      data-testid="dashboard-hero"
-      className="relative isolate flex min-h-[240px] flex-col justify-end overflow-hidden border-b border-ink/10 px-4 py-8 sm:min-h-[300px] sm:px-6 sm:py-10"
-    >
-      <div
-        aria-hidden
-        className="absolute inset-0 -z-10 bg-cover bg-center"
-        style={{ backgroundImage: `url(${imageUrl})` }}
-      />
-      <div
-        aria-hidden
-        className="absolute inset-0 -z-10 bg-linear-to-t from-black/75 via-black/35 to-black/15"
-      />
-      <div className="mx-auto w-full max-w-5xl">
-        <p className="font-sans text-[11px] uppercase tracking-[0.28em] text-white/70">
-          {timing}
-        </p>
-        <h1 className="mt-2 max-w-3xl font-serif text-3xl leading-tight text-white sm:text-4xl">
-          {title}
-        </h1>
-        {brief ? (
-          <p className="mt-3 max-w-2xl font-serif text-lg italic leading-snug text-white/85">
-            {brief}
-          </p>
-        ) : null}
-        {canEdit ? (
-          <button
-            type="button"
-            onClick={onEdit}
-            data-testid="dashboard-hero-edit"
-            className="mt-4 self-start rounded-full border border-white/40 px-4 py-1.5 font-sans text-[11px] uppercase tracking-[0.18em] text-white/90 transition-colors hover:border-white hover:bg-white/10"
-          >
-            {brief ? "Edit the brief" : "Set the brief"}
-          </button>
-        ) : null}
-      </div>
-    </section>
   );
 }
 

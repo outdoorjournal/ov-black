@@ -272,6 +272,41 @@ describe("editing actions are inert for non-editable viewers", () => {
   });
 });
 
+describe("editNoteText (the Journal's tap-to-edit margin notes)", () => {
+  test("inert without credentials", () => {
+    const { result } = renderStore({ role: "client" });
+    act(() => result.current.getState().editNoteText("n1", "rewritten"));
+    expect(result.current.getState().nodes[0]!.title).toBe("Original");
+  });
+
+  test("only note nodes are rewritable through this path", () => {
+    // A credentialed viewer on a non-note card bails BEFORE any optimistic
+    // mutation or network call — content fields keep their own gates.
+    const hotel: NodeResponse = { ...NODE, id: "card-1", type: "hotel" };
+    const { result } = renderStore({
+      timeline: timeline([hotel]),
+      role: "client",
+      apiBaseUrl: "http://x",
+      accessToken: "t",
+    });
+    act(() => result.current.getState().editNoteText("card-1", "rewritten"));
+    expect(result.current.getState().nodes[0]!.title).toBe("Original");
+  });
+
+  test("empty or unchanged text is a no-op (no optimistic churn)", () => {
+    const { result } = renderStore({
+      role: "client",
+      apiBaseUrl: "http://x",
+      accessToken: "t",
+    });
+    act(() => {
+      result.current.getState().editNoteText("n1", "   ");
+      result.current.getState().editNoteText("n1", "Original");
+    });
+    expect(result.current.getState().nodes[0]!.title).toBe("Original");
+  });
+});
+
 describe("selectCanLeaveNote", () => {
   test("needs both apiBaseUrl and accessToken", () => {
     const base = {} as ItineraryGraphState;

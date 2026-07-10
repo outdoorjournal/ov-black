@@ -1,8 +1,9 @@
 // The per-trip Dashboard (M006/PS3). These assert the view's COMPOSITION — the
-// hero, the one derived next action, the money roll-up (owed · pay link · the
-// per-inventory deep-link back down to the card), the role split (advisor panels
-// vs. a traveler's read-only party glance), and the brief edit gate. The heavy
-// leaves (the four management panels, the intake form, next/link's router, the
+// edit-in-place hero (phase 2 — its editor guts are covered in
+// dashboardHero.test.tsx), the one derived next action, the money roll-up
+// (owed · pay link · the per-inventory deep-link back down to the card), and
+// the role split (advisor panels vs. a traveler's read-only party glance). The
+// heavy leaves (the four management panels, next/link's router, the
 // invoice/party reads) are stubbed so this tests the Dashboard, not their guts.
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -29,8 +30,8 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// The management panels + intake each have their own tests; stub them so this
-// asserts the Dashboard's own wiring (which panels appear for whom).
+// The management panels each have their own tests; stub them so this asserts
+// the Dashboard's own wiring (which panels appear for whom).
 vi.mock("@/app/_components/itinerary-graph/views/horizontal/PartyPanel", () => ({
   PartyPanel: () => <div data-testid="stub-party-panel" />,
 }));
@@ -43,20 +44,14 @@ vi.mock("@/app/_components/itinerary-graph/views/horizontal/InvoicePanel", () =>
 vi.mock("@/app/_components/itinerary-graph/views/horizontal/BookingPanel", () => ({
   BookingPanel: () => <div data-testid="stub-booking-panel" />,
 }));
-vi.mock("@/app/_components/itinerary-graph/intake/ItineraryIntake", () => ({
-  ItineraryIntake: ({ onSaved }: { onSaved: () => void }) => (
-    <button type="button" data-testid="stub-intake" onClick={onSaved}>
-      intake
-    </button>
-  ),
-}));
-
 const listInvoicesMock = vi.fn();
 const listItineraryPartyMock = vi.fn();
+const updateItineraryMock = vi.fn();
 vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   listInvoices: (...args: unknown[]) => listInvoicesMock(...args),
   listItineraryParty: (...args: unknown[]) => listItineraryPartyMock(...args),
+  updateItinerary: (...args: unknown[]) => updateItineraryMock(...args),
 }));
 
 import type { ItineraryResponse, NodeResponse } from "@ov-black/api-client";
@@ -156,21 +151,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   listInvoicesMock.mockResolvedValue({ ok: true, invoices: [] });
   listItineraryPartyMock.mockResolvedValue({ ok: true, party: { itinerary_id: "it-1", members: [] } });
+  updateItineraryMock.mockResolvedValue({ ok: true, itinerary: ITINERARY });
 });
 
 describe("DashboardView · hero", () => {
-  test("renders the brief, timing, and title, and flips to the intake to edit", () => {
+  test("renders the brief, timing, and title as in-place editors — no overlay path", () => {
     renderDashboard();
     const hero = screen.getByTestId("dashboard-hero");
     expect(within(hero).getByRole("heading", { level: 1 })).toHaveTextContent("Sailing in Greece");
     expect(hero).toHaveTextContent("Two weeks island-hopping");
     expect(hero).toHaveTextContent(/Jun 20, 2024/);
 
-    fireEvent.click(screen.getByTestId("dashboard-hero-edit"));
-    expect(screen.getByTestId("stub-intake")).toBeInTheDocument();
-    // Saving the intake returns to the dashboard.
-    fireEvent.click(screen.getByTestId("stub-intake"));
-    expect(screen.getByTestId("dashboard-hero")).toBeInTheDocument();
+    // Phase 2: the edit-overlay button is gone; each element edits in place
+    // (the editors themselves are exercised in dashboardHero.test.tsx).
+    expect(screen.queryByTestId("dashboard-hero-edit")).not.toBeInTheDocument();
+    fireEvent.click(within(hero).getByTestId("hero-title"));
+    expect(within(hero).getByTestId("hero-title-input")).toHaveValue("Sailing in Greece");
   });
 });
 

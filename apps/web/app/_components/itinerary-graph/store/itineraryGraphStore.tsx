@@ -310,6 +310,10 @@ export type ItineraryGraphState = {
   addAttachedNote: (hostId: string, text: string) => void;
   // Drop a free-standing note on a day at noon ("a dinner between these").
   addFreeStandingNote: (dayKey: string, text: string) => void;
+  // Rewrite a note's text in place (the Journal's tap-to-edit margin notes).
+  // Notes bypass the fork/approve gates like the other note writes — the
+  // backend's write authorization is the real authority; reverts on failure.
+  editNoteText: (id: string, text: string) => void;
   // ── Collection (wish list) writes (credentialed; backend authorizes) ──
   // A pasted web link → server fetches its OpenGraph preview into a card.
   savingLink: boolean;
@@ -1446,6 +1450,36 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ publishing: false }));
         },
+        editNoteText: (id, text) => {
+          const s = get();
+          const body = text.trim();
+          if (!body || !selectCanLeaveNote(s)) return;
+          const target = s.nodes.find((n) => n.id === id);
+          // Only note text is rewritable through this path — a content field
+          // edit on a real card keeps its own gates (`editNodeField`).
+          if (!target || target.type !== "note") return;
+          if (target.title === body) return;
+          const c = client();
+          if (!c) return;
+          const previousNodes = s.nodes;
+          set({
+            nodes: s.nodes.map((n) => (n.id === id ? { ...n, title: body } : n)),
+          });
+          void updateNode(c, {
+            itineraryId: s.itineraryId,
+            nodeId: id,
+            patch: { title: body },
+          }).then((result) => {
+            if (result.ok) {
+              set({
+                nodes: get().nodes.map((n) => (n.id === id ? result.node : n)),
+              });
+            } else {
+              set({ nodes: previousNodes });
+            }
+          });
+        },
+
         addFreeStandingNote: (dayKey, text) => {
           const s = get();
           const body = text.trim();
