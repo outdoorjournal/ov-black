@@ -597,6 +597,9 @@ export function collectionItemsOf(
   for (const n of [...nodes, ...pending]) {
     if (seen.has(n.id)) continue;
     if (n.status === "discarded") continue;
+    // Subgraph children live inside their parent card (the embedded
+    // day-by-day journey) — never as free-standing wish-list items.
+    if (n.parent_subgraph_id) continue;
     seen.add(n.id);
     out.push(n);
   }

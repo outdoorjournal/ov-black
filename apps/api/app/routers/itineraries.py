@@ -33,6 +33,7 @@ from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
 from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
+from app.inventory.schemas import ExperienceItem
 from app.models import (
     Client,
     CostKind,
@@ -93,6 +94,7 @@ from app.services.node_cost import (
     sum_node_costs,
 )
 from app.services.pagination import clamp_limit, require_cursor
+from app.services.subgraph import SubgraphMaterializeError, materialize_day_subgraph
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -244,6 +246,12 @@ class CreateNodeFromInventoryRequest(BaseModel):
     source_id: str
     status: NodeStatus = NodeStatus.pending
     parent_subgraph_id: uuid.UUID | None = None
+    # Multi-day items (OV adventures) carry a day-by-day internal journey;
+    # when true (default) it's materialized as an embedded subgraph — one
+    # child node per day chained by ``follows`` edges. Ignored when the item
+    # has no days or when this node is itself being created inside a
+    # subgraph (no nested materialization).
+    expand_days: bool = True
 
 
 class CreateNodeFromLinkRequest(BaseModel):
@@ -1195,6 +1203,28 @@ async def create_node_from_inventory_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
+
+    # PRD "subgraphs for self-contained experiences": a multi-day item's
+    # internal journey becomes child nodes under this one. Top-level nodes
+    # only — no nested materialization inside an existing subgraph.
+    if (
+        payload.expand_days
+        and payload.parent_subgraph_id is None
+        and isinstance(item, ExperienceItem)
+        and item.itinerary_days
+    ):
+        try:
+            await materialize_day_subgraph(
+                session,
+                actor,
+                itinerary_id=itinerary_id,
+                parent_node_id=result.id,
+                days=item.itinerary_days,
+                status=payload.status,
+            )
+        except SubgraphMaterializeError as exc:
+            _raise_for_error(exc.error)
+
     return _node_response_from_node(result)
 
 

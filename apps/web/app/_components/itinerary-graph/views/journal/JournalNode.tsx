@@ -49,7 +49,7 @@ import { journalDragId } from "./journalEditing";
 import { MarginNotes, SpineNoteCard } from "./JournalNotes";
 import type { JournalProblem } from "./problems";
 import { SPINE_COL_PX, SpineCircle } from "./Spine";
-import type { GroupedRole } from "./toJournal";
+import type { GroupedRole, JourneyBeat } from "./toJournal";
 import type { JournalNodeDiff } from "./toJournalDiff";
 
 const spineColStyle = {
@@ -75,12 +75,14 @@ export function JournalNode({
   tzOffsetHours,
   active,
   attachedNotes = [],
+  subgraphChildren = [],
   onActivate,
   observeRef,
   dragEnabled = false,
   problem = null,
   bracket = null,
   diff = null,
+  journey = null,
   marginInline = false,
 }: {
   node: NodeResponse;
@@ -88,6 +90,14 @@ export function JournalNode({
   active: boolean;
   /** The `note` nodes annotating this one — rendered in the margin channel. */
   attachedNotes?: NodeResponse[];
+  /** The node's embedded subgraph (a multi-day item's day-by-day journey) —
+   *  its children render as derived journey beats on the days they cover;
+   *  the parent card wears the span caption. */
+  subgraphChildren?: NodeResponse[];
+  /** This card IS a derived journey beat — day k of N of its parent's
+   *  journey. Wears the membership chip; never draggable (the parent owns
+   *  the schedule). */
+  journey?: JourneyBeat | null;
   onActivate: (nodeId: string) => void;
   /** Callback ref registering the row with the scroll-active observer. */
   observeRef: RefCallback<HTMLElement>;
@@ -111,8 +121,10 @@ export function JournalNode({
   // artifact, not an itinerary card — small, yellow, editable in place.
   const isNote = node.type === "note";
   // Approval locks the card (existing semantics) — a firmed card offers no
-  // drag; notes keep their editors free of drag listeners.
-  const canDrag = dragEnabled && !isNote && !node.lock_reason;
+  // drag; notes keep their editors free of drag listeners; a journey beat's
+  // placement is derived from its parent, so it offers no drag either.
+  const canDrag =
+    dragEnabled && !isNote && !node.lock_reason && !node.parent_subgraph_id;
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: journalDragId(node.id),
@@ -231,6 +243,32 @@ export function JournalNode({
             />
           </div>
         )}
+        {/* A multi-day card's span caption — the embedded journey is laid out
+            on the days it covers (the beats below carry the chips). */}
+        {!isNote && subgraphChildren.length > 0 ? (
+          <p
+            data-testid="journal-journey-span"
+            className="mt-1 pl-1 font-serif text-[11px] italic text-ink/45"
+          >
+            a {subgraphChildren.length}-day journey — the days ahead carry it
+          </p>
+        ) : null}
+        {/* The journey-beat chip — this card is day k of N of its parent's
+            packaged journey. */}
+        {journey ? (
+          <p className="mt-1 pl-1">
+            <span
+              data-testid="journal-journey-chip"
+              data-parent-id={journey.parentId}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-ink/20 px-2.5 py-0.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/50"
+            >
+              <span aria-hidden>↳</span>
+              <span className="min-w-0 truncate">
+                day {journey.index} of {journey.total} · {journey.parentTitle}
+              </span>
+            </span>
+          </p>
+        ) : null}
         {/* Diff captions — manuscript margin marks, not paint: a brand line
             for "new", a small chip for "moved" (the rail shows old vs new). */}
         {diff?.kind === "added" ? (
@@ -291,6 +329,7 @@ export function JournalAltGroup({
   tzOffsetHours,
   focusedNodeId,
   attachedNotes,
+  subgraphChildren,
   onActivate,
   observeRef,
   problems,
@@ -300,6 +339,8 @@ export function JournalAltGroup({
   tzOffsetHours: number;
   focusedNodeId: string | null;
   attachedNotes?: Map<string, NodeResponse[]> | undefined;
+  /** Embedded subgraphs by parent id — a member can be a multi-day package. */
+  subgraphChildren?: Map<string, NodeResponse[]> | undefined;
   onActivate: (nodeId: string) => void;
   observeRef: (nodeId: string) => RefCallback<HTMLElement>;
   problems?: Map<string, JournalProblem> | undefined;
@@ -334,6 +375,7 @@ export function JournalAltGroup({
           tzOffsetHours={tzOffsetHours}
           active={focusedNodeId === chosen.id}
           attachedNotes={attachedNotes?.get(chosen.id) ?? []}
+          subgraphChildren={subgraphChildren?.get(chosen.id) ?? []}
           onActivate={onActivate}
           observeRef={observeRef(chosen.id)}
           problem={problems?.get(chosen.id) ?? null}
@@ -410,6 +452,7 @@ export function JournalAltGroup({
                 tzOffsetHours={tzOffsetHours}
                 active={focusedNodeId === node.id}
                 attachedNotes={attachedNotes?.get(node.id) ?? []}
+                subgraphChildren={subgraphChildren?.get(node.id) ?? []}
                 onActivate={onActivate}
                 observeRef={observeRef(node.id)}
                 problem={problems?.get(node.id) ?? null}

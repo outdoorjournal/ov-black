@@ -25,10 +25,13 @@ from __future__ import annotations
 import logging
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db import get_session
 from app.models import AgentSession, Itinerary, PartyMemberActor
 from app.schemas.dossier import DossierDetail
@@ -61,6 +64,7 @@ from app.services.facts import (
 from app.services.graph_digest import graph_digest_for_itinerary
 from app.services.messaging import MessagingOutcome, post_agent_thread_message
 from app.services.party_members import create_party_member, update_party_member
+from app.services.route_plan import RoutePlan, RoutePlanError, compute_route
 
 logger = logging.getLogger("ov_black.routers.agent_internal")
 
@@ -370,3 +374,58 @@ async def update_party_member_endpoint(
     if member is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="party_member_not_found")
     return PartyMemberDetail.model_validate(member, from_attributes=True)
+
+
+# ── POST /agent/route — route brochure geometry (Google Routes) ─────────
+
+
+class RouteComputeRequest(BaseModel):
+    """Loose address strings straight from the agent's ``present_route`` call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin: str = Field(min_length=1, max_length=200)
+    destination: str = Field(min_length=1, max_length=200)
+    waypoints: list[str] = Field(default_factory=list, max_length=5)
+    mode: str = Field(default="drive", pattern="^(drive|walk|bicycle|transit)$")
+
+
+def get_routes_client() -> httpx.AsyncClient:
+    """A fresh client for the computeRoutes call (override in tests)."""
+    return httpx.AsyncClient(timeout=10.0)
+
+
+@router.post(
+    "/route",
+    response_model=RoutePlan,
+    summary="Compute the geometry + timings for a route the agent wants to present.",
+    responses={
+        404: {"description": "Google returned no route for this pair."},
+        502: {"description": "Routes API unconfigured or upstream failure."},
+    },
+)
+async def compute_route_endpoint(
+    payload: RouteComputeRequest,
+    _claims: AgentTokenClaims = Depends(require_agent_token),
+    client: httpx.AsyncClient = Depends(get_routes_client),
+) -> RoutePlan:
+    """One computeRoutes round-trip; the key never leaves the backend.
+
+    The agent narrates the journey in prose — this endpoint only supplies the
+    verifiable half (polyline, distances, durations) of the route surface.
+    """
+    try:
+        return await compute_route(
+            origin=payload.origin,
+            destination=payload.destination,
+            waypoints=payload.waypoints,
+            mode=payload.mode,
+            settings=get_settings(),
+            client=client,
+        )
+    except RoutePlanError as exc:
+        if exc.reason == "route_not_found":
+            raise HTTPException(status_code=404, detail="route_not_found") from exc
+        raise HTTPException(status_code=502, detail=exc.reason) from exc
+    finally:
+        await client.aclose()

@@ -27,7 +27,7 @@ export function MoodBoard({ cards, onAction }: MoodBoardProps) {
   return (
     <aside
       id="mood-board"
-      className="border-l border-ink/10 bg-paper/70"
+      className="h-full overflow-y-auto border-l border-ink/10 bg-paper/70"
       aria-label="Mood board"
       data-testid="mood-board"
     >

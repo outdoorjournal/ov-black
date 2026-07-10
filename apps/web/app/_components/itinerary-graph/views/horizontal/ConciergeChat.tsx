@@ -32,6 +32,13 @@ import {
 } from "../../store/itineraryGraphStore";
 
 import { ConversationPanel } from "@/app/_components/concierge/ConversationPanel";
+import { AgentSurface } from "@/app/_components/concierge/surfaces/AgentSurface";
+import { SurfaceContext } from "@/app/_components/concierge/surfaces/SurfaceContext";
+import type { OptionView } from "@/app/_components/concierge/surfaces/types";
+import {
+  optionReply,
+  useAgentSurface,
+} from "@/app/_components/concierge/surfaces/useAgentSurface";
 
 type ConciergeChatProps = {
   audience: "traveler" | "advisor";
@@ -91,6 +98,9 @@ export function ConciergeChat({
   const sessionIdRef = useRef<string | null>(sessionId ?? null);
   const streamingIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // This chat lives in the right-hand aside of the itinerary view, so the
+  // drawer flyout anchors here and slides out to the LEFT — over the canvas.
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
   const canChat = Boolean(apiBaseUrl && accessToken && clientId);
 
@@ -118,11 +128,16 @@ export function ConciergeChat({
     );
   }, []);
 
+  // The drawer over this aside — agent-pushed panels (route brochure,
+  // decision cards) and chip-opened place briefs share one host.
+  const { surface, onSurface, opener, close } = useAgentSurface();
+
   const { sendTurn } = useAgentStream({
     getSessionId: () => sessionIdRef.current,
     getAccessToken,
     apiBaseUrl: apiBaseUrl ?? "",
     abortRef,
+    onSurface,
     onActivity: () => {
       if (streamingIdRef.current) setWorking(true);
     },
@@ -283,17 +298,39 @@ export function ConciergeChat({
     [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],
   );
 
+  // A tapped option answers through the ordinary turn path, phrased as the
+  // traveler's own reply — the agent reads it like any message.
+  const onChooseOption = useCallback(
+    (option: OptionView) => {
+      close();
+      handleSubmit(optionReply(option));
+    },
+    [close, handleSubmit],
+  );
+
   return (
-    <ConversationPanel
-      messages={messages}
-      proposals={pendingProposals}
-      onAccept={(id) => storeApi.getState().acceptProposal(id)}
-      onDismiss={(id) => storeApi.getState().dismissProposal(id)}
-      onSubmit={handleSubmit}
-      {...(onScrollToNode ? { onScrollToNode } : {})}
-      disabled={!canChat || streaming}
-      hideHeader={hideHeader}
-      working={working}
-    />
+    <div ref={panelRef} className="flex h-full min-h-0 flex-col">
+      <SurfaceContext.Provider value={opener}>
+        <ConversationPanel
+          messages={messages}
+          proposals={pendingProposals}
+          onAccept={(id) => storeApi.getState().acceptProposal(id)}
+          onDismiss={(id) => storeApi.getState().dismissProposal(id)}
+          onSubmit={handleSubmit}
+          {...(onScrollToNode ? { onScrollToNode } : {})}
+          disabled={!canChat || streaming}
+          hideHeader={hideHeader}
+          working={working}
+        />
+      </SurfaceContext.Provider>
+      <AgentSurface
+        surface={surface}
+        busy={!canChat || streaming}
+        onClose={close}
+        onChooseOption={onChooseOption}
+        anchorRef={panelRef}
+        side="left"
+      />
+    </div>
   );
 }

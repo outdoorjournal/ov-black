@@ -31,6 +31,13 @@ import { chatStore, nextTurnIndex } from "./chatStore";
 import { Composer } from "./Composer";
 import { ConversationStream } from "./ConversationStream";
 import { MoodBoard } from "./MoodBoard";
+import { AgentSurface } from "@/app/_components/concierge/surfaces/AgentSurface";
+import { SurfaceContext } from "@/app/_components/concierge/surfaces/SurfaceContext";
+import type { OptionView } from "@/app/_components/concierge/surfaces/types";
+import {
+  optionReply,
+  useAgentSurface,
+} from "@/app/_components/concierge/surfaces/useAgentSurface";
 import type { InitialCardPayload } from "./types";
 import {
   createApiClient,
@@ -103,6 +110,7 @@ function ChatShellInner({
   const turns = chatStore.useStore((s) => s.turns);
   const streaming = chatStore.useStore((s) => s.streaming);
   const cards = chatStore.useStore((s) => s.cards);
+  const { surface, onSurface, opener, close } = useAgentSurface();
   const initialTurnsCount = chatStore.useStore((s) => s.initialTurnsCount);
   const storeApi = chatStore.useStoreApi();
 
@@ -111,6 +119,9 @@ function ChatShellInner({
   const currentMood = override ?? classifiedMood;
 
   const abortRef = useRef<AbortController | null>(null);
+  // The drawer flyout anchors to the conversation column and slides out to
+  // the right — over the mood-board area, never covering the chat itself.
+  const conversationRef = useRef<HTMLDivElement | null>(null);
 
   // True while the agent is off calling tools mid-turn — drives the map-fold
   // "working" indicator on the streaming row. Set by the anonymous `activity`
@@ -187,6 +198,7 @@ function ChatShellInner({
       };
       storeApi.getState().proposeCard(frame);
     },
+    onSurface,
     onNodeUpdated: (node: AgentNode) => {
       // Advisor adjustment landed — replay as a card-status flip. Known
       // statuses map cleanly; anything else is ignored (the status literal
@@ -262,6 +274,16 @@ function ChatShellInner({
     [sendTurn, storeApi],
   );
 
+  // A tapped option answers through the ordinary turn path, phrased as the
+  // traveler's own reply — the agent reads it like any message.
+  const onChooseOption = useCallback(
+    (option: OptionView) => {
+      close();
+      submit(optionReply(option));
+    },
+    [close, submit],
+  );
+
   useBootstrapOpener({
     initialTurnsCount,
     streaming,
@@ -290,7 +312,7 @@ function ChatShellInner({
       >
         <AtmosFrame mood={currentMood} phaseCounter={phaseCounter} />
         <div className="relative grid h-full grid-cols-[1fr_minmax(0,480px)]">
-          <div className="flex h-full min-h-0 flex-col">
+          <div ref={conversationRef} className="flex h-full min-h-0 flex-col">
             <header className="flex items-baseline justify-between border-b border-ink/10 px-8 pb-6 pt-8">
               <div>
                 <p className="font-sans text-[11px] uppercase tracking-label text-ink/50">
@@ -301,7 +323,9 @@ function ChatShellInner({
                 </h1>
               </div>
             </header>
-            <ConversationStream turns={turns} streaming={streaming} working={working} />
+            <SurfaceContext.Provider value={opener}>
+              <ConversationStream turns={turns} streaming={streaming} working={working} />
+            </SurfaceContext.Provider>
             <Composer
               disabled={streaming !== null}
               onSend={(content) => submit(content)}
@@ -309,6 +333,14 @@ function ChatShellInner({
           </div>
           <MoodBoard cards={cards} onAction={onCardAction} />
         </div>
+        <AgentSurface
+          surface={surface}
+          busy={streaming !== null}
+          onClose={close}
+          onChooseOption={onChooseOption}
+          anchorRef={conversationRef}
+          side="right"
+        />
       </main>
     </div>
   );

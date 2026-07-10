@@ -56,6 +56,24 @@ class EditorialLink(BaseModel):
     title: str | None = None
 
 
+class ItineraryDay(BaseModel):
+    """One day inside a multi-day experience (OV adventure itineraries).
+
+    The provider's detail payload breaks a packaged trip into an ordered
+    day-by-day journey, each with its own geo point — the raw material for
+    a node's embedded subgraph (PRD "Subgraphs for self-contained
+    experiences"). ``day`` is 1-based and unique within the item.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    day: int
+    title: str
+    description: str | None = None  # vendor HTML, sanitized at render
+    hours: float | None = None  # active hours that day, when the vendor says
+    location: Location | None = None
+
+
 class InventoryItemBase(BaseModel):
     """Fields common to every item variant.
 
@@ -96,6 +114,10 @@ class ExperienceItem(InventoryItemBase):
     kind: Literal["experience"] = "experience"
     duration_days: Range | None = None
     difficulty: Range | None = None
+    # Day-by-day journey inside a packaged multi-day trip. Populated only by
+    # detail lookups (search entries don't carry it); empty for single-day
+    # or unstructured experiences.
+    itinerary_days: list[ItineraryDay] = []
 
 
 class DestinationItem(InventoryItemBase):

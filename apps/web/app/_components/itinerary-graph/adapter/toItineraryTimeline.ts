@@ -286,8 +286,11 @@ export function toItineraryTimeline(
     windowStartKey ??
     todayKey();
 
+  // Subgraph children (parent_subgraph_id) are the journey INSIDE a card —
+  // the parent owns the slot, so children get no synthesized layout time.
+  // They ride through `nodes` untimed for the expandable sub-journey views.
   const undated = followOrder(
-    timed.filter((n) => explicitStart(n) === null),
+    timed.filter((n) => explicitStart(n) === null && !n.parent_subgraph_id),
     edges,
   );
   const synthStartMinute = new Map<string, string>();

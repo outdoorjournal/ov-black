@@ -123,6 +123,18 @@ export type ActivityFrame = {
   phase: "call" | "result";
 };
 
+// A presentation surface for the drawer beside the chat — emitted when the
+// agent calls `present_route` / `present_options` (more kinds to come). The
+// payload is deliberately kept as an unknown-record at the wire layer; the
+// chat surface module parses it tolerantly per `kind` (like parseTimeline)
+// so a malformed payload drops the panel rather than crashing the stream.
+export type SurfaceFrame = {
+  type: "surface";
+  surface_id: string;
+  kind: string;
+  payload: Record<string, unknown>;
+};
+
 export type SseFrame =
   | FirstTokenFrame
   | DeltaFrame
@@ -134,4 +146,5 @@ export type SseFrame =
   | NodeUpdatedFrame
   | ItineraryUpdatedFrame
   | MoodFrame
-  | ActivityFrame;
+  | ActivityFrame
+  | SurfaceFrame;

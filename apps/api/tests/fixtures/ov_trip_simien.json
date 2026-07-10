@@ -1,0 +1,349 @@
+{
+ "success": true,
+ "data": {
+  "id": "019c57ad-ec7e-7651-b224-7300ee088e36",
+  "organization": {
+   "id": "019b8db8-bb0e-7360-9961-b06e5ba7deb4",
+   "slug": "ethio-top-land-tours",
+   "kind": "operator",
+   "name": "Ethio Top Land Tours",
+   "logoUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019b8db8-bb0e-7360-9961-b06e5ba7deb4/logos/juTI42xdUAcx.jpg",
+   "isActive": true
+  },
+  "title": "4 Days Simien Mountain Wildlife Safari",
+  "slug": "4-days-simien-mountain-wildlife-safari",
+  "description": "<p>Experience the breathtaking Simien Mountains on a 4-day adventure. Fly from <strong>Addis Ababa</strong> to <strong>Gondar,</strong> drive to Sankaber, and meet the unique <strong>Gelada baboons.</strong> Explore Gich, spotting the rare <strong>Walia ibex</strong> and <strong>Jinbar Waterfall,</strong> then trek to Chennek and climb <strong>Ras Dashen,</strong> Ethiopia\u2019s highest peak. Return to Gondar and visit the historic <strong>Fasil Ghebbi.</strong></p><p></p><p>Price Includes:</p><ul><li><p>Simien Mountain Hikes</p></li><li><p>4 days accommodation with breakfast</p></li><li><p>4x4 Toyota Land Cruiser jeep with fuel and driver's</p></li><li><p>Park fees</p></li><li><p>Entrance fees</p></li><li><p>Scout fees</p></li><li><p>Local guide fees and other associated expenses</p></li><li><p>Nature professional guide</p></li><li><p>Photography and video fees</p></li><li><p>Hotel or airport pickup and drop off</p></li><li><p>Unlimited bottles of water</p></li><li><p>Government tax</p></li><li><p>Ethiopian coffee or tea</p></li><li><p>4 days Simien Mountain full meal board</p></li><li><p>Farewell dinner</p></li></ul><p>&nbsp;</p><p>Price excludes:</p><ul><li><p>&nbsp;Personal tips</p></li><li><p>&nbsp;Alcoholic drinks</p></li><li><p>&nbsp;Domestics flight</p></li></ul>",
+  "minPrice": {
+   "amount": 650,
+   "currency": {
+    "code": "USD",
+    "name": "US Dollar",
+    "sign": "$",
+    "exponent": 2
+   }
+  },
+  "location": {
+   "lat": 9.010793,
+   "lng": 38.761253,
+   "place": "Addis Ababa",
+   "country": {
+    "code": "ET",
+    "name": "Ethiopia",
+    "lat": 8,
+    "lng": 38,
+    "region": "Africa",
+    "subRegion": "Eastern Africa",
+    "phonePrefix": "+251"
+   }
+  },
+  "difficulty": {
+   "min": 3,
+   "max": 3
+  },
+  "durationDays": {
+   "min": 4,
+   "max": 4
+  },
+  "coverImage": {
+   "id": "019c57bb-03a7-7a14-83df-46b687c4d3bd",
+   "mimeType": "image/jpeg",
+   "size": 273409,
+   "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019b8db8-bb0e-7360-9961-b06e5ba7deb4/adventures/019c57ad-ec7e-7651-b224-7300ee088e36/covers/vKH2rg2fUfPd.jpg"
+  },
+  "thumbnailImage": null,
+  "images": [
+   {
+    "id": "019c57ba-4cda-70f9-9532-05593660e88f",
+    "index": 0,
+    "name": "",
+    "caption": "",
+    "credit": "",
+    "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019b8db8-bb0e-7360-9961-b06e5ba7deb4/adventures/019c57ad-ec7e-7651-b224-7300ee088e36/images/gWo5aHeH6nS5.jpg"
+   },
+   {
+    "id": "019c57ba-52d4-7d78-871f-46a6cc0ab475",
+    "index": 1,
+    "name": "",
+    "caption": "",
+    "credit": "",
+    "accessUrl": "https://cdn-pub.prod.outdoorvoyage.com/operators/019b8db8-bb0e-7360-9961-b06e5ba7deb4/adventures/019c57ad-ec7e-7651-b224-7300ee088e36/images/bhZjDrzdVUUs.jpg"
+   }
+  ],
+  "activities": [
+   {
+    "id": "018f3958-0b95-7bc8-bfbd-4ae04d18cc51",
+    "name": "Hiking",
+    "kind": {
+     "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+     "name": "Land"
+    }
+   },
+   {
+    "id": "018f3958-0ebb-7044-bbf0-cb70a5b1b7c6",
+    "name": "Wildlife",
+    "kind": {
+     "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+     "name": "Land"
+    }
+   },
+   {
+    "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+    "name": "4 x 4",
+    "kind": {
+     "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+     "name": "Motor"
+    }
+   },
+   {
+    "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+    "name": "Walking",
+    "kind": {
+     "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+     "name": "Land"
+    }
+   },
+   {
+    "id": "018f3958-16c7-7960-a6f1-e76f569afe24",
+    "name": "Trekking",
+    "kind": {
+     "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+     "name": "Land"
+    }
+   },
+   {
+    "id": "018f3958-18ae-71cc-a9b0-62d887c4e086",
+    "name": "Climbing",
+    "kind": {
+     "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+     "name": "Land"
+    }
+   },
+   {
+    "id": "018f3958-1bb0-7cd8-b4e4-ed34b96e560b",
+    "name": "Camping",
+    "kind": {
+     "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+     "name": "Lodging"
+    }
+   },
+   {
+    "id": "018f3958-24cc-7c3c-a17a-7f94b7f8bfc2",
+    "name": "Flights",
+    "kind": {
+     "id": "01902613-d02e-70f0-9edf-b712c78a6f84",
+     "name": "Air"
+    }
+   },
+   {
+    "id": "018f3958-25cd-7a54-8f09-bcd1df790070",
+    "name": "Hotel",
+    "kind": {
+     "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+     "name": "Lodging"
+    }
+   },
+   {
+    "id": "01999422-c62e-7651-bab2-48646c43543c",
+    "name": "Sightseeing",
+    "kind": {
+     "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+     "name": "Land"
+    }
+   }
+  ],
+  "isSubmitted": true,
+  "isPublished": true,
+  "isArchived": false,
+  "itineraries": [
+   {
+    "id": "019c57ad-ec93-7bc2-9756-fee2929bff59",
+    "title": "4 days Simien Mountain Wildlife Safari Tour",
+    "difficulty": 3,
+    "durationDays": 4,
+    "days": [
+     {
+      "day": 1,
+      "title": "Fly Addis Ababa \u2013 Gondar, Drive to Sankaber",
+      "description": "<p>You will take a morning flight from Addis Ababa to Gondar, enjoying scenic views of the Ethiopian highlands. From Gondar, drive to Sankaber, a gateway to the Simien Mountains National Park. Upon arrival, embark on a short trek to spot the endemic Gelada baboons at Chilada. Spend the evening relaxing at Sankaber camp and soaking in the stunning mountain vistas. Overnight Camping</p>",
+      "hours": 9,
+      "location": {
+       "lat": 13.1842518662328,
+       "lng": 38.1313858393817,
+       "place": "Amhara",
+       "country": {
+        "code": "ET",
+        "name": "Ethiopia",
+        "lat": 8,
+        "lng": 38,
+        "region": "Africa",
+        "subRegion": "Eastern Africa",
+        "phonePrefix": "+251"
+       }
+      },
+      "steps": []
+     },
+     {
+      "day": 2,
+      "title": "Sankaber \u2013 Gich (Walia Ibex & Jinbar Waterfall)",
+      "description": "<p>After breakfast, drive from Sankaber to Gich, passing through breathtaking landscapes of the Simien Mountains. Along the way, keep your camera ready for the rare Walia ibex, Ethiopia\u2019s iconic mountain goat. Visit the spectacular Jinbar Waterfall, a perfect spot for photos and enjoying nature\u2019s power. End the day at Gich camp, resting under the clear mountain skies. Overnight camping</p>",
+      "hours": 9,
+      "location": {
+       "lat": 13.1842518662328,
+       "lng": 38.1313858393817,
+       "place": "Amhara",
+       "country": {
+        "code": "ET",
+        "name": "Ethiopia",
+        "lat": 8,
+        "lng": 38,
+        "region": "Africa",
+        "subRegion": "Eastern Africa",
+        "phonePrefix": "+251"
+       }
+      },
+      "steps": []
+     },
+     {
+      "day": 3,
+      "title": "Gich \u2013 Chennek (Highest Mountain Trek)",
+      "description": "<p>Today, drive from Gich to Chennek and prepare for a trek to the Simien Mountains\u2019 highest peaks. Challenge yourself with a climb to experience breathtaking panoramic views of the surrounding valleys. Spot local wildlife along the way, including more Gelada baboons and endemic birds. Return to Chennek camp in the evening for a well-deserved rest after a day of adventure. Overnight Camping</p>",
+      "hours": 9,
+      "location": {
+       "lat": 13.1842518662328,
+       "lng": 38.1313858393817,
+       "place": "Amhara",
+       "country": {
+        "code": "ET",
+        "name": "Ethiopia",
+        "lat": 8,
+        "lng": 38,
+        "region": "Africa",
+        "subRegion": "Eastern Africa",
+        "phonePrefix": "+251"
+       }
+      },
+      "steps": []
+     },
+     {
+      "day": 4,
+      "title": "Drive Chennek \u2013 Gondar",
+      "description": "<p><strong> </strong>After breakfast, begin your drive back from Chennek to Gondar, enjoying the scenic routes one last time. Stop for photos and short walks along the way to capture the beauty of the mountains. Arrive in Gondar and explore the town if time permits, including its historic castles and churches. Conclude your tour with a transfer to your hotel or airport for onward travel.</p>",
+      "hours": 6,
+      "location": {
+       "lat": 12.6082842310917,
+       "lng": 37.4579101902136,
+       "place": "Gonder",
+       "country": {
+        "code": "ET",
+        "name": "Ethiopia",
+        "lat": 8,
+        "lng": 38,
+        "region": "Africa",
+        "subRegion": "Eastern Africa",
+        "phonePrefix": "+251"
+       }
+      },
+      "steps": []
+     }
+    ],
+    "hours": {
+     "min": 6,
+     "max": 9
+    },
+    "activities": [
+     {
+      "id": "018f3958-0b95-7bc8-bfbd-4ae04d18cc51",
+      "name": "Hiking",
+      "kind": {
+       "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+       "name": "Land"
+      }
+     },
+     {
+      "id": "018f3958-0ebb-7044-bbf0-cb70a5b1b7c6",
+      "name": "Wildlife",
+      "kind": {
+       "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+       "name": "Land"
+      }
+     },
+     {
+      "id": "018f3958-0f9e-75bc-9c19-87a0f8599f41",
+      "name": "4 x 4",
+      "kind": {
+       "id": "019354b3-0ff7-7b14-a7d7-bd971023900f",
+       "name": "Motor"
+      }
+     },
+     {
+      "id": "018f3958-11bd-72c4-ab87-f91e27756567",
+      "name": "Walking",
+      "kind": {
+       "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+       "name": "Land"
+      }
+     },
+     {
+      "id": "018f3958-16c7-7960-a6f1-e76f569afe24",
+      "name": "Trekking",
+      "kind": {
+       "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+       "name": "Land"
+      }
+     },
+     {
+      "id": "018f3958-18ae-71cc-a9b0-62d887c4e086",
+      "name": "Climbing",
+      "kind": {
+       "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+       "name": "Land"
+      }
+     },
+     {
+      "id": "018f3958-1bb0-7cd8-b4e4-ed34b96e560b",
+      "name": "Camping",
+      "kind": {
+       "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+       "name": "Lodging"
+      }
+     },
+     {
+      "id": "018f3958-24cc-7c3c-a17a-7f94b7f8bfc2",
+      "name": "Flights",
+      "kind": {
+       "id": "01902613-d02e-70f0-9edf-b712c78a6f84",
+       "name": "Air"
+      }
+     },
+     {
+      "id": "018f3958-25cd-7a54-8f09-bcd1df790070",
+      "name": "Hotel",
+      "kind": {
+       "id": "019354b3-0ff7-7aa0-8e9e-8da44968fd4d",
+       "name": "Lodging"
+      }
+     },
+     {
+      "id": "01999422-c62e-7651-bab2-48646c43543c",
+      "name": "Sightseeing",
+      "kind": {
+       "id": "01902613-d02f-7934-99e5-c52be02d99e3",
+       "name": "Land"
+      }
+     }
+    ],
+    "price": {
+     "amount": 650,
+     "currency": {
+      "code": "USD",
+      "name": "US Dollar",
+      "sign": "$",
+      "exponent": 2
+     }
+    },
+    "isPublished": true,
+    "isArchived": false
+   }
+  ]
+ }
+}

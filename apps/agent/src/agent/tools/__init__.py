@@ -33,6 +33,7 @@ from agent.tools.proposals import assemble_draft, propose_card, propose_flight
 from agent.tools.reconcile import reconcile_alternative
 from agent.tools.request_reconcile import request_reconcile
 from agent.tools.set_mood import set_mood
+from agent.tools.surfaces import present_options, present_route
 from agent.tools.thread import post_thread_message
 from agent.tools.timeline import propose_timeline
 from agent.tools.traveler import (
@@ -59,6 +60,9 @@ _TOOLS_ONBOARDING = [
     add_collection_note,
     get_collection,
     propose_timeline,
+    # Drawer surfaces — a route brochure or a laid-out decision beside the chat.
+    present_route,
+    present_options,
     set_mood,
 ]
 
@@ -84,6 +88,9 @@ _TOOLS_PLANNING = [
     add_collection_note,
     get_collection,
     propose_timeline,
+    # Drawer surfaces — a route brochure or a laid-out decision beside the chat.
+    present_route,
+    present_options,
     assemble_draft,
     update_node_status,
     update_node_details,
@@ -111,6 +118,10 @@ _TOOLS_QA = [
     get_itinerary,
     get_collection,
     propose_timeline,
+    # Drawer surfaces are read-only presentation — safe in Q&A ("how do we
+    # get from the ryokan to the station?" earns a route brochure).
+    present_route,
+    present_options,
     add_note,
     fork_itinerary,
     move_node,

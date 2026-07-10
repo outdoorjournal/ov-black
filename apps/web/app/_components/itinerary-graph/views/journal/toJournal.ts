@@ -15,6 +15,7 @@ import { offsetHoursOr, parseIso } from "../../model/time";
 import type { EdgeResponse, NodeResponse } from "../../model/types";
 import { getVerticalMeta } from "../../model/types";
 import { dayKeyForNode } from "../../shared/groupNodesByDay";
+import { subgraphChildrenByParent, subgraphDayMeta } from "../../shared/subgraph";
 
 // ── Bucketing thresholds ──────────────────────────────────────────────────────
 /** Below this a gap is invisible — the spine simply continues. */
@@ -30,10 +31,25 @@ export type QuietPeriod = "morning" | "afternoon" | "evening" | "day";
  *  spanning the group (phase 3). Only runs of ≥2 consecutive cards mark. */
 export type GroupedRole = "start" | "mid" | "end";
 
+/** A derived per-day placement of a multi-day card's subgraph child — "day k
+ *  of N" of the journey the parent packages. */
+export type JourneyBeat = {
+  parentId: string;
+  parentTitle: string;
+  index: number;
+  total: number;
+};
+
 export type JournalEntry =
   /** A real graph node, rendered as a card on the spine. `groupedWith` marks
-   *  membership in a consecutive `grouped_with` run (the bracket). */
-  | { kind: "node"; node: NodeResponse; groupedWith?: GroupedRole }
+   *  membership in a consecutive `grouped_with` run (the bracket). `journey`
+   *  marks a derived journey beat (a subgraph child laid onto its day). */
+  | {
+      kind: "node";
+      node: NodeResponse;
+      groupedWith?: GroupedRole;
+      journey?: JourneyBeat;
+    }
   /** DIFF MODE ONLY (toJournalDiff): a trunk-only node — "removed" in this
    *  version — rendered as a ghost card at its trunk time. `toJournal` itself
    *  never emits one; the node is SYNTHESIZED from the diff's `before`
@@ -106,10 +122,13 @@ export interface ToJournalInput {
 //   - unscheduled nodes (no real start, or a synthesized layout-only start —
 //     those belong to the Collection/wish list),
 //   - attached notes (they ride their host in the margin — phase 2 renders
-//     them there; putting them on the spine would double-count feedback).
+//     them there; putting them on the spine would double-count feedback),
+//   - subgraph children (the journey INSIDE a card — they render as the
+//     parent's expandable sub-journey, never as spine cards of their own).
 function isJournalVisible(node: NodeResponse): boolean {
   if (node.status === "discarded") return false;
   if (node.attached_to_node_id) return false;
+  if (node.parent_subgraph_id) return false;
   const meta = getVerticalMeta(node);
   if (meta.start_synthesized === true) return false;
   return typeof meta.start_time === "string" && meta.start_time.length > 0;
@@ -204,13 +223,97 @@ export function quietCaption(period: QuietPeriod): string {
   }
 }
 
+// ── Journey beats (embedded subgraphs laid onto their days) ──────────────────
+// A multi-day card (an OV adventure) carries its internal journey as subgraph
+// children. The RAW children are never spine-visible; instead, when the parent
+// is scheduled, each child is DERIVED onto its calendar day — day k of the
+// journey lands on parentDay + (k-1), wearing a membership chip — so the span
+// reads across the days it covers. Derived, never persisted (the same rule as
+// quiet moments and nights).
+
+const BEAT_DEFAULT_MIN = 6 * 60; // a day-long leg when the vendor gives no hours
+const BEAT_START_TIME = "09:00"; // days 2..N start the morning
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function addDaysToKey(dayKey: string, days: number): string {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  const dt = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+}
+
+/** The ISO offset suffix of `iso`, or one built from the trip default. */
+function offsetSuffixOf(iso: string, tzDefault: number): string {
+  const m = iso.match(/(Z|[+-]\d{2}:\d{2})$/);
+  if (m?.[1]) return m[1];
+  const sign = tzDefault < 0 ? "-" : "+";
+  const abs = Math.abs(tzDefault);
+  return `${sign}${pad(Math.floor(abs))}:${pad(Math.round((abs % 1) * 60))}`;
+}
+
+function deriveJourneyBeats(
+  visibleCards: NodeResponse[],
+  allNodes: NodeResponse[],
+  tz: number,
+): { beats: NodeResponse[]; info: Map<string, JourneyBeat> } {
+  const childrenByParent = subgraphChildrenByParent(allNodes);
+  const beats: NodeResponse[] = [];
+  const info = new Map<string, JourneyBeat>();
+  for (const parent of visibleCards) {
+    const children = childrenByParent.get(parent.id) ?? [];
+    if (children.length === 0) continue;
+    const parentStart = getVerticalMeta(parent).start_time;
+    if (!parentStart) continue;
+    const parentDay = dayKeyForNode(parent, tz);
+    if (!parentDay) continue;
+    const suffix = offsetSuffixOf(parentStart, tz);
+    children.forEach((child, i) => {
+      const dayIndex = subgraphDayMeta(child).index ?? i + 1;
+      const hours = subgraphDayMeta(child).hours;
+      // Day 1 rides the parent's own start instant (the card sorts first on a
+      // tie — input order is stable); later days start the morning.
+      const start =
+        dayIndex <= 1
+          ? parentStart
+          : `${addDaysToKey(parentDay, dayIndex - 1)}T${BEAT_START_TIME}:00${suffix}`;
+      beats.push({
+        ...child,
+        metadata: {
+          ...child.metadata,
+          start_time: start,
+          duration_minutes:
+            typeof hours === "number" && hours > 0
+              ? Math.round(hours * 60)
+              : BEAT_DEFAULT_MIN,
+        },
+      } as NodeResponse);
+      info.set(child.id, {
+        parentId: parent.id,
+        parentTitle: parent.title,
+        index: dayIndex,
+        total: children.length,
+      });
+    });
+  }
+  return { beats, info };
+}
+
 // ── The derivation ────────────────────────────────────────────────────────────
 export function toJournal(input: ToJournalInput): Journal {
   const { nodes, edges, days, timezoneOffsetHours: tz } = input;
 
   const visible = nodes.filter(isJournalVisible);
   const nightBars = visible.filter((n) => getVerticalMeta(n).night_bar === true);
-  const cards = visible.filter((n) => getVerticalMeta(n).night_bar !== true);
+  const scheduledCards = visible.filter(
+    (n) => getVerticalMeta(n).night_bar !== true,
+  );
+  // Embedded subgraphs: lay each scheduled parent's day children onto their
+  // calendar days as derived journey beats (see deriveJourneyBeats above).
+  const { beats, info: journeyInfo } = deriveJourneyBeats(scheduledCards, nodes, tz);
+  const cards = [...scheduledCards, ...beats];
   const groupByNode = altGroupsOf(cards, edges);
   const groupedByNode = groupedWithOf(cards, edges);
 
@@ -330,10 +433,12 @@ export function toJournal(input: ToJournalInput): Journal {
       }
       if (entry.kind === "node") {
         const role = bracketRoles.get(foldIdx);
+        const journey = journeyInfo.get(entry.node.id);
         entries.push({
           kind: "node",
           node: entry.node,
           ...(role ? { groupedWith: role } : {}),
+          ...(journey ? { journey } : {}),
         });
         nodeCount += 1;
       } else {

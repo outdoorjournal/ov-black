@@ -26,11 +26,18 @@ from app.inventory.registry import InventoryCtx
 from app.inventory.schemas import ExperienceItem
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "ov_search_como.json"
+TRIP_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "ov_trip_simien.json"
 
 
 @pytest.fixture(scope="module")
 def ov_fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text())
+
+
+@pytest.fixture(scope="module")
+def ov_trip_fixture() -> dict[str, Any]:
+    """Recorded ``/api/trips/{id}`` detail — a 4-day Simien adventure."""
+    return json.loads(TRIP_FIXTURE_PATH.read_text())
 
 
 @pytest.fixture()
@@ -459,7 +466,7 @@ async def test_get_detail_happy_path(ov_fixture: dict[str, Any]) -> None:
     entry = ov_fixture["trips"][0]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == f"/api/adventure/{entry['id']}"
+        assert request.url.path == f"/api/trips/{entry['id']}"
         return httpx.Response(200, json={"success": True, "data": entry})
 
     provider = _build_provider(handler)
@@ -471,6 +478,72 @@ async def test_get_detail_happy_path(ov_fixture: dict[str, Any]) -> None:
     assert item is not None
     assert isinstance(item, ExperienceItem)
     assert item.source_id == entry["id"]
+
+
+@pytest.mark.asyncio
+async def test_get_detail_normalizes_itinerary_days(
+    ov_trip_fixture: dict[str, Any],
+) -> None:
+    """The recorded Simien detail carries a 4-day journey with geo points."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ov_trip_fixture)
+
+    provider = _build_provider(handler)
+    try:
+        item = await provider.get_detail(
+            source_id=ov_trip_fixture["data"]["id"], ctx=InventoryCtx()
+        )
+    finally:
+        await provider.aclose()
+
+    assert isinstance(item, ExperienceItem)
+    days = item.itinerary_days
+    assert [d.day for d in days] == [1, 2, 3, 4]
+    first = days[0]
+    assert first.title.startswith("Fly Addis Ababa")
+    assert first.hours == 9
+    assert first.location is not None
+    assert first.location.lat == pytest.approx(13.184, abs=0.01)
+    assert first.location.label == "Amhara, Ethiopia"
+    # Days 1 and 4 sit at different geo points — a journey, not a pin.
+    assert days[-1].location is not None
+    assert days[-1].location.lat != first.location.lat
+
+
+def test_normalize_search_entry_has_no_days(ov_fixture: dict[str, Any]) -> None:
+    """Search entries carry no ``itineraries`` — days stay empty."""
+    item = normalize_ov_entry(ov_fixture["trips"][0])
+    assert item.itinerary_days == []
+
+
+@pytest.mark.asyncio
+async def test_get_detail_success_false_not_found_returns_none() -> None:
+    """Upstream signals a missing trip as HTTP 200 + success=false."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"success": False, "error": "Trip not found"})
+
+    provider = _build_provider(handler)
+    try:
+        item = await provider.get_detail(source_id="missing", ctx=InventoryCtx())
+    finally:
+        await provider.aclose()
+
+    assert item is None
+
+
+@pytest.mark.asyncio
+async def test_get_detail_success_false_other_error_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"success": False, "error": "db exploded"})
+
+    provider = _build_provider(handler)
+    try:
+        with pytest.raises(ProviderUpstreamError):
+            await provider.get_detail(source_id="abc", ctx=InventoryCtx())
+    finally:
+        await provider.aclose()
 
 
 @pytest.mark.asyncio

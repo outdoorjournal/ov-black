@@ -49,6 +49,7 @@ from app.inventory.registry import InventoryCtx, InventoryProvider
 from app.inventory.schemas import (
     ExperienceItem,
     InventoryItem,
+    ItineraryDay,
     Location,
     Price,
     Range,
@@ -217,6 +218,47 @@ def _extract_tags(entry: dict[str, Any]) -> list[str]:
     return tags
 
 
+def _extract_itinerary_days(entry: dict[str, Any]) -> list[ItineraryDay]:
+    """Lift the first non-empty ``itineraries[].days`` into typed days.
+
+    Only the detail payload (``/api/trips/{id}``) carries ``itineraries`` —
+    search entries return []. Days reuse the entry-level location shape, so
+    ``_extract_location`` applies. Malformed days are skipped individually;
+    the ordering key is the vendor's 1-based ``day`` field.
+    """
+    itineraries = entry.get("itineraries")
+    if not isinstance(itineraries, list):
+        return []
+    days_raw: list[Any] = []
+    for itinerary in itineraries:
+        if isinstance(itinerary, dict):
+            candidate = itinerary.get("days")
+            if isinstance(candidate, list) and candidate:
+                days_raw = candidate
+                break
+    days: list[ItineraryDay] = []
+    for raw in days_raw:
+        if not isinstance(raw, dict):
+            continue
+        day_number = raw.get("day")
+        title = raw.get("title")
+        if not isinstance(day_number, int) or not isinstance(title, str) or not title:
+            continue
+        hours = raw.get("hours")
+        description = raw.get("description")
+        days.append(
+            ItineraryDay(
+                day=day_number,
+                title=title,
+                description=description if isinstance(description, str) and description else None,
+                hours=float(hours) if isinstance(hours, (int, float)) else None,
+                location=_extract_location(raw),
+            )
+        )
+    days.sort(key=lambda d: d.day)
+    return days
+
+
 def normalize_ov_entry(entry: dict[str, Any]) -> ExperienceItem:
     """Map one OV ``Adventures.Entry`` to an :class:`ExperienceItem`.
 
@@ -244,6 +286,7 @@ def normalize_ov_entry(entry: dict[str, Any]) -> ExperienceItem:
         tags=_extract_tags(entry),
         duration_days=_extract_range(entry, "durationDays"),
         difficulty=_extract_range(entry, "difficulty"),
+        itinerary_days=_extract_itinerary_days(entry),
         raw=entry,
     )
 
@@ -414,13 +457,16 @@ class OVProvider(InventoryProvider):
         source_id: str,
         ctx: InventoryCtx,
     ) -> InventoryItem | None:
-        """Fetch a single trip by id.
+        """Fetch a single trip by id, including its day-by-day itinerary.
 
-        OV exposes detail at ``GET /api/adventure/{id}``. On 404 we return
-        ``None``; on any other failure we raise :class:`ProviderUpstreamError`
-        so the router can distinguish "not found" from "upstream broken".
+        OV exposes detail at ``GET /api/trips/{id}`` (the older
+        ``/api/adventure/{id}`` route no longer exists upstream). A missing
+        trip is HTTP 200 + ``{"success": false, "error": "Trip not found"}``
+        — mapped to ``None``; any other failure raises
+        :class:`ProviderUpstreamError` so the router can distinguish "not
+        found" from "upstream broken".
         """
-        url = f"{self._base_url}/api/adventure/{source_id}"
+        url = f"{self._base_url}/api/trips/{source_id}"
         try:
             resp = await self._client.get(url, headers=self._headers())
         except httpx.TimeoutException as exc:
@@ -461,9 +507,15 @@ class OVProvider(InventoryProvider):
         except ValueError as exc:
             raise ProviderUpstreamError("ov_detail_invalid_json") from exc
 
-        # Shape observed in voyage-site: { success: bool, data: Adventure }.
+        # Shape (voyage-site /api/trips/[id]): { success: bool, data: Adventure }.
+        # A missing trip is success=false at HTTP 200, not a 404.
         entry: dict[str, Any] | None = None
         if isinstance(body, dict):
+            if body.get("success") is False:
+                error = body.get("error")
+                if isinstance(error, str) and "not found" in error.lower():
+                    return None
+                raise ProviderUpstreamError("ov_detail_upstream_error")
             data = body.get("data")
             if isinstance(data, dict):
                 entry = data

@@ -216,3 +216,164 @@ def test_unknown_source_returns_400(
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "unknown_source"
+
+
+# ── multi-day subgraph materialization (OV adventures) ─────────────────────
+
+OV_TRIP_FIXTURE = Path(__file__).parent / "fixtures" / "ov_trip_simien.json"
+
+
+def _simien_item() -> Any:
+    from app.inventory.providers.ov import normalize_ov_entry
+
+    entry = json.loads(OV_TRIP_FIXTURE.read_text())["data"]
+    item = normalize_ov_entry(entry)
+    assert len(item.itinerary_days) == 4
+    return item
+
+
+class FakeOVProvider(InventoryProvider):
+    source = "ov"
+
+    def __init__(self, item: InventoryItem | None) -> None:
+        self._item = item
+
+    async def search(self, **_: Any) -> list[InventoryItem]:  # pragma: no cover
+        return []
+
+    async def get_detail(self, *, source_id: str, ctx: InventoryCtx) -> InventoryItem | None:
+        return self._item
+
+
+@pytest.fixture()
+def captured_graph_writes(
+    captured_add_node: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> dict[str, list[dict[str, Any]]]:
+    """Capture every add_node/add_edge across router + subgraph service.
+
+    ``materialize_day_subgraph`` calls the service-module bound names, so the
+    router-level stub from ``captured_add_node`` doesn't see child writes —
+    patch the subgraph module too, recording calls in order.
+    """
+    calls: dict[str, list[dict[str, Any]]] = {"nodes": [], "edges": []}
+
+    async def _add_node(session: Any, actor: Any, **kwargs: Any) -> Any:
+        calls["nodes"].append(kwargs)
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            itinerary_id=kwargs["itinerary_id"],
+            parent_subgraph_id=kwargs.get("parent_subgraph_id"),
+            type=kwargs["type"],
+            status=kwargs["status"],
+            title=kwargs["title"],
+            source=kwargs.get("source"),
+            source_id=kwargs.get("source_id"),
+            metadata_=kwargs["metadata"],
+            cost_amount=kwargs.get("cost_amount"),
+            cost_currency=kwargs.get("cost_currency"),
+            cost_kind=kwargs.get("cost_kind"),
+            starts_at=None,
+        )
+
+    async def _add_edge(session: Any, actor: Any, **kwargs: Any) -> Any:
+        calls["edges"].append(kwargs)
+        return SimpleNamespace(id=uuid.uuid4(), **kwargs)
+
+    from app.routers import itineraries as routers_itineraries
+    from app.services import subgraph as subgraph_service
+
+    monkeypatch.setattr(routers_itineraries, "add_node", _add_node)
+    monkeypatch.setattr(subgraph_service, "add_node", _add_node)
+    monkeypatch.setattr(subgraph_service, "add_edge", _add_edge)
+    return calls
+
+
+@pytest.fixture()
+def override_ov_registry():
+    provider = FakeOVProvider(_simien_item())
+    registry = InventoryProviderRegistry()
+    registry.register(provider)
+    fastapi_app.dependency_overrides[get_inventory_registry] = lambda: registry
+    try:
+        yield provider
+    finally:
+        fastapi_app.dependency_overrides.pop(get_inventory_registry, None)
+
+
+def test_multi_day_item_materializes_day_subgraph(
+    client: TestClient,
+    captured_graph_writes: dict[str, list[dict[str, Any]]],
+    override_ov_registry: FakeOVProvider,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.post(
+        f"/itinerary/{_IID}/nodes/from-inventory",
+        json={"source": "ov", "source_id": "simien-4d"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    nodes = captured_graph_writes["nodes"]
+    assert len(nodes) == 5  # parent + 4 days
+    parent, children = nodes[0], nodes[1:]
+    assert parent["source"] == "ov"
+    assert parent["parent_subgraph_id"] is None
+
+    # Response is the parent node, not a child.
+    assert resp.json()["parent_subgraph_id"] is None
+    assert resp.json()["title"] == parent["title"]
+
+    for i, child in enumerate(children, start=1):
+        assert child["parent_subgraph_id"] is not None
+        assert child["title"].startswith(f"Day {i} — ")
+        assert child["status"] == parent["status"]
+        day_meta = child["metadata"]["subgraph_day"]
+        assert day_meta["index"] == i
+        assert isinstance(day_meta.get("lat"), float)
+        # Derived content: no provenance of its own.
+        assert child.get("source") is None
+    # All children share one parent id.
+    assert len({str(c["parent_subgraph_id"]) for c in children}) == 1
+
+    # Days chained by follows edges: 1→2→3→4.
+    edges = captured_graph_writes["edges"]
+    assert len(edges) == 3
+    assert all(e["type"].value == "follows" for e in edges)
+    assert all(e["metadata"] == {"reason": "day_sequence"} for e in edges)
+
+
+def test_expand_days_false_creates_only_parent(
+    client: TestClient,
+    captured_graph_writes: dict[str, list[dict[str, Any]]],
+    override_ov_registry: FakeOVProvider,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = client.post(
+        f"/itinerary/{_IID}/nodes/from-inventory",
+        json={"source": "ov", "source_id": "simien-4d", "expand_days": False},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(captured_graph_writes["nodes"]) == 1
+    assert captured_graph_writes["edges"] == []
+
+
+def test_nested_target_skips_materialization(
+    client: TestClient,
+    captured_graph_writes: dict[str, list[dict[str, Any]]],
+    override_ov_registry: FakeOVProvider,
+    auth_headers: dict[str, str],
+) -> None:
+    """Creating inside an existing subgraph never nests another one."""
+    resp = client.post(
+        f"/itinerary/{_IID}/nodes/from-inventory",
+        json={
+            "source": "ov",
+            "source_id": "simien-4d",
+            "parent_subgraph_id": str(uuid.uuid4()),
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(captured_graph_writes["nodes"]) == 1
+    assert captured_graph_writes["edges"] == []

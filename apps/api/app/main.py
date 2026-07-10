@@ -52,6 +52,7 @@ from app.routers.me import router as me_router
 from app.routers.messaging import router as messaging_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.party_members import router as party_members_router
+from app.routers.places import router as places_router
 from app.vault.storage import MockVaultStorage, S3VaultStorage
 
 if TYPE_CHECKING:
@@ -236,6 +237,7 @@ app.add_middleware(
         "/agent/dossier/facts",
         "/agent/party-members",
         "/agent/thread-message",
+        "/agent/route",
         # Places photo proxy — loaded by a browser <img> tag (no bearer
         # header possible), so it gates on its own HS256-signed photo token
         # instead of the Supabase JWT. See routers/integrations/google_places.
@@ -304,6 +306,7 @@ app.include_router(party_members_router)
 app.include_router(onboarding_router)
 app.include_router(demos_router)
 app.include_router(google_places_router)
+app.include_router(places_router)
 app.include_router(weather_router)
 app.include_router(flight_status_router)
 

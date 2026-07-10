@@ -741,6 +741,23 @@ class FactSourceKind(StrEnum):
     scraper = 'scraper'
 
 
+class FactbookTexture(BaseModel):
+    """
+    Country-level color pulled from the CIA World Factbook.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    country_name: Annotated[str, Field(title='Country Name')]
+    background: Annotated[str | None, Field(title='Background')] = None
+    climate: Annotated[str | None, Field(title='Climate')] = None
+    terrain: Annotated[str | None, Field(title='Terrain')] = None
+    languages: Annotated[str | None, Field(title='Languages')] = None
+    population: Annotated[str | None, Field(title='Population')] = None
+    capital: Annotated[str | None, Field(title='Capital')] = None
+
+
 class FindingSeverity(StrEnum):
     """
     Mirrors the public.finding_severity Postgres enum (0017).
@@ -1421,6 +1438,13 @@ class PaymentTokenResponse(BaseModel):
     client_token: Annotated[str, Field(title='Client Token')]
 
 
+class PlaceBriefRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    query: Annotated[str, Field(max_length=200, min_length=1, title='Query')]
+
+
 class PlacePhoto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1618,6 +1642,24 @@ class RequestReconcileRequest(BaseModel):
     note: Annotated[Note | None, Field(title='Note')] = None
 
 
+class ResolvedPlace(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    place_id: Annotated[str, Field(title='Place Id')]
+    name: Annotated[str, Field(title='Name')]
+    formatted_address: Annotated[str, Field(title='Formatted Address')]
+    lat: Annotated[float, Field(title='Lat')]
+    lng: Annotated[float, Field(title='Lng')]
+    types: Annotated[list[str] | None, Field(title='Types')] = None
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    editorial_summary: Annotated[str | None, Field(title='Editorial Summary')] = None
+    website: Annotated[str | None, Field(title='Website')] = None
+    maps_url: Annotated[str, Field(title='Maps Url')]
+    photo_tokens: Annotated[list[str] | None, Field(title='Photo Tokens')] = None
+
+
 class RetimeItineraryRequest(BaseModel):
     """
     Pin the trip to real dates (Wave E / ADV-17): "Day 1 is date_start".
@@ -1633,6 +1675,56 @@ class RetimeItineraryRequest(BaseModel):
     )
     date_start: Annotated[date_aliased, Field(title='Date Start')]
     date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
+
+
+class RouteComputeRequest(BaseModel):
+    """
+    Loose address strings straight from the agent's ``present_route`` call.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    origin: Annotated[str, Field(max_length=200, min_length=1, title='Origin')]
+    destination: Annotated[
+        str, Field(max_length=200, min_length=1, title='Destination')
+    ]
+    waypoints: Annotated[list[str] | None, Field(max_length=5, title='Waypoints')] = (
+        None
+    )
+    mode: Annotated[
+        str | None, Field(pattern='^(drive|walk|bicycle|transit)$', title='Mode')
+    ] = 'drive'
+
+
+class RouteLeg(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    distance_meters: Annotated[int, Field(title='Distance Meters')]
+    duration_seconds: Annotated[int, Field(title='Duration Seconds')]
+    start_lat: Annotated[float | None, Field(title='Start Lat')] = None
+    start_lng: Annotated[float | None, Field(title='Start Lng')] = None
+    end_lat: Annotated[float | None, Field(title='End Lat')] = None
+    end_lng: Annotated[float | None, Field(title='End Lng')] = None
+
+
+class RoutePlan(BaseModel):
+    """
+    One computed route, shaped for the browser's route surface.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    origin: Annotated[str, Field(title='Origin')]
+    destination: Annotated[str, Field(title='Destination')]
+    waypoints: Annotated[list[str] | None, Field(title='Waypoints')] = None
+    mode: Annotated[str, Field(title='Mode')]
+    distance_meters: Annotated[int, Field(title='Distance Meters')]
+    duration_seconds: Annotated[int, Field(title='Duration Seconds')]
+    encoded_polyline: Annotated[str, Field(title='Encoded Polyline')]
+    legs: Annotated[list[RouteLeg] | None, Field(title='Legs')] = None
 
 
 class RadiusM(RootModel[int]):
@@ -1952,6 +2044,20 @@ class WeatherForecast(BaseModel):
     summary: Annotated[str, Field(title='Summary')]
 
 
+class WikipediaTexture(BaseModel):
+    """
+    Place-level summary from Wikipedia's REST summary endpoint.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: Annotated[str, Field(title='Title')]
+    extract: Annotated[str, Field(title='Extract')]
+    url: Annotated[str | None, Field(title='Url')] = None
+    thumbnail_url: Annotated[str | None, Field(title='Thumbnail Url')] = None
+
+
 class AddLineItemRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -2239,6 +2345,7 @@ class CreateNodeFromInventoryRequest(BaseModel):
     source_id: Annotated[str, Field(title='Source Id')]
     status: NodeStatus | None = 'pending'
     parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')] = None
+    expand_days: Annotated[bool | None, Field(title='Expand Days')] = True
 
 
 class CreateNodeFromLinkRequest(BaseModel):
@@ -2420,31 +2527,6 @@ class EdgeResponse(BaseModel):
     metadata: Annotated[dict[str, Any], Field(title='Metadata')]
 
 
-class ExperienceItem(BaseModel):
-    source: Annotated[str, Field(title='Source')]
-    source_id: Annotated[str, Field(title='Source Id')]
-    title: Annotated[str, Field(title='Title')]
-    description: Annotated[str | None, Field(title='Description')] = None
-    photos: Annotated[list[str] | None, Field(title='Photos')] = []
-    location: Location | None = None
-    price: Price | None = None
-    editorial_links: Annotated[
-        list[EditorialLink] | None,
-        Field(title='Editorial Links', validate_default=True),
-    ] = []
-    tags: Annotated[list[str] | None, Field(title='Tags')] = []
-    rating: Annotated[float | None, Field(title='Rating')] = None
-    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
-    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
-    website: Annotated[str | None, Field(title='Website')] = None
-    phone: Annotated[str | None, Field(title='Phone')] = None
-    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
-    raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
-    kind: Annotated[Literal['experience'], Field(title='Kind')] = 'experience'
-    duration_days: Range | None = None
-    difficulty: Range | None = None
-
-
 class FillProposalResponse(BaseModel):
     inventory_source: Annotated[str, Field(title='Inventory Source')]
     inventory_id: Annotated[str, Field(title='Inventory Id')]
@@ -2588,6 +2670,23 @@ class InvoiceLineItemResponse(BaseModel):
         UUID | None, Field(title='Reverses Line Item Id')
     ] = None
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+
+class ItineraryDay(BaseModel):
+    """
+    One day inside a multi-day experience (OV adventure itineraries).
+
+    The provider's detail payload breaks a packaged trip into an ordered
+    day-by-day journey, each with its own geo point — the raw material for
+    a node's embedded subgraph (PRD "Subgraphs for self-contained
+    experiences"). ``day`` is 1-based and unique within the item.
+    """
+
+    day: Annotated[int, Field(title='Day')]
+    title: Annotated[str, Field(title='Title')]
+    description: Annotated[str | None, Field(title='Description')] = None
+    hours: Annotated[float | None, Field(title='Hours')] = None
+    location: Location | None = None
 
 
 class ItineraryPartyEntry(BaseModel):
@@ -2862,6 +2961,12 @@ class PaymentResponse(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
 
+class PlaceBrief(BaseModel):
+    resolved: ResolvedPlace
+    factbook: FactbookTexture | None = None
+    wikipedia: WikipediaTexture | None = None
+
+
 class PlaceDetail(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -2925,29 +3030,6 @@ class RetimeItineraryResponse(BaseModel):
     itinerary: ItineraryResponse
     delta_days: Annotated[int, Field(title='Delta Days')]
     shifted_nodes: Annotated[int, Field(title='Shifted Nodes')]
-
-
-class SearchInventoryResponse(BaseModel):
-    items: Annotated[
-        list[
-            Annotated[
-                ExperienceItem
-                | DestinationItem
-                | HotelItem
-                | FlightItem
-                | MealItem
-                | TransitItem
-                | NoteItem,
-                Field(discriminator='kind'),
-            ]
-        ],
-        Field(title='Items'),
-    ]
-    count: Annotated[int, Field(title='Count')]
-    sources: Annotated[
-        list[SearchSourceDiagnostics] | None,
-        Field(title='Sources', validate_default=True),
-    ] = []
 
 
 class SupplierAvailabilityResponse(BaseModel):
@@ -3113,6 +3195,34 @@ class CollectionResponse(BaseModel):
     items: Annotated[list[NodeResponse], Field(title='Items')]
 
 
+class ExperienceItem(BaseModel):
+    source: Annotated[str, Field(title='Source')]
+    source_id: Annotated[str, Field(title='Source Id')]
+    title: Annotated[str, Field(title='Title')]
+    description: Annotated[str | None, Field(title='Description')] = None
+    photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    location: Location | None = None
+    price: Price | None = None
+    editorial_links: Annotated[
+        list[EditorialLink] | None,
+        Field(title='Editorial Links', validate_default=True),
+    ] = []
+    tags: Annotated[list[str] | None, Field(title='Tags')] = []
+    rating: Annotated[float | None, Field(title='Rating')] = None
+    rating_count: Annotated[int | None, Field(title='Rating Count')] = None
+    opening_hours: Annotated[list[str] | None, Field(title='Opening Hours')] = []
+    website: Annotated[str | None, Field(title='Website')] = None
+    phone: Annotated[str | None, Field(title='Phone')] = None
+    photo_refs: Annotated[list[str] | None, Field(title='Photo Refs')] = []
+    raw: Annotated[dict[str, Any] | None, Field(title='Raw')] = {}
+    kind: Annotated[Literal['experience'], Field(title='Kind')] = 'experience'
+    duration_days: Range | None = None
+    difficulty: Range | None = None
+    itinerary_days: Annotated[
+        list[ItineraryDay] | None, Field(title='Itinerary Days', validate_default=True)
+    ] = []
+
+
 class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
@@ -3151,6 +3261,29 @@ class ReconcileResponse(BaseModel):
     baseline: GraphResponse
     fork: ItineraryResponse
     outcomes: Annotated[list[ReconcileOutcomeResponse], Field(title='Outcomes')]
+
+
+class SearchInventoryResponse(BaseModel):
+    items: Annotated[
+        list[
+            Annotated[
+                ExperienceItem
+                | DestinationItem
+                | HotelItem
+                | FlightItem
+                | MealItem
+                | TransitItem
+                | NoteItem,
+                Field(discriminator='kind'),
+            ]
+        ],
+        Field(title='Items'),
+    ]
+    count: Annotated[int, Field(title='Count')]
+    sources: Annotated[
+        list[SearchSourceDiagnostics] | None,
+        Field(title='Sources', validate_default=True),
+    ] = []
 
 
 class ApproveAllResponse(BaseModel):

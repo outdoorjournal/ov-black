@@ -173,6 +173,26 @@ class Settings(BaseSettings):
         repr=False,
     )
 
+    google_routes_base_url: str = Field(
+        default="https://routes.googleapis.com",
+        description=(
+            "Base URL for the Google Routes API (computeRoutes). Authenticated "
+            "with google_places_api_key (one Google key, Routes API enabled)."
+        ),
+    )
+
+    factbook_base_url: str = Field(
+        default="https://raw.githubusercontent.com/factbook/factbook.json/master",
+        description=(
+            "Base URL of the factbook.json mirror (public-domain CIA World "
+            "Factbook data) used for place-drawer country texture."
+        ),
+    )
+    wikipedia_api_base_url: str = Field(
+        default="https://en.wikipedia.org/api/rest_v1",
+        description="Wikipedia REST API base used for place-drawer summaries (no key).",
+    )
+
     bokun_base_url: str = Field(
         default="https://api.bokun.io",
         description=(

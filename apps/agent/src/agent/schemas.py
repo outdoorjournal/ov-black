@@ -156,3 +156,47 @@ class SearchInventoryArgs(BaseModel):
     keyword: str | None = Field(default=None, max_length=200)
     kinds: list[str] | None = Field(default=None, max_length=10)
     limit: int | None = Field(default=None, ge=1, le=50)
+
+
+class RouteHighlight(BaseModel):
+    """One agent-authored note rendered under the route brochure's map."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+    detail: str = Field(default="", max_length=400)
+
+
+class PresentRouteArgs(BaseModel):
+    """Args for the ``present_route`` tool (validated — rendered to the traveler)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin: str = Field(min_length=1, max_length=200)
+    destination: str = Field(min_length=1, max_length=200)
+    waypoints: list[str] = Field(default_factory=list, max_length=5)
+    mode: Literal["drive", "walk", "bicycle", "transit"] = "drive"
+    headline: str = Field(default="", max_length=120)
+    highlights: list[RouteHighlight] = Field(default_factory=list, max_length=5)
+
+
+class SurfaceOption(BaseModel):
+    """One option card in a ``present_options`` decision surface."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default="", max_length=40)
+    title: str = Field(min_length=1, max_length=120)
+    tagline: str = Field(default="", max_length=160)
+    case: str = Field(default="", max_length=600)
+    node_id: str = Field(default="", max_length=64)
+
+
+class PresentOptionsArgs(BaseModel):
+    """Args for the ``present_options`` tool (validated — rendered to the traveler)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=240)
+    options: list[SurfaceOption] = Field(min_length=2, max_length=4)
+    context: str = Field(default="", max_length=400)

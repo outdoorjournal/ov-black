@@ -108,6 +108,7 @@ import {
   listInventorySourcesEndpointInventorySourcesGet,
   resendWelcomeEndpointClientsClientIdResendWelcomePost,
   searchInventoryEndpointSearchInventoryGet,
+  placeBriefPlacesBriefPost,
   startAnalysisEndpointItineraryItineraryIdAnalysesPost,
   updateClientContactEndpointClientsClientIdContactsContactIdPatch,
   updateClientDocumentEndpointClientsClientIdDocumentsDocumentIdPatch,
@@ -4901,6 +4902,52 @@ export async function supplierAvailability(
       return { ok: true, slots: data };
     }
     return { ok: false, status: response.status, detail: _parseBookingDetail(response.status, error) };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Place brief (chat place drawer) ──────────────────────────────────────
+
+export type {
+  FactbookTexture,
+  PlaceBrief,
+  ResolvedPlace,
+  WikipediaTexture,
+} from "./generated/types.gen.js";
+
+export type PlaceBriefDetail = "place_not_found" | "network_error" | "unknown";
+
+/**
+ * Discriminated result for POST /places/brief — server-side place resolution
+ * (Google Places Text Search) plus texture (CIA World Factbook + Wikipedia)
+ * for the drawer beside the chat. 404 means the query resolved to nothing
+ * usable; texture fields inside a 200 brief may independently be null.
+ */
+export type PlaceBriefResult =
+  | { ok: true; brief: import("./generated/types.gen.js").PlaceBrief }
+  | { ok: false; status: number; detail: PlaceBriefDetail };
+
+/**
+ * Typed wrapper for POST /places/brief.
+ */
+export async function getPlaceBrief(
+  client: Client,
+  query: string,
+): Promise<PlaceBriefResult> {
+  try {
+    const { data, error, response } = await placeBriefPlacesBriefPost({
+      client,
+      body: { query },
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, brief: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 404 ? "place_not_found" : "unknown",
+    };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

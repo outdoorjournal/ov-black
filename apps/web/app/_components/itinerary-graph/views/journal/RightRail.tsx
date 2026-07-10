@@ -46,6 +46,7 @@ import { useRouter } from "next/navigation";
 import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
 
 import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
+import { PartOfJourney } from "../../shared/PartOfJourney";
 import {
   formatClock,
   offsetHoursOr,
@@ -108,6 +109,19 @@ export function RightRail({
   const activeDiff = active
     ? (diffView?.annotations.get(active.id) ?? null)
     : null;
+  const focusNode = itineraryGraphStore.useStore((s) => s.focusNode);
+  // A journey beat (subgraph child) carries its parent's card above its own
+  // detail — the package anchoring the day being looked at.
+  const activeParent =
+    active && !activeIsGhost && active.parent_subgraph_id
+      ? (nodes.find((n) => n.id === active.parent_subgraph_id) ?? null)
+      : null;
+  const activeSiblingCount = activeParent
+    ? nodes.filter(
+        (n) =>
+          n.parent_subgraph_id === activeParent.id && n.status !== "discarded",
+      ).length
+    : 0;
 
   const problems = useMemo(
     () => journalProblems(nodes, findings),
@@ -131,6 +145,15 @@ export function RightRail({
           data-testid="journal-rail-detail"
           className="hidden flex-col gap-3 lg:flex"
         >
+          {activeParent && active ? (
+            <PartOfJourney
+              parent={activeParent}
+              child={active}
+              siblingCount={activeSiblingCount}
+              tzOffsetHours={timeline.timezoneOffsetHours}
+              onOpenParent={() => focusNode(activeParent.id, "click")}
+            />
+          ) : null}
           <NodeZoomCard
             node={active}
             tzOffsetHours={timeline.timezoneOffsetHours}

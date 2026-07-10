@@ -55,6 +55,11 @@ _TOOL_FRAME_TYPES = {
     "update_node_details": "node_updated",
     "update_trip_timing": "itinerary_updated",
     "set_mood": "mood",
+    # Presentation surfaces (the drawer beside the chat). The tool result is
+    # already ``{surface_id, kind, payload}``-shaped; an error result is
+    # dropped so the browser never sees a malformed panel.
+    "present_route": "surface",
+    "present_options": "surface",
     # Materialised into the reply text as a fenced markdown block rather than a
     # bespoke frame — see ``_timeline_fence``. The emitted frame is a plain
     # ``delta`` so the API's existing text accumulation persists it with the
@@ -173,6 +178,18 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
         if fence is None:
             return None
         return {"type": "delta", "text": fence}
+    if frame_type == "surface":
+        kind = output.get("kind")
+        payload = output.get("payload")
+        surface_id = output.get("surface_id")
+        if "error" in output or not isinstance(kind, str) or not isinstance(payload, dict):
+            return None
+        return {
+            "type": "surface",
+            "surface_id": surface_id if isinstance(surface_id, str) else "",
+            "kind": kind,
+            "payload": payload,
+        }
     return None
 
 

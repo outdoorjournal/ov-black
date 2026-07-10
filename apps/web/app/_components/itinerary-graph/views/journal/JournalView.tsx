@@ -56,6 +56,7 @@ import { useRouter } from "next/navigation";
 
 import type { NodeResponse } from "../../model/types";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
+import { subgraphChildrenByParent } from "../../shared/subgraph";
 import { itineraryGraphStore } from "../../store/itineraryGraphStore";
 import { useTimelineData } from "../../TimelineDataContext";
 import { datesPinned } from "../../model/time";
@@ -168,6 +169,11 @@ export function JournalView({
     [diffView, nodes, edges, timeline.days, tz],
   );
   const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
+  // Embedded subgraphs (a multi-day card's internal journey), parent → days.
+  const subgraphChildren = useMemo(
+    () => subgraphChildrenByParent(nodes),
+    [nodes],
+  );
   // Problem states — driven by whatever problem data exists client-side today
   // (Analyze findings + the typed metadata.problem socket); see problems.ts.
   const problems = useMemo(
@@ -323,6 +329,7 @@ export function JournalView({
                     pinned={pinned}
                     focusedNodeId={focusedNodeId}
                     attachedNotes={attachedNotes}
+                    subgraphChildren={subgraphChildren}
                     problems={problems}
                     onActivate={onActivate}
                     observe={observe}
@@ -434,6 +441,7 @@ function DaySection({
   pinned,
   focusedNodeId,
   attachedNotes,
+  subgraphChildren,
   problems,
   onActivate,
   observe,
@@ -449,6 +457,8 @@ function DaySection({
   pinned: boolean;
   focusedNodeId: string | null;
   attachedNotes: Map<string, NodeResponse[]>;
+  /** Embedded subgraphs — a multi-day card's day children, by parent id. */
+  subgraphChildren: Map<string, NodeResponse[]>;
   problems: Map<string, JournalProblem>;
   onActivate: (nodeId: string) => void;
   observe: ReturnType<typeof useScrollActive>;
@@ -500,12 +510,14 @@ function DaySection({
             tzOffsetHours={tz}
             active={focusedNodeId === entry.node.id}
             attachedNotes={attachedNotes.get(entry.node.id) ?? []}
+            subgraphChildren={subgraphChildren.get(entry.node.id) ?? []}
             onActivate={onActivate}
             observeRef={observe(entry.node.id)}
             dragEnabled={dragEnabled}
             problem={problems.get(entry.node.id) ?? null}
             bracket={entry.groupedWith ?? null}
             diff={diffs?.get(entry.node.id) ?? null}
+            journey={entry.journey ?? null}
           />,
         );
         break;
@@ -530,6 +542,7 @@ function DaySection({
             tzOffsetHours={tz}
             focusedNodeId={focusedNodeId}
             attachedNotes={attachedNotes}
+            subgraphChildren={subgraphChildren}
             onActivate={onActivate}
             observeRef={observe}
             problems={problems}
@@ -570,6 +583,16 @@ function DaySection({
   // rail's divergence dots read the exact same derivation.
   const hasDivergence = diverged;
 
+  // A day carried by a packaged journey — the parent card's day or any day
+  // holding one of its derived beats — wears the JOURNEY THREAD: a solid
+  // second line right of the spine tying the run together across days.
+  const hasJourney = section.entries.some(
+    (e) =>
+      e.kind === "node" &&
+      (e.journey !== undefined ||
+        (subgraphChildren.get(e.node.id)?.length ?? 0) > 0),
+  );
+
   return (
     <section data-testid="journal-day" data-date={section.date}>
       <DayHeader label={section.label} date={section.date} datesPinned={pinned} />
@@ -588,6 +611,17 @@ function DaySection({
             data-testid="journal-diff-thread"
             className="absolute bottom-0 top-0 w-0 border-l border-dashed border-brand/45"
             style={{ left: SPINE_COL_PX / 2 - 6 }}
+          />
+        ) : null}
+        {/* The journey thread — a packaged multi-day experience runs through
+            this day (the diff thread sits left of the spine; this one right). */}
+        {hasJourney ? (
+          <span
+            aria-hidden
+            data-testid="journal-journey-thread"
+            title="Part of a packaged journey"
+            className="absolute bottom-0 top-0 w-0 border-l-2 border-ink/15"
+            style={{ left: SPINE_COL_PX / 2 + 6 }}
           />
         ) : null}
         {rows}

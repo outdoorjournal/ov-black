@@ -29,6 +29,13 @@ import {
   ConversationPanel,
   type ConversationMessage,
 } from "@/app/_components/concierge/ConversationPanel";
+import { AgentSurface } from "@/app/_components/concierge/surfaces/AgentSurface";
+import { SurfaceContext } from "@/app/_components/concierge/surfaces/SurfaceContext";
+import type { OptionView } from "@/app/_components/concierge/surfaces/types";
+import {
+  optionReply,
+  useAgentSurface,
+} from "@/app/_components/concierge/surfaces/useAgentSurface";
 import {
   useAgentStream,
   type DeltaFrame,
@@ -110,6 +117,9 @@ function RightRailChatInner({
   const router = useRouter();
   const sessionIdRef = useRef<string | null>(existingSessionId);
   const abortRef = useRef<AbortController | null>(null);
+  // The rail sits on the right of the screen, so the drawer flyout anchors
+  // here and slides out to the LEFT — over the basecamp content beside it.
+  const railRef = useRef<HTMLDivElement | null>(null);
   // Prior onboarding_complete value, for false→true flip detection.
   const prevOnboardingCompleteRef = useRef(onboardingComplete);
 
@@ -141,11 +151,16 @@ function RightRailChatInner({
     };
   }, [accessToken]);
 
+  // The drawer beside the conversation — agent-pushed panels (route brochure,
+  // decision cards) and chip-opened place briefs share one host.
+  const { surface, onSurface, opener, close } = useAgentSurface();
+
   const { sendTurn } = useAgentStream({
     sessionId: sessionIdRef.current ?? "",
     getAccessToken,
     apiBaseUrl,
     abortRef,
+    onSurface,
     onDelta: (frame: DeltaFrame) => {
       storeApi.getState().appendDelta(frame.text);
     },
@@ -210,6 +225,16 @@ function RightRailChatInner({
     [ensureSession, sendTurn, storeApi],
   );
 
+  // A tapped option answers through the ordinary turn path, phrased as the
+  // traveler's own reply — the agent reads it like any message.
+  const onChooseOption = useCallback(
+    (option: OptionView) => {
+      close();
+      onSend(optionReply(option));
+    },
+    [close, onSend],
+  );
+
   useEffect(() => {
     const ref = abortRef;
     return () => {
@@ -243,6 +268,7 @@ function RightRailChatInner({
   // /chat prose stream — so both surfaces read identically.
   return (
     <div
+      ref={railRef}
       data-testid="basecamp-concierge"
       className="flex h-full min-h-0 flex-col bg-paper text-ink"
     >
@@ -265,13 +291,15 @@ function RightRailChatInner({
             channel === "artemis" ? "absolute inset-0 flex flex-col" : "hidden"
           }
         >
-          <ConversationPanel
-            messages={messages}
-            onSubmit={onSend}
-            disabled={streaming !== null}
-            hideHeader
-            placeholder="Write to your concierge"
-          />
+          <SurfaceContext.Provider value={opener}>
+            <ConversationPanel
+              messages={messages}
+              onSubmit={onSend}
+              disabled={streaming !== null}
+              hideHeader
+              placeholder="Write to your concierge"
+            />
+          </SurfaceContext.Provider>
         </div>
         {channel === "human" ? (
           <div className="absolute inset-0 flex flex-col">
@@ -284,6 +312,14 @@ function RightRailChatInner({
           </div>
         ) : null}
       </div>
+      <AgentSurface
+        surface={surface}
+        busy={streaming !== null}
+        onClose={close}
+        onChooseOption={onChooseOption}
+        anchorRef={railRef}
+        side="left"
+      />
     </div>
   );
 }

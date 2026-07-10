@@ -34,6 +34,7 @@ import type {
   MoodFrame,
   NodeUpdatedFrame,
   SseFrame,
+  SurfaceFrame,
 } from "./agentStream.types";
 
 export type {
@@ -51,6 +52,7 @@ export type {
   MoodFrame,
   NodeUpdatedFrame,
   SseFrame,
+  SurfaceFrame,
 } from "./agentStream.types";
 
 import { parseSseJson } from "./sse";
@@ -72,6 +74,7 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "itinerary_updated",
   "mood",
   "activity",
+  "surface",
 ]);
 
 // Frames the agent emits for harness clients (ovb / the eval runner), not for
@@ -117,6 +120,12 @@ function isSseFrame(value: unknown): value is SseFrame {
   if (type === "activity") {
     const v = value as { phase?: unknown };
     if (v.phase !== "call" && v.phase !== "result") return false;
+  }
+  if (type === "surface") {
+    const v = value as { surface_id?: unknown; kind?: unknown; payload?: unknown };
+    if (typeof v.surface_id !== "string") return false;
+    if (typeof v.kind !== "string" || v.kind.length === 0) return false;
+    if (!v.payload || typeof v.payload !== "object" || Array.isArray(v.payload)) return false;
   }
 
   return true;
@@ -213,6 +222,13 @@ export type UseAgentStreamOptions = {
    * Clear the indicator on the next delta / done / error.
    */
   onActivity?: (frame: ActivityFrame) => void;
+  /**
+   * Fires when the agent presents a drawer surface (``present_route`` /
+   * ``present_options``). The payload is wire-shaped and unparsed — the chat
+   * shell runs it through the per-kind tolerant parser before opening the
+   * panel, so consumers that don't host a drawer can simply omit this.
+   */
+  onSurface?: (frame: SurfaceFrame) => void;
   /**
    * Caller-owned abort controller ref. The hook writes a fresh
    * AbortController into this ref at the start of every stream so the caller
@@ -369,6 +385,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "activity":
                 current.onActivity?.(frame);
                 break;
+              case "surface":
+                current.onSurface?.(frame);
+                break;
             }
             if (terminated) break;
           }
@@ -432,6 +451,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "activity":
         current.onActivity?.(frame);
+        break;
+      case "surface":
+        current.onSurface?.(frame);
         break;
     }
   }

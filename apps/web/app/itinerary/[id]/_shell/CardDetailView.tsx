@@ -31,6 +31,7 @@ import {
 } from "@/app/_components/itinerary-graph/model/horizontalTypes";
 import { attachedNotesByHost } from "@/app/_components/itinerary-graph/shared/attachedNotes";
 import { NodeZoomCard } from "@/app/_components/itinerary-graph/shared/cards/NodeZoomCard";
+import { PartOfJourney } from "@/app/_components/itinerary-graph/shared/PartOfJourney";
 import { NotesPanel } from "@/app/_components/itinerary-graph/shared/NotesPanel";
 import {
   itineraryGraphStore,
@@ -113,6 +114,18 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
   }
 
   const notes = attachedNotes.get(node.id) ?? [];
+  // A journey beat (subgraph child) carries its parent package above its own
+  // detail; opening it navigates to the parent's detail destination.
+  const journeyParent = node.parent_subgraph_id
+    ? (nodes.find((n) => n.id === node.parent_subgraph_id) ?? null)
+    : null;
+  const journeySiblingCount = journeyParent
+    ? nodes.filter(
+        (n) =>
+          n.parent_subgraph_id === journeyParent.id &&
+          n.status !== "discarded",
+      ).length
+    : 0;
 
   return (
     <div data-testid="card-detail" data-node-id={node.id} className="flex min-h-0 flex-1 flex-col">
@@ -130,7 +143,20 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-5xl flex-col gap-6 p-4 sm:p-6 lg:flex-row">
           {/* (b) The rich, data-driven type detail. */}
-          <div className="min-w-0 lg:flex-1">
+          <div className="flex min-w-0 flex-col gap-4 lg:flex-1">
+            {journeyParent ? (
+              <PartOfJourney
+                parent={journeyParent}
+                child={node}
+                siblingCount={journeySiblingCount}
+                tzOffsetHours={tz}
+                onOpenParent={() =>
+                  router.push(
+                    `/itinerary/${itineraryId}/item/${journeyParent.id}`,
+                  )
+                }
+              />
+            ) : null}
             <NodeZoomCard node={node} tzOffsetHours={tz} />
           </div>
 

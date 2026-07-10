@@ -3,13 +3,17 @@
 // Inline location chip. The agent references a place mid-sentence as a markdown
 // link with a `place:` scheme — `[Fiskardo](place:Fiskardo)` — and ProseMessage
 // swaps the anchor for this component. It renders as a restrained pill inside
-// the prose; tapping it slides out a small Mapbox map centered on the place.
+// the prose. Inside ChatShell (where SurfaceContext provides an opener),
+// tapping it opens the place brief in the drawer beside the chat — resolution
+// happens server-side there, which handles the loose place strings the agent
+// writes far better than client geocoding. Outside the chat shell (concierge
+// panel, human thread) it falls back to the original inline mini-map popover.
 //
 // Constraints that shaped this:
 //   * It lives inside a markdown <p>, so the whole subtree is inline elements
 //     (span/button) — never a <div> — to avoid invalid nesting / hydration warns.
-//   * Geocoding is lazy: nothing hits the network until the first expand. We
-//     resolve the human place string to coordinates via lib/chat/geocode (memoised).
+//   * Geocoding (fallback path only) is lazy: nothing hits the network until
+//     the first expand; lib/chat/geocode memoises per query.
 //   * No Mapbox token, or an unresolvable place, degrades to a quiet caption —
 //     the chip still marks the place, it just can't draw a map.
 
@@ -22,8 +26,11 @@ import {
   loadMapbox,
   type MapboxMap,
 } from "@/app/_components/itinerary-graph/model/mapbox";
-import { geocodePlace, type GeocodeResult } from "@/lib/chat/geocode";
+import type { GeocodeResult } from "@/lib/chat/geocode";
+import { resolvePlacePoint } from "@/lib/chat/placeBrief";
 import { cn } from "@/lib/utils";
+
+import { useSurfaceOpener } from "@/app/_components/concierge/surfaces/SurfaceContext";
 
 export type PlaceChipProps = {
   // The visible label (the markdown link text).
@@ -39,16 +46,19 @@ type LookupState =
   | { phase: "empty" };
 
 export function PlaceChip({ label, query }: PlaceChipProps) {
+  const opener = useSurfaceOpener();
   const [open, setOpen] = useState(false);
   const [lookup, setLookup] = useState<LookupState>({ phase: "idle" });
   const rootRef = useRef<HTMLSpanElement | null>(null);
 
-  // Resolve coordinates the first time the chip is opened.
+  // Resolve coordinates the first time the popover is opened (fallback path
+  // only — inside a SurfaceContext the drawer owns resolution). Server-side
+  // /places/brief first; Mapbox geocoding only as a last resort.
   useEffect(() => {
     if (!open || lookup.phase !== "idle") return;
     let cancelled = false;
     setLookup({ phase: "loading" });
-    void geocodePlace(query).then((result) => {
+    void resolvePlacePoint(query).then((result) => {
       if (cancelled) return;
       setLookup(result ? { phase: "ready", result } : { phase: "empty" });
     });
@@ -83,7 +93,13 @@ export function PlaceChip({ label, query }: PlaceChipProps) {
         data-testid="place-chip"
         data-place-query={query}
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (opener) {
+            opener.open({ kind: "place", label, query });
+            return;
+          }
+          setOpen((v) => !v);
+        }}
         className={cn(
           "inline-flex items-center gap-1 rounded-full px-2 py-0.5 align-baseline",
           "font-sans text-[0.85em] leading-none text-ink transition-colors",

@@ -38,6 +38,13 @@ import {
 } from "@/lib/agentStream";
 import { DEFAULT_MOOD, type MoodId } from "@/lib/atmos/moods";
 import { createBrowserSupabase } from "@/lib/supabase/client";
+import { AgentSurface } from "@/app/_components/concierge/surfaces/AgentSurface";
+import { SurfaceContext } from "@/app/_components/concierge/surfaces/SurfaceContext";
+import type { OptionView } from "@/app/_components/concierge/surfaces/types";
+import {
+  optionReply,
+  useAgentSurface,
+} from "@/app/_components/concierge/surfaces/useAgentSurface";
 
 import { basecampChatStore, nextTurnIndex } from "./basecampChatStore";
 
@@ -108,6 +115,9 @@ function SinglePromptInner({
   const [dismissing, setDismissing] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // The drawer flyout anchors to the engaged conversation card and slides
+  // out to its right, over the Atmos backdrop.
+  const conversationRef = useRef<HTMLDivElement | null>(null);
   const moodPhaseRef = useRef(0);
   // Fire-once guard for the milestone card. The first-touch card can't
   // router.refresh() (it would flip the server variant and unmount this
@@ -136,6 +146,10 @@ function SinglePromptInner({
     };
   }, [accessToken]);
 
+  // The drawer beside the conversation — agent-pushed panels and chip-opened
+  // place briefs share one host (only visible in the engaged phase).
+  const { surface, onSurface, opener: surfaceOpener, close } = useAgentSurface();
+
   // useAgentStream needs a sessionId. The session is opened lazily on
   // the very first submit, so we point the hook at a getter backed by
   // sessionIdRef — that ref is written synchronously inside submit
@@ -146,6 +160,7 @@ function SinglePromptInner({
     getAccessToken,
     apiBaseUrl,
     abortRef,
+    onSurface,
     onDelta: (frame: DeltaFrame) => {
       storeApi.getState().appendDelta(frame.text);
     },
@@ -235,6 +250,32 @@ function SinglePromptInner({
     storeApi,
     streaming,
   ]);
+
+  // Follow-up sends in the engaged phase — shared by the Composer and the
+  // options-surface pick (which answers as the traveler's own reply).
+  const sendFollowUp = useCallback(
+    (content: string) => {
+      const state = storeApi.getState();
+      const idx = nextTurnIndex(state.turns);
+      state.commitUserTurn({
+        id: `user-${idx}-${Date.now()}`,
+        turn_index: idx,
+        role: "user",
+        content,
+      });
+      state.startStream(idx + 1);
+      void sendTurn(content);
+    },
+    [sendTurn, storeApi],
+  );
+
+  const onChooseOption = useCallback(
+    (option: OptionView) => {
+      close();
+      sendFollowUp(optionReply(option));
+    },
+    [close, sendFollowUp],
+  );
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -344,7 +385,10 @@ function SinglePromptInner({
             ) : null}
           </div>
         ) : (
-          <div className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-sm bg-paper text-ink shadow-float">
+          <div
+            ref={conversationRef}
+            className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-sm bg-paper text-ink shadow-float"
+          >
             <button
               type="button"
               onClick={() => void dismiss()}
@@ -355,22 +399,21 @@ function SinglePromptInner({
               {dismissing ? "Closing…" : "Close"}
             </button>
             <div className="min-h-0 flex-1 [&>section]:h-full">
-              <ConversationStream turns={turns} streaming={streaming} />
+              <SurfaceContext.Provider value={surfaceOpener}>
+                <ConversationStream turns={turns} streaming={streaming} />
+              </SurfaceContext.Provider>
             </div>
             <Composer
               disabled={streaming !== null}
-              onSend={(content) => {
-                const state = storeApi.getState();
-                const idx = nextTurnIndex(state.turns);
-                state.commitUserTurn({
-                  id: `user-${idx}-${Date.now()}`,
-                  turn_index: idx,
-                  role: "user",
-                  content,
-                });
-                state.startStream(idx + 1);
-                void sendTurn(content);
-              }}
+              onSend={sendFollowUp}
+            />
+            <AgentSurface
+              surface={surface}
+              busy={streaming !== null}
+              onClose={close}
+              onChooseOption={onChooseOption}
+              anchorRef={conversationRef}
+              side="right"
             />
           </div>
         )}
