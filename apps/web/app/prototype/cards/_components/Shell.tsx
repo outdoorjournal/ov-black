@@ -100,7 +100,7 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <FlightGlance status="proposed" />
+            <FlightGlance status="pending" />
             <FlightGlance status="approved" />
             <FlightGlance status="confirmed" />
           </Row>
@@ -121,7 +121,7 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <SubwayGlance status="proposed" />
+            <SubwayGlance status="pending" />
             <SubwayGlance status="approved" />
           </Row>
           <Row label="Zoom — line diagram + signage">
@@ -140,7 +140,7 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <TrainGlance status="proposed" />
+            <TrainGlance status="pending" />
             <TrainGlance status="approved" />
           </Row>
           <Row label="Zoom — stop sequence + window briefing">
@@ -178,7 +178,7 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <HotelGlance status="proposed" />
+            <HotelGlance status="pending" />
             <HotelGlance status="booked" />
             <HotelGlance status="confirmed" />
           </Row>
@@ -198,7 +198,7 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <ExperienceGlance status="proposed" />
+            <ExperienceGlance status="pending" />
             <ExperienceGlance status="approved" />
             <ExperienceGlance status="booked" />
           </Row>
@@ -218,7 +218,7 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <MealGlance status="proposed" />
+            <MealGlance status="pending" />
             <MealGlance status="booked" />
           </Row>
           <Row label="Zoom — dish + etiquette + phrases">
@@ -237,9 +237,9 @@ export function Shell() {
           ]}
         >
           <Row label="Glance variants">
-            <FreeTimeGlance status="proposed" />
-            <WaitingGlance status="proposed" />
-            <NoteGlance status="proposed" />
+            <FreeTimeGlance status="pending" />
+            <WaitingGlance status="pending" />
+            <NoteGlance status="pending" />
           </Row>
           <Row label="Zoom — free time">
             <FreeTimeZoom />

@@ -27,8 +27,6 @@ import { ItineraryIntake } from "@/app/_components/itinerary-graph/intake/Itiner
 import {
   itineraryGraphStore,
   selectCanApprove,
-  selectCanPropose,
-  selectCanReopen,
   selectScheduledCount,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
@@ -274,41 +272,32 @@ function NextActionCard({
 }
 
 // ── Money roll-up ────────────────────────────────────────────────────────────
-// ── Approval — propose → approve, per-currency total (ADV-10) ────────────────
+// ── Approval — approve-all, per-currency total ───────────────────────────────
 //
-// The itinerary's proposed → approved arc lives here. The advisor *proposes*
-// the finished plan (draft → proposed), which freezes the build for review; the
-// traveler *approves* it — the all-at-once "Approve all" here, or card-by-card
-// on the timeline (both derive the itinerary to `approved`). The plan's
-// per-currency price (from the graph read's `totals`) shows alongside, so the
-// traveler sees what they're approving. Craft-feel: no spinners/icons — a
-// disabled button is the only in-flight affordance.
+// The itinerary's approval arc lives here. Once cards are with the traveler
+// (`with_traveler`) they *approve* — the all-at-once "Approve all" here, or
+// card-by-card on the timeline (both derive the itinerary to `approved`). The
+// plan's per-currency price (from the graph read's `totals`) shows alongside,
+// so the traveler sees what they're approving. Craft-feel: no spinners/icons —
+// a disabled button is the only in-flight affordance.
 function ApprovalSection() {
   const role = itineraryGraphStore.useStore((s) => s.role);
   const status = itineraryGraphStore.useStore((s) => s.status);
   const totals = itineraryGraphStore.useStore((s) => s.totals);
-  const canPropose = itineraryGraphStore.useStore(selectCanPropose);
-  const canReopen = itineraryGraphStore.useStore(selectCanReopen);
   const canApprove = itineraryGraphStore.useStore(selectCanApprove);
-  const proposePending = itineraryGraphStore.useStore((s) => s.proposePending);
-  const reopenPending = itineraryGraphStore.useStore((s) => s.reopenPending);
   const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
-  const propose = itineraryGraphStore.useStore((s) => s.propose);
-  const reopen = itineraryGraphStore.useStore((s) => s.reopen);
   const approve = itineraryGraphStore.useStore((s) => s.approve);
 
   const isAdvisor = role === "advisor";
   const totalEntries = Object.entries(totals);
   const hasTotals = totalEntries.length > 0;
 
-  // Nothing to show on a plain draft with no price and no advisor propose action
-  // (e.g. a traveler looking at a draft the advisor is still building).
-  if (status === "draft" && !canPropose && !hasTotals) return null;
+  // Nothing to show on a plan still in the studio with no price (e.g. a
+  // traveler looking at a plan the advisor is still building).
+  if (status === "in_studio" && !hasTotals) return null;
 
   const primaryBtn =
     "shrink-0 self-start rounded-full bg-ink px-5 py-2 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50";
-  const secondaryBtn =
-    "shrink-0 self-start rounded-full border border-ink/20 bg-transparent px-5 py-2 font-sans text-[11px] uppercase tracking-[0.18em] text-ink/80 transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-50";
 
   return (
     <SectionCard label="Approval" testid="dashboard-approval">
@@ -320,20 +309,20 @@ function ApprovalSection() {
           <p className="font-serif text-xl text-ink">
             {status === "approved"
               ? "Approved"
-              : status === "proposed"
+              : status === "with_traveler"
                 ? isAdvisor
-                  ? "Proposed — awaiting the traveler"
+                  ? "With the traveler — awaiting their review"
                   : "Ready for your approval"
-                : "Ready to send"}
+                : "In the studio"}
           </p>
           <p className="mt-0.5 font-sans text-[13px] text-ink/55">
             {status === "approved"
               ? "The whole plan is approved."
-              : status === "proposed"
+              : status === "with_traveler"
                 ? isAdvisor
                   ? "The traveler can approve the plan, or firm up cards one at a time."
                   : "Approve the whole plan, or approve cards one at a time on the timeline."
-                : "Send the finished plan to the traveler for approval."}
+                : "The plan is still being built."}
           </p>
           {hasTotals ? (
             <div
@@ -358,29 +347,7 @@ function ApprovalSection() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {canPropose ? (
-            <button
-              type="button"
-              onClick={propose}
-              disabled={proposePending}
-              data-testid="dashboard-propose"
-              className={primaryBtn}
-            >
-              Propose to traveler
-            </button>
-          ) : null}
-          {canReopen ? (
-            <button
-              type="button"
-              onClick={reopen}
-              disabled={reopenPending}
-              data-testid="dashboard-reopen"
-              className={secondaryBtn}
-            >
-              Reopen to edit
-            </button>
-          ) : null}
-          {/* Traveler's one-action "Approve all" (advisor uses propose/reopen). */}
+          {/* Traveler's one-action "Approve all". */}
           {canApprove && !isAdvisor ? (
             <button
               type="button"

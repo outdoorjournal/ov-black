@@ -42,7 +42,7 @@ pytestmark = pytest.mark.e2e
 def _editable_bookable(graph: Any) -> Any | None:
     """First currently-editable bookable node (a candidate to book then lock)."""
     bookable = {"flight", "hotel", "experience", "meal"}
-    editable = {"idea", "proposed", "approved"}
+    editable = {"pending", "approved"}
     return next(
         (n for n in graph.nodes if str(n.type) in bookable and str(n.status) in editable),
         None,
@@ -50,17 +50,20 @@ def _editable_bookable(graph: Any) -> Any | None:
 
 
 async def test_booked_node_is_immutable_to_traveler_and_agent(
-    advisor: Ovb, traveler: Ovb, built_itinerary: str
+    advisor: Ovb, traveler: Ovb, linked_traveler_client_id: str
 ) -> None:
     """G1 — status-aware mutation gate: booked nodes are immutable to non-advisors.
 
-    Drives the whole status×actor contract over the wire with two real JWTs (the
-    traveler is the same non-advisor path the agent uses): advisor books a node →
-    a traveler edit is refused 409 → an advisor field-edit is refused until they
-    demote → demotion (a pure status change) reopens it. The static lock_reason
-    half is asserted with ``status_actor_gate_holds``.
+    Drives the status×actor contract over the wire with two real JWTs (the
+    traveler is the same non-advisor path the agent uses). Under the trunk
+    model the traveler's refusals are layered: a content edit on the OFFICIAL
+    trunk is refused by the trunk guard (``fork_required`` — fork first), and
+    on their own fork the booked node carries LOCKED, so the edit is refused
+    by G1 (``status_locked``). The advisor keeps the demote-before-edit
+    escape hatch on the trunk. The static lock_reason half is asserted with
+    ``status_actor_gate_holds``.
     """
-    itin = built_itinerary
+    itin = await flows.ensure_japan_itinerary(advisor, client_id=linked_traveler_client_id)
     graph = await advisor.get_graph(itin)
     node = _editable_bookable(graph)
     if node is None:
@@ -77,11 +80,25 @@ async def test_booked_node_is_immutable_to_traveler_and_agent(
     # Static contract: every firmed node advertises its lock_reason, no others do.
     assert_no_violations(status_actor_gate_holds(await advisor.get_graph(itin)))
 
-    # A traveler (the agent's non-advisor path) is refused with a crafted 409.
+    # Layer 1 — the trunk guard: a traveler content edit on the official trunk
+    # is refused outright; content reaches the trunk only via publish.
     with pytest.raises(ApiError) as exc:
         await traveler.update_node(itin, node_id, fields={"title": "changed by traveler"})
     assert exc.value.status == 409
-    assert exc.value.detail == "status_locked"
+    assert exc.value.detail == "fork_required"
+
+    # Layer 2 — G1 in the working copy: the booked node carries locked into the
+    # traveler's fork, so even there the edit is refused with the crafted 409.
+    fork = await traveler.fork_itinerary(itin)
+    fork_id = str(fork.itinerary.id)
+    fork_node = next(n for n in fork.nodes if str(n.forked_from_node_id) == node_id)
+    assert str(fork_node.status) == "booked"  # carried locked
+    with pytest.raises(ApiError) as exc_fork:
+        await traveler.update_node(
+            fork_id, str(fork_node.id), fields={"title": "changed in my version"}
+        )
+    assert exc_fork.value.status == 409
+    assert exc_fork.value.detail == "status_locked"
 
     # Even an advisor must demote first — a field edit on a booked node is refused.
     with pytest.raises(ApiError) as exc2:
@@ -90,8 +107,8 @@ async def test_booked_node_is_immutable_to_traveler_and_agent(
     assert exc2.value.detail == "demote_before_edit"
 
     # Advisor demotion (a pure status change) succeeds and reopens the node.
-    demoted = await advisor.update_node(itin, node_id, fields={"status": "proposed"})
-    assert str(demoted.status) == "proposed"
+    demoted = await advisor.update_node(itin, node_id, fields={"status": "pending"})
+    assert str(demoted.status) == "pending"
     edited = await advisor.update_node(itin, node_id, fields={"title": "now editable again"})
     assert edited.title == "now editable again"
 
@@ -132,7 +149,7 @@ async def test_traveler_forks_an_approved_itinerary(
 
     # An approved itinerary carrying a booked node (the "can't fork away a booking" case).
     await flows.book_node_via_money_gate(advisor, itin, str(node.id))
-    await advisor.approve(itin)
+    await advisor.approve_all(itin)
     baseline = await advisor.get_graph(itin)
 
     # A non-owner traveler cannot fork someone else's itinerary.
@@ -181,19 +198,19 @@ async def test_advisor_diffs_and_reconciles_a_fork(
     if bookable is None:
         pytest.skip("no editable bookable node to book before forking")
     await flows.book_node_via_money_gate(advisor, itin, str(bookable.id))
-    await advisor.approve(itin)
+    await advisor.approve_all(itin)
 
     fork = await advisor.fork_itinerary(itin)
     fork_id = str(fork.itinerary.id)
 
     # Rework a pre-booked content node (→ changed) and add a node (→ added).
     prebooked = next(
-        n for n in fork.nodes if str(n.status) == "proposed" and str(n.type) in BOOKABLE_TYPES
+        n for n in fork.nodes if str(n.status) == "pending" and str(n.type) in BOOKABLE_TYPES
     )
     origin_id = str(prebooked.forked_from_node_id)
     await advisor.update_node(fork_id, str(prebooked.id), fields={"title": "Slower Kyoto morning"})
     added = await advisor.add_node(
-        fork_id, type="experience", title="Tea ceremony", status="proposed"
+        fork_id, type="experience", title="Tea ceremony", status="pending"
     )
 
     diff = await advisor.fork_diff(fork_id)
@@ -239,9 +256,9 @@ async def test_traveler_requests_and_advisor_reconciles(
     itin = await advisor.create_itinerary(title="Traveler trip", client_id=client_id)
     itin_id = str(itin.id)
     n1 = await advisor.add_node(
-        itin_id, type="experience", title="Original plan", status="proposed"
+        itin_id, type="experience", title="Original plan", status="pending"
     )
-    await advisor.approve(itin_id)
+    await advisor.approve_all(itin_id)
 
     # The traveler forks their own itinerary and reworks the alternative.
     fork = await traveler.fork_itinerary(itin_id)

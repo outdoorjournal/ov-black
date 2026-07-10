@@ -181,8 +181,7 @@ function ChatShellInner({
       // statuses map cleanly; anything else is ignored (the status literal
       // must match NodeStatus in the api-client types).
       const allowed: readonly NodeStatus[] = [
-        "idea",
-        "proposed",
+        "pending",
         "approved",
         "booked",
         "confirmed",
@@ -194,8 +193,8 @@ function ChatShellInner({
     },
   });
 
-  // MoodBoard card action handler. Pin → approved, Keep → proposed (no-op
-  // when already proposed), Discard → discarded. Optimistic dispatch first,
+  // MoodBoard card action handler. Pin → approved, Keep → pending (no-op
+  // when already pending), Discard → discarded. Optimistic dispatch first,
   // then PATCH /itinerary/{id}/nodes/{id}; on non-ok we revert.
   const onCardAction = useCallback(
     (nodeId: string, action: CardActionKind) => {
@@ -207,7 +206,7 @@ function ChatShellInner({
           ? "approved"
           : action === "discard"
           ? "discarded"
-          : "proposed";
+          : "pending";
       if (card.status === nextStatus) return;
       const previousStatus = card.status;
       storeApi.getState().setCardStatus(nodeId, nextStatus);

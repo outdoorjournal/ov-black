@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
@@ -38,7 +39,6 @@ from app.models import (
     EdgeType,
     ForkStatus,
     Itinerary,
-    ItineraryStatus,
     ItineraryTimingKind,
     NodeStatus,
     NodeType,
@@ -49,6 +49,7 @@ from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
 from app.services.card_mapping import inventory_item_to_card_metadata
 from app.services.changes import load_itinerary_changes, next_changes_cursor
+from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.fork import (
     ForkDiff,
     NodeChange,
@@ -73,16 +74,14 @@ from app.services.itineraries import (
     acquire_lock,
     add_edge,
     add_node,
-    approve_itinerary,
+    approve_all_nodes,
     assemble_initial_draft,
     compute_lock_reason,
     create_itinerary,
     delete_edge,
     delete_node,
     get_itinerary_graph,
-    propose_itinerary,
     release_lock,
-    reopen_itinerary,
     retime_itinerary,
     update_itinerary_details,
     update_node,
@@ -157,13 +156,12 @@ class ItineraryResponse(BaseModel):
     title: str
     client_id: uuid.UUID | None
     created_by: uuid.UUID | None
-    status: ItineraryStatus = ItineraryStatus.draft
-    approved_by: uuid.UUID | None = None
-    approved_at: datetime | None = None
-    # Propose step (ADV-10, 0039). Set when the advisor proposes the plan to the
-    # traveler (status draft → proposed); cleared on reopen. None until proposed.
-    proposed_by: uuid.UUID | None = None
-    proposed_at: datetime | None = None
+    # Derived trunk lifecycle (never stored): in_studio → with_traveler →
+    # approved, bucketed from the nodes at read time. None when the endpoint
+    # didn't compute it (write/lock responses); the graph read and the list
+    # endpoints always populate it. On a fork it reflects the fork's own
+    # nodes and is mostly meaningless — check fork_status instead.
+    display_status: DisplayStatus | None = None
     # Fork lineage (G2). ``forked_from_id`` is the baseline this itinerary was
     # cloned from (None on a normal itinerary); ``fork_status`` tracks the
     # reconcile lifecycle and is None unless this row is a fork.
@@ -211,7 +209,7 @@ class RetimeItineraryResponse(BaseModel):
 
 class CreateNodeRequest(BaseModel):
     type: NodeType
-    status: NodeStatus = NodeStatus.idea
+    status: NodeStatus = NodeStatus.pending
     title: str = ""
     parent_subgraph_id: uuid.UUID | None = None
     source: str | None = None
@@ -236,15 +234,15 @@ class CreateNodeFromInventoryRequest(BaseModel):
     The server fetches the current item through the provider registry and
     derives the typed card metadata (e.g. a Duffel flight → FlightCardAttrs),
     so callers never hand-shape card attrs. For flights this re-fetch is a
-    natural offer refresh (D024). ``status`` defaults to ``proposed`` — the
-    item is a candidate on the board, not a stray idea.
+    natural offer refresh (D024). ``status`` defaults to ``pending`` — a
+    candidate on the board.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     source: str
     source_id: str
-    status: NodeStatus = NodeStatus.proposed
+    status: NodeStatus = NodeStatus.pending
     parent_subgraph_id: uuid.UUID | None = None
 
 
@@ -255,7 +253,7 @@ class CreateNodeFromLinkRequest(BaseModel):
     description) so the saved card looks intentional rather than a bare link;
     the fetch degrades gracefully to just the URL. ``kind`` files the link under
     a Collection category (a restaurant → ``meal``, a hotel → ``hotel``) and
-    defaults to ``note`` — an unfiled idea. ``status`` defaults to ``proposed``
+    defaults to ``note`` — an unfiled idea. ``status`` defaults to ``pending``
     (a candidate on the board). There is no ``starts_at``: a saved link lands in
     the Collection, unscheduled, until it's dragged onto the timeline.
     """
@@ -264,7 +262,7 @@ class CreateNodeFromLinkRequest(BaseModel):
 
     url: str = Field(min_length=1, max_length=2048)
     kind: NodeType = NodeType.note
-    status: NodeStatus = NodeStatus.proposed
+    status: NodeStatus = NodeStatus.pending
     note: str | None = Field(default=None, max_length=_NOTE_MAX)
     parent_subgraph_id: uuid.UUID | None = None
 
@@ -446,12 +444,22 @@ class ReconcileDecisionPayload(BaseModel):
     accept: bool
 
 
+class ApproveAllResponse(BaseModel):
+    """Result of the bulk approve: how many nodes flipped + the fresh graph."""
+
+    approved_count: int
+    graph: GraphResponse
+
+
 class ReconcileRequest(BaseModel):
     """Advisor per-change accept/discard verdicts, with the feasibility gate.
 
     ``analysis_id`` pins which Analyze run gates the pass (defaults to the fork's
     latest completed run); ``override_block`` is the advisor's explicit, logged
-    escape hatch past a ``block`` finding.
+    escape hatch past a ``block`` finding. ``accept_all=True`` is the publish
+    fast path: every change in the server-side diff is accepted (``decisions``
+    is ignored — send ``[]``), with no staleness window between a fetched diff
+    and the verdicts.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -459,6 +467,7 @@ class ReconcileRequest(BaseModel):
     decisions: list[ReconcileDecisionPayload] = Field(default_factory=list)
     analysis_id: uuid.UUID | None = None
     override_block: bool = False
+    accept_all: bool = False
 
 
 class ReconcileOutcomeResponse(BaseModel):
@@ -572,6 +581,16 @@ async def _resolve_viewer_open_fork_id(
     ).scalar_one_or_none()
 
 
+async def _display_status_for(session: AsyncSession, itinerary_id: uuid.UUID) -> DisplayStatus:
+    """Compute the derived display bucket for one itinerary (single scalar query)."""
+    value = (
+        await session.execute(
+            select(display_status_expr()).select_from(Itinerary).where(Itinerary.id == itinerary_id)
+        )
+    ).scalar_one_or_none()
+    return DisplayStatus(value) if value is not None else DisplayStatus.in_studio
+
+
 async def _is_requester_advisor(session: AsyncSession, user_uuid: uuid.UUID | None) -> bool:
     """One-shot profile lookup used by the draft-read gate.
 
@@ -588,42 +607,69 @@ async def _is_requester_advisor(session: AsyncSession, user_uuid: uuid.UUID | No
     return row is UserRole.advisor
 
 
+async def _resolve_actor(session: AsyncSession, user: AuthenticatedUser) -> ActorContext:
+    """USER actor, promoted to ADVISOR when the caller's profile says so.
+
+    Content mutations must run with the caller's real role: the trunk guard
+    admits advisors (their escape hatch, and the reconcile path) while
+    USER/AGENT actors are redirected to a fork — and history rows attribute
+    the change to the right actor kind.
+    """
+    actor = _actor_from_user(user)
+    try:
+        is_advisor = await _is_requester_advisor(session, actor.user_id)
+    except (SQLAlchemyError, AttributeError):
+        # Fake-factory tests stub the session; a broken role probe degrades to
+        # the non-advisor actor rather than failing the request outright.
+        return actor
+    if is_advisor:
+        return _advisor_actor_from_user(user)
+    return actor
+
+
 async def assert_itinerary_readable(
     session: AsyncSession,
     user: AuthenticatedUser,
     itinerary: Any,
 ) -> None:
-    """Draft-read gate, shared by the graph-read and analyze endpoints.
+    """Read gate, shared by the graph-read and analyze endpoints.
 
-    On ``status='draft'`` only advisors, the owning client, or the creator may
-    read; everyone else gets a 403 with ``detail='forbidden'`` so the SDK can
+    Topology-derived rules (the stored lifecycle is gone):
+
+    - **Trunk** (``forked_from_id`` is None): the owning client, the creator,
+      or an advisor may read. There is no "public once proposed" state any
+      more — a trunk is private to its trip relationship.
+    - **Fork**: the creator or an advisor only. A fork is a private working
+      copy; the owning traveler does NOT see an advisor's in-flight fork
+      (that privacy is what lets the advisor build before publishing), and
+      vice versa staff see everything.
+
+    Everyone else gets a 403 with ``detail='forbidden'`` so the SDK can
     discriminate deterministically. The agent acting on the client's behalf
-    carries the client's JWT, so the ``is_owner`` branch admits it without a
-    separate actor_kind check. Approved itineraries are readable by any
-    authenticated user. ``itinerary`` must expose ``status`` / ``client_id`` /
-    ``created_by`` / ``id``.
+    carries the client's JWT, so the owner branch admits it without a
+    separate actor_kind check. ``itinerary`` must expose ``forked_from_id`` /
+    ``client_id`` / ``created_by`` / ``id``.
     """
-    if itinerary.status is not ItineraryStatus.draft:
-        return
     actor = _actor_from_user(user)
-    # ``is_owner`` compares the caller's auth.users id against the clients row
-    # linked to this itinerary — clients.id and auth.users.id live in different
-    # UUID namespaces, so resolve via clients.auth_user_id.
-    is_owner = False
-    if actor.user_id is not None and itinerary.client_id is not None:
-        owning_auth_user_id = await _resolve_client_auth_user_id(session, itinerary.client_id)
-        is_owner = owning_auth_user_id is not None and owning_auth_user_id == actor.user_id
+    is_fork = itinerary.forked_from_id is not None
     is_creator = (
         actor.user_id is not None
         and itinerary.created_by is not None
         and actor.user_id == itinerary.created_by
     )
-    if is_owner or is_creator:
+    if is_creator:
         return
+    # ``is_owner`` compares the caller's auth.users id against the clients
+    # row linked to this itinerary — clients.id and auth.users.id live in
+    # different UUID namespaces, so resolve via clients.auth_user_id.
+    if not is_fork and actor.user_id is not None and itinerary.client_id is not None:
+        owning_auth_user_id = await _resolve_client_auth_user_id(session, itinerary.client_id)
+        if owning_auth_user_id is not None and owning_auth_user_id == actor.user_id:
+            return
     if await _is_requester_advisor(session, actor.user_id):
         return
     logger.info(
-        "itinerary.draft_access_denied",
+        "itinerary.read_denied",
         extra={
             "sub_hint": (user.sub or "")[:8],
             "itinerary_id": str(itinerary.id),
@@ -735,6 +781,11 @@ def _raise_for_error(err: ItineraryError) -> NoReturn:
         # editor lock; the detail token (status_locked / demote_before_edit /
         # demote_before_delete) lets the agent + web craft the human reason.
         raise HTTPException(status_code=409, detail=err.detail or "status_locked")
+    if err.outcome is ItineraryOutcome.TRUNK_LOCKED:
+        # Content mutation on an official trunk by a non-advisor — the trunk is
+        # written only via publish/reconcile. The ``fork_required`` detail tells
+        # the client to fork (the web store lazy-forks on this signal).
+        raise HTTPException(status_code=409, detail=err.detail or "fork_required")
     if err.outcome is ItineraryOutcome.CONFLICT:
         # A precondition on related state failed — e.g. the M005 money gate: a
         # node can't be flipped straight to booked/confirmed via update_node
@@ -917,7 +968,7 @@ async def get_itinerary_endpoint(
     result = await get_itinerary_graph(session, itinerary_id)
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    # Draft-read gate (shared with the analyze endpoints).
+    # Read gate (shared with the analyze endpoints).
     await assert_itinerary_readable(session, user, result.itinerary)
     # mypy: result is GraphView past this point
     # Surface the plan's per-currency price (ADV-10) so the UI can show a total
@@ -925,6 +976,7 @@ async def get_itinerary_endpoint(
     totals = {c: str(a) for c, a in (await sum_node_costs(session, itinerary_id)).items()}
     party_size = await resolve_party_size(session, itinerary_id)
     response = _graph_to_response(result, totals=totals, party_size=party_size)
+    response.itinerary.display_status = await _display_status_for(session, itinerary_id)
     # On a baseline, surface the caller's own OPEN fork so the traveler's
     # two-version toggle ("My version") resolves to it rather than re-forking.
     if result.itinerary.forked_from_id is None:
@@ -1018,7 +1070,7 @@ async def retime_itinerary_endpoint(
     if itinerary is None:
         raise HTTPException(status_code=404, detail="not_found")
     await assert_itinerary_writable(session, user, itinerary)
-    actor = _actor_from_user(user)
+    actor = await _resolve_actor(session, user)
     result = await retime_itinerary(
         session,
         actor,
@@ -1051,7 +1103,7 @@ async def create_node_endpoint(
     if itinerary is None:
         raise HTTPException(status_code=404, detail="not_found")
     await assert_itinerary_writable(session, user, itinerary)
-    actor = _actor_from_user(user)
+    actor = await _resolve_actor(session, user)
     result = await add_node(
         session,
         actor,
@@ -1100,7 +1152,7 @@ async def create_node_from_inventory_endpoint(
     if itinerary is None:
         raise HTTPException(status_code=404, detail="not_found")
     await assert_itinerary_writable(session, user, itinerary)
-    actor = _actor_from_user(user)
+    actor = await _resolve_actor(session, user)
     ctx = InventoryCtx(actor_kind="user", actor_id=user.sub)
     try:
         item = await get_inventory_detail(
@@ -1170,7 +1222,7 @@ async def create_node_from_link_endpoint(
     if itinerary is None:
         raise HTTPException(status_code=404, detail="not_found")
     await assert_itinerary_writable(session, user, itinerary)
-    actor = _actor_from_user(user)
+    actor = await _resolve_actor(session, user)
 
     preview = await fetch_link_preview(payload.url)
     metadata: dict[str, Any] = {"snapshot": preview.to_snapshot()}
@@ -1250,17 +1302,15 @@ async def delete_node_endpoint(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _itinerary_to_response(itinerary: Any) -> ItineraryResponse:
+def _itinerary_to_response(
+    itinerary: Any, *, display_status: DisplayStatus | None = None
+) -> ItineraryResponse:
     return ItineraryResponse(
         id=itinerary.id,
         title=itinerary.title,
         client_id=itinerary.client_id,
         created_by=itinerary.created_by,
-        status=itinerary.status or ItineraryStatus.draft,
-        approved_by=itinerary.approved_by,
-        approved_at=itinerary.approved_at,
-        proposed_by=getattr(itinerary, "proposed_by", None),
-        proposed_at=getattr(itinerary, "proposed_at", None),
+        display_status=display_status,
         forked_from_id=getattr(itinerary, "forked_from_id", None),
         fork_status=getattr(itinerary, "fork_status", None),
         reconcile_requested_at=getattr(itinerary, "reconcile_requested_at", None),
@@ -1317,72 +1367,24 @@ async def release_itinerary_endpoint(
 
 
 @router.post(
-    "/{itinerary_id}/propose",
-    response_model=ItineraryResponse,
-    summary="Propose the itinerary to the traveler — flips status draft→proposed.",
+    "/{itinerary_id}/nodes/approve-all",
+    response_model=ApproveAllResponse,
+    summary="Approve every pending approvable node on the official trunk.",
 )
-async def propose_itinerary_endpoint(
-    itinerary_id: uuid.UUID,
-    user: AuthenticatedUser = Depends(require_advisor),
-    session: AsyncSession = Depends(get_session),
-) -> ItineraryResponse:
-    """Advisor finishes building and hands the plan to the traveler (ADV-10).
-
-    Advisor-only (like lock/release). ``draft`` → ``proposed`` freezes the build
-    for the traveler's review; the traveler then approves. 409 ``not_draft`` if
-    the plan isn't a draft (already proposed/approved — reopen it first).
-    """
-    actor = _advisor_actor_from_user(user)
-    result = await propose_itinerary(session, actor, itinerary_id=itinerary_id)
-    if isinstance(result, ItineraryError):
-        if result.outcome is ItineraryOutcome.VALIDATION_ERROR and result.detail == "not_draft":
-            raise HTTPException(status_code=409, detail="not_draft")
-        _raise_for_error(result)
-    return _itinerary_to_response(result)
-
-
-@router.post(
-    "/{itinerary_id}/reopen",
-    response_model=ItineraryResponse,
-    summary="Reopen a proposed itinerary — flips status proposed→draft.",
-)
-async def reopen_itinerary_endpoint(
-    itinerary_id: uuid.UUID,
-    user: AuthenticatedUser = Depends(require_advisor),
-    session: AsyncSession = Depends(get_session),
-) -> ItineraryResponse:
-    """Advisor escape hatch — resume building a proposed plan (ADV-10).
-
-    Advisor-only. ``proposed`` → ``draft`` (clears proposed_by/at). 409
-    ``not_proposed`` if the plan isn't currently proposed.
-    """
-    actor = _advisor_actor_from_user(user)
-    result = await reopen_itinerary(session, actor, itinerary_id=itinerary_id)
-    if isinstance(result, ItineraryError):
-        if result.outcome is ItineraryOutcome.VALIDATION_ERROR and result.detail == "not_proposed":
-            raise HTTPException(status_code=409, detail="not_proposed")
-        _raise_for_error(result)
-    return _itinerary_to_response(result)
-
-
-@router.post(
-    "/{itinerary_id}/approve",
-    response_model=ItineraryResponse,
-    summary="Approve the itinerary all-at-once — flips proposed/draft→approved.",
-)
-async def approve_itinerary_endpoint(
+async def approve_all_nodes_endpoint(
     itinerary_id: uuid.UUID,
     user: AuthenticatedUser = Depends(require_user),
     session: AsyncSession = Depends(get_session),
-) -> ItineraryResponse:
-    """Approve the whole plan in one action (ADV-10 — the traveler's "Approve all").
+) -> ApproveAllResponse:
+    """The traveler's "Approve all" — bulk per-node approval on the trunk.
 
-    Unlike propose/reopen (advisor-only), approval is the *traveler's*: gated by
-    the same writability relationship as node writes (owner / creator / advisor),
-    so the owning traveler can approve their own proposed plan and an advisor can
-    still approve on behalf of a not-yet-signed-in client. Any authenticated
-    non-writer gets 403. ``actor_kind`` is resolved from the caller's role so the
-    approval attributes correctly.
+    Replaces the retired itinerary-level approve: flips every approvable
+    ``pending`` node to ``approved`` (annotation kinds, discarded nodes, and
+    deselected alternatives are untouched), one history row per node.
+    Approval is the *traveler's* gesture but is gated by the same writability
+    relationship as node writes (owner / creator / advisor), so an advisor can
+    still approve on behalf of a not-yet-signed-in client. Idempotent — zero
+    pending nodes returns ``approved_count=0``. 409 ``not_a_trunk`` on a fork.
     """
     itinerary = await _load_itinerary(session, itinerary_id)
     if itinerary is None:
@@ -1391,17 +1393,12 @@ async def approve_itinerary_endpoint(
     actor = _actor_from_user(user)
     if await _is_requester_advisor(session, actor.user_id):
         actor = _advisor_actor_from_user(user)
-    result = await approve_itinerary(session, actor, itinerary_id=itinerary_id)
+    result = await approve_all_nodes(session, actor, itinerary_id=itinerary_id)
     if isinstance(result, ItineraryError):
-        # VALIDATION_ERROR with detail='already_approved' should surface as 409
-        # per the slice contract, not the generic 400.
-        if (
-            result.outcome is ItineraryOutcome.VALIDATION_ERROR
-            and result.detail == "already_approved"
-        ):
-            raise HTTPException(status_code=409, detail="already_approved")
         _raise_for_error(result)
-    return _itinerary_to_response(result)
+    graph = _graph_to_response(result.view)
+    graph.itinerary.display_status = await _display_status_for(session, itinerary_id)
+    return ApproveAllResponse(approved_count=result.approved_count, graph=graph)
 
 
 @router.post(
@@ -1489,6 +1486,7 @@ async def reconcile_fork_endpoint(
         decisions=decisions,
         analysis_id=payload.analysis_id,
         override_block=payload.override_block,
+        accept_all=payload.accept_all,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
@@ -1642,7 +1640,7 @@ async def create_edge_endpoint(
     if itinerary is None:
         raise HTTPException(status_code=404, detail="not_found")
     await assert_itinerary_writable(session, user, itinerary)
-    actor = _actor_from_user(user)
+    actor = await _resolve_actor(session, user)
     result = await add_edge(
         session,
         actor,
@@ -1680,7 +1678,7 @@ async def delete_edge_endpoint(
     if itinerary is None:
         raise HTTPException(status_code=404, detail="not_found")
     await assert_itinerary_writable(session, user, itinerary)
-    actor = _actor_from_user(user)
+    actor = await _resolve_actor(session, user)
     err = await delete_edge(session, actor, itinerary_id=itinerary_id, edge_id=edge_id)
     if err is not None:
         _raise_for_error(err)

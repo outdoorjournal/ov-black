@@ -46,9 +46,10 @@ export function AuthoringPanel({ tzOffsetHours, days }: AuthoringPanelProps) {
           data-testid="itinerary-graph-authoring-locked"
           className="font-sans text-[11px] leading-relaxed text-ink/55"
         >
-          Adding to the itinerary needs the edit lock — press{" "}
-          <span className="uppercase tracking-[0.16em]">Edit</span> above. You can
-          still search, analyze, and find options.
+          This is the official version — build in{" "}
+          <span className="uppercase tracking-[0.16em]">My workspace</span> and
+          publish when it&apos;s ready. You can still search, analyze, and find
+          options here.
         </p>
       ) : null}
 

@@ -54,7 +54,7 @@ async def propose_card(
 
     payload: dict[str, Any] = {
         "type": "experience",
-        "status": "proposed",
+        "status": "pending",
         "title": title or (snapshot or {}).get("title") or "",
         "source": source,
         "source_id": source_id,

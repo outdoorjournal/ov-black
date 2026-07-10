@@ -23,12 +23,12 @@ import { useCallback } from "react";
 
 import {
   acquireItineraryLock,
-  approveItinerary,
+  approveAllNodes,
   createApiClient,
   releaseItineraryLock,
   updateNode,
+  type DisplayStatus,
   type EdgeResponse,
-  type ItineraryStatus,
   type NodeResponse,
 } from "@ov-black/api-client";
 
@@ -40,7 +40,7 @@ export type DraftItineraryEditorProps = {
   accessToken: string;
   initialNodes: NodeResponse[];
   initialEdges: EdgeResponse[];
-  initialStatus: ItineraryStatus;
+  initialStatus: DisplayStatus;
 };
 
 export function DraftItineraryEditor({
@@ -137,9 +137,13 @@ function DraftItineraryEditorInner({
     s.setApprovePending(true);
     const previousStatus = s.status;
     s.setStatus("approved");
-    void approveItinerary(clientForAction(), itineraryId)
+    void approveAllNodes(clientForAction(), itineraryId)
       .then((result) => {
-        if (!result.ok) {
+        if (result.ok) {
+          storeApi
+            .getState()
+            .setStatus(result.graph.itinerary.display_status ?? "approved");
+        } else {
           storeApi.getState().setStatus(previousStatus);
         }
       })

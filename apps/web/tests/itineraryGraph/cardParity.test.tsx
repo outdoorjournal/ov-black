@@ -36,7 +36,7 @@ const EXPERIENCE: NodeResponse = {
   itinerary_id: "it-1",
   parent_subgraph_id: null,
   type: "experience",
-  status: "proposed",
+  status: "pending",
   title: TITLE,
   source: "ov",
   source_id: "ov-123",
@@ -54,7 +54,7 @@ const EXPERIENCE: NodeResponse = {
 function assertSharedSubstrate(root: HTMLElement) {
   const substrate = root.querySelector<HTMLElement>(".card-substrate");
   expect(substrate).not.toBeNull();
-  expect(substrate!.getAttribute("data-status")).toBe("proposed");
+  expect(substrate!.getAttribute("data-status")).toBe("pending");
   // The shared CardBody header carries the type label + the serif title.
   const text = substrate!.textContent ?? "";
   expect(text).toContain("Experience");
@@ -66,7 +66,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 function timeline(nodes: NodeResponse[]): ItineraryTimeline {
@@ -100,7 +100,7 @@ describe("card harmonization · one node, one card across surfaces", () => {
           node_id: EXPERIENCE.id,
           source: "ov",
           source_id: "ov-123",
-          status: "proposed",
+          status: "pending",
           snapshot: {
             title: TITLE,
             location: "Kyoto",
@@ -120,7 +120,7 @@ describe("card harmonization · one node, one card across surfaces", () => {
     const init: ItineraryGraphInit = {
       timeline: timeline([EXPERIENCE]),
       itineraryId: "it-1",
-      status: "draft",
+      status: "in_studio",
       role: "client",
       apiBaseUrl: "http://api.test",
       accessToken: "tok",

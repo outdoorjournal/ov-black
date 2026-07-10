@@ -18,7 +18,7 @@ from app.services.advisor_overview import derive_portfolio, load_advisor_overvie
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from tests._graph_seed import LOCAL_DB_URL, insert_itinerary, integration
+from tests._graph_seed import LOCAL_DB_URL, insert_itinerary, insert_node, integration
 
 _NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
@@ -44,12 +44,16 @@ def _derive(**overrides):  # type: ignore[no-untyped-def]
 def test_client_and_itinerary_buckets_sum_to_total() -> None:
     p = _derive(
         client_rows=[("active", 3), ("pending", 2), ("uninvited", 1)],
-        itinerary_rows=[("draft", 4), ("proposed", 2), ("approved", 1)],
+        itinerary_rows=[("in_studio", 4), ("with_traveler", 2), ("approved", 1)],
     )
     assert p.clients.total == 6
     assert (p.clients.active, p.clients.pending, p.clients.uninvited) == (3, 2, 1)
     assert p.itineraries.total == 7
-    assert (p.itineraries.draft, p.itineraries.proposed, p.itineraries.approved) == (4, 2, 1)
+    assert (p.itineraries.in_studio, p.itineraries.with_traveler, p.itineraries.approved) == (
+        4,
+        2,
+        1,
+    )
 
 
 def test_empty_roster_is_all_zeroes() -> None:
@@ -246,35 +250,44 @@ async def _world() -> AsyncIterator[SimpleNamespace]:
         await _seed_client(s, c_stranger, stranger, invited=True)
         await s.commit()
 
-        i_draft = await insert_itinerary(
-            s, title="Draft trip", created_by=owner, client_id=c_active
+        # Bucketing is derived from nodes now: no approvable nodes → in_studio,
+        # a pending approvable node → with_traveler, all actioned → approved.
+        i_studio = await insert_itinerary(
+            s, title="Studio trip", created_by=owner, client_id=c_active
         )
-        i_prop = await insert_itinerary(
-            s, title="Proposed trip", status="proposed", created_by=owner, client_id=c_pending
+        i_with = await insert_itinerary(
+            s, title="With-traveler trip", created_by=owner, client_id=c_pending
+        )
+        await insert_node(s, itinerary_id=i_with, type="experience", title="Pending card")
+        i_appr = await insert_itinerary(
+            s, title="Approved trip", created_by=owner, client_id=c_pending
+        )
+        await insert_node(
+            s, itinerary_id=i_appr, type="experience", title="Approved card", status="approved"
         )
         await insert_itinerary(s, title="Stranger trip", created_by=stranger, client_id=c_stranger)
-        # A fork of the draft with an open reconcile request.
+        # A fork of the studio trip with an open reconcile request.
         fork = await insert_itinerary(s, title="Fork", created_by=owner, client_id=c_active)
         await s.execute(
             text(
                 "update public.itineraries set forked_from_id = :base, fork_status = 'open', "
                 "reconcile_requested_at = now() where id = :id"
             ),
-            {"base": i_draft, "id": fork},
+            {"base": i_studio, "id": fork},
         )
         await s.commit()
 
         # Money: unpaid issued (500), partially paid issued (1000/400),
         # overpaid paid (1000/1200), plus draft + void that must not count.
-        await _seed_invoice_with_lines(s, itinerary_id=i_draft, status="issued", amounts=["500"])
+        await _seed_invoice_with_lines(s, itinerary_id=i_studio, status="issued", amounts=["500"])
         await _seed_invoice_with_lines(
-            s, itinerary_id=i_draft, status="issued", amounts=["600", "400"], settled="400"
+            s, itinerary_id=i_studio, status="issued", amounts=["600", "400"], settled="400"
         )
         await _seed_invoice_with_lines(
-            s, itinerary_id=i_prop, status="paid", amounts=["1000"], settled="1200"
+            s, itinerary_id=i_with, status="paid", amounts=["1000"], settled="1200"
         )
-        await _seed_invoice_with_lines(s, itinerary_id=i_prop, status="draft", amounts=["77"])
-        await _seed_invoice_with_lines(s, itinerary_id=i_prop, status="void", amounts=["88"])
+        await _seed_invoice_with_lines(s, itinerary_id=i_with, status="draft", amounts=["77"])
+        await _seed_invoice_with_lines(s, itinerary_id=i_with, status="void", amounts=["88"])
 
         # Sessions: one live with turns (2 assistant @1000ms + 1 error), one
         # ended, one stale turn outside the 7-day window, one stranger session.
@@ -303,10 +316,12 @@ async def test_overview_scopes_counts_and_clamps() -> None:
         assert p.clients.total == 3
         assert (p.clients.active, p.clients.pending, p.clients.uninvited) == (1, 1, 1)
 
-        # draft + fork(draft) + proposed = 3; stranger's trip invisible.
+        # Trunks only (the fork is excluded from the buckets); stranger's
+        # trip invisible.
         assert p.itineraries.total == 3
-        assert p.itineraries.draft == 2
-        assert p.itineraries.proposed == 1
+        assert p.itineraries.in_studio == 1
+        assert p.itineraries.with_traveler == 1
+        assert p.itineraries.approved == 1
         assert p.itineraries.open_forks == 1
         assert p.itineraries.reconcile_requested == 1
 

@@ -1,13 +1,17 @@
 "use client";
 
-// Traveler-facing two-version control. Every trip is presented as the OFFICIAL
-// (staff-agreed) version and the traveler's own MY VERSION; this segmented
-// toggle switches between them. "My version" is lazily forked on the first edit
-// (see store.forkAndMove), so before any change it's just a read-through of
-// Official — the toggle is shown regardless so the two-version model is legible.
-// On a real fork the traveler can ask staff to merge (and cancel that request)
-// or discard the whole version. Advisors have their own DiffPanel/reconcile
-// tooling, so this renders nothing for them.
+// Two-version control over the trunk/fork model. Every trip is presented as
+// the OFFICIAL version (the trunk — the transacted record) plus the viewer's
+// own working copy: the traveler's "My version", the advisor's "My workspace".
+// Either is lazily forked on the first edit (see store.forkAndMove), so before
+// any change it's just a read-through of Official — the toggle is shown
+// regardless so the two-version model is legible.
+//
+// On a real fork the affordances differ by role: a traveler asks staff to
+// merge (and can cancel or discard); an advisor PUBLISHES — an accept-all
+// reconcile that folds the workspace into the official trunk. A blocking
+// feasibility finding refuses the fast path; the diff panel's review/override
+// flow is the escape hatch.
 
 import { useRouter } from "next/navigation";
 
@@ -27,16 +31,20 @@ export function VersionSwitcher() {
   const mergeRequested = itineraryGraphStore.useStore((s) => s.mergeRequested);
   const cancelingMerge = itineraryGraphStore.useStore((s) => s.cancelingMerge);
   const discarding = itineraryGraphStore.useStore((s) => s.discarding);
+  const publishing = itineraryGraphStore.useStore((s) => s.publishing);
+  const publishBlocked = itineraryGraphStore.useStore((s) => s.publishBlocked);
   const selectVersion = itineraryGraphStore.useStore((s) => s.selectVersion);
   const requestMerge = itineraryGraphStore.useStore((s) => s.requestMerge);
   const cancelMerge = itineraryGraphStore.useStore((s) => s.cancelMerge);
   const discardMine = itineraryGraphStore.useStore((s) => s.discardMine);
+  const publishMine = itineraryGraphStore.useStore((s) => s.publishMine);
 
-  // Advisor tooling lives elsewhere; without credentials we can't mutate.
-  if (canEdit || !hasCreds) return null;
+  // Without credentials we can't fork or mutate — nothing to switch.
+  if (!hasCreds) return null;
 
   const isFork = Boolean(forkedFromId);
   const onMine = isFork || draftMine;
+  const mineLabel = canEdit ? "My workspace" : "My version";
   const push = (id: string) => router.push(`/itinerary/${id}`);
 
   const seg = (active: boolean) =>
@@ -69,12 +77,45 @@ export function VersionSwitcher() {
           onClick={() => selectVersion("mine", push)}
           className={`${seg(onMine)} border-l border-ink/15`}
         >
-          My version
+          {mineLabel}
         </button>
       </div>
 
-      {/* On the traveler's own version (a real fork): merge + discard. */}
-      {isFork ? (
+      {/* Advisor on their workspace: publish folds it into the official trunk. */}
+      {isFork && canEdit ? (
+        <>
+          <button
+            type="button"
+            data-testid="publish-mine"
+            onClick={() => publishMine(push)}
+            disabled={publishing}
+            className={pill}
+          >
+            {publishing ? "Publishing…" : "Publish to official"}
+          </button>
+          {publishBlocked ? (
+            <span
+              data-testid="publish-blocked"
+              className="font-sans text-[11px] text-ink/60"
+            >
+              A blocking finding refused the publish — review it in the diff
+              panel.
+            </span>
+          ) : null}
+          <button
+            type="button"
+            data-testid="discard-mine"
+            onClick={() => discardMine(push)}
+            disabled={discarding}
+            className={pill}
+          >
+            {discarding ? "Discarding…" : "Discard workspace"}
+          </button>
+        </>
+      ) : null}
+
+      {/* Traveler on their own version (a real fork): merge + discard. */}
+      {isFork && !canEdit ? (
         <>
           {mergeRequested ? (
             <>
@@ -117,7 +158,7 @@ export function VersionSwitcher() {
         </>
       ) : null}
 
-      {/* Draft preview (on Official, no fork yet): editing starts the version. */}
+      {/* Working-copy preview (on Official, no fork yet): editing starts it. */}
       {draftMine && !isFork ? (
         <span
           data-testid="draft-mine-hint"

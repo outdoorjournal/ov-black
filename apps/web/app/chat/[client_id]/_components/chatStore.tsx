@@ -108,7 +108,7 @@ export const chatStore = createStoreContext<ChatState, ChatStoreInit>(
             node_id: frame.node_id,
             source: frame.source,
             source_id: frame.source_id,
-            status: "proposed",
+            status: "pending",
             snapshot: frame.snapshot,
           };
           const idx = s.cards.findIndex((c) => c.node_id === frame.node_id);

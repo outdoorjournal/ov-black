@@ -13,18 +13,18 @@ E1 = "eeeeeeee-0000-0000-0000-000000000001"
 def test_snapshot_indexes_and_groups_by_status() -> None:
     g = make_graph(
         ITIN,
-        nodes=[make_node(A, ITIN, status="approved"), make_node(B, ITIN, status="proposed")],
+        nodes=[make_node(A, ITIN, status="approved"), make_node(B, ITIN, status="pending")],
     )
     snap = GraphSnapshot.of(g)
     assert set(snap.nodes) == {A, B}
-    assert snap.statuses() == {A: "approved", B: "proposed"}
+    assert snap.statuses() == {A: "approved", B: "pending"}
     assert [str(n.id) for n in snap.by_status("approved")] == [A]
-    assert snap.status == "draft"
+    assert snap.status == "in_studio"
 
 
 def test_diff_reports_added_removed_changed_and_edges() -> None:
     before = GraphSnapshot.of(
-        make_graph(ITIN, nodes=[make_node(A, ITIN, status="proposed"), make_node(B, ITIN)])
+        make_graph(ITIN, nodes=[make_node(A, ITIN, status="pending"), make_node(B, ITIN)])
     )
     after = GraphSnapshot.of(
         make_graph(

@@ -13,7 +13,7 @@ vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   acquireItineraryLock: vi.fn(async () => ({ ok: true })),
   releaseItineraryLock: vi.fn(async () => ({ ok: true })),
-  approveItinerary: vi.fn(async () => ({ ok: true })),
+  approveAllNodes: vi.fn(async () => ({ ok: true })),
   createNode: vi.fn(async () => ({ ok: true })),
   deleteNode: vi.fn(async () => ({ ok: true })),
   updateNode: vi.fn(async () => ({ ok: true })),
@@ -47,12 +47,15 @@ import { HorizontalView } from "@/app/_components/itinerary-graph/views/horizont
 import { CardComposer } from "@/app/itinerary/[id]/_shell/CardComposer";
 import type { UserRole } from "@/lib/role";
 
+// The advisor authoring surface is a WORKING COPY (a fork of the trunk) —
+// trunk content only arrives via publish, so editable scenarios play out here.
 const ITINERARY: ItineraryResponse = {
   id: "it-1",
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
+  forked_from_id: "trunk-0",
 };
 
 const NODE: NodeResponse = {
@@ -95,7 +98,7 @@ function initFor(partial: Partial<ItineraryGraphInit> = {}): ItineraryGraphInit 
   return {
     timeline: timeline(),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",

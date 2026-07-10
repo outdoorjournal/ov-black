@@ -105,12 +105,12 @@ async def test_loop_invite_to_approved(advisor: Ovb, harness: Harness) -> None:
     # 3d. Approve → the itinerary becomes client-visible.
     with contextlib.suppress(Exception):  # lock is best-effort; approve is the assertion.
         await advisor.lock(itinerary_id)
-    approved = await advisor.approve(itinerary_id)
-    assert str(approved.status) == "approved"
+    approved = await advisor.approve_all(itinerary_id)
+    assert str(approved.graph.itinerary.display_status) == "approved"
 
     # The cost spine (B4) yields a real per-currency total — the money gate's input.
     graph = await advisor.get_graph(itinerary_id)
-    assert str(graph.itinerary.status) == "approved"
+    assert str(graph.itinerary.display_status) == "approved"
     assert_no_violations(graph_integrity(graph))
     cost_totals(graph)  # computable without raising; values asserted in Pillar 3.
     harness.record("approved", itinerary_id=itinerary_id)
@@ -134,7 +134,7 @@ async def test_loop_client_sees_approved_itinerary(
     itinerary_id = await flows.ensure_japan_itinerary(advisor, client_id=client_id)
     with contextlib.suppress(Exception):
         await advisor.lock(itinerary_id)
-    await advisor.approve(itinerary_id)
+    await advisor.approve_all(itinerary_id)
 
     mine = await traveler.my_itineraries()
     ids = {str(s.id) for s in mine.itineraries}
@@ -187,7 +187,7 @@ async def test_loop_detail_to_confirmed_continuation(
     )
     itinerary_id = str(itin.id)
     plan_node = await advisor.add_node(
-        itinerary_id, type="experience", title="Kyoto temple morning", status="proposed"
+        itinerary_id, type="experience", title="Kyoto temple morning", status="pending"
     )
     harness.itinerary_id = itinerary_id
 
@@ -228,9 +228,9 @@ async def test_loop_detail_to_confirmed_continuation(
     # Approve the baseline, then the traveler forks it and reworks the alternative.
     with contextlib.suppress(Exception):  # lock is best-effort; approve is the gate.
         await advisor.lock(itinerary_id)
-    await advisor.approve(itinerary_id)
+    await advisor.approve_all(itinerary_id)
     baseline_before = await advisor.get_graph(itinerary_id)
-    assert str(baseline_before.itinerary.status) == "approved"
+    assert str(baseline_before.itinerary.display_status) == "approved"
     assert_no_violations(graph_integrity(baseline_before))
 
     fork = await traveler.fork_itinerary(itinerary_id)
@@ -275,7 +275,7 @@ async def test_loop_detail_to_confirmed_continuation(
         itinerary_id,
         type="experience",
         title="Private kaiseki dinner",
-        status="proposed",
+        status="pending",
         cost_amount="1000.00",
         cost_currency="USD",
         cost_kind="total",

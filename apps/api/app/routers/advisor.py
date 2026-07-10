@@ -69,8 +69,8 @@ class ItineraryCountsOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     total: int
-    draft: int
-    proposed: int
+    in_studio: int
+    with_traveler: int
     approved: int
     open_forks: int
     reconcile_requested: int
@@ -118,8 +118,8 @@ def _overview_out(p: Portfolio) -> AdvisorOverviewResponse:
         ),
         itineraries=ItineraryCountsOut(
             total=p.itineraries.total,
-            draft=p.itineraries.draft,
-            proposed=p.itineraries.proposed,
+            in_studio=p.itineraries.in_studio,
+            with_traveler=p.itineraries.with_traveler,
             approved=p.itineraries.approved,
             open_forks=p.itineraries.open_forks,
             reconcile_requested=p.itineraries.reconcile_requested,

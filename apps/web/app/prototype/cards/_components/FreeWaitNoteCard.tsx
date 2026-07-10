@@ -7,7 +7,7 @@ const free = TYPE_TOKENS.free_time;
 const wait = TYPE_TOKENS.waiting;
 const note = TYPE_TOKENS.note;
 
-export function FreeTimeGlance({ status = "proposed" }: { status?: StatusKind }) {
+export function FreeTimeGlance({ status = "pending" }: { status?: StatusKind }) {
   return (
     <CardShell kind="free_time" status={status} width="glance">
       <div className="mt-1 rounded-md border border-dashed border-ink/20 px-2.5 py-2">
@@ -25,7 +25,7 @@ export function FreeTimeGlance({ status = "proposed" }: { status?: StatusKind })
 }
 
 export function FreeTimeCompact({
-  status = "proposed",
+  status = "pending",
 }: {
   status?: StatusKind;
 }) {
@@ -43,7 +43,7 @@ export function FreeTimeCompact({
 
 export function FreeTimeZoom() {
   return (
-    <CardShell kind="free_time" status="proposed" width="zoom">
+    <CardShell kind="free_time" status="pending" width="zoom">
       <Title className="text-[22px] italic">Open afternoon · Kyoto</Title>
       <p className="text-[12px] text-ink/65">Wed 14 May · 14:00 → 17:30 · weather: clear, 19°C</p>
 
@@ -100,7 +100,7 @@ function Suggestion({
   );
 }
 
-export function WaitingGlance({ status = "proposed" }: { status?: StatusKind }) {
+export function WaitingGlance({ status = "pending" }: { status?: StatusKind }) {
   return (
     <CardShell kind="waiting" status={status} width="glance">
       <Title>Pre-flight buffer</Title>
@@ -117,7 +117,7 @@ export function WaitingGlance({ status = "proposed" }: { status?: StatusKind }) 
 }
 
 export function WaitingCompact({
-  status = "proposed",
+  status = "pending",
 }: {
   status?: StatusKind;
 }) {
@@ -162,7 +162,7 @@ export function WaitingZoom() {
   );
 }
 
-export function NoteGlance({ status = "proposed" }: { status?: StatusKind }) {
+export function NoteGlance({ status = "pending" }: { status?: StatusKind }) {
   return (
     <CardShell kind="note" status={status} width="glance" noteOverride>
       <div className="mt-1.5">
@@ -184,7 +184,7 @@ export function NoteGlance({ status = "proposed" }: { status?: StatusKind }) {
 }
 
 export function NoteCompact({
-  status = "proposed",
+  status = "pending",
 }: {
   status?: StatusKind;
 }) {

@@ -59,7 +59,7 @@ async def test_get_graph_parses_nodes() -> None:
                         "itinerary_id": ITIN,
                         "parent_subgraph_id": None,
                         "type": "hotel",
-                        "status": "proposed",
+                        "status": "pending",
                         "title": "Aman",
                         "source": None,
                         "source_id": None,

@@ -27,12 +27,12 @@ async def test_advisor_token_is_accepted(advisor: Ovb) -> None:
 
 
 async def test_list_clients_returns_models(advisor: Ovb) -> None:
-    clients = await advisor.list_clients()
-    assert isinstance(clients, list)
+    page = await advisor.list_clients()
+    assert isinstance(page.clients, list)
 
 
 async def test_chat_turn_persists_and_keeps_graph_sound(advisor: Ovb, harness: Harness) -> None:
-    clients = await advisor.list_clients()
+    clients = (await advisor.list_clients()).clients
     if not clients:
         pytest.skip("no clients in this environment; create one to exercise chat")
 

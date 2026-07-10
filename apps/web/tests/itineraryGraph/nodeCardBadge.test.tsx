@@ -14,7 +14,7 @@ function host(): NodeResponse {
     itinerary_id: "it-1",
     parent_subgraph_id: null,
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: "Tea at 1:30",
     source: null,
     source_id: null,

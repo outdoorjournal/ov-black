@@ -17,6 +17,21 @@ export type ItineraryGridProps = {
   itineraries: MyItinerarySummary[];
 };
 
+// Human copy for the derived trunk lifecycle (traveler-facing).
+const STATUS_LABEL: Record<MyItinerarySummary["status"], string> = {
+  in_studio: "In the studio",
+  with_traveler: "Awaiting your review",
+  approved: "Approved",
+};
+
+// A solo trip lives in the traveler's own working copy until staff ever
+// publish, so an "in the studio" trunk with their open fork reads as theirs —
+// not as something an advisor is crafting.
+function statusLabel(it: MyItinerarySummary): string {
+  if (it.status === "in_studio" && it.has_open_fork) return "Your working version";
+  return STATUS_LABEL[it.status] ?? it.status;
+}
+
 export function ItineraryGrid({ itineraries }: ItineraryGridProps) {
   return (
     <section className="flex min-h-[60vh] flex-col gap-8">
@@ -53,7 +68,7 @@ function ItineraryCard({ itinerary }: { itinerary: MyItinerarySummary }) {
     >
       <div className="flex flex-col gap-2">
         <p className="text-[10px] uppercase tracking-label text-ink/55">
-          {itinerary.status}
+          {statusLabel(itinerary)}
         </p>
         <h3 className="font-serif text-3xl leading-tight tracking-tight text-ink">
           {itinerary.title || "Your itinerary"}

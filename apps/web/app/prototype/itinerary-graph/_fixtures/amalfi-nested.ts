@@ -75,7 +75,7 @@ export function buildAmalfi(): SampleTimeline {
   });
   const pompeiiDay = makeNode(itinId, {
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: "Pompeii — private archaeologist",
     meta: {
       day_index: 3,
@@ -92,7 +92,7 @@ export function buildAmalfi(): SampleTimeline {
   });
   const ravelloDay = makeNode(itinId, {
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: "Ravello — gardens & villa drive",
     meta: {
       day_index: 3,

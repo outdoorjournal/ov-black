@@ -100,7 +100,7 @@ async def test_add_collection_note_posts_timeless_note(monkeypatch: pytest.Monke
         # No starts_at / attached_to_node_id → a timeless Collection note.
         assert body == {
             "type": "note",
-            "status": "proposed",
+            "status": "pending",
             "title": "wants a sushi counter, not a table",
         }
     finally:

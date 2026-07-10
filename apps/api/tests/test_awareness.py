@@ -125,14 +125,6 @@ def test_new_actionable_kinds_light_the_badge() -> None:
     assert result.attention_count == 3
 
 
-def test_trip_proposed_is_informational_only() -> None:
-    """A proposed trip waits on the traveler — never the advisor's badge."""
-    result = build_client_attention(uuid.uuid4(), [_item("trip_proposed")])
-    assert result.needs_attention is False
-    assert result.attention_count == 0
-    assert len(result.items) == 1
-
-
 def test_full_name_flows_through_the_rollup() -> None:
     result = build_client_attention(uuid.uuid4(), [], full_name="Margaret Chen")
     assert result.full_name == "Margaret Chen"
@@ -166,7 +158,13 @@ def test_invoice_unpaid_turns_urgent_past_due() -> None:
 
 
 def test_other_kinds_are_never_urgent() -> None:
-    for kind in ("changes_requested", "unread_messages", "booking_unconfirmed", "trip_proposed"):
+    other_kinds = (
+        "changes_requested",
+        "unread_messages",
+        "booking_unconfirmed",
+        "traveler_approved",
+    )
+    for kind in other_kinds:
         assert classify_urgency(kind, deadline=_NOW - timedelta(days=9), now=_NOW) == "normal"  # type: ignore[arg-type]
 
 
@@ -291,7 +289,7 @@ async def _world() -> AsyncIterator[SimpleNamespace]:
             s,
             itinerary_id=i1,
             actor_kind="traveler",
-            before_status="proposed",
+            before_status="pending",
             after_status="approved",
             occurred_at=_now(),
         )
@@ -304,7 +302,7 @@ async def _world() -> AsyncIterator[SimpleNamespace]:
             s,
             itinerary_id=i2,
             actor_kind="advisor",
-            before_status="proposed",
+            before_status="pending",
             after_status="approved",
             occurred_at=_now(),
         )
@@ -312,7 +310,7 @@ async def _world() -> AsyncIterator[SimpleNamespace]:
             s,
             itinerary_id=i2,
             actor_kind="traveler",
-            before_status="proposed",
+            before_status="pending",
             after_status="approved",
             occurred_at=old,
         )
@@ -566,35 +564,6 @@ async def test_booking_unconfirmed_clears_on_confirm_or_cancel() -> None:
         unconfirmed = [i for i in c2.items if i.kind == "booking_unconfirmed"]
         assert [i.node_id for i in unconfirmed] == [pending]
         assert c2.needs_attention is True
-
-
-@integration
-async def test_trip_proposed_windows_and_stays_informational() -> None:
-    async with _world() as w, w.maker() as s:
-        await s.execute(
-            text(
-                "update public.itineraries set status = 'proposed', proposed_at = :at "
-                "where id = :id"
-            ),
-            {"id": w.i2, "at": _now() - timedelta(days=2)},
-        )
-        await s.commit()
-
-        c2 = _by_client(await load_advisor_attention(s, advisor_id=w.owner), w.c2)
-        assert c2 is not None
-        assert "trip_proposed" in _kinds(c2)
-        # Proposed waits on the traveler — informational, so no badge from it.
-        assert all(i.kind != "trip_proposed" or i.count == 1 for i in c2.items)
-        assert c2.needs_attention is False
-
-        # Out-of-window proposals drop off the strip.
-        await s.execute(
-            text("update public.itineraries set proposed_at = :at where id = :id"),
-            {"id": w.i2, "at": _now() - timedelta(days=40)},
-        )
-        await s.commit()
-        c2 = _by_client(await load_advisor_attention(s, advisor_id=w.owner), w.c2)
-        assert c2 is None or "trip_proposed" not in _kinds(c2)
 
 
 @integration

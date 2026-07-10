@@ -268,7 +268,7 @@ export async function seedCollectionItemAsAdvisor(
     method: "POST",
     body: JSON.stringify({
       type: body.type ?? "note",
-      status: "proposed",
+      status: "pending",
       title: body.title,
       ...(body.source ? { source: body.source, source_id: body.source_id } : {}),
     }),
@@ -279,8 +279,7 @@ export async function seedCollectionItemAsAdvisor(
   return ((await resp.json()) as GraphNode).id;
 }
 
-/** Seed a raw `idea` item (advisor still building — nothing proposed yet), so
- *  the per-card "Propose this" hand-over (ADV-10) has an idea card to act on. */
+/** Seed a raw pending item (advisor still building) as a bare experience card. */
 export async function seedIdeaItemAsAdvisor(
   itineraryId: string,
   body: { type?: string; title: string },
@@ -289,7 +288,7 @@ export async function seedIdeaItemAsAdvisor(
     method: "POST",
     body: JSON.stringify({
       type: body.type ?? "experience",
-      status: "idea",
+      status: "pending",
       title: body.title,
     }),
   });
@@ -308,7 +307,7 @@ export async function seedScheduledItemAsAdvisor(
     method: "POST",
     body: JSON.stringify({
       type: body.type ?? "experience",
-      status: "proposed",
+      status: "pending",
       title: body.title,
       starts_at: body.startsAt,
       duration_minutes: 60,
@@ -337,7 +336,7 @@ export async function seedPricedItemAsAdvisor(
     method: "POST",
     body: JSON.stringify({
       type: body.type ?? "experience",
-      status: "proposed",
+      status: "pending",
       title: body.title,
       cost_amount: body.amount,
       cost_currency: body.currency,
@@ -353,23 +352,17 @@ export async function seedPricedItemAsAdvisor(
   return ((await resp.json()) as GraphNode).id;
 }
 
-/** Propose an itinerary (advisor, ADV-10) — flips draft → proposed. */
-export async function proposeItineraryAsAdvisor(itineraryId: string): Promise<void> {
-  const resp = await advisorFetch(`/itinerary/${itineraryId}/propose`, {
-    method: "POST",
-  });
-  if (!resp.ok) {
-    throw new Error(`propose failed (${resp.status}): ${await resp.text()}`);
-  }
-}
-
-/** The itinerary's status (advisor read) — draft | proposed | approved. */
+/** The itinerary's derived display status (advisor read) —
+ *  in_studio | with_traveler | approved. */
 export async function getItineraryStatusAsAdvisor(itineraryId: string): Promise<string> {
   const resp = await advisorFetch(`/itinerary/${itineraryId}`);
   if (!resp.ok) {
     throw new Error(`GET /itinerary/${itineraryId} failed (${resp.status})`);
   }
-  return ((await resp.json()) as { itinerary: { status: string } }).itinerary.status;
+  return (
+    ((await resp.json()) as { itinerary: { display_status?: string | null } })
+      .itinerary.display_status ?? "in_studio"
+  );
 }
 
 /** The itinerary's per-currency totals (advisor read, ADV-10). */
@@ -446,4 +439,17 @@ export async function getGraphNodesAsAdvisor(itineraryId: string): Promise<Graph
     throw new Error(`GET /itinerary/${itineraryId} failed (${resp.status})`);
   }
   return ((await resp.json()) as { nodes: GraphNode[] }).nodes;
+}
+
+/** Fork an itinerary (advisor) — returns the new fork's id. The advisor's
+ *  working copy: content built here reaches the trunk only via publish. */
+export async function forkItineraryAsAdvisor(itineraryId: string): Promise<string> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/fork`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  if (!resp.ok) {
+    throw new Error(`fork failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as { itinerary: { id: string } }).itinerary.id;
 }

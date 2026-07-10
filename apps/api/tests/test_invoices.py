@@ -297,7 +297,7 @@ async def test_node_without_cost_rejected(db_session: AsyncSession) -> None:
             _actor(),
             itinerary_id=itin.id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="unpriced idea",
         )
         assert isinstance(node, Node)

@@ -35,6 +35,7 @@ from app.models import (
     AgentTurn,
     Client,
     Dossier,
+    ForkStatus,
     Itinerary,
     Node,
     NodeHistory,
@@ -61,26 +62,42 @@ SECRET_OSINT = "DO_NOT_LOG_THIS_OSINT"
 
 @dataclass
 class FakeResult:
-    """Stand-in for SQLAlchemy ``Result``."""
+    """Stand-in for SQLAlchemy ``Result``.
+
+    Rows may be bare values or tuples; the scalar accessors unwrap a 1-tuple
+    the way a real Result's scalar path would take column 0.
+    """
 
     rows: list[Any] = field(default_factory=list)
 
+    @staticmethod
+    def _scalar(row: Any) -> Any:
+        return row[0] if isinstance(row, tuple) else row
+
     def scalar_one_or_none(self) -> Any:
-        return self.rows[0] if self.rows else None
+        return self._scalar(self.rows[0]) if self.rows else None
 
     def scalar_one(self) -> Any:
         if not self.rows:
             raise AssertionError("scalar_one called on empty result")
-        return self.rows[0]
+        return self._scalar(self.rows[0])
 
     def scalars(self) -> FakeResult:
-        return self
+        return FakeResult(rows=[self._scalar(r) for r in self.rows])
 
     def all(self) -> list[Any]:
         return list(self.rows)
 
     def first(self) -> Any:
         return self.rows[0] if self.rows else None
+
+    def one_or_none(self) -> Any:
+        return self.rows[0] if self.rows else None
+
+    def one(self) -> Any:
+        if not self.rows:
+            raise AssertionError("one called on empty result")
+        return self.rows[0]
 
 
 @dataclass
@@ -277,13 +294,57 @@ class FakeFactory:
                 return FakeResult(rows=[self.open_agent_session_on_reuse])
             return FakeResult(rows=[])
 
+        def _bound_params(target: Any) -> dict[str, Any]:
+            try:
+                return dict(target.compile().params)
+            except Exception:
+                return {}
+
+        def _itinerary_by_id(target: Any) -> Itinerary | None:
+            iid = _bound_params(target).get("id_1")
+            return next(
+                (it for it in self.itineraries if str(it.id) == str(iid)),
+                None,
+            )
+
+        # Trunk-guard fork resolution — the AgentSession→Client join that
+        # fetches the session client's auth_user_id (no dossier in this one).
+        if "clients.auth_user_id" in sql_lower and "agent_sessions" in sql_lower:
+            if self.client_row is None:
+                return FakeResult(rows=[])
+            return FakeResult(rows=[self.client_row.auth_user_id])
+
+        # fork_itinerary loads the full baseline row (SELECT of every
+        # itineraries column — 'title' marks it apart from the id-only reads).
+        if (
+            "itineraries.title" in sql_lower
+            and "clients" not in sql_lower
+            and "id_1" in _bound_params(stmt)
+        ):
+            match = _itinerary_by_id(stmt)
+            return FakeResult(rows=[match] if match is not None else [])
+
+        # Trunk-guard fork resolution — the caller's open fork of a baseline
+        # (WHERE forked_from_id = :x AND fork_status = 'open' AND created_by …).
+        if "itineraries.fork_status" in sql_lower and "itineraries.forked_from_id" in sql_lower:
+            bound = _bound_params(stmt)
+            base_id = bound.get("forked_from_id_1")
+            created_by = bound.get("created_by_1")
+            for it in self.itineraries:
+                if str(it.forked_from_id) != str(base_id):
+                    continue
+                if it.fork_status is not ForkStatus.open:
+                    continue
+                if "created_by_1" in bound:
+                    if str(it.created_by) == str(created_by):
+                        return FakeResult(rows=[it.id])
+                elif it.created_by is None:
+                    return FakeResult(rows=[it.id])
+            return FakeResult(rows=[])
+
         # S07 T03 — itinerary-by-client (ensure-one-per-client helper).
         if "itineraries" in sql_lower and "itineraries.client_id" in sql_lower:
-            bound = {}
-            try:
-                bound = dict(stmt.compile().params)
-            except Exception:
-                bound = {}
+            bound = _bound_params(stmt)
             client_id = bound.get("client_id_1")
             match = next(
                 (it for it in self.itineraries if str(it.client_id) == str(client_id)),
@@ -293,17 +354,21 @@ class FakeFactory:
                 return FakeResult(rows=[])
             return FakeResult(rows=[match.id])
 
-        # S08 T02 — locked_by lookup for the _check_lock gate. Must precede
-        # the generic itineraries-by-id branch because the SQL also contains
-        # ``itineraries.id``. None itineraries are locked in agent-service
-        # tests, so always return NULL.
+        # S08 T02 / trunk guard — the (locked_by, forked_from_id) write-gates
+        # read. Must precede the generic itineraries-by-id branch because the
+        # SQL also contains ``itineraries.id``.
         if "itineraries.locked_by" in sql_lower and "itineraries.id" in sql_lower:
-            return FakeResult(rows=[None])
+            match = _itinerary_by_id(stmt)
+            if match is None:
+                return FakeResult(rows=[])
+            return FakeResult(rows=[(match.locked_by, match.forked_from_id)])
 
-        # G3 — _fork_baseline_title selects forked_from_id; these tests never use
-        # a fork, so report "not a fork" (NULL) before the generic id branch.
+        # forked_from_id-by-id (fork_baseline_title / _resolve_card_itinerary).
         if "itineraries.forked_from_id" in sql_lower:
-            return FakeResult(rows=[None])
+            match = _itinerary_by_id(stmt)
+            if match is None:
+                return FakeResult(rows=[])
+            return FakeResult(rows=[(match.forked_from_id,)])
 
         # S07 T03 — itinerary-by-id (add_node exists-check).
         if "itineraries" in sql_lower and "itineraries.id" in sql_lower:
@@ -1161,10 +1226,12 @@ async def test_card_frame_persists_as_proposed_node(
     agent_session: AgentSession,
     settings: Settings,
 ) -> None:
-    """Card frames land as ``nodes`` rows with status=proposed BEFORE forward.
+    """Card frames land as ``nodes`` rows with status=pending BEFORE forward.
 
     T03 durability half: even if the client closes the tab mid-stream, the
-    proposed card must survive for a reload hydration.
+    proposed card must survive for a reload hydration. Trunk guard: the card
+    never lands on the auto-created official trunk — the service lazily forks
+    it and the node lands in the client's working fork.
     """
     card_event = {
         "type": "card",
@@ -1195,11 +1262,11 @@ async def test_card_frame_persists_as_proposed_node(
         )
     )
 
-    # Exactly one Node was persisted with the proposed-experience shape.
+    # Exactly one Node was persisted with the pending-experience shape.
     assert len(factory.nodes) == 1
     node = factory.nodes[0]
     assert node.type == NodeType.experience
-    assert node.status == NodeStatus.proposed
+    assert node.status == NodeStatus.pending
     assert node.source == "ov"
     assert node.source_id == "ov-42"
     assert node.title == "Sahara glamping"
@@ -1213,12 +1280,17 @@ async def test_card_frame_persists_as_proposed_node(
     assert history.actor_kind == itineraries_service.ActorKind.AGENT.value
     assert history.actor_id == agent_session.agentcore_session_id
 
-    # And an itinerary was auto-created with title='Concierge draft'.
-    assert len(factory.itineraries) == 1
-    itinerary = factory.itineraries[0]
-    assert itinerary.client_id == agent_session.client_id
-    assert itinerary.title == "Concierge draft"
-    assert node.itinerary_id == itinerary.id
+    # A trunk was auto-created with title='Concierge draft' and then lazily
+    # forked (trunk guard: cards never land on an official trunk). The node
+    # sits in the fork, stamped with the client's auth user as creator.
+    assert len(factory.itineraries) == 2
+    trunk, fork = factory.itineraries
+    assert trunk.client_id == agent_session.client_id
+    assert trunk.title == "Concierge draft"
+    assert trunk.forked_from_id is None
+    assert fork.forked_from_id == trunk.id
+    assert fork.fork_status is ForkStatus.open
+    assert node.itinerary_id == fork.id
 
 
 async def test_card_frame_reuses_existing_itinerary(
@@ -1227,10 +1299,10 @@ async def test_card_frame_reuses_existing_itinerary(
     agent_session: AgentSession,
     settings: Settings,
 ) -> None:
-    """Two cards in one turn land under the same itinerary row.
+    """Two cards in one turn land under the same working fork.
 
-    Guards against the duplicate-itinerary-row bug where a naive
-    implementation would INSERT a new itinerary per card.
+    Guards against the duplicate-row bug where a naive implementation would
+    INSERT a new itinerary (or a new fork of the trunk) per card.
     """
     # Pre-seed an itinerary for this client.
     existing = Itinerary(
@@ -1271,11 +1343,15 @@ async def test_card_frame_reuses_existing_itinerary(
         )
     )
 
-    # No new itinerary was created — both nodes land under the existing one.
-    assert len(factory.itineraries) == 1
+    # The pre-existing trunk was reused (no second trunk), one fork of it was
+    # lazily created for the first card, and the second card found the same
+    # open fork instead of forking again.
+    assert len(factory.itineraries) == 2
+    fork = factory.itineraries[1]
+    assert fork.forked_from_id == existing.id
     assert len(factory.nodes) == 2
-    assert factory.nodes[0].itinerary_id == existing.id
-    assert factory.nodes[1].itinerary_id == existing.id
+    assert factory.nodes[0].itinerary_id == fork.id
+    assert factory.nodes[1].itinerary_id == fork.id
 
 
 async def test_card_frame_persist_failure_is_non_fatal(

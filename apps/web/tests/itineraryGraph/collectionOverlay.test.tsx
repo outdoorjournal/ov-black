@@ -33,7 +33,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 const NODE: NodeResponse = {
@@ -41,7 +41,7 @@ const NODE: NodeResponse = {
   itinerary_id: "it-1",
   parent_subgraph_id: null,
   type: "experience",
-  status: "proposed",
+  status: "pending",
   title: "Sushi Saito",
   source: null,
   source_id: null,
@@ -68,7 +68,7 @@ function renderOverlay() {
   const init: ItineraryGraphInit = {
     timeline: timeline(),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",

@@ -39,13 +39,13 @@ def list_(ctx: typer.Context) -> None:
     render.emit(state.json_mode, res, lambda: render.itineraries_table(res))
 
 
-@app.command("approve")
-def approve(
+@app.command("approve-all")
+def approve_all(
     ctx: typer.Context, itinerary_id: str = typer.Argument(..., help="Itinerary UUID.")
 ) -> None:
-    """Flip a draft itinerary to approved."""
+    """Approve every pending approvable card on the official trip."""
     state = state_of(ctx)
-    res = run_op(ctx, lambda ovb: ovb.approve(itinerary_id))
+    res = run_op(ctx, lambda ovb: ovb.approve_all(itinerary_id))
     render.emit(state.json_mode, res, lambda: render.kv_panel("approved", res))
 
 

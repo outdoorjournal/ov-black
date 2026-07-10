@@ -259,7 +259,7 @@ async def test_add_node_persists_cost_and_graph_read_surfaces_it(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.flight,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="LAX → HND",
             source="duffel",
             source_id="off_1",

@@ -256,7 +256,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             itinerary_id=kwargs["itinerary_id"],
             parent_subgraph_id=kwargs.get("parent_subgraph_id"),
             type=kwargs["type"],
-            status=kwargs.get("status", NodeStatus.idea),
+            status=kwargs.get("status", NodeStatus.pending),
             title=kwargs.get("title", ""),
             source=kwargs.get("source"),
             source_id=kwargs.get("source_id"),
@@ -272,7 +272,7 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             itinerary_id=kwargs["itinerary_id"],
             parent_subgraph_id=None,
             type=NodeType.experience,
-            status=NodeStatus.idea,
+            status=NodeStatus.pending,
             title=kwargs.get("title", ""),
             source=None,
             source_id=None,
@@ -354,6 +354,16 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return None
 
     monkeypatch.setattr(routers_itineraries, "_resolve_viewer_open_fork_id", _no_open_fork)
+
+    # GET also computes the derived display bucket with a real query — stub it
+    # off the fake session (the derivation itself is pinned in
+    # test_display_status.py).
+    from app.services.display_status import DisplayStatus
+
+    async def _display_status(_session: Any, _itinerary_id: uuid.UUID) -> Any:
+        return returns.get("display_status", DisplayStatus.in_studio)
+
+    monkeypatch.setattr(routers_itineraries, "_display_status_for", _display_status)
 
     # Also override the session dependency so no DB is required.
     async def _dep() -> Iterator[object]:
@@ -546,6 +556,9 @@ def test_get_itinerary_assembles_graph(
 
     iid = uuid.uuid4()
     root_id, child_id, alt_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    # The read gate is relationship-based now; admit the caller as advisor so
+    # this test stays about graph serialization (authz is pinned elsewhere).
+    stub_service["returns"]["is_advisor"] = True
     stub_service["returns"]["get_itinerary_graph"] = GraphView(
         itinerary=Itinerary(id=iid, title="Como"),
         nodes=[
@@ -554,7 +567,7 @@ def test_get_itinerary_assembles_graph(
                 itinerary_id=iid,
                 parent_subgraph_id=None,
                 type=NodeType.experience,
-                status=NodeStatus.proposed,
+                status=NodeStatus.pending,
                 title="Root",
                 source="ov",
                 source_id="t-1",
@@ -571,7 +584,7 @@ def test_get_itinerary_assembles_graph(
                 itinerary_id=iid,
                 parent_subgraph_id=root_id,
                 type=NodeType.meal,
-                status=NodeStatus.idea,
+                status=NodeStatus.pending,
                 title="Child",
                 source=None,
                 source_id=None,
@@ -628,6 +641,7 @@ def test_get_itinerary_surfaces_per_currency_totals(
     from app.services.itineraries import GraphView
 
     iid = uuid.uuid4()
+    stub_service["returns"]["is_advisor"] = True  # pass the relationship read gate
     stub_service["returns"]["get_itinerary_graph"] = GraphView(
         itinerary=Itinerary(id=iid, title="Kyoto"),
         nodes=[],
@@ -860,7 +874,7 @@ def test_patch_node_stamps_advisor_when_role_advisor(
     stub_service["returns"]["is_advisor"] = True
     iid, nid = uuid.uuid4(), uuid.uuid4()
     resp = client.patch(
-        f"/itinerary/{iid}/nodes/{nid}", json={"status": "proposed"}, headers=auth_headers
+        f"/itinerary/{iid}/nodes/{nid}", json={"status": "pending"}, headers=auth_headers
     )
     assert resp.status_code == 200, resp.text
     assert stub_service["calls"]["update_node"][-1]["actor"].kind is ActorKind.ADVISOR
@@ -934,6 +948,7 @@ def test_graph_read_serializes_lock_reason(
     from app.services.itineraries import GraphView, NodeOut
 
     iid, firmed_id, free_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    stub_service["returns"]["is_advisor"] = True  # pass the relationship read gate
 
     def _node_out(node_id: uuid.UUID, status: NodeStatus, lock_reason: str | None) -> Any:
         return NodeOut(
@@ -959,7 +974,7 @@ def test_graph_read_serializes_lock_reason(
         itinerary=Itinerary(id=iid, title="Como"),
         nodes=[
             _node_out(firmed_id, NodeStatus.booked, "status_locked"),
-            _node_out(free_id, NodeStatus.proposed, None),
+            _node_out(free_id, NodeStatus.pending, None),
         ],
         edges=[],
     )

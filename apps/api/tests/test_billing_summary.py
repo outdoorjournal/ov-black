@@ -191,7 +191,7 @@ def test_paid_rollup_and_outstanding_on_issued() -> None:
 
 
 def test_only_approved_priced_nodes_are_chargeable() -> None:
-    proposed = _node(status=NodeStatus.proposed)
+    proposed = _node(status=NodeStatus.pending)
     costless = _node(amount=None, currency=None, kind=None)
     booked = _node(status=NodeStatus.booked)
 

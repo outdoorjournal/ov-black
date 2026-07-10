@@ -14,7 +14,7 @@ function note(id: string, title: string): NodeResponse {
     itinerary_id: "it-1",
     parent_subgraph_id: null,
     type: "note",
-    status: "proposed",
+    status: "pending",
     title,
     source: null,
     source_id: null,

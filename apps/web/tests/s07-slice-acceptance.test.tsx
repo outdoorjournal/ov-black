@@ -172,7 +172,7 @@ test("(2) a Card renders full detail from an ExperienceItem fixture", () => {
     node_id: entry.node_id,
     source: entry.source,
     source_id: entry.source_id,
-    status: "proposed",
+    status: "pending",
     snapshot: entry.snapshot,
   };
 
@@ -277,7 +277,7 @@ test("(3) pin / keep / discard dispatches the right status transitions", async (
         client={{ id: "client-s07", full_name: "Test Client" }}
         initialTurns={initialTurns}
         itineraryId="itin-s07-3"
-        initialCards={[toInitialCard(entry, "proposed")]}
+        initialCards={[toInitialCard(entry, "pending")]}
       />,
     );
     const btn = document.querySelector(
@@ -317,7 +317,7 @@ test("(4) reload hydration renders approved + proposed + discarded from initialC
 
   const initialCards: InitialCardPayload[] = [
     toInitialCard(fixture[0]!, "approved"),
-    toInitialCard(fixture[1]!, "proposed"),
+    toInitialCard(fixture[1]!, "pending"),
     toInitialCard(fixture[2]!, "discarded"),
   ];
 
@@ -358,7 +358,7 @@ test("(4) reload hydration renders approved + proposed + discarded from initialC
     `[data-node-id="${fixture[1]!.node_id}"]`,
   );
   expect(proposed).not.toBeNull();
-  expect(proposed!.getAttribute("data-card-status")).toBe("proposed");
+  expect(proposed!.getAttribute("data-card-status")).toBe("pending");
 
   const discarded = board.querySelector(
     `[data-node-id="${fixture[2]!.node_id}"]`,
@@ -375,7 +375,7 @@ test("(5) craft-feel invariants in the mood-board subtree", async () => {
 
   const initialCards: InitialCardPayload[] = fixture
     .slice(0, 3)
-    .map((entry) => toInitialCard(entry, "proposed"));
+    .map((entry) => toInitialCard(entry, "pending"));
 
   render(
     <ChatShell

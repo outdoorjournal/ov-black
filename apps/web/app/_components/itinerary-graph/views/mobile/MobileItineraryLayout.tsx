@@ -15,6 +15,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AwaitingProposalState } from "../../shared/AwaitingProposalState";
 import { BuilderEmptyState } from "../../shared/BuilderEmptyState";
 import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { Card } from "../../shared/ExpandedCard";
@@ -63,6 +64,9 @@ export function MobileItineraryLayout({
   const flashNodeId = itineraryGraphStore.useStore((s) => s.flashNodeId);
   const billingChips = itineraryGraphStore.useStore((s) => s.billingChips);
   const role = itineraryGraphStore.useStore((s) => s.role);
+  const awaitingProposal = itineraryGraphStore.useStore(
+    (s) => s.awaitingProposal,
+  );
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
 
@@ -231,7 +235,11 @@ export function MobileItineraryLayout({
           </div>
         ) : null}
         {nodes.length === 0 && pendingProposals.length === 0 ? (
-          <BuilderEmptyState hint="sheet" />
+          awaitingProposal ? (
+            <AwaitingProposalState />
+          ) : (
+            <BuilderEmptyState hint="sheet" />
+          )
         ) : null}
       </div>
 

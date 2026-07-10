@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from tests._graph_seed import LOCAL_DB_URL, insert_itinerary, integration
+from tests._graph_seed import LOCAL_DB_URL, insert_itinerary, insert_node, integration
 
 
 async def _seed_user(s: AsyncSession, uid: uuid.UUID) -> None:
@@ -103,13 +103,15 @@ async def _world() -> AsyncIterator[SimpleNamespace]:
         ada_trip = await insert_itinerary(
             s, title="Ada in Kyoto", created_by=owner, client_id=cids["Ada Lovelace"]
         )
-        await insert_itinerary(
+        alps_trip = await insert_itinerary(
             s,
             title="Alps ascent",
-            status="proposed",
             created_by=owner,
             client_id=cids["Blaise Pascal"],
         )
+        # A pending approvable card puts the Alps trip in the with_traveler
+        # bucket; Ada's empty trip derives in_studio.
+        await insert_node(s, itinerary_id=alps_trip, type="experience", title="Summit day")
         # An open reconcile on Ada's trip → needs_attention must light.
         await s.execute(
             text("update public.itineraries set reconcile_requested_at = now() where id = :id"),
@@ -226,10 +228,10 @@ async def test_itineraries_search_filters_and_attention(
             body = http.get("/itineraries?q=pascal", headers=headers).json()
             assert [r["title"] for r in body["itineraries"]] == ["Alps ascent"]
 
-            # Status filter.
-            body = http.get("/itineraries?status=proposed", headers=headers).json()
+            # Status filter (derived display buckets).
+            body = http.get("/itineraries?status=with_traveler", headers=headers).json()
             assert body["total"] == 1
-            assert body["itineraries"][0]["status"] == "proposed"
+            assert body["itineraries"][0]["status"] == "with_traveler"
 
             # Cursor pages cleanly at limit=1.
             first = http.get("/itineraries?limit=1", headers=headers).json()

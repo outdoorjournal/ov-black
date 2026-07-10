@@ -79,7 +79,7 @@ def _portfolio() -> Portfolio:
     return Portfolio(
         clients=ClientCounts(total=2, uninvited=1, pending=0, active=1),
         itineraries=ItineraryCounts(
-            total=3, draft=2, proposed=1, approved=0, open_forks=1, reconcile_requested=1
+            total=3, in_studio=2, with_traveler=1, approved=0, open_forks=1, reconcile_requested=1
         ),
         billing=[
             BillingRow(

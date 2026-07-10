@@ -47,7 +47,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 function node(id: string, over: Partial<NodeResponse> = {}): NodeResponse {
@@ -56,7 +56,7 @@ function node(id: string, over: Partial<NodeResponse> = {}): NodeResponse {
     itinerary_id: "it-1",
     parent_subgraph_id: null,
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: id,
     source: null,
     source_id: null,
@@ -85,7 +85,7 @@ function renderRail(nodes: NodeResponse[], partial: Partial<ItineraryGraphInit> 
   const init: ItineraryGraphInit = {
     timeline: timeline(nodes),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "client",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
@@ -171,7 +171,7 @@ describe("CollectionRail · grouping", () => {
 
 describe("CollectionRail · remove", () => {
   test("a non-firmed maybe offers a remove control that soft-deletes it", () => {
-    renderRail([node("wish", { type: "experience", status: "proposed" })]);
+    renderRail([node("wish", { type: "experience", status: "pending" })]);
     fireEvent.click(screen.getByTestId("collection-remove"));
     expect(deleteNode).toHaveBeenCalledWith(
       expect.anything(),

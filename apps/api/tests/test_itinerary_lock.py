@@ -1,10 +1,17 @@
-"""Unit + integration coverage for S08 T02 lock / release / approve primitives.
+"""Unit + integration coverage for S08 T02 lock / release primitives.
 
 The service functions under test mutate real ``itineraries`` rows so we gate
 this file on a live local Supabase Postgres (same pattern as
 ``test_itineraries.py``). Without the DB there is nothing meaningful to
-assert — the SQL ``RETURNING`` semantics and the ``_check_lock`` gate both
-need the real engine.
+assert — the SQL ``RETURNING`` semantics and the ``_check_write_gates`` gate
+both need the real engine.
+
+The old itinerary-level propose/approve/reopen state machine is gone (0044);
+its replacement — per-node approve-all + the derived display status — is
+covered in ``test_approve_all.py`` and ``test_display_status.py``. The
+non-advisor lock tests run against a FORK: on a trunk the trunk guard
+(``fork_required``) fires before the editor lock, so the fork is where the
+lock outcome is observable for a USER actor.
 """
 
 from __future__ import annotations
@@ -15,23 +22,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from app.models import Itinerary, ItineraryStatus, Node, NodeStatus, NodeType
+from app.models import Itinerary, Node, NodeType
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
     ItineraryError,
     ItineraryOutcome,
-    _check_lock,
+    _check_write_gates,
     acquire_lock,
     add_node,
-    approve_itinerary,
     create_itinerary,
-    propose_itinerary,
     release_lock,
-    reopen_itinerary,
     update_node,
 )
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -74,23 +78,24 @@ async def db_session() -> AsyncSession:
         await engine.dispose()
 
 
-async def _cleanup(itinerary_id: uuid.UUID, user_ids: list[uuid.UUID] | None = None) -> None:
+async def _cleanup(itinerary_ids: list[uuid.UUID], user_ids: list[uuid.UUID] | None = None) -> None:
     """Tear down fixture rows on a fresh engine so prior errors don't leak."""
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
     try:
         async with engine.begin() as conn:
-            await conn.execute(
-                text("delete from public.edge_history where itinerary_id = :i"),
-                {"i": itinerary_id},
-            )
-            await conn.execute(
-                text("delete from public.node_history where itinerary_id = :i"),
-                {"i": itinerary_id},
-            )
-            await conn.execute(
-                text("delete from public.itineraries where id = :i"),
-                {"i": itinerary_id},
-            )
+            for itinerary_id in itinerary_ids:
+                await conn.execute(
+                    text("delete from public.edge_history where itinerary_id = :i"),
+                    {"i": itinerary_id},
+                )
+                await conn.execute(
+                    text("delete from public.node_history where itinerary_id = :i"),
+                    {"i": itinerary_id},
+                )
+                await conn.execute(
+                    text("delete from public.itineraries where id = :i"),
+                    {"i": itinerary_id},
+                )
             for uid in user_ids or []:
                 await conn.execute(text("delete from auth.users where id = :i"), {"i": uid})
     finally:
@@ -98,10 +103,10 @@ async def _cleanup(itinerary_id: uuid.UUID, user_ids: list[uuid.UUID] | None = N
 
 
 async def _seed_user(session: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
-    """Insert a minimal ``auth.users`` row so the locked_by / approved_by FKs
-    can reference it. Supabase's ``auth.users`` has many columns but only
-    ``id``, ``is_sso_user``, and ``is_anonymous`` are NOT NULL; the rest
-    default or accept NULL. Using a random email keeps tests isolated.
+    """Insert a minimal ``auth.users`` row so the locked_by FK can reference
+    it. Supabase's ``auth.users`` has many columns but only ``id``,
+    ``is_sso_user``, and ``is_anonymous`` are NOT NULL; the rest default or
+    accept NULL. Using a random email keeps tests isolated.
     """
     await session.execute(
         text(
@@ -112,6 +117,22 @@ async def _seed_user(session: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
     )
     await session.commit()
     return user_id
+
+
+async def _seed_fork(session: AsyncSession, *, title: str) -> tuple[uuid.UUID, uuid.UUID]:
+    """(trunk_id, fork_id) — the non-advisor lock tests need a fork, since a
+    trunk refuses USER content writes (``fork_required``) before the editor
+    lock is even consulted."""
+    trunk = await create_itinerary(session, _system(), title=f"{title}-trunk")
+    fork = await create_itinerary(session, _system(), title=f"{title}-fork")
+    await session.execute(
+        text(
+            "update public.itineraries set forked_from_id = :t, fork_status = 'open' where id = :f"
+        ),
+        {"t": trunk.id, "f": fork.id},
+    )
+    await session.commit()
+    return trunk.id, fork.id
 
 
 def _advisor(user_id: uuid.UUID) -> ActorContext:
@@ -142,7 +163,7 @@ async def test_acquire_lock_on_unlocked_itinerary_flips_locked_by(
         assert result.locked_by == advisor_id
         assert result.locked_at is not None
     finally:
-        await _cleanup(itinerary.id, [advisor_id])
+        await _cleanup([itinerary.id], [advisor_id])
 
 
 # ── (b) second acquire by different user returns LOCKED ────────────────────
@@ -166,7 +187,7 @@ async def test_acquire_lock_by_different_user_returns_locked(
         assert second_res.outcome is ItineraryOutcome.LOCKED
         assert second_res.detail == "already_locked"
     finally:
-        await _cleanup(itinerary_id, [first, second])
+        await _cleanup([itinerary_id], [first, second])
 
 
 # ── (c) same-user re-acquire is idempotent ─────────────────────────────────
@@ -186,7 +207,7 @@ async def test_same_user_reacquire_is_idempotent(
         assert isinstance(second, Itinerary)
         assert second.locked_by == advisor_id
     finally:
-        await _cleanup(itinerary.id, [advisor_id])
+        await _cleanup([itinerary.id], [advisor_id])
 
 
 # ── (d) release_lock is idempotent ─────────────────────────────────────────
@@ -208,319 +229,7 @@ async def test_release_lock_is_idempotent(db_session: AsyncSession) -> None:
         assert isinstance(second, Itinerary)
         assert second.locked_by is None
     finally:
-        await _cleanup(itinerary.id, [advisor_id])
-
-
-# ── (e) approve_itinerary flips status + rejects a second call ─────────────
-
-
-@integration
-@pytest.mark.asyncio
-async def test_approve_itinerary_flips_status_and_rejects_second_call(
-    db_session: AsyncSession,
-) -> None:
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e")
-    # Stash id now — subsequent commits inside approve_itinerary expire the
-    # attached ``itinerary`` instance and re-reading id via lazy load would
-    # trip SA's async/greenlet guard.
-    itinerary_id = itinerary.id
-    try:
-        first = await approve_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-        assert isinstance(first, Itinerary)
-        assert first.status == ItineraryStatus.approved
-        assert first.approved_by == advisor_id
-        assert first.approved_at is not None
-
-        second = await approve_itinerary(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
-        )
-        assert isinstance(second, ItineraryError)
-        assert second.outcome is ItineraryOutcome.VALIDATION_ERROR
-        assert second.detail == "already_approved"
-
-        # Confirm status persisted (fresh engine to dodge expired-state lazy
-        # loads on the committed session).
-        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
-        try:
-            verify_maker = async_sessionmaker(
-                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
-            )
-            async with verify_maker() as vs:
-                fresh = (
-                    await vs.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
-                ).scalar_one()
-                assert fresh.status == ItineraryStatus.approved
-        finally:
-            await verify_engine.dispose()
-    finally:
-        await _cleanup(itinerary_id, [advisor_id])
-
-
-# ── (e2) approve cascades proposed → approved, ideas untouched (ADV-10) ────
-
-
-@integration
-@pytest.mark.asyncio
-async def test_approve_cascades_proposed_nodes_to_approved(
-    db_session: AsyncSession,
-) -> None:
-    """A single approval firms the plan: every ``proposed`` node flips to
-    ``approved`` while ``idea`` (wish-list) nodes are left alone."""
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e2")
-    itinerary_id = itinerary.id
-    try:
-        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-        proposed = await add_node(
-            db_session,
-            _advisor(advisor_id),
-            itinerary_id=itinerary_id,
-            type=NodeType.experience,
-            title="proposed-one",
-            status=NodeStatus.proposed,
-        )
-        idea = await add_node(
-            db_session,
-            _advisor(advisor_id),
-            itinerary_id=itinerary_id,
-            type=NodeType.meal,
-            title="wishlist-maybe",
-            status=NodeStatus.idea,
-        )
-        assert isinstance(proposed, Node)
-        assert isinstance(idea, Node)
-        proposed_id, idea_id = proposed.id, idea.id
-
-        result = await approve_itinerary(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
-        )
-        assert isinstance(result, Itinerary)
-        assert result.status == ItineraryStatus.approved
-
-        # Fresh engine to dodge expired-state lazy loads after the commit.
-        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
-        try:
-            verify_maker = async_sessionmaker(
-                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
-            )
-            async with verify_maker() as vs:
-                statuses = {
-                    r.id: r.status
-                    for r in (
-                        await vs.execute(select(Node).where(Node.itinerary_id == itinerary_id))
-                    ).scalars()
-                }
-            assert statuses[proposed_id] is NodeStatus.approved  # cascaded
-            assert statuses[idea_id] is NodeStatus.idea  # untouched
-        finally:
-            await verify_engine.dispose()
-    finally:
-        await _cleanup(itinerary_id, [advisor_id])
-
-
-# ── (e3) propose flips draft → proposed; second propose rejected (ADV-10) ──
-
-
-@integration
-@pytest.mark.asyncio
-async def test_propose_flips_draft_to_proposed_and_rejects_second(
-    db_session: AsyncSession,
-) -> None:
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e3")
-    itinerary_id = itinerary.id
-    try:
-        first = await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-        assert isinstance(first, Itinerary)
-        assert first.status == ItineraryStatus.proposed
-        assert first.proposed_by == advisor_id
-        assert first.proposed_at is not None
-
-        # A second propose on an already-proposed plan is refused (not a draft).
-        second = await propose_itinerary(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
-        )
-        assert isinstance(second, ItineraryError)
-        assert second.outcome is ItineraryOutcome.VALIDATION_ERROR
-        assert second.detail == "not_draft"
-    finally:
-        await _cleanup(itinerary_id, [advisor_id])
-
-
-# ── (e4) reopen flips proposed → draft (clears proposed_*); else rejected ───
-
-
-@integration
-@pytest.mark.asyncio
-async def test_reopen_flips_proposed_to_draft_and_rejects_when_not_proposed(
-    db_session: AsyncSession,
-) -> None:
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e4")
-    itinerary_id = itinerary.id
-    try:
-        # Reopen before propose is a no-op error (still a draft).
-        early = await reopen_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-        assert isinstance(early, ItineraryError)
-        assert early.detail == "not_proposed"
-
-        await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-        reopened = await reopen_itinerary(
-            db_session, _advisor(advisor_id), itinerary_id=itinerary_id
-        )
-        assert isinstance(reopened, Itinerary)
-        assert reopened.status == ItineraryStatus.draft
-        assert reopened.proposed_by is None
-        assert reopened.proposed_at is None
-    finally:
-        await _cleanup(itinerary_id, [advisor_id])
-
-
-# ── (e5) approve accepts a proposed itinerary (the traveler path, ADV-10) ───
-
-
-@integration
-@pytest.mark.asyncio
-async def test_approve_from_proposed_state(db_session: AsyncSession) -> None:
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    traveler_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e5")
-    itinerary_id = itinerary.id
-    try:
-        await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-        # The owning traveler approves all-at-once from the proposed state.
-        result = await approve_itinerary(db_session, _user(traveler_id), itinerary_id=itinerary_id)
-        assert isinstance(result, Itinerary)
-        assert result.status == ItineraryStatus.approved
-        assert result.approved_by == traveler_id
-    finally:
-        await _cleanup(itinerary_id, [advisor_id, traveler_id])
-
-
-# ── (e6) per-node approve derives itinerary approved once proposed drains ───
-
-
-@integration
-@pytest.mark.asyncio
-async def test_per_node_approve_derives_itinerary_approved(
-    db_session: AsyncSession,
-) -> None:
-    """A traveler approving nodes one-by-one reaches the same ``approved`` end
-    state as the all-at-once cascade: the itinerary derives to ``approved`` only
-    once the last remaining ``proposed`` node has been actioned."""
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    traveler_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e6")
-    itinerary_id = itinerary.id
-    try:
-        n1 = await add_node(
-            db_session,
-            _advisor(advisor_id),
-            itinerary_id=itinerary_id,
-            type=NodeType.experience,
-            title="card-1",
-            status=NodeStatus.proposed,
-        )
-        n2 = await add_node(
-            db_session,
-            _advisor(advisor_id),
-            itinerary_id=itinerary_id,
-            type=NodeType.meal,
-            title="card-2",
-            status=NodeStatus.proposed,
-        )
-        assert isinstance(n1, Node) and isinstance(n2, Node)
-        n1_id, n2_id = n1.id, n2.id
-        await propose_itinerary(db_session, _advisor(advisor_id), itinerary_id=itinerary_id)
-
-        # Approve the first node — one proposed node still remains, so the
-        # itinerary stays ``proposed`` (not yet fully approved).
-        r1 = await update_node(
-            db_session,
-            _user(traveler_id),
-            itinerary_id=itinerary_id,
-            node_id=n1_id,
-            status=NodeStatus.approved,
-        )
-        assert isinstance(r1, Node)
-
-        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
-        try:
-            vmaker = async_sessionmaker(
-                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
-            )
-            async with vmaker() as vs:
-                mid = (
-                    await vs.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
-                ).scalar_one()
-                assert mid is ItineraryStatus.proposed  # not yet — one card open
-
-            # Approve the last node — the itinerary now derives to ``approved``.
-            r2 = await update_node(
-                db_session,
-                _user(traveler_id),
-                itinerary_id=itinerary_id,
-                node_id=n2_id,
-                status=NodeStatus.approved,
-            )
-            assert isinstance(r2, Node)
-            async with vmaker() as vs:
-                fresh = (
-                    await vs.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
-                ).scalar_one()
-                assert fresh.status is ItineraryStatus.approved  # derived
-                assert fresh.approved_by == traveler_id
-        finally:
-            await verify_engine.dispose()
-    finally:
-        await _cleanup(itinerary_id, [advisor_id, traveler_id])
-
-
-# ── (e7) derive does NOT fire while the itinerary is still a draft ──────────
-
-
-@integration
-@pytest.mark.asyncio
-async def test_node_approve_on_draft_does_not_derive(db_session: AsyncSession) -> None:
-    advisor_id = await _seed_user(db_session, uuid.uuid4())
-    itinerary = await create_itinerary(db_session, _system(), title="lock-e7")
-    itinerary_id = itinerary.id
-    try:
-        node = await add_node(
-            db_session,
-            _advisor(advisor_id),
-            itinerary_id=itinerary_id,
-            type=NodeType.experience,
-            title="only-card",
-            status=NodeStatus.proposed,
-        )
-        assert isinstance(node, Node)
-        # Approve the only node while the itinerary is still a DRAFT (advisor has
-        # not proposed it). The itinerary must stay draft — approval is derived
-        # only during the proposed/review phase.
-        result = await update_node(
-            db_session,
-            _advisor(advisor_id),
-            itinerary_id=itinerary_id,
-            node_id=node.id,
-            status=NodeStatus.approved,
-        )
-        assert isinstance(result, Node)
-        verify_engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
-        try:
-            vmaker = async_sessionmaker(
-                bind=verify_engine, expire_on_commit=False, class_=AsyncSession
-            )
-            async with vmaker() as vs:
-                status = (
-                    await vs.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
-                ).scalar_one()
-                assert status is ItineraryStatus.draft  # unchanged
-        finally:
-            await verify_engine.dispose()
-    finally:
-        await _cleanup(itinerary_id, [advisor_id])
+        await _cleanup([itinerary.id], [advisor_id])
 
 
 # ── (f) add_node by a non-advisor while locked returns LOCKED ──────────────
@@ -533,13 +242,13 @@ async def test_add_node_by_non_advisor_while_locked_returns_locked(
 ) -> None:
     advisor_id = await _seed_user(db_session, uuid.uuid4())
     other_user_id = uuid.uuid4()  # does not need to be in auth.users (no FK use)
-    itinerary = await create_itinerary(db_session, _system(), title="lock-f")
+    trunk_id, fork_id = await _seed_fork(db_session, title="lock-f")
     try:
-        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=fork_id)
         err = await add_node(
             db_session,
             _user(other_user_id),
-            itinerary_id=itinerary.id,
+            itinerary_id=fork_id,
             type=NodeType.experience,
             title="blocked",
         )
@@ -547,7 +256,7 @@ async def test_add_node_by_non_advisor_while_locked_returns_locked(
         assert err.outcome is ItineraryOutcome.LOCKED
         assert err.detail == "locked_by_advisor"
     finally:
-        await _cleanup(itinerary.id, [advisor_id])
+        await _cleanup([fork_id, trunk_id], [advisor_id])
 
 
 # ── (g) add_node by an advisor while locked succeeds ───────────────────────
@@ -572,7 +281,7 @@ async def test_add_node_by_advisor_while_locked_succeeds(
         assert isinstance(node, Node)
         assert node.title == "swap-hotel"
     finally:
-        await _cleanup(itinerary.id, [advisor_id])
+        await _cleanup([itinerary.id], [advisor_id])
 
 
 # ── (h) update_node by non-advisor while locked returns LOCKED ─────────────
@@ -585,25 +294,25 @@ async def test_update_node_by_non_advisor_while_locked_returns_locked(
 ) -> None:
     advisor_id = await _seed_user(db_session, uuid.uuid4())
     user_id = uuid.uuid4()  # no FK use; just the acting user_id
-    itinerary = await create_itinerary(db_session, _system(), title="lock-h")
+    trunk_id, fork_id = await _seed_fork(db_session, title="lock-h")
     try:
         # Seed a node before the lock is taken so a USER can find it.
         node = await add_node(
             db_session,
             _user(user_id),
-            itinerary_id=itinerary.id,
+            itinerary_id=fork_id,
             type=NodeType.experience,
             title="orig",
         )
         assert isinstance(node, Node)
 
         # Advisor takes the lock.
-        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=itinerary.id)
+        await acquire_lock(db_session, _advisor(advisor_id), itinerary_id=fork_id)
 
         err = await update_node(
             db_session,
             _user(user_id),
-            itinerary_id=itinerary.id,
+            itinerary_id=fork_id,
             node_id=node.id,
             title="blocked-edit",
         )
@@ -611,15 +320,15 @@ async def test_update_node_by_non_advisor_while_locked_returns_locked(
         assert err.outcome is ItineraryOutcome.LOCKED
         assert err.detail == "locked_by_advisor"
     finally:
-        await _cleanup(itinerary.id, [advisor_id])
+        await _cleanup([fork_id, trunk_id], [advisor_id])
 
 
-# ── Pure-unit guards on _check_lock (no DB fixture needed) ─────────────────
+# ── Pure-unit guards on _check_write_gates (no DB fixture needed) ───────────
 
 
 @integration
 @pytest.mark.asyncio
-async def test_check_lock_allows_advisor_even_without_user_id(
+async def test_check_write_gates_allows_advisor_even_without_user_id(
     db_session: AsyncSession,
 ) -> None:
     itinerary = await create_itinerary(db_session, _system(), title="lock-chk")
@@ -627,7 +336,7 @@ async def test_check_lock_allows_advisor_even_without_user_id(
         # Simulate an advisor with no resolved user_id (edge case — advisors
         # still bypass the gate; the advisor router guard is the real check).
         advisor = ActorContext(user_id=None, kind=ActorKind.ADVISOR, actor_id="x")
-        result = await _check_lock(db_session, itinerary.id, advisor)
+        result = await _check_write_gates(db_session, itinerary.id, advisor)
         assert result is None
     finally:
-        await _cleanup(itinerary.id)
+        await _cleanup([itinerary.id])

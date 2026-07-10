@@ -54,8 +54,8 @@ from app.models import (
     AgentTurn,
     Client,
     Dossier,
+    ForkStatus,
     Itinerary,
-    ItineraryStatus,
     Message,
     NodeStatus,
     NodeType,
@@ -66,8 +66,10 @@ from app.models import (
     TurnRole,
 )
 from app.observability import emit_metric
+from app.services import fork as fork_service
 from app.services import itineraries as itineraries_service
 from app.services.agent_token import AgentTokenError, mint_agent_token
+from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.facts import load_agent_context
 from app.services.graph_digest import graph_digest_for_itinerary
 
@@ -723,26 +725,33 @@ async def _detect_mode(
 ) -> str:
     """Classify the turn as ``onboarding``, ``planning``, or ``qa``.
 
-    Rules (from the plan):
+    Rules (display status is derived — see :mod:`app.services.display_status`):
 
-    - **planning**: session is pinned to a draft itinerary.
-    - **qa**: session is pinned to an approved itinerary, OR session is
-      unpinned and the client already has ≥1 approved itinerary.
+    - **planning**: session is pinned to a fork (a working copy is always
+      planning), or to a trunk that hasn't fully bucketed ``approved``.
+    - **qa**: session is pinned to an ``approved`` trunk, OR session is
+      unpinned and the client already has ≥1 ``approved`` trunk.
     - **onboarding**: session is unpinned and the client has no
-      approved itineraries yet.
+      approved trunks yet.
 
-    One SQL round-trip in the pinned case (fetch status of the pinned
-    itinerary); one in the unpinned case (count approved itineraries).
+    One SQL round-trip in the pinned case; one in the unpinned case.
     Always returns a string — never raises — so a DB hiccup can't break
     a turn; worst case we default to ``onboarding`` and let the agent
     reorient.
     """
     try:
         if itinerary_id is not None:
-            status = (
-                await session.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
-            ).scalar_one_or_none()
-            if status is ItineraryStatus.approved:
+            row = (
+                await session.execute(
+                    select(Itinerary.forked_from_id, display_status_expr()).where(
+                        Itinerary.id == itinerary_id
+                    )
+                )
+            ).one_or_none()
+            if row is None:
+                return "planning"
+            forked_from_id, bucket = row
+            if forked_from_id is None and bucket == DisplayStatus.approved.value:
                 return "qa"
             return "planning"
 
@@ -752,7 +761,8 @@ async def _detect_mode(
                 .select_from(Itinerary)
                 .where(
                     Itinerary.client_id == client_id,
-                    Itinerary.status == ItineraryStatus.approved,
+                    Itinerary.forked_from_id.is_(None),
+                    display_status_expr() == DisplayStatus.approved.value,
                 )
             )
         ).scalar_one_or_none()
@@ -926,7 +936,7 @@ async def drain_queue(
     """Replay every queued mutation for ``itinerary_id`` in FIFO order.
 
     Called from the release-lock route handler after ``locked_by`` has been
-    cleared, so the natural ``_check_lock`` pass now admits agent writes.
+    cleared, so the natural write-gate pass now admits agent writes.
     Each entry gets a fresh session — isolating one replay's rollback
     from the next. Per-entry failures are logged and dropped so a single
     bad payload never blocks the rest of the queue or the release path.
@@ -980,6 +990,84 @@ async def drain_queue(
     return replayed
 
 
+async def _resolve_card_itinerary(
+    session: AsyncSession,
+    *,
+    itinerary_id: uuid.UUID,
+    session_id: uuid.UUID,
+    agentcore_session_id: str,
+) -> uuid.UUID:
+    """Where an agent-proposed card may land: a working fork, never a trunk.
+
+    The trunk guard rejects AGENT content writes on an official trunk
+    (content reaches a trunk only via publish/reconcile), but web pins chat
+    sessions to the page's itinerary — the trunk when the traveler views
+    Official. Resolve trunk → the session client's open fork of it, lazily
+    forking (``created_by`` = the traveler's auth user, so the web/CLI
+    viewer-fork resolution finds the same working copy). If the pinned
+    itinerary is already a fork — or resolution fails — return the input and
+    let ``add_node`` surface the outcome.
+    """
+    row = (
+        await session.execute(select(Itinerary.forked_from_id).where(Itinerary.id == itinerary_id))
+    ).one_or_none()
+    if row is None or row[0] is not None:
+        return itinerary_id  # missing (404s downstream) or already a fork
+
+    auth_user_id = (
+        await session.execute(
+            select(Client.auth_user_id)
+            .join(AgentSession, AgentSession.client_id == Client.id)
+            .where(AgentSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+    created_by_match = (
+        Itinerary.created_by == auth_user_id
+        if auth_user_id is not None
+        else Itinerary.created_by.is_(None)
+    )
+    fork_id = (
+        await session.execute(
+            select(Itinerary.id)
+            .where(
+                Itinerary.forked_from_id == itinerary_id,
+                Itinerary.fork_status == ForkStatus.open,
+                created_by_match,
+            )
+            .order_by(Itinerary.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if fork_id is not None:
+        return fork_id
+
+    fork_actor = itineraries_service.ActorContext(
+        user_id=auth_user_id,
+        kind=itineraries_service.ActorKind.AGENT,
+        actor_id=agentcore_session_id,
+    )
+    fork = await fork_service.fork_itinerary(session, fork_actor, itinerary_id=itinerary_id)
+    if isinstance(fork, itineraries_service.ItineraryError):
+        logger.warning(
+            "agent.card.fork_failed",
+            extra={
+                "session_id": str(session_id),
+                "itinerary_id": str(itinerary_id),
+                "reason": fork.outcome.value,
+            },
+        )
+        return itinerary_id
+    logger.info(
+        "agent.card.fork_created",
+        extra={
+            "session_id": str(session_id),
+            "itinerary_id": str(itinerary_id),
+            "fork_id": str(fork.id),
+        },
+    )
+    return fork.id
+
+
 async def _persist_proposed_card(
     session: AsyncSession,
     *,
@@ -990,7 +1078,7 @@ async def _persist_proposed_card(
     source_id: str,
     snapshot: dict[str, Any],
 ) -> uuid.UUID | None:
-    """Insert a proposed-experience node for an agent-proposed card.
+    """Insert a pending-experience node for an agent-proposed card.
 
     Returns the new node id on success, None on persistence failure, and
     None after queueing when an advisor currently holds the lock. The
@@ -1006,6 +1094,14 @@ async def _persist_proposed_card(
     if isinstance(raw_title, str):
         title = raw_title
 
+    # Trunk guard: cards land in the traveler's working fork, not the trunk.
+    itinerary_id = await _resolve_card_itinerary(
+        session,
+        itinerary_id=itinerary_id,
+        session_id=session_id,
+        agentcore_session_id=agentcore_session_id,
+    )
+
     card_actor = itineraries_service.ActorContext(
         user_id=None,
         kind=itineraries_service.ActorKind.AGENT,
@@ -1015,11 +1111,11 @@ async def _persist_proposed_card(
     # Lock gate: if an advisor holds the lock, queue the mutation and bail
     # before ``add_node`` so no partial state leaks to the DB. The helper is
     # side-effect-free so reading it mid-transaction is safe.
-    lock_err = await itineraries_service._check_lock(session, itinerary_id, card_actor)
+    lock_err = await itineraries_service._check_write_gates(session, itinerary_id, card_actor)
     if lock_err is not None and lock_err.outcome is itineraries_service.ItineraryOutcome.LOCKED:
         payload: dict[str, Any] = {
             "type": NodeType.experience,
-            "status": NodeStatus.proposed,
+            "status": NodeStatus.pending,
             "title": title,
             "source": source,
             "source_id": source_id,
@@ -1050,7 +1146,7 @@ async def _persist_proposed_card(
         card_actor,
         itinerary_id=itinerary_id,
         type=NodeType.experience,
-        status=NodeStatus.proposed,
+        status=NodeStatus.pending,
         title=title,
         source=source,
         source_id=source_id,

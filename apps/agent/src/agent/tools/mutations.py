@@ -12,11 +12,9 @@ from agent.backend import BackendError, get_json, patch_json, pin_ctx
 @tool
 async def update_node_status(
     node_id: str,
-    status: Literal[
-        "idea", "proposed", "approved", "booked", "confirmed", "discarded"
-    ],
+    status: Literal["pending", "approved", "booked", "confirmed", "discarded"],
 ) -> dict:
-    """Flip a node's status — approve, discard, or revert.
+    """Flip a node's status — approve, discard, or revert to pending.
 
     Use this in planning mode when the advisor directs a change
     ("drop the modern hotel", "approve the Bernina Express") or when

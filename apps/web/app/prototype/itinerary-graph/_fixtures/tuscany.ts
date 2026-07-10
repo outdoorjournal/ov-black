@@ -150,7 +150,7 @@ export function buildTuscany(): SampleTimeline {
   });
   const sanGimDay = makeNode(itinId, {
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: "San Gimignano — medieval towers & enoteca",
     meta: {
       day_index: 5,

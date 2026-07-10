@@ -5,7 +5,7 @@ import { TYPE_TOKENS, type StatusKind } from "@/app/_components/itinerary-graph/
 
 const t = TYPE_TOKENS.experience;
 
-export function ExperienceGlance({ status = "proposed" }: { status?: StatusKind }) {
+export function ExperienceGlance({ status = "pending" }: { status?: StatusKind }) {
   return (
     <CardShell kind="experience" status={status} width="glance">
       <ImageStub />
@@ -25,7 +25,7 @@ export function ExperienceGlance({ status = "proposed" }: { status?: StatusKind 
 }
 
 export function ExperienceCompact({
-  status = "proposed",
+  status = "pending",
 }: {
   status?: StatusKind;
 }) {

@@ -103,8 +103,7 @@ export const NODE_TYPE_ORDER: Record<NodeType, number> = {
 };
 
 export const STATUS_LABELS: Record<NodeStatus, string> = {
-  idea: "Idea",
-  proposed: "Proposed",
+  pending: "Pending",
   approved: "Approved",
   booked: "Booked",
   confirmed: "Confirmed",

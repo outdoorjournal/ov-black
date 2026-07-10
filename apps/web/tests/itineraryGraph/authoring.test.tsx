@@ -11,7 +11,7 @@ vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   acquireItineraryLock: vi.fn(async () => ({ ok: true })),
   releaseItineraryLock: vi.fn(async () => ({ ok: true })),
-  approveItinerary: vi.fn(async () => ({ ok: true })),
+  approveAllNodes: vi.fn(async () => ({ ok: true })),
   createNode: vi.fn(async () => ({ ok: true })),
   deleteNode: vi.fn(async () => ({ ok: true })),
   updateNode: vi.fn(async () => ({ ok: true })),
@@ -44,12 +44,15 @@ import {
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { AuthoringPanel } from "@/app/_components/itinerary-graph/views/horizontal/AuthoringPanel";
 
+// The advisor authoring surface is a WORKING COPY (a fork of the trunk) —
+// trunk content only arrives via publish, so editable scenarios play out here.
 const ITINERARY: ItineraryResponse = {
   id: "it-1",
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
+  forked_from_id: "trunk-0",
 };
 
 const NODE: NodeResponse = {
@@ -77,7 +80,7 @@ const NEW_NODE: NodeResponse = {
   itinerary_id: "it-1",
   parent_subgraph_id: null,
   type: "meal",
-  status: "proposed",
+  status: "pending",
   title: "Sushi Saito",
   source: "google_places",
   source_id: "p-saito",
@@ -144,11 +147,20 @@ function timeline(nodes: NodeResponse[], edges: EdgeResponse[] = []): ItineraryT
   };
 }
 
+
+// The OFFICIAL trunk variant — no forked_from_id, so authoring is refused
+// (the trunk only takes content via publish) while reads still work.
+function trunkTimeline(nodes: NodeResponse[]): ItineraryTimeline {
+  const t = timeline(nodes);
+  const { forked_from_id: _omit, ...trunk } = ITINERARY;
+  return { ...t, itinerary: trunk };
+}
+
 function initFor(partial: Partial<ItineraryGraphInit> = {}): ItineraryGraphInit {
   return {
     timeline: timeline([NODE]),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
@@ -232,8 +244,10 @@ describe("authoring store actions", () => {
     expect(nodes.map((n) => n.id)).toContain("n-new");
   });
 
-  test("addNodeFromInventory is inert without the lock", async () => {
-    const { result } = renderStore({ startLocked: false }); // canEdit but unlocked
+  test("addNodeFromInventory is inert on the official trunk", async () => {
+    // Authoring lives on the working copy; the trunk only takes content via
+    // publish, so the store refuses before any network call.
+    const { result } = renderStore({ timeline: trunkTimeline([NODE]) });
     act(() => {
       result.current.getState().addNodeFromInventory("google_places", "p-saito");
     });
@@ -335,8 +349,8 @@ describe("AuthoringPanel", () => {
     expect(add.disabled).toBe(false);
   });
 
-  test("without the lock, the panel warns and disables Add", async () => {
-    renderPanel({ startLocked: false });
+  test("on the official trunk, the panel warns and disables Add", async () => {
+    renderPanel({ timeline: trunkTimeline([NODE]) });
     expect(screen.getByTestId("itinerary-graph-authoring-locked")).toBeDefined();
     fireEvent.change(screen.getByTestId("itinerary-graph-search-input"), {
       target: { value: "sushi" },

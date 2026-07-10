@@ -121,7 +121,7 @@ async def add_collection_note(text: str) -> dict:
     itinerary_id = await _ensure_itinerary()
     return await post_json(
         f"/itinerary/{itinerary_id}/nodes",
-        json={"type": "note", "status": "proposed", "title": text},
+        json={"type": "note", "status": "pending", "title": text},
     )
 
 

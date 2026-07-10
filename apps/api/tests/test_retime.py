@@ -123,7 +123,7 @@ async def _scheduled_node(
         _actor(),
         itinerary_id=itinerary_id,
         type=NodeType.meal,
-        status=NodeStatus.proposed,
+        status=NodeStatus.pending,
         title=title,
         starts_at=starts_at,
         duration_minutes=duration_minutes,
@@ -187,7 +187,7 @@ async def test_drag_to_timeline_metadata_patch_stamps_anchor(
             _actor(),
             itinerary_id=itin.id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="Unscheduled idea",
         )
         assert not isinstance(node, ItineraryError)
@@ -230,7 +230,7 @@ async def test_retime_shifts_scheduled_nodes_preserving_wall_clock(
             _actor(),
             itinerary_id=itin.id,
             type=NodeType.note,
-            status=NodeStatus.idea,
+            status=NodeStatus.pending,
             title="Maybe a boat",
         )
         assert not isinstance(idea, ItineraryError)

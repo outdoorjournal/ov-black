@@ -40,8 +40,6 @@ export function attentionLine(item: AttentionItemOut): {
     }
     case "payment_received":
       return { label: `Payment received${where}`, tone: "info" };
-    case "trip_proposed":
-      return { label: `Proposed to traveler${where}`, tone: "info" };
   }
 }
 

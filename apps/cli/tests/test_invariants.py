@@ -91,7 +91,7 @@ def test_cost_totals_status_filter() -> None:
         make_node(
             "00000000-0000-0000-0000-000000000006",
             ITIN,
-            status="proposed",
+            status="pending",
             cost_amount="20.00",
             cost_currency="USD",
         ),
@@ -192,12 +192,12 @@ def test_status_actor_gate_holds_checks_lock_reason() -> None:
     """G1 landed: a firmed node must advertise lock_reason; a pre-firmed must not."""
     iid = "11111111-1111-1111-1111-111111111111"
     booked_id = "22222222-2222-2222-2222-222222222222"
-    proposed_id = "33333333-3333-3333-3333-333333333333"
+    pending_id = "33333333-3333-3333-3333-333333333333"
     clean = make_graph(
         iid,
         nodes=[
             make_node(booked_id, iid, status="booked", lock_reason="status_locked"),
-            make_node(proposed_id, iid, status="proposed", lock_reason=None),
+            make_node(pending_id, iid, status="pending", lock_reason=None),
         ],
     )
     assert status_actor_gate_holds(clean) == []
@@ -224,16 +224,16 @@ def test_reconcile_holds_folds_accepted_and_keeps_booking() -> None:
     baseline = make_graph(
         iid,
         nodes=[
-            make_node(keep, iid, status="proposed", title="old"),
+            make_node(keep, iid, status="pending", title="old"),
             make_node(booked, iid, status="booked", title="Aman", lock_reason="status_locked"),
-            make_node(drop, iid, status="proposed", title="to remove"),
+            make_node(drop, iid, status="pending", title="to remove"),
         ],
     )
     # Accepted: keep's title folded in, drop removed; the booking carries over intact.
     live = make_graph(
         iid,
         nodes=[
-            make_node(keep, iid, status="proposed", title="new"),
+            make_node(keep, iid, status="pending", title="new"),
             make_node(booked, iid, status="booked", title="Aman", lock_reason="status_locked"),
         ],
     )
@@ -259,7 +259,7 @@ def test_reconcile_holds_flags_unapplied_change_and_mutated_booking() -> None:
     baseline = make_graph(
         iid,
         nodes=[
-            make_node(keep, iid, status="proposed", title="old"),
+            make_node(keep, iid, status="pending", title="old"),
             make_node(booked, iid, status="booked", title="Aman", lock_reason="status_locked"),
         ],
     )
@@ -267,7 +267,7 @@ def test_reconcile_holds_flags_unapplied_change_and_mutated_booking() -> None:
     live = make_graph(
         iid,
         nodes=[
-            make_node(keep, iid, status="proposed", title="old"),
+            make_node(keep, iid, status="pending", title="old"),
             make_node(booked, iid, status="booked", title="Tampered", lock_reason="status_locked"),
         ],
     )

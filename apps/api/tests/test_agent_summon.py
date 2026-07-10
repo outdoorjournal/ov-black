@@ -291,19 +291,43 @@ async def test_summon_proposal_lands_on_graph(settings_override: Settings) -> No
         )
         assert msg_id is not None
 
-        # A proposed-experience node landed on the thread's itinerary…
+        # Cards never land on the official trunk — the bridge resolves (and
+        # lazily creates) the traveler's working fork of the thread's itinerary.
+        fork_row = (
+            await s.execute(
+                text(
+                    "select id, created_by, fork_status from public.itineraries "
+                    "where forked_from_id = :i"
+                ),
+                {"i": w.itin},
+            )
+        ).one()
+        fork_id, fork_created_by, fork_status = fork_row
+        assert fork_created_by == w.traveler_uid  # the session client's own fork
+        assert fork_status == "open"
+
+        # The pending-experience node landed in the fork…
         node_row = (
             await s.execute(
                 text(
                     "select id, type, status from public.nodes "
                     "where itinerary_id = :i and source_id = 'exp-kaiseki-1'"
                 ),
-                {"i": w.itin},
+                {"i": fork_id},
             )
         ).one()
         node_id, node_type, node_status = node_row
         assert node_type == "experience"
-        assert node_status == "proposed"
+        assert node_status == "pending"
+
+        # …and the trunk stayed clean.
+        trunk_nodes = (
+            await s.execute(
+                text("select count(*) from public.nodes where itinerary_id = :i"),
+                {"i": w.itin},
+            )
+        ).scalar_one()
+        assert trunk_nodes == 0
 
         # …and the Artemis message points at it (proposed_node_id on the spine).
         proposed = (

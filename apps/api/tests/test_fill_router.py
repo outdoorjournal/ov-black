@@ -40,6 +40,7 @@ from tests._graph_seed import (
     insert_itinerary,
     insert_node,
     integration,
+    seed_auth_user_sync,
     seed_itinerary_sync,
 )
 
@@ -106,15 +107,15 @@ def _bearer(make_token: Callable[..., str], sub: str | None = None) -> dict[str,
     return {"Authorization": f"Bearer {make_token(sub=sub or str(uuid.uuid4()))}"}
 
 
-def _seed_located_trip_sync() -> uuid.UUID:
-    """Seed an approved itinerary with two located + timed Tokyo anchors."""
+def _seed_located_trip_sync(*, created_by: uuid.UUID | None = None) -> uuid.UUID:
+    """Seed an itinerary with two located + timed Tokyo anchors."""
 
     async def _seed() -> uuid.UUID:
         engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
         maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
         try:
             async with maker() as s:
-                iid = await insert_itinerary(s, status="approved")
+                iid = await insert_itinerary(s, created_by=created_by)
                 await insert_node(
                     s,
                     itinerary_id=iid,
@@ -146,9 +147,12 @@ def _seed_located_trip_sync() -> uuid.UUID:
 
 @integration
 def test_fill_returns_feasible_proposal(client: TestClient, make_token: Callable[..., str]) -> None:
-    iid = _seed_located_trip_sync()
+    caller = seed_auth_user_sync()
+    iid = _seed_located_trip_sync(created_by=caller)
     _override_registry([_meal("m-tokyo", 35.67, 139.73)])
-    resp = client.post(f"/itinerary/{iid}/fill", json=_GAP_BODY, headers=_bearer(make_token))
+    resp = client.post(
+        f"/itinerary/{iid}/fill", json=_GAP_BODY, headers=_bearer(make_token, sub=str(caller))
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["analysis_id"] is None  # none seeded
@@ -168,9 +172,12 @@ def test_fill_marks_unknown_without_located_anchors(
     client: TestClient, make_token: Callable[..., str]
 ) -> None:
     # seed_itinerary_sync nodes carry no coordinates/times -> no anchors.
-    iid = seed_itinerary_sync()
+    caller = seed_auth_user_sync()
+    iid = seed_itinerary_sync(created_by=caller)
     _override_registry([_meal("m-tokyo", 35.67, 139.73)])
-    resp = client.post(f"/itinerary/{iid}/fill", json=_GAP_BODY, headers=_bearer(make_token))
+    resp = client.post(
+        f"/itinerary/{iid}/fill", json=_GAP_BODY, headers=_bearer(make_token, sub=str(caller))
+    )
     assert resp.status_code == 200, resp.text
     proposals = resp.json()["proposals"]
     assert len(proposals) == 1
@@ -206,7 +213,7 @@ def test_fill_requires_jwt(client: TestClient) -> None:
 def test_fill_draft_read_gate_forbids_stranger(
     client: TestClient, make_token: Callable[..., str]
 ) -> None:
-    iid = seed_itinerary_sync(status="draft")
+    iid = seed_itinerary_sync()  # no owner/creator — a stranger cannot read it
     _override_registry([_meal("m-tokyo", 35.67, 139.73)])
     resp = client.post(f"/itinerary/{iid}/fill", json=_GAP_BODY, headers=_bearer(make_token))
     assert resp.status_code == 403

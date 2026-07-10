@@ -62,7 +62,27 @@ export default async function ItineraryLayout({
   }
 
   const role = await resolveUserRole(supabase);
-  const status = result.itinerary.status ?? "draft";
+  const status = result.itinerary.display_status ?? "in_studio";
+  const isTrunk = !result.itinerary.forked_from_id;
+  const isOwnBuild = result.itinerary.created_by === user.id;
+
+  // Solo traveler: their working copy IS the trip. An empty trunk they started
+  // themselves defaults into their open fork rather than a blank official view.
+  if (
+    role !== "advisor" &&
+    isTrunk &&
+    isOwnBuild &&
+    result.nodes.length === 0 &&
+    result.viewer_open_fork_id
+  ) {
+    redirect(`/itinerary/${result.viewer_open_fork_id}`);
+  }
+
+  // Invited traveler on an advisor-crafted trunk with nothing published yet:
+  // the timeline shows the "being crafted" teaser instead of the builder
+  // empty state (which is the self-serve prompt).
+  const awaitingProposal = role !== "advisor" && isTrunk && !isOwnBuild;
+
   const timeline = toItineraryTimeline(
     result.itinerary,
     result.nodes,
@@ -111,6 +131,7 @@ export default async function ItineraryLayout({
         apiBaseUrl={apiBaseUrl}
         accessToken={accessToken}
         viewerOpenForkId={result.viewer_open_fork_id ?? null}
+        awaitingProposal={awaitingProposal}
         totals={result.totals}
         needsBrief={needsBrief}
         audience={role === "advisor" ? "advisor" : "traveler"}

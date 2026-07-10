@@ -331,7 +331,7 @@ async def book_node_via_money_gate(
     node = next((n for n in graph.nodes if str(n.id) == node_id), None)
     # Editing a firmed node needs a demotion first (G1); pre-firmed nodes edit freely.
     if node is not None and str(node.status) in {"approved", "booked", "confirmed"}:
-        await advisor.update_node(itinerary_id, node_id, fields={"status": "proposed"})
+        await advisor.update_node(itinerary_id, node_id, fields={"status": "pending"})
     await advisor.update_node(
         itinerary_id,
         node_id,

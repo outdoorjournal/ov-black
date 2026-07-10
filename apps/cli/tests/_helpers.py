@@ -36,7 +36,7 @@ def make_node(node_id: str, itinerary_id: str, **over: Any) -> dict[str, Any]:
         "itinerary_id": itinerary_id,
         "parent_subgraph_id": None,
         "type": "experience",
-        "status": "proposed",
+        "status": "pending",
         "title": "Node",
         "source": None,
         "source_id": None,
@@ -57,7 +57,7 @@ def make_graph(
     *,
     nodes: list[dict[str, Any]] | None = None,
     edges: list[dict[str, Any]] | None = None,
-    status: str = "draft",
+    status: str = "in_studio",
 ) -> gm.GraphResponse:
     return gm.GraphResponse.model_validate(
         {
@@ -66,9 +66,7 @@ def make_graph(
                 "title": "Trip",
                 "client_id": None,
                 "created_by": None,
-                "status": status,
-                "approved_by": None,
-                "approved_at": None,
+                "display_status": status,
             },
             "nodes": nodes or [],
             "edges": edges or [],

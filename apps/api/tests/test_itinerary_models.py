@@ -101,8 +101,7 @@ def test_node_type_enum_values_match_migration() -> None:
         "waiting",
     }
     assert {m.value for m in NodeStatus} == {
-        "idea",
-        "proposed",
+        "pending",
         "approved",
         "booked",
         "confirmed",
@@ -177,7 +176,7 @@ async def test_itinerary_graph_round_trip(session: AsyncSession) -> None:
             id=parent_id,
             itinerary_id=itinerary_id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="Amalfi multi-stop",
             source="ov",
             source_id="trip-123",
@@ -188,7 +187,7 @@ async def test_itinerary_graph_round_trip(session: AsyncSession) -> None:
             itinerary_id=itinerary_id,
             parent_subgraph_id=parent_id,
             type=NodeType.meal,
-            status=NodeStatus.idea,
+            status=NodeStatus.pending,
             title="Lunch at Le Sirenuse",
             metadata_={"content": {"description": "seaside lunch"}},
         )
@@ -197,7 +196,7 @@ async def test_itinerary_graph_round_trip(session: AsyncSession) -> None:
             itinerary_id=itinerary_id,
             parent_subgraph_id=parent_id,
             type=NodeType.meal,
-            status=NodeStatus.idea,
+            status=NodeStatus.pending,
             title="Lunch at La Sponda (alternative)",
         )
         session.add_all([parent, child, alt])
@@ -237,7 +236,7 @@ async def test_itinerary_graph_round_trip(session: AsyncSession) -> None:
             await session.execute(select(Node).where(Node.id == parent_id))
         ).scalar_one()
         assert fetched_parent.type is NodeType.experience
-        assert fetched_parent.status is NodeStatus.proposed
+        assert fetched_parent.status is NodeStatus.pending
         assert fetched_parent.source == "ov"
         assert fetched_parent.source_id == "trip-123"
         assert fetched_parent.metadata_ == {
@@ -387,7 +386,7 @@ async def test_rls_enabled_on_all_graph_tables(session: AsyncSession) -> None:
 
 def test_node_status_includes_discarded() -> None:
     """S07: the discarded enum value must be present on NodeStatus so pin /
-    keep / discard can round-trip (pin → approved, keep → proposed,
+    keep / discard can round-trip (pin → approved, keep → pending,
     discard → discarded). Guards the SQLAlchemy side of migration 0005.
     """
     assert NodeStatus.discarded == "discarded"
@@ -421,7 +420,7 @@ async def test_update_node_discarded_round_trips_through_history(
             id=node_id,
             itinerary_id=itinerary_id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="OV experience card",
             source="ov",
             source_id="exp-42",
@@ -459,7 +458,7 @@ async def test_update_node_discarded_round_trips_through_history(
         hist = history_rows[0]
         assert hist.op == "update"
         assert hist.before is not None
-        assert hist.before["status"] == "proposed"
+        assert hist.before["status"] == "pending"
         assert hist.after is not None
         assert hist.after["status"] == "discarded"
     finally:

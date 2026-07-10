@@ -120,8 +120,7 @@ export function TaxonomyGrid() {
 
 export function StatusLegend() {
   const order: StatusKind[] = [
-    "idea",
-    "proposed",
+    "pending",
     "approved",
     "booked",
     "confirmed",

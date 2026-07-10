@@ -12,10 +12,8 @@ import type { Client } from "./generated/client/types.gen.js";
 import {
   abandonForkEndpointItineraryForkIdAbandonPost,
   cancelReconcileEndpointItineraryForkIdCancelReconcilePost,
-  approveItineraryEndpointItineraryItineraryIdApprovePost,
-  proposeItineraryEndpointItineraryItineraryIdProposePost,
+  approveAllNodesEndpointItineraryItineraryIdNodesApproveAllPost,
   retimeItineraryEndpointItineraryItineraryIdRetimePost,
-  reopenItineraryEndpointItineraryItineraryIdReopenPost,
   archiveClientPartyMemberEndpointClientsClientIdPartyMembersMemberIdDelete,
   archiveMyPartyMemberEndpointMePartyMembersMemberIdDelete,
   archiveClientDocumentEndpointClientsClientIdDocumentsDocumentIdDelete,
@@ -146,6 +144,7 @@ import type {
   CreateEdgeRequest,
   CreateItineraryRequest,
   CreateNodeRequest,
+  DisplayStatus,
   DossierFactCreate,
   DossierFactDetail,
   DossierFactUpdate,
@@ -155,7 +154,6 @@ import type {
   ForkDiffResponse,
   GraphResponse,
   ItineraryResponse,
-  ItineraryStatus,
   UpdateItineraryRequest,
   RetimeItineraryRequest,
   AddLineItemRequest,
@@ -231,7 +229,7 @@ export type {
   RetimeItineraryRequest,
   RetimeItineraryResponse,
   ItineraryResponse,
-  ItineraryStatus,
+  DisplayStatus,
   ItineraryTimingKind,
   CreateNodeRequest,
   UpdateNodeRequest,
@@ -2509,140 +2507,50 @@ function parseReleaseLockDetail(status: number): ReleaseLockDetail {
   return "unknown";
 }
 
-export type ApproveItineraryDetail =
-  | "already_approved"
+export type ApproveAllNodesDetail =
+  | "not_a_trunk"
   | "forbidden"
   | "itinerary_not_found"
   | "network_error"
   | "unknown";
 
-export type ApproveItineraryResult =
-  | { ok: true; itinerary: ItineraryResponse }
-  | { ok: false; status: number; detail: ApproveItineraryDetail };
+export type ApproveAllNodesResult =
+  | { ok: true; approvedCount: number; graph: GraphResponse }
+  | { ok: false; status: number; detail: ApproveAllNodesDetail };
 
 /**
- * Typed wrapper for POST /itinerary/{itinerary_id}/approve (ADV-10 — the
- * traveler's "Approve all"). Writability-gated (owner / creator / advisor), so
- * the owning traveler can approve their own proposed plan; a non-writer 403s
- * (`forbidden`). 409 collapses to `already_approved`. Accepts a draft or
- * proposed itinerary and cascades every remaining `proposed` node to `approved`.
+ * Typed wrapper for POST /itinerary/{itinerary_id}/nodes/approve-all — the
+ * traveler's "Approve all" on the official trunk. Writability-gated (owner /
+ * creator / advisor); a non-writer 403s (`forbidden`). 409 collapses to
+ * `not_a_trunk` (a fork has nothing to approve). Idempotent: zero pending
+ * approvable nodes returns `approvedCount: 0`.
  */
-export async function approveItinerary(
+export async function approveAllNodes(
   client: Client,
   itineraryId: string,
-): Promise<ApproveItineraryResult> {
+): Promise<ApproveAllNodesResult> {
   try {
     const { data, error, response } =
-      await approveItineraryEndpointItineraryItineraryIdApprovePost({
+      await approveAllNodesEndpointItineraryItineraryIdNodesApproveAllPost({
         client,
         path: { itinerary_id: itineraryId },
       });
     if (error === undefined && data !== undefined) {
-      return { ok: true, itinerary: data };
+      return { ok: true, approvedCount: data.approved_count, graph: data.graph };
     }
     return {
       ok: false,
       status: response.status,
-      detail: parseApproveItineraryDetail(response.status),
+      detail: parseApproveAllNodesDetail(response.status),
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }
 }
 
-function parseApproveItineraryDetail(status: number): ApproveItineraryDetail {
-  if (status === 409) return "already_approved";
+function parseApproveAllNodesDetail(status: number): ApproveAllNodesDetail {
+  if (status === 409) return "not_a_trunk";
   if (status === 403) return "forbidden";
-  if (status === 404) return "itinerary_not_found";
-  return "unknown";
-}
-
-export type ProposeItineraryDetail =
-  | "not_draft"
-  | "advisor_only"
-  | "itinerary_not_found"
-  | "network_error"
-  | "unknown";
-
-export type ProposeItineraryResult =
-  | { ok: true; itinerary: ItineraryResponse }
-  | { ok: false; status: number; detail: ProposeItineraryDetail };
-
-/**
- * Typed wrapper for POST /itinerary/{itinerary_id}/propose (ADV-10). The
- * advisor's finish-and-hand-over step: flips draft→proposed (advisor-only).
- * 409 `not_draft` when the plan isn't currently a draft (already proposed or
- * approved — reopen it first).
- */
-export async function proposeItinerary(
-  client: Client,
-  itineraryId: string,
-): Promise<ProposeItineraryResult> {
-  try {
-    const { data, error, response } =
-      await proposeItineraryEndpointItineraryItineraryIdProposePost({
-        client,
-        path: { itinerary_id: itineraryId },
-      });
-    if (error === undefined && data !== undefined) {
-      return { ok: true, itinerary: data };
-    }
-    return {
-      ok: false,
-      status: response.status,
-      detail: parseProposeReopenDetail(response.status, "not_draft"),
-    };
-  } catch {
-    return { ok: false, status: 0, detail: "network_error" };
-  }
-}
-
-export type ReopenItineraryDetail =
-  | "not_proposed"
-  | "advisor_only"
-  | "itinerary_not_found"
-  | "network_error"
-  | "unknown";
-
-export type ReopenItineraryResult =
-  | { ok: true; itinerary: ItineraryResponse }
-  | { ok: false; status: number; detail: ReopenItineraryDetail };
-
-/**
- * Typed wrapper for POST /itinerary/{itinerary_id}/reopen (ADV-10). The advisor
- * escape hatch back to editing: flips proposed→draft (advisor-only). 409
- * `not_proposed` when the plan isn't currently proposed.
- */
-export async function reopenItinerary(
-  client: Client,
-  itineraryId: string,
-): Promise<ReopenItineraryResult> {
-  try {
-    const { data, error, response } =
-      await reopenItineraryEndpointItineraryItineraryIdReopenPost({
-        client,
-        path: { itinerary_id: itineraryId },
-      });
-    if (error === undefined && data !== undefined) {
-      return { ok: true, itinerary: data };
-    }
-    return {
-      ok: false,
-      status: response.status,
-      detail: parseProposeReopenDetail(response.status, "not_proposed"),
-    };
-  } catch {
-    return { ok: false, status: 0, detail: "network_error" };
-  }
-}
-
-// propose/reopen share a 409/403/404 shape; the 409 token differs per verb.
-function parseProposeReopenDetail<T extends "not_draft" | "not_proposed">(
-  status: number,
-  conflict: T,
-): T | "advisor_only" | "itinerary_not_found" | "unknown" {
-  if (status === 409) return conflict;
-  if (status === 403) return "advisor_only";
   if (status === 404) return "itinerary_not_found";
   return "unknown";
 }
@@ -3222,7 +3130,7 @@ export type ListAdvisorItinerariesParams = {
   limit?: number;
   cursor?: string;
   q?: string;
-  status?: ItineraryStatus;
+  status?: DisplayStatus;
   clientId?: string;
   sort?: "updated_at" | "created_at" | "title";
   order?: "asc" | "desc";

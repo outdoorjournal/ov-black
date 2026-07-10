@@ -169,7 +169,9 @@ def test_planning_prompts_teach_wave_c_capabilities() -> None:
         assert "get_booking_state" in prompt, actor_kind
         assert "post_thread_message" in prompt, actor_kind
         assert "Live plan state" in prompt, actor_kind
-        assert "draft" in prompt and "proposed" in prompt and "approved" in prompt, actor_kind
+        assert "official trip" in prompt and "pending" in prompt and "approved" in prompt, (
+                actor_kind
+            )
 
 
 def test_qa_pinned_prompt_teaches_money_reads_and_escalation() -> None:

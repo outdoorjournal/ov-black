@@ -52,10 +52,15 @@ class NodeRole(str, enum.Enum):
 
 
 class NodeStatus(str, enum.Enum):
-    """Mirrors the public.node_status Postgres enum."""
+    """Mirrors the public.node_status Postgres enum (collapsed in 0043).
 
-    idea = "idea"
-    proposed = "proposed"
+    ``pending`` is the single pre-firmed default; whether it reads as "idea"
+    or "proposed to the traveler" is derived from branch topology (fork vs.
+    official trunk), not stored. The firmed statuses record real-world
+    events: traveler approval, invoice/booking, supplier confirmation.
+    """
+
+    pending = "pending"
     approved = "approved"
     booked = "booked"
     confirmed = "confirmed"
@@ -83,21 +88,6 @@ class EdgeType(str, enum.Enum):
     connected_by = "connected_by"
     requires = "requires"
     grouped_with = "grouped_with"
-
-
-class ItineraryStatus(str, enum.Enum):
-    """Mirrors the public.itinerary_status Postgres enum (0006, `proposed` 0039).
-
-    Lifecycle: ``draft`` (advisor building) → ``proposed`` (advisor finished and
-    handed the plan to the traveler for review, freezing the build) → ``approved``
-    (the traveler has approved — the itinerary-level ``approved`` is *derived*:
-    it is set once every remaining ``proposed`` node has been actioned). The
-    whole itinerary follows the same ``proposed → approved`` arc as its nodes.
-    """
-
-    draft = "draft"
-    proposed = "proposed"
-    approved = "approved"
 
 
 class ForkStatus(str, enum.Enum):
@@ -176,14 +166,6 @@ node_role_enum: PGEnum = PGEnum(
     values_callable=lambda e: [m.value for m in e],
 )
 
-itinerary_status_enum: PGEnum = PGEnum(
-    ItineraryStatus,
-    name="itinerary_status",
-    schema="public",
-    create_type=False,
-    values_callable=lambda e: [m.value for m in e],
-)
-
 fork_status_enum: PGEnum = PGEnum(
     ForkStatus,
     name="fork_status",
@@ -225,31 +207,6 @@ class Itinerary(Base):
         nullable=True,
     )
     locked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    status: Mapped[ItineraryStatus] = mapped_column(
-        itinerary_status_enum,
-        nullable=False,
-        default=ItineraryStatus.draft,
-        server_default=text("'draft'::public.itinerary_status"),
-    )
-    approved_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        nullable=True,
-    )
-    approved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    # 0039 — ADV-10 propose step. Siblings of approved_by/at: set when the advisor
-    # *proposes* the plan to the traveler (status draft → proposed), cleared on
-    # reopen (proposed → draft). NULL until first proposed.
-    proposed_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        nullable=True,
-    )
-    proposed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -328,7 +285,7 @@ class Node(Base):
     status: Mapped[NodeStatus] = mapped_column(
         node_status_enum,
         nullable=False,
-        server_default=text("'idea'::public.node_status"),
+        server_default=text("'pending'::public.node_status"),
     )
     title: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
     source: Mapped[str | None] = mapped_column(nullable=True)

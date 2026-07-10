@@ -31,7 +31,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { Pencil, Plus, RotateCcw, Send, Sparkles, Unlock } from "lucide-react";
+import { Pencil, Plus, Sparkles, Unlock } from "lucide-react";
 import {
   type UIEvent,
   useCallback,
@@ -43,6 +43,7 @@ import {
 
 import { useRouter } from "next/navigation";
 
+import { AwaitingProposalState } from "../../shared/AwaitingProposalState";
 import { BuilderEmptyState } from "../../shared/BuilderEmptyState";
 import { VersionSwitcher } from "../../shared/VersionSwitcher";
 import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
@@ -65,8 +66,6 @@ import {
   scheduledCountOf,
   selectCanApprove,
   selectCanLeaveNote,
-  selectCanPropose,
-  selectCanReopen,
   selectEditable,
   selectIsDraftMine,
   selectTravelerEditable,
@@ -169,18 +168,15 @@ export function HorizontalView({
     nodes.length > 0 || pendingProposals.length > 0 || timingKind === "exact";
   // Staff editing state.
   const canEdit = itineraryGraphStore.useStore((s) => s.canEdit);
+  const awaitingProposal = itineraryGraphStore.useStore(
+    (s) => s.awaitingProposal,
+  );
   const status = itineraryGraphStore.useStore((s) => s.status);
   const lockStatus = itineraryGraphStore.useStore((s) => s.lockStatus);
   const lockPending = itineraryGraphStore.useStore((s) => s.lockPending);
   const releasePending = itineraryGraphStore.useStore((s) => s.releasePending);
   const editable = itineraryGraphStore.useStore(selectEditable);
-  // ADV-10 propose → approve. The advisor's timeline action is Propose (draft →
-  // proposed) / Reopen (proposed → draft); the traveler approves elsewhere.
-  const proposePending = itineraryGraphStore.useStore((s) => s.proposePending);
-  const reopenPending = itineraryGraphStore.useStore((s) => s.reopenPending);
-  const canPropose = itineraryGraphStore.useStore(selectCanPropose);
-  const canReopen = itineraryGraphStore.useStore(selectCanReopen);
-  // ADV-10 node-by-node approve: the traveler firms up a single proposed card
+  // Node-by-node approve: the traveler firms up a single pending card
   // from its expanded detail; clearing the last one derives the plan to approved.
   const canApprove = itineraryGraphStore.useStore(selectCanApprove);
   const approvingNodeId = itineraryGraphStore.useStore((s) => s.approvingNodeId);
@@ -723,10 +719,6 @@ export function HorizontalView({
               lockStatus={lockStatus}
               lockPending={lockPending}
               releasePending={releasePending}
-              proposePending={proposePending}
-              reopenPending={reopenPending}
-              canPropose={canPropose}
-              canReopen={canReopen}
               editable={editable}
               // Embedded: the Edit/Release toggle lives on the far left of the
               // header (empty title slot). Standalone prototype keeps its title
@@ -734,8 +726,6 @@ export function HorizontalView({
               showLockToggle={!embedded}
               onEdit={() => storeApi.getState().acquireLock()}
               onRelease={() => storeApi.getState().releaseLock()}
-              onPropose={() => storeApi.getState().propose()}
-              onReopen={() => storeApi.getState().reopen()}
               onAddNode={handleAddNode}
               // Routed timeline (no in-canvas aside): the toolbar IS the authoring
               // surface — Add opens the unified composer (Details/Link/Find/Fill)
@@ -889,7 +879,11 @@ export function HorizontalView({
                 {...(onOpenNode ? { onOpenNode } : {})}
               />
             ) : nodes.length === 0 && pendingProposals.length === 0 ? (
-              <BuilderEmptyState hint="aside" />
+              awaitingProposal ? (
+                <AwaitingProposalState />
+              ) : (
+                <BuilderEmptyState hint="aside" />
+              )
             ) : null}
           </div>
 
@@ -1123,10 +1117,10 @@ export function HorizontalView({
                       Delete note
                     </button>
                   ) : null}
-                  {/* ADV-10 node-by-node approve: firm up this single proposed
+                  {/* Node-by-node approve: firm up this single pending
                       card (the traveler's card-at-a-time path to the same
                       approved end state as "Approve all"). */}
-                  {canApprove && expandedNode.status === "proposed" ? (
+                  {canApprove && expandedNode.status === "pending" ? (
                     <button
                       type="button"
                       onClick={() =>
@@ -1276,16 +1270,10 @@ function StaffToolbar({
   lockStatus,
   lockPending,
   releasePending,
-  proposePending,
-  reopenPending,
-  canPropose,
-  canReopen,
   editable,
   showLockToggle,
   onEdit,
   onRelease,
-  onPropose,
-  onReopen,
   onAddNode,
   authoringInToolbar,
   onAddCard,
@@ -1295,10 +1283,6 @@ function StaffToolbar({
   lockStatus: "unlocked" | "locked-by-me" | "locked-by-other";
   lockPending: boolean;
   releasePending: boolean;
-  proposePending: boolean;
-  reopenPending: boolean;
-  canPropose: boolean;
-  canReopen: boolean;
   editable: boolean;
   /** Standalone prototype keeps its title on the left, so the Edit/Release
    *  toggle rides here with the tools. The routed shell renders it in the
@@ -1306,8 +1290,6 @@ function StaffToolbar({
   showLockToggle: boolean;
   onEdit: () => void;
   onRelease: () => void;
-  onPropose: () => void;
-  onReopen: () => void;
   onAddNode: () => void;
   /** Routed timeline: the toolbar hosts the authoring surface (Add composer +
    *  Analyze modal). The prototype aside carries them instead, so it passes false
@@ -1364,29 +1346,6 @@ function StaffToolbar({
         >
           <Plus className="h-3.5 w-3.5" />
           Add
-        </button>
-      )}
-      {status === "proposed" ? (
-        <button
-          type="button"
-          onClick={onReopen}
-          disabled={reopenPending || !canReopen}
-          data-testid="itinerary-graph-reopen"
-          className={btn}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          Reopen
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={onPropose}
-          disabled={proposePending || !canPropose}
-          data-testid="itinerary-graph-propose"
-          className={btn}
-        >
-          <Send className="h-3.5 w-3.5" />
-          Propose to Client
         </button>
       )}
     </div>

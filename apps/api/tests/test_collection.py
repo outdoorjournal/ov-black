@@ -112,7 +112,7 @@ def test_from_link_creates_unscheduled_web_note(
     assert resp.status_code == 201, resp.text
     # Default kind is an unfiled note; provenance marks it a pasted link.
     assert captured_from_link["type"] is NodeType.note
-    assert captured_from_link["status"] is NodeStatus.proposed
+    assert captured_from_link["status"] is NodeStatus.pending
     assert captured_from_link["source"] == "web"
     assert captured_from_link["source_id"] == "https://kikunoi.jp/"
     assert captured_from_link["title"] == "Kikunoi Kyoto"
@@ -150,7 +150,7 @@ def _out(**over: Any) -> SimpleNamespace:
         "itinerary_id": uuid.UUID(_IID),
         "parent_subgraph_id": None,
         "type": NodeType.experience,
-        "status": NodeStatus.proposed,
+        "status": NodeStatus.pending,
         "title": "thing",
         "source": None,
         "source_id": None,

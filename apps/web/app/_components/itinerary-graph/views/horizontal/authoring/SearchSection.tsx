@@ -111,7 +111,7 @@ export function SearchSection({ heading = true }: { heading?: boolean }) {
             >
               <CardShell
                 kind={inferCardKind(node)}
-                status="proposed"
+                status="pending"
                 width="glance"
                 lockLabel={node.type}
               >

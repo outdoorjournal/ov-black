@@ -10,7 +10,7 @@ import {
   createStoreContext,
 } from "@/lib/store/createStoreContext";
 import type {
-  ItineraryStatus,
+  DisplayStatus,
   NodeResponse,
 } from "@ov-black/api-client";
 
@@ -33,13 +33,13 @@ export function toNodeView(node: NodeResponse): NodeView {
 }
 
 export type DraftItineraryState = {
-  status: ItineraryStatus;
+  status: DisplayStatus;
   lockStatus: LockStatus;
   nodes: NodeView[];
   edgePending: boolean;
   releasePending: boolean;
   approvePending: boolean;
-  setStatus: (status: ItineraryStatus) => void;
+  setStatus: (status: DisplayStatus) => void;
   setLockStatus: (lock: LockStatus) => void;
   setNodes: (nodes: NodeView[]) => void;
   patchNode: (
@@ -53,7 +53,7 @@ export type DraftItineraryState = {
 };
 
 export type DraftItineraryStoreInit = {
-  initialStatus: ItineraryStatus;
+  initialStatus: DisplayStatus;
   initialNodes: NodeResponse[];
 };
 

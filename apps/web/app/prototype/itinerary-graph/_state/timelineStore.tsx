@@ -147,7 +147,7 @@ export const timelineStore = createStoreContext<
             itinerary_id: node.itinerary_id,
             parent_subgraph_id: null,
             type: node.type as NodeResponse["type"],
-            status: "proposed",
+            status: "pending",
             title: node.title,
             source: node.source,
             source_id: node.source_id,

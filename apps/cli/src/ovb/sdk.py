@@ -244,8 +244,11 @@ class Ovb:
         resp = await self._send("GET", "/advisor/money", params=params or None)
         return gm.AdvisorMoneyResponse.model_validate(resp.json())
 
-    async def approve(self, itinerary_id: str) -> gm.ItineraryResponse:
-        return await self._model(gm.ItineraryResponse, "POST", f"/itinerary/{itinerary_id}/approve")
+    async def approve_all(self, itinerary_id: str) -> gm.ApproveAllResponse:
+        """Approve every pending approvable node on the official trunk."""
+        return await self._model(
+            gm.ApproveAllResponse, "POST", f"/itinerary/{itinerary_id}/nodes/approve-all"
+        )
 
     async def lock(self, itinerary_id: str) -> gm.ItineraryResponse:
         return await self._model(gm.ItineraryResponse, "POST", f"/itinerary/{itinerary_id}/lock")
@@ -288,15 +291,22 @@ class Ovb:
         self,
         fork_id: str,
         *,
-        decisions: list[dict[str, Any]],
+        decisions: list[dict[str, Any]] | None = None,
         analysis_id: str | None = None,
         override_block: bool = False,
+        accept_all: bool = False,
     ) -> gm.ReconcileResponse:
         """Fold accepted fork changes into the live baseline (advisor only).
 
         ``decisions`` is a list of ``{"change_id": ..., "accept": bool}``.
+        ``accept_all=True`` is the publish fast path — the server accepts every
+        change in its own fresh diff and ``decisions`` is ignored.
         """
-        body: dict[str, Any] = {"decisions": decisions, "override_block": override_block}
+        body: dict[str, Any] = {
+            "decisions": decisions or [],
+            "override_block": override_block,
+            "accept_all": accept_all,
+        }
         if analysis_id is not None:
             body["analysis_id"] = analysis_id
         return await self._model(
@@ -524,7 +534,7 @@ class Ovb:
         *,
         type: str,
         title: str = "",
-        status: str = "idea",
+        status: str = "pending",
         source: str | None = None,
         source_id: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -564,7 +574,7 @@ class Ovb:
         *,
         source: str,
         source_id: str,
-        status: str = "proposed",
+        status: str = "pending",
         parent_subgraph_id: str | None = None,
     ) -> gm.NodeResponse:
         body: dict[str, Any] = {"source": source, "source_id": source_id, "status": status}

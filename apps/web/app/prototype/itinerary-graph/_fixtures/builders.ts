@@ -79,6 +79,5 @@ export function makeItinerary(id: string, title: string): ItineraryResponse {
     title,
     client_id: null,
     created_by: null,
-    status: "draft",
   };
 }

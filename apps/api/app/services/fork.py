@@ -38,7 +38,6 @@ from app.models import (
     FindingSeverity,
     ForkStatus,
     Itinerary,
-    ItineraryStatus,
     Node,
     NodeStatus,
 )
@@ -69,13 +68,15 @@ _CARRY_LOCKED: frozenset[NodeStatus] = frozenset({NodeStatus.booked, NodeStatus.
 def _forked_status(status: NodeStatus) -> NodeStatus:
     """The status a baseline node takes in the fork.
 
-    booked/confirmed → preserved (carried locked); approved → demoted to proposed
-    (pre-booked, so editable in the fork); idea/proposed/discarded → unchanged.
+    booked/confirmed → preserved (carried locked); approved → demoted to pending
+    (pre-booked, so editable in the fork — the trunk node stays approved/locked;
+    a fork is where amendments to it get *proposed*); pending/discarded →
+    unchanged.
     """
     if status in _CARRY_LOCKED:
         return status
     if status is NodeStatus.approved:
-        return NodeStatus.proposed
+        return NodeStatus.pending
     return status
 
 
@@ -103,7 +104,6 @@ async def fork_itinerary(
         client_id=baseline.client_id,
         created_by=actor.user_id,
         title=title or f"{baseline.title} (fork)",
-        status=ItineraryStatus.draft,
         forked_from_id=baseline.id,
         fork_status=ForkStatus.open,
     )
@@ -385,8 +385,11 @@ def _changed_fields(baseline: NodeOut, fork: NodeOut) -> list[str]:
     """Names of the content fields that differ fork-vs-baseline.
 
     Applies the **intrinsic-demotion rule**: a status diff that is exactly
-    ``approved → proposed`` is G2's fork transform (not a user edit), so it is
+    ``approved → pending`` is G2's fork transform (not a user edit), so it is
     never reported. Every other field — and every other status transition — is.
+    (With idea/proposed collapsed into pending this also swallows the case
+    where a pre-collapse fork node sat at ``idea`` opposite an approved
+    baseline — acceptable, and arguably the more correct read.)
     """
     fields: list[str] = []
     if baseline.title != fork.title:
@@ -409,7 +412,7 @@ def _changed_fields(baseline: NodeOut, fork: NodeOut) -> list[str]:
         fields.append("source_id")
     if baseline.status is not fork.status:
         is_fork_demotion = (
-            baseline.status is NodeStatus.approved and fork.status is NodeStatus.proposed
+            baseline.status is NodeStatus.approved and fork.status is NodeStatus.pending
         )
         if not is_fork_demotion:
             fields.append("status")
@@ -690,8 +693,8 @@ async def _apply_changed(
     """Apply a fork node's content edits onto its live baseline node.
 
     Booked/confirmed baseline nodes are refused (G1 — never changed via
-    reconcile). An approved baseline node is first demoted to ``proposed`` (the
-    advisor's pure G1 status change) so the edit lands; the advisor re-approves
+    reconcile). An approved baseline node is first demoted to ``pending`` (the
+    advisor's pure G1 status change) so the edit lands; the traveler re-approves
     via the normal flow.
     """
     assert change.baseline_node_id is not None and change.fork_node_id is not None
@@ -712,7 +715,7 @@ async def _apply_changed(
             actor,
             itinerary_id=baseline_id,
             node_id=change.baseline_node_id,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
         )
         if isinstance(demoted, ItineraryError):
             return _failed(change, demoted.detail)
@@ -819,6 +822,7 @@ async def reconcile_fork(
     decisions: list[ReconcileDecision],
     analysis_id: uuid.UUID | None = None,
     override_block: bool = False,
+    accept_all: bool = False,
 ) -> ReconcileResult | ItineraryError:
     """Fold the *accepted* fork changes into the live baseline (advisor-only).
 
@@ -829,6 +833,11 @@ async def reconcile_fork(
     unless ``override_block``. The fork flips to ``reconciled`` only when every
     diff change was decided and none was refused/failed; otherwise it stays
     ``open`` (honest partial). The pending reconcile request is always cleared.
+
+    ``accept_all=True`` is the publish fast path: every change in the diff is
+    accepted as computed *server-side in this same transaction*, so there is
+    no staleness window between a client-fetched diff and the decisions it
+    sends back. ``decisions`` is ignored (send ``[]``).
     """
     fork_itin = (
         await session.execute(select(Itinerary).where(Itinerary.id == fork_id))
@@ -849,6 +858,10 @@ async def reconcile_fork(
     if isinstance(diff, ItineraryError):
         return diff
     change_map = {c.change_id: c for c in (*diff.added, *diff.removed, *diff.changed, *diff.moved)}
+    if accept_all:
+        decisions = [
+            ReconcileDecision(change_id=change_id, accept=True) for change_id in change_map
+        ]
 
     baseline_view = await get_itinerary_graph(session, baseline_id)
     if isinstance(baseline_view, ItineraryError):

@@ -24,7 +24,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Tokyo trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 type NodeOverrides = Partial<NodeResponse> & {

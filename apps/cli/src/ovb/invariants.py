@@ -17,7 +17,7 @@ from ovb._compat import unwrap_root
 from ovb._generated import models as gm
 
 # Mirrors the NodeStatus / NodeType / EdgeType enums in the schema spine.
-NODE_STATUSES = {"idea", "proposed", "approved", "booked", "confirmed", "discarded"}
+NODE_STATUSES = {"pending", "approved", "booked", "confirmed", "discarded"}
 BOOKABLE_TYPES = {"flight", "hotel", "experience", "meal"}
 
 

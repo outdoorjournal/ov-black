@@ -22,7 +22,7 @@
 // traveler-facing concierge. The backend's advisor guards remain the real
 // authority over any mutation.
 
-import type { ItineraryStatus } from "@ov-black/api-client";
+import type { DisplayStatus } from "@ov-black/api-client";
 
 import type { UserRole } from "@/lib/role";
 
@@ -37,7 +37,7 @@ export type ItineraryGraphViewKind = "horizontal";
 export type ItineraryGraphViewProps = {
   timeline: ItineraryTimeline;
   itineraryId: string;
-  status: ItineraryStatus;
+  status: DisplayStatus;
   /** Server-resolved viewer role; the store derives `canEdit` from it. */
   role: UserRole;
   /** The viewer's own API credentials (their Supabase session token). */

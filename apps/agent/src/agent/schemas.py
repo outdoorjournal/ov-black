@@ -145,9 +145,7 @@ class UpdateNodeStatusArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     node_id: uuid.UUID
-    status: Literal[
-        "idea", "proposed", "approved", "booked", "confirmed", "discarded"
-    ]
+    status: Literal["pending", "approved", "booked", "confirmed", "discarded"]
 
 
 class SearchInventoryArgs(BaseModel):

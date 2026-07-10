@@ -38,12 +38,15 @@ import { TimelineDataProvider } from "@/app/_components/itinerary-graph/Timeline
 import { CollectionRail } from "@/app/_components/itinerary-graph/collection/CollectionRail";
 import { PlaceModeLayer } from "@/app/itinerary/[id]/_shell/PlaceModeLayer";
 
+// The advisor authoring surface is a WORKING COPY (a fork of the trunk) —
+// trunk content only arrives via publish, so editable scenarios play out here.
 const ITINERARY: ItineraryResponse = {
   id: "it-1",
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
+  forked_from_id: "trunk-0",
 };
 
 function node(id: string, over: Partial<NodeResponse> = {}): NodeResponse {
@@ -52,7 +55,7 @@ function node(id: string, over: Partial<NodeResponse> = {}): NodeResponse {
     itinerary_id: "it-1",
     parent_subgraph_id: null,
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: id === "n1" ? "Sushi Saito" : id,
     source: null,
     source_id: null,
@@ -81,7 +84,7 @@ function storeApiHook(init: Partial<ItineraryGraphInit> = {}, nodes: NodeRespons
   const full: ItineraryGraphInit = {
     timeline: timeline(nodes),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
@@ -98,6 +101,15 @@ beforeEach(() => {
   nav.pathname = "/itinerary/it-1/collection";
   push.mockClear();
 });
+
+
+// The OFFICIAL trunk variant — no forked_from_id: nobody schedules here
+// (content + placement arrive via publish from a working copy).
+function trunkTimeline(nodes: NodeResponse[]): ItineraryTimeline {
+  const t = timeline(nodes);
+  const { forked_from_id: _omit, ...trunk } = ITINERARY;
+  return { ...t, itinerary: trunk };
+}
 
 describe("store · place-mode slice", () => {
   test("holdItem lifts a card; placeHeldItem moves it + records the placement", () => {
@@ -120,7 +132,12 @@ describe("store · place-mode slice", () => {
   });
 
   test("placeHeldItem is inert (no placement) for a viewer who can't schedule", () => {
-    const { result } = storeApiHook({ role: "client", startLocked: false });
+    // A traveler on the official trunk: holding works, placing is refused.
+    const { result } = storeApiHook({
+      role: "client",
+      startLocked: false,
+      timeline: trunkTimeline([node("n1")]),
+    });
     act(() => result.current.getState().holdItem("n1"));
     act(() => result.current.getState().placeHeldItem("2024-06-20", 600));
     const s = result.current.getState();
@@ -150,7 +167,7 @@ describe("store · place-mode slice", () => {
 
   test("selectCanSchedule: advisor-with-lock yes, plain traveler no", () => {
     expect(
-      selectCanSchedule({ canEdit: true, lockStatus: "locked-by-me", status: "draft" } as ItineraryGraphState),
+      selectCanSchedule({ canEdit: true, lockStatus: "locked-by-me", status: "in_studio" } as ItineraryGraphState),
     ).toBe(true);
     expect(
       selectCanSchedule({
@@ -169,7 +186,7 @@ describe("CollectionRail · Schedule affordance", () => {
     const init: ItineraryGraphInit = {
       timeline: timeline([node("n1")]),
       itineraryId: "it-1",
-      status: "draft",
+      status: "in_studio",
       role: "advisor",
       apiBaseUrl: "http://api.test",
       accessToken: "tok",
@@ -199,8 +216,8 @@ describe("CollectionRail · Schedule affordance", () => {
     expect(getApi()?.getState().heldItem).toEqual({ nodeId: "n1", title: "Sushi Saito" });
   });
 
-  test("a read-only viewer never sees Schedule", () => {
-    renderRail({ role: "client", startLocked: false });
+  test("a read-only viewer (traveler on the trunk) never sees Schedule", () => {
+    renderRail({ role: "client", startLocked: false, timeline: trunkTimeline([node("n1")]) });
     expect(screen.queryByTestId("collection-schedule")).toBeNull();
   });
 });
@@ -210,7 +227,7 @@ describe("PlaceModeLayer · cross-surface chrome", () => {
     const init: ItineraryGraphInit = {
       timeline: timeline(nodes),
       itineraryId: "it-1",
-      status: "draft",
+      status: "in_studio",
       role: "advisor",
       apiBaseUrl: "http://api.test",
       accessToken: "tok",

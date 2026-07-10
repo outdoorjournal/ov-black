@@ -100,7 +100,7 @@ test("ADV-4: advisor composes a typed + priced card (with live preview) into the
     (n) => n.title === title,
   );
   expect(node?.type).toBe("meal");
-  expect(node?.status).toBe("proposed");
+  expect(node?.status).toBe("pending");
   expect(node?.starts_at ?? null).toBeNull();
   expect(Number(node?.cost_amount)).toBe(450);
   expect(node?.cost_currency).toBe("USD");
@@ -145,7 +145,7 @@ test("ADV-4: advisor composes a pasted link into the Collection", async ({
     (n) => n.source_id === url,
   );
   expect(node?.type).toBe("experience");
-  expect(node?.status).toBe("proposed");
+  expect(node?.status).toBe("pending");
 });
 
 test("ADV-4: advisor clicks an empty timeline slot to schedule a new card", async ({
@@ -203,7 +203,7 @@ test("ADV-4: advisor clicks an empty timeline slot to schedule a new card", asyn
     (n) => n.title === title,
   );
   expect(node?.type).toBe("experience");
-  expect(node?.status).toBe("proposed");
+  expect(node?.status).toBe("pending");
   expect(node?.starts_at ?? null).not.toBeNull();
   expect(node?.starts_at ?? "").toContain("2026-08-01");
 });

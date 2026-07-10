@@ -142,11 +142,10 @@ def client(overrides) -> Iterator[TestClient]:
 def auth_headers(make_token) -> Iterator[dict[str, str]]:
     """Real JWT minted by the conftest factory against a seeded auth user.
 
-    The S08 draft-read gate requires ``actor.user_id == created_by`` for
-    a caller to read back their own draft. We mint a random UUID sub and
-    seed the matching ``auth.users`` row so ``itineraries.created_by``'s
-    FK to ``auth.users(id)`` is satisfied. The row is torn down on
-    teardown.
+    The read gate requires ``actor.user_id == created_by`` for a caller to
+    read back their own draft. We mint a random UUID sub and seed the
+    matching ``auth.users`` row so ``itineraries.created_by``'s FK to
+    ``auth.users(id)`` is satisfied. The row is torn down on teardown.
     """
     user_id = uuid.uuid4()
 
@@ -211,6 +210,33 @@ def _cleanup(itinerary_id: uuid.UUID) -> None:
             )
 
     _run_with_engine(_do)
+
+
+def _make_fork(itinerary_id: uuid.UUID) -> uuid.UUID:
+    """Turn a freshly-created itinerary into a FORK of a bare parent trunk.
+
+    The trunk guard (0043/0044) reserves direct USER content mutations to
+    working forks, so these HTTP acceptance flows build their graph inside a
+    fork. Returns the parent trunk id (for cleanup).
+    """
+    parent_id = uuid.uuid4()
+
+    async def _do(eng) -> None:
+        async with eng.begin() as conn:
+            await conn.execute(
+                text("insert into public.itineraries (id, title) values (:id, 'trunk')"),
+                {"id": parent_id},
+            )
+            await conn.execute(
+                text(
+                    "update public.itineraries set forked_from_id = :p, fork_status = 'open' "
+                    "where id = :i"
+                ),
+                {"p": parent_id, "i": itinerary_id},
+            )
+
+    _run_with_engine(_do)
+    return parent_id
 
 
 def _fetch_scalar(sql: str, **params: Any) -> Any:
@@ -345,6 +371,8 @@ def test_get_itinerary_graph_returns_assembled_view(
     )
     assert create.status_code == 201, create.text
     itinerary_id = uuid.UUID(create.json()["id"])
+    # USER content mutations are reserved to forks (trunk guard) — build inside one.
+    parent_id = _make_fork(itinerary_id)
 
     try:
         # Root → child (subgraph parent) → two grandchildren + an edge to
@@ -419,6 +447,7 @@ def test_get_itinerary_graph_returns_assembled_view(
         assert body["edges"][0]["type"] == "alternative_to"
     finally:
         _cleanup(itinerary_id)
+        _cleanup(parent_id)
 
 
 def test_every_mutation_produces_history_row(
@@ -438,6 +467,8 @@ def test_every_mutation_produces_history_row(
     )
     assert create.status_code == 201, create.text
     itinerary_id = uuid.UUID(create.json()["id"])
+    # USER content mutations are reserved to forks (trunk guard) — build inside one.
+    parent_id = _make_fork(itinerary_id)
 
     try:
         n1 = client.post(
@@ -506,6 +537,7 @@ def test_every_mutation_produces_history_row(
         assert edge_ops == ["insert", "delete"]
     finally:
         _cleanup(itinerary_id)
+        _cleanup(parent_id)
 
 
 def test_inventory_sourced_nodes_carry_source_and_source_id(
@@ -533,6 +565,8 @@ def test_inventory_sourced_nodes_carry_source_and_source_id(
     )
     assert create.status_code == 201
     itinerary_id = uuid.UUID(create.json()["id"])
+    # USER content mutations are reserved to forks (trunk guard) — build inside one.
+    parent_id = _make_fork(itinerary_id)
 
     try:
         # Happy path: source + source_id together → 201 and round-trips.
@@ -575,3 +609,4 @@ def test_inventory_sourced_nodes_carry_source_and_source_id(
         assert "source_id" in detail or detail == "nodes_provenance_complete", detail
     finally:
         _cleanup(itinerary_id)
+        _cleanup(parent_id)

@@ -167,12 +167,7 @@ body {
     border: var(--card-border);
     box-shadow: var(--card-shadow);
   }
-  .card-substrate[data-status="idea"] {
-    --card-bg: #f7f4ee;
-    --card-border: 1px dashed rgba(10, 10, 10, 0.18);
-    --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
-  }
-  .card-substrate[data-status="proposed"] {
+  .card-substrate[data-status="pending"] {
     --card-bg: #f7f4ee;
     --card-border: 1px solid rgba(10, 10, 10, 0.1);
     --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.25),

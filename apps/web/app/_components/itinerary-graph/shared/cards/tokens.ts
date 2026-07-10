@@ -173,8 +173,7 @@ export const TYPE_TOKENS: Record<CardKind, TypeToken> = {
 };
 
 export type StatusKind =
-  | "idea"
-  | "proposed"
+  | "pending"
   | "approved"
   | "booked"
   | "confirmed"
@@ -184,15 +183,10 @@ export const STATUS_TOKENS: Record<
   StatusKind,
   { label: string; description: string; nonColorCue: string }
 > = {
-  idea: {
-    label: "Idea",
-    description: "Mentioned in conversation; not yet a candidate.",
-    nonColorCue: "Dashed border, italic title, 70% opacity.",
-  },
-  proposed: {
-    label: "Proposed",
-    description: "Surfaced for the traveler to react to.",
-    nonColorCue: "Solid border, footer tag “Proposed”, soft shadow.",
+  pending: {
+    label: "Pending",
+    description: "On the board; not yet approved.",
+    nonColorCue: "Solid border, footer tag “Pending”, soft shadow.",
   },
   approved: {
     label: "Approved",

@@ -33,16 +33,16 @@ export function StatsBand({ overview }: { overview: AdvisorOverviewResponse }) {
         sub={overview.clients.pending > 0 ? `${overview.clients.pending} pending` : undefined}
       />
       <Cell
-        href={"/command-center/trips?status=draft" as Route}
-        value={String(overview.itineraries.draft)}
+        href={"/command-center/trips?status=in_studio" as Route}
+        value={String(overview.itineraries.in_studio)}
         label="In the studio"
-        sub="drafts"
+        sub="in studio"
       />
       <Cell
-        href={"/command-center/trips?status=proposed" as Route}
-        value={String(overview.itineraries.proposed)}
+        href={"/command-center/trips?status=with_traveler" as Route}
+        value={String(overview.itineraries.with_traveler)}
         label="With travelers"
-        sub="proposed"
+        sub="awaiting review"
       />
       <Cell
         href={"/command-center/trips?status=approved" as Route}

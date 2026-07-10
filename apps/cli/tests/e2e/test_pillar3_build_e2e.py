@@ -96,7 +96,7 @@ async def test_proposing_an_inventory_node_carries_provenance_and_cost(
     if node is None:
         pytest.skip("no searched experience was detail-addressable for proposal")
     assert node is not None  # narrowed by the skip above (pytest.skip is NoReturn)
-    assert str(node.status) == "proposed"
+    assert str(node.status) == "pending"
     assert_no_violations(flows.assert_provenance(node))
 
     # 3. Cost is both-or-neither: if the source priced it, the node carries numeric cost.
@@ -209,12 +209,12 @@ async def test_advisor_approves_built_itinerary(advisor: Ovb, built_itinerary: s
     with contextlib.suppress(Exception):  # lock is best-effort; approve is the assertion.
         await advisor.lock(built_itinerary)
 
-    itin = await advisor.approve(built_itinerary)
-    assert str(itin.status) == "approved", itin.status
+    itin = await advisor.approve_all(built_itinerary)
+    assert str(itin.graph.itinerary.display_status) == "approved"
 
     # And the graph read reflects the approved status (linearization-driven surface).
     graph = await advisor.get_graph(built_itinerary)
-    assert str(graph.itinerary.status) == "approved"
+    assert str(graph.itinerary.display_status) == "approved"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

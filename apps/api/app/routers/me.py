@@ -29,21 +29,23 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from app.auth import AuthenticatedUser, require_user
 from app.db import get_session
 from app.models import (
     AgentSession,
     AgentTurn,
+    ForkStatus,
     InvoiceStatus,
     Itinerary,
-    ItineraryStatus,
     ProfileFact,
     SessionAudience,
     TurnRole,
 )
 from app.services import invoices as invoices_svc
 from app.services.clients import resolve_client_for_auth_user
+from app.services.display_status import DisplayStatus, display_status_expr
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,10 +69,14 @@ class MyItinerarySummary(BaseModel):
 
     id: uuid.UUID
     title: str
-    status: ItineraryStatus
+    # Derived trunk lifecycle bucket (in_studio / with_traveler / approved).
+    status: DisplayStatus
     created_at: datetime
     updated_at: datetime
-    approved_at: datetime | None
+    # True when the caller has their own OPEN fork of this trunk — the solo
+    # traveler's working copy. Basecamp uses it to label an empty trunk "your
+    # working version" instead of the advisor-is-crafting teaser.
+    has_open_fork: bool = False
 
 
 class MyItinerariesResponse(BaseModel):
@@ -201,25 +207,41 @@ async def list_my_itineraries_endpoint(
     if client is None:
         return MyItinerariesResponse(itineraries=[])
 
-    # Only OFFICIAL itineraries (baselines) list here. A fork is the traveler's
+    # Only OFFICIAL itineraries (trunks) list here. A fork is the traveler's
     # private "My version" of a trip — reached via the two-version toggle on the
     # itinerary page, never shown as a standalone trip card on basecamp.
-    rows = (
-        (
-            await session.execute(
-                select(Itinerary)
-                .where(
-                    Itinerary.client_id == client.id,
-                    Itinerary.forked_from_id.is_(None),
-                )
-                .order_by(Itinerary.updated_at.desc())
-            )
+    fork = aliased(Itinerary)
+    has_open_fork_expr = (
+        select(fork.id)
+        .where(
+            fork.forked_from_id == Itinerary.id,
+            fork.fork_status == ForkStatus.open,
+            fork.created_by == user_id,
         )
-        .scalars()
-        .all()
+        .exists()
     )
+    rows = (
+        await session.execute(
+            select(Itinerary, display_status_expr(), has_open_fork_expr)
+            .where(
+                Itinerary.client_id == client.id,
+                Itinerary.forked_from_id.is_(None),
+            )
+            .order_by(Itinerary.updated_at.desc())
+        )
+    ).all()
     return MyItinerariesResponse(
-        itineraries=[MyItinerarySummary.model_validate(row) for row in rows]
+        itineraries=[
+            MyItinerarySummary(
+                id=row.id,
+                title=row.title,
+                status=DisplayStatus(bucket),
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                has_open_fork=bool(has_fork),
+            )
+            for row, bucket, has_fork in rows
+        ]
     )
 
 

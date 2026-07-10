@@ -2,7 +2,7 @@
 
 import type {
   EdgeResponse,
-  ItineraryStatus,
+  DisplayStatus,
   NodeResponse,
   NodeType,
 } from "@ov-black/api-client";
@@ -10,7 +10,7 @@ import type {
 import { buildDayChains } from "./dayChains";
 
 export type FinalItineraryViewProps = {
-  status: ItineraryStatus;
+  status: DisplayStatus;
   nodes: NodeResponse[];
   edges: EdgeResponse[];
   title: string | null;

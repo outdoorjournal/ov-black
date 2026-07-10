@@ -11,7 +11,7 @@ vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   acquireItineraryLock: vi.fn(async () => ({ ok: true })),
   releaseItineraryLock: vi.fn(async () => ({ ok: true })),
-  approveItinerary: vi.fn(async () => ({ ok: true })),
+  approveAllNodes: vi.fn(async () => ({ ok: true })),
   createNode: vi.fn(async () => ({
     ok: true,
     node: { id: "server-note", type: "note" },
@@ -33,6 +33,7 @@ vi.mock("@ov-black/api-client", () => ({
     },
   })),
   requestReconcile: vi.fn(async () => ({ ok: true, itinerary: { id: "fork-9" } })),
+  reconcileFork: vi.fn(async () => ({ ok: true, result: { outcomes: [] } })),
   cancelReconcile: vi.fn(async () => ({ ok: true, itinerary: { id: "fork-9" } })),
   abandonFork: vi.fn(async () => ({ ok: true, itinerary: { id: "fork-9" } })),
 }));
@@ -42,6 +43,7 @@ import {
   cancelReconcile,
   createNode,
   forkItinerary,
+  reconcileFork,
   requestReconcile,
   updateNode,
   type EdgeResponse,
@@ -60,7 +62,7 @@ const HOST: NodeResponse = {
   itinerary_id: "it-1",
   parent_subgraph_id: null,
   type: "experience",
-  status: "proposed",
+  status: "pending",
   title: "Tea at 1:30",
   source: null,
   source_id: null,
@@ -73,7 +75,7 @@ function timeline(forkedFromId: string | null): ItineraryTimeline {
     title: "Trip",
     client_id: "c-1",
     created_by: "u-1",
-    status: "draft",
+    display_status: "in_studio",
     forked_from_id: forkedFromId,
   };
   return {
@@ -94,12 +96,13 @@ function timeline(forkedFromId: string | null): ItineraryTimeline {
 function renderStore(
   forkedFromId: string | null,
   viewerOpenForkId: string | null = null,
+  role: "client" | "advisor" = "client",
 ) {
   const init: ItineraryGraphInit = {
     timeline: timeline(forkedFromId),
     itineraryId: "it-1",
-    status: "draft",
-    role: "client",
+    status: "in_studio",
+    role,
     apiBaseUrl: "http://api",
     accessToken: "token",
     viewerOpenForkId,
@@ -232,6 +235,60 @@ describe("merge request lifecycle", () => {
     });
     expect(abandonFork).toHaveBeenCalled();
     expect(nav).toHaveBeenCalledWith("base-1");
+  });
+});
+
+
+describe("publish (advisor workspace → official trunk)", () => {
+  test("publishMine reconciles accept-all and navigates back to the trunk", async () => {
+    const { result } = renderStore("base-1", null, "advisor");
+    const nav = vi.fn();
+    await act(async () => {
+      result.current.getState().publishMine(nav);
+      await Promise.resolve();
+    });
+    expect(reconcileFork).toHaveBeenCalledWith(
+      expect.anything(),
+      "it-1",
+      expect.objectContaining({ accept_all: true }),
+    );
+    expect(nav).toHaveBeenCalledWith("base-1");
+  });
+
+  test("a blocking feasibility finding refuses the fast path and flags it", async () => {
+    vi.mocked(reconcileFork).mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      detail: "fork_infeasible",
+    } as Awaited<ReturnType<typeof reconcileFork>>);
+    const { result } = renderStore("base-1", null, "advisor");
+    const nav = vi.fn();
+    await act(async () => {
+      result.current.getState().publishMine(nav);
+      await Promise.resolve();
+    });
+    expect(nav).not.toHaveBeenCalled();
+    expect(result.current.getState().publishBlocked).toBe(true);
+  });
+
+  test("travelers cannot publish (advisor gesture only)", async () => {
+    const { result } = renderStore("base-1");
+    const nav = vi.fn();
+    await act(async () => {
+      result.current.getState().publishMine(nav);
+      await Promise.resolve();
+    });
+    expect(reconcileFork).not.toHaveBeenCalled();
+  });
+
+  test("publishMine is a no-op on the trunk itself", async () => {
+    const { result } = renderStore(null, null, "advisor");
+    const nav = vi.fn();
+    await act(async () => {
+      result.current.getState().publishMine(nav);
+      await Promise.resolve();
+    });
+    expect(reconcileFork).not.toHaveBeenCalled();
   });
 });
 

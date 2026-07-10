@@ -41,7 +41,7 @@ async def test_add_note_attached_posts_attached_to_node_id(
         assert path == "/itinerary/it-1/nodes"
         assert body == {
             "type": "note",
-            "status": "proposed",
+            "status": "pending",
             "title": "why are we doing this at 1:30?",
             "attached_to_node_id": "n-7",
         }

@@ -6,7 +6,6 @@ import {
   findClientByEmail,
   getGraphNodesAsAdvisor,
   getItineraryStatusAsAdvisor,
-  proposeItineraryAsAdvisor,
   seedPricedItemAsAdvisor,
 } from "../support/api";
 
@@ -55,7 +54,9 @@ async function seedProposedPricedTripForTraveler(
     currency: "USD",
     kind: "total",
   });
-  await proposeItineraryAsAdvisor(id);
+  // TODO(wave4): the whole-itinerary propose endpoint is gone (trunk + forks
+  // model). Seeded pending cards already surface to the traveler; the proper
+  // publish-flow rework lands next wave.
   return { id };
 }
 
@@ -99,15 +100,15 @@ test("ADV-10: the traveler approves card-by-card and the plan derives to approve
 }) => {
   const { id } = await seedProposedPricedTripForTraveler(page, baseURL!);
 
-  const proposed = (await getGraphNodesAsAdvisor(id)).filter(
-    (n) => n.status === "proposed",
+  const pending = (await getGraphNodesAsAdvisor(id)).filter(
+    (n) => n.status === "pending",
   );
-  expect(proposed.length).toBe(2);
+  expect(pending.length).toBe(2);
 
   // Approve each card from its detail route; after the first the plan is still
-  // proposed, after the last it derives to approved.
-  for (let i = 0; i < proposed.length; i++) {
-    const node = proposed[i]!;
+  // with the traveler, after the last it derives to approved.
+  for (let i = 0; i < pending.length; i++) {
+    const node = pending[i]!;
     await page.goto(`/itinerary/${id}/item/${node.id}`);
     const approve = page.getByTestId("card-detail-approve-node");
     await expect(approve).toBeVisible();
@@ -119,6 +120,6 @@ test("ADV-10: the traveler approves card-by-card and the plan derives to approve
       .toBe("approved");
     await expect
       .poll(async () => getItineraryStatusAsAdvisor(id))
-      .toBe(i === proposed.length - 1 ? "approved" : "proposed");
+      .toBe(i === pending.length - 1 ? "approved" : "with_traveler");
   }
 });

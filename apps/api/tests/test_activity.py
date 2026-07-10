@@ -118,7 +118,7 @@ async def _seed_history(
     itinerary_id: uuid.UUID,
     occurred_at: datetime,
     title: str = "Card",
-    status_after: str = "proposed",
+    status_after: str = "approved",
 ) -> None:
     await s.execute(
         text(
@@ -131,7 +131,7 @@ async def _seed_history(
         {
             "nid": uuid.uuid4(),
             "iid": itinerary_id,
-            "b": '{"status": "idea"}',
+            "b": '{"status": "pending"}',
             "a": f'{{"status": "{status_after}", "title": "{title}"}}',
             "at": occurred_at,
         },

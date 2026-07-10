@@ -2,14 +2,15 @@
 
 AGT-2: the agent used to be blind to the itinerary's lifecycle and money state
 unless it burned a ``get_itinerary`` call — and the tool never carried totals,
-invoicing, or the ADV-10 ``draft → proposed → approved`` position at all. This
+invoicing, or the trip's derived lifecycle position at all. This
 module renders one compact plaintext block that
 :func:`app.agent.traveler_context.assemble_traveler_context` appends to the
 system prompt **every turn** (the prompt is rebuilt per turn, so the digest
 never stacks — each turn sees exactly one, current snapshot). The same block is
 mirrored as ``AgentContext.graph_digest`` for the ``get_traveler_context`` tool.
 
-Contents: itinerary status (with what the state *means* for the propose flow),
+Contents: the trip's derived lifecycle bucket (with what the state *means*
+for the publish flow — or the fork framing when pinned to a working copy),
 node counts by status, per-currency trip totals, the uninvoiced remainder
 (shared math with the advisor cockpit via
 :mod:`app.services.billing_summary`), a pending reconcile request, and the
@@ -35,44 +36,49 @@ from app.models import (
     AnalysisStatus,
     FindingSeverity,
     Itinerary,
-    ItineraryStatus,
     Node,
     NodeStatus,
 )
 from app.services.billing_summary import BillingState, billing_state
+from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.node_cost import resolve_party_size, sum_node_costs
 
 _ZERO = Decimal("0.00")
 
-# Lifecycle render order — ideas first, firmest last, discarded never shown.
+# Lifecycle render order — pending first, firmest last, discarded never shown.
 _STATUS_ORDER = (
-    NodeStatus.idea,
-    NodeStatus.proposed,
+    NodeStatus.pending,
     NodeStatus.approved,
     NodeStatus.booked,
     NodeStatus.confirmed,
 )
 
-_ITINERARY_STATUS_HINTS = {
-    ItineraryStatus.draft: (
-        "draft — still being built; new cards land as proposals. When the plan "
-        "is ready, the advisor proposes it to the traveler from the board."
+_DISPLAY_STATUS_HINTS = {
+    DisplayStatus.in_studio: (
+        "in the studio — nothing is with the traveler yet on this official "
+        "trip; content reaches it when a working version is published "
+        "(reconciled) into it."
     ),
-    ItineraryStatus.proposed: (
-        "proposed — handed to the traveler for review; the build is frozen "
-        "until they approve (card by card or all at once) or the advisor "
-        "reopens it."
+    DisplayStatus.with_traveler: (
+        "with the traveler — published cards are pending their review; they "
+        "approve card by card or all at once, and approval locks a card in."
     ),
-    ItineraryStatus.approved: (
+    DisplayStatus.approved: (
         "approved — the traveler has approved the plan; next steps are money "
         "and booking, which staff execute."
     ),
 }
 
+_FORK_HINT = (
+    "working version — a private copy of the official trip; edits here are "
+    "proposals until staff publish (reconcile) them into the official version."
+)
+
 
 def render_graph_digest(
     *,
-    itinerary_status: ItineraryStatus,
+    display_status: DisplayStatus,
+    is_fork: bool,
     status_counts: dict[NodeStatus, int],
     totals: dict[str, Decimal],
     party_size: int,
@@ -84,7 +90,10 @@ def render_graph_digest(
     """Pure renderer — the async loader gathers, this formats (unit-testable)."""
     lines: list[str] = []
 
-    hint = _ITINERARY_STATUS_HINTS.get(itinerary_status, itinerary_status.value)
+    if is_fork:
+        hint = _FORK_HINT
+    else:
+        hint = _DISPLAY_STATUS_HINTS.get(display_status, display_status.value)
     lines.append(f"Status: {hint}")
 
     total_cards = sum(status_counts.get(s, 0) for s in _STATUS_ORDER)
@@ -178,14 +187,16 @@ async def graph_digest_for_itinerary(
         return None
     itinerary_row = (
         await session.execute(
-            select(Itinerary.status, Itinerary.reconcile_requested_at).where(
-                Itinerary.id == itinerary_id
-            )
+            select(
+                Itinerary.forked_from_id,
+                display_status_expr(),
+                Itinerary.reconcile_requested_at,
+            ).where(Itinerary.id == itinerary_id)
         )
     ).first()
     if itinerary_row is None:
         return None
-    itinerary_status, reconcile_requested_at = itinerary_row
+    forked_from_id, display_status_value, reconcile_requested_at = itinerary_row
 
     count_rows = (
         await session.execute(
@@ -206,7 +217,8 @@ async def graph_digest_for_itinerary(
     block_count, warn_count = await _latest_completed_analysis_counts(session, itinerary_id)
 
     return render_graph_digest(
-        itinerary_status=itinerary_status,
+        display_status=DisplayStatus(display_status_value),
+        is_fork=forked_from_id is not None,
         status_counts=status_counts,
         totals=totals,
         party_size=party_size,

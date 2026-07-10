@@ -157,7 +157,6 @@ class Kind1(StrEnum):
     booking_unconfirmed = 'booking_unconfirmed'
     traveler_approved = 'traveler_approved'
     payment_received = 'payment_received'
-    trip_proposed = 'trip_proposed'
 
 
 class Urgency(StrEnum):
@@ -526,6 +525,16 @@ class DaySlotPayload(BaseModel):
     node_ids_in_order: Annotated[list[UUID], Field(title='Node Ids In Order')]
 
 
+class DisplayStatus(StrEnum):
+    """
+    Derived trunk lifecycle bucket (never stored).
+    """
+
+    in_studio = 'in_studio'
+    with_traveler = 'with_traveler'
+    approved = 'approved'
+
+
 class DocumentActor(StrEnum):
     """
     Mirrors the public.document_actor enum from 0020.
@@ -873,27 +882,11 @@ class ItineraryCountsOut(BaseModel):
         extra='forbid',
     )
     total: Annotated[int, Field(title='Total')]
-    draft: Annotated[int, Field(title='Draft')]
-    proposed: Annotated[int, Field(title='Proposed')]
+    in_studio: Annotated[int, Field(title='In Studio')]
+    with_traveler: Annotated[int, Field(title='With Traveler')]
     approved: Annotated[int, Field(title='Approved')]
     open_forks: Annotated[int, Field(title='Open Forks')]
     reconcile_requested: Annotated[int, Field(title='Reconcile Requested')]
-
-
-class ItineraryStatus(StrEnum):
-    """
-    Mirrors the public.itinerary_status Postgres enum (0006, `proposed` 0039).
-
-    Lifecycle: ``draft`` (advisor building) → ``proposed`` (advisor finished and
-    handed the plan to the traveler for review, freezing the build) → ``approved``
-    (the traveler has approved — the itinerary-level ``approved`` is *derived*:
-    it is set once every remaining ``proposed`` node has been actioned). The
-    whole itinerary follows the same ``proposed → approved`` arc as its nodes.
-    """
-
-    draft = 'draft'
-    proposed = 'proposed'
-    approved = 'approved'
 
 
 class ItineraryTimingKind(StrEnum):
@@ -1082,10 +1075,10 @@ class MyItinerarySummary(BaseModel):
 
     id: Annotated[UUID, Field(title='Id')]
     title: Annotated[str, Field(title='Title')]
-    status: ItineraryStatus
+    status: DisplayStatus
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
-    approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')]
+    has_open_fork: Annotated[bool | None, Field(title='Has Open Fork')] = False
 
 
 class MyOnboardingSessionResponse(BaseModel):
@@ -1146,11 +1139,15 @@ class NodeChangeResponse(BaseModel):
 
 class NodeStatus(StrEnum):
     """
-    Mirrors the public.node_status Postgres enum.
+    Mirrors the public.node_status Postgres enum (collapsed in 0043).
+
+    ``pending`` is the single pre-firmed default; whether it reads as "idea"
+    or "proposed to the traveler" is derived from branch topology (fork vs.
+    official trunk), not stored. The firmed statuses record real-world
+    events: traveler approval, invoice/booking, supplier confirmation.
     """
 
-    idea = 'idea'
-    proposed = 'proposed'
+    pending = 'pending'
     approved = 'approved'
     booked = 'booked'
     confirmed = 'confirmed'
@@ -1527,7 +1524,10 @@ class ReconcileRequest(BaseModel):
 
     ``analysis_id`` pins which Analyze run gates the pass (defaults to the fork's
     latest completed run); ``override_block`` is the advisor's explicit, logged
-    escape hatch past a ``block`` finding.
+    escape hatch past a ``block`` finding. ``accept_all=True`` is the publish
+    fast path: every change in the server-side diff is accepted (``decisions``
+    is ignored — send ``[]``), with no staleness window between a fetched diff
+    and the verdicts.
     """
 
     model_config = ConfigDict(
@@ -1538,6 +1538,7 @@ class ReconcileRequest(BaseModel):
     ] = None
     analysis_id: Annotated[UUID | None, Field(title='Analysis Id')] = None
     override_block: Annotated[bool | None, Field(title='Override Block')] = False
+    accept_all: Annotated[bool | None, Field(title='Accept All')] = False
 
 
 class ReconciliationRowResponse(BaseModel):
@@ -1972,10 +1973,9 @@ class AdvisorItinerarySummary(BaseModel):
     )
     id: Annotated[UUID, Field(title='Id')]
     title: Annotated[str, Field(title='Title')]
-    status: ItineraryStatus
+    status: DisplayStatus
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
-    approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')]
     last_activity_at: Annotated[AwareDatetime, Field(title='Last Activity At')]
     client: AdvisorItineraryClient
     needs_attention: Annotated[bool | None, Field(title='Needs Attention')] = False
@@ -2228,8 +2228,8 @@ class CreateNodeFromInventoryRequest(BaseModel):
     The server fetches the current item through the provider registry and
     derives the typed card metadata (e.g. a Duffel flight → FlightCardAttrs),
     so callers never hand-shape card attrs. For flights this re-fetch is a
-    natural offer refresh (D024). ``status`` defaults to ``proposed`` — the
-    item is a candidate on the board, not a stray idea.
+    natural offer refresh (D024). ``status`` defaults to ``pending`` — a
+    candidate on the board.
     """
 
     model_config = ConfigDict(
@@ -2237,7 +2237,7 @@ class CreateNodeFromInventoryRequest(BaseModel):
     )
     source: Annotated[str, Field(title='Source')]
     source_id: Annotated[str, Field(title='Source Id')]
-    status: NodeStatus | None = 'proposed'
+    status: NodeStatus | None = 'pending'
     parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')] = None
 
 
@@ -2249,7 +2249,7 @@ class CreateNodeFromLinkRequest(BaseModel):
     description) so the saved card looks intentional rather than a bare link;
     the fetch degrades gracefully to just the URL. ``kind`` files the link under
     a Collection category (a restaurant → ``meal``, a hotel → ``hotel``) and
-    defaults to ``note`` — an unfiled idea. ``status`` defaults to ``proposed``
+    defaults to ``note`` — an unfiled idea. ``status`` defaults to ``pending``
     (a candidate on the board). There is no ``starts_at``: a saved link lands in
     the Collection, unscheduled, until it's dragged onto the timeline.
     """
@@ -2259,14 +2259,14 @@ class CreateNodeFromLinkRequest(BaseModel):
     )
     url: Annotated[str, Field(max_length=2048, min_length=1, title='Url')]
     kind: NodeType | None = 'note'
-    status: NodeStatus | None = 'proposed'
+    status: NodeStatus | None = 'pending'
     note: Annotated[Note | None, Field(title='Note')] = None
     parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')] = None
 
 
 class CreateNodeRequest(BaseModel):
     type: NodeType
-    status: NodeStatus | None = 'idea'
+    status: NodeStatus | None = 'pending'
     title: Annotated[str | None, Field(title='Title')] = ''
     parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')] = None
     source: Annotated[str | None, Field(title='Source')] = None
@@ -2618,11 +2618,7 @@ class ItineraryResponse(BaseModel):
     title: Annotated[str, Field(title='Title')]
     client_id: Annotated[UUID | None, Field(title='Client Id')]
     created_by: Annotated[UUID | None, Field(title='Created By')]
-    status: ItineraryStatus | None = 'draft'
-    approved_by: Annotated[UUID | None, Field(title='Approved By')] = None
-    approved_at: Annotated[AwareDatetime | None, Field(title='Approved At')] = None
-    proposed_by: Annotated[UUID | None, Field(title='Proposed By')] = None
-    proposed_at: Annotated[AwareDatetime | None, Field(title='Proposed At')] = None
+    display_status: DisplayStatus | None = None
     forked_from_id: Annotated[UUID | None, Field(title='Forked From Id')] = None
     fork_status: ForkStatus | None = None
     reconcile_requested_at: Annotated[
@@ -3155,3 +3151,12 @@ class ReconcileResponse(BaseModel):
     baseline: GraphResponse
     fork: ItineraryResponse
     outcomes: Annotated[list[ReconcileOutcomeResponse], Field(title='Outcomes')]
+
+
+class ApproveAllResponse(BaseModel):
+    """
+    Result of the bulk approve: how many nodes flipped + the fresh graph.
+    """
+
+    approved_count: Annotated[int, Field(title='Approved Count')]
+    graph: GraphResponse

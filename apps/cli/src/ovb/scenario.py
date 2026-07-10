@@ -76,7 +76,9 @@ class GraphSnapshot:
 
     @property
     def status(self) -> str:
-        return str(self.graph.itinerary.status)
+        """The trunk's derived display bucket ("" when the endpoint omitted it)."""
+        value = self.graph.itinerary.display_status
+        return str(value.value if hasattr(value, "value") else value or "")
 
     def statuses(self) -> dict[str, str]:
         return {nid: str(n.status) for nid, n in self.nodes.items()}

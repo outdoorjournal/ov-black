@@ -36,7 +36,6 @@ from app.inventory.schemas import InventoryItem
 from app.models import (
     EdgeType,
     Itinerary,
-    ItineraryStatus,
     ItineraryTimingKind,
     NodeStatus,
     NodeType,
@@ -171,7 +170,7 @@ _PLAN: list[_Stop] = [
         1,
         "15:00",
         120,
-        "proposed",
+        "pending",
         "experience",
         "google_places",
         keyword="Shinjuku Gyoen National Garden",
@@ -400,7 +399,6 @@ async def build_live_japan_itinerary(
         title=title or "Japan · live concierge build",
         client_id=client_id,
         created_by=created_by,
-        status=ItineraryStatus.draft,
     )
     session.add(itinerary)
     await session.flush()

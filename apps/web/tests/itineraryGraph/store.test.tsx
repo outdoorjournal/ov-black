@@ -17,8 +17,6 @@ import {
   itineraryGraphStore,
   selectCanApprove,
   selectCanLeaveNote,
-  selectCanPropose,
-  selectCanReopen,
   selectEditable,
   selectIsDraftMine,
   selectTravelerEditable,
@@ -31,7 +29,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 const NODE: NodeResponse = {
@@ -66,7 +64,7 @@ function renderStore(init: Partial<ItineraryGraphInit> = {}) {
   const full: ItineraryGraphInit = {
     timeline: timeline([NODE]),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "client",
     apiBaseUrl: null,
     accessToken: null,
@@ -80,8 +78,42 @@ function renderStore(init: Partial<ItineraryGraphInit> = {}) {
   return renderHook(() => itineraryGraphStore.useStoreApi(), { wrapper });
 }
 
-describe("selectEditable", () => {
-  const base = { status: "draft", lockStatus: "locked-by-me" } as ItineraryGraphState;
+describe("selectEditable (credentialed: advisor on their working copy)", () => {
+  const creds = {
+    canEdit: true,
+    apiBaseUrl: "x",
+    accessToken: "t",
+  } as unknown as ItineraryGraphState;
+
+  test("true on a fork — the advisor workspace", () => {
+    expect(
+      selectEditable({
+        ...creds,
+        sample: { itinerary: { forked_from_id: "trunk-1" } },
+      } as unknown as ItineraryGraphState),
+    ).toBe(true);
+  });
+  test("false on the official trunk (content arrives via publish)", () => {
+    expect(
+      selectEditable({
+        ...creds,
+        sample: { itinerary: { forked_from_id: null } },
+      } as unknown as ItineraryGraphState),
+    ).toBe(false);
+  });
+  test("false for travelers even on a fork (that's selectTravelerEditable)", () => {
+    expect(
+      selectEditable({
+        ...creds,
+        canEdit: false,
+        sample: { itinerary: { forked_from_id: "trunk-1" } },
+      } as unknown as ItineraryGraphState),
+    ).toBe(false);
+  });
+});
+
+describe("selectEditable (credential-less sandbox keeps the lock rule)", () => {
+  const base = { status: "in_studio", lockStatus: "locked-by-me" } as ItineraryGraphState;
   test("requires canEdit", () => {
     expect(selectEditable({ ...base, canEdit: false } as ItineraryGraphState)).toBe(false);
   });
@@ -93,96 +125,39 @@ describe("selectEditable", () => {
       selectEditable({ ...base, canEdit: true, lockStatus: "locked-by-other" } as ItineraryGraphState),
     ).toBe(false);
   });
-  test("requires a draft (not approved)", () => {
+  test("requires in_studio (not approved)", () => {
     expect(
       selectEditable({ ...base, canEdit: true, status: "approved" } as ItineraryGraphState),
     ).toBe(false);
   });
-  test("true only when staff + locked-by-me + draft", () => {
+  test("true only when staff + locked-by-me + in_studio", () => {
     expect(selectEditable({ ...base, canEdit: true } as ItineraryGraphState)).toBe(true);
   });
-  test("proposed freezes the build (not editable — ADV-10)", () => {
+  test("with_traveler freezes the build (not editable)", () => {
     expect(
-      selectEditable({ ...base, canEdit: true, status: "proposed" } as ItineraryGraphState),
+      selectEditable({ ...base, canEdit: true, status: "with_traveler" } as ItineraryGraphState),
     ).toBe(false);
-  });
-});
-
-// ── ADV-10 propose → approve gates ─────────────────────────────────────────
-
-describe("selectCanPropose", () => {
-  const base = {
-    canEdit: true,
-    status: "draft",
-    apiBaseUrl: "x",
-    accessToken: "t",
-    sample: { itinerary: { forked_from_id: null } },
-  } as unknown as ItineraryGraphState;
-
-  test("advisor on a draft baseline with creds", () => {
-    expect(selectCanPropose(base)).toBe(true);
-  });
-  test("false for a traveler", () => {
-    expect(selectCanPropose({ ...base, canEdit: false })).toBe(false);
-  });
-  test("false unless it's a draft", () => {
-    expect(selectCanPropose({ ...base, status: "proposed" })).toBe(false);
-    expect(selectCanPropose({ ...base, status: "approved" })).toBe(false);
-  });
-  test("false on a fork (propose is a baseline gesture)", () => {
-    expect(
-      selectCanPropose({
-        ...base,
-        sample: { itinerary: { forked_from_id: "b" } },
-      } as unknown as ItineraryGraphState),
-    ).toBe(false);
-  });
-  test("false without creds", () => {
-    expect(selectCanPropose({ ...base, accessToken: null })).toBe(false);
-  });
-});
-
-describe("selectCanReopen", () => {
-  const base = {
-    canEdit: true,
-    status: "proposed",
-    apiBaseUrl: "x",
-    accessToken: "t",
-  } as ItineraryGraphState;
-
-  test("advisor on a proposed plan with creds", () => {
-    expect(selectCanReopen(base)).toBe(true);
-  });
-  test("false for a traveler", () => {
-    expect(selectCanReopen({ ...base, canEdit: false })).toBe(false);
-  });
-  test("false unless it's proposed", () => {
-    expect(selectCanReopen({ ...base, status: "draft" })).toBe(false);
-    expect(selectCanReopen({ ...base, status: "approved" })).toBe(false);
-  });
-  test("false without creds", () => {
-    expect(selectCanReopen({ ...base, accessToken: null })).toBe(false);
   });
 });
 
 describe("selectCanApprove", () => {
   const traveler = {
     canEdit: false,
-    status: "proposed",
+    status: "with_traveler",
     apiBaseUrl: "x",
     accessToken: "t",
     sample: { itinerary: { forked_from_id: null } },
   } as unknown as ItineraryGraphState;
 
-  test("traveler may approve a proposed baseline", () => {
+  test("traveler may approve a plan that's with them", () => {
     expect(selectCanApprove(traveler)).toBe(true);
   });
-  test("traveler may NOT approve a draft (advisor still building)", () => {
-    expect(selectCanApprove({ ...traveler, status: "draft" })).toBe(false);
+  test("traveler may NOT approve while in the studio (advisor still building)", () => {
+    expect(selectCanApprove({ ...traveler, status: "in_studio" })).toBe(false);
   });
-  test("advisor may approve-all from draft or proposed (on a client's behalf)", () => {
-    expect(selectCanApprove({ ...traveler, canEdit: true, status: "draft" })).toBe(true);
-    expect(selectCanApprove({ ...traveler, canEdit: true, status: "proposed" })).toBe(true);
+  test("advisor may approve-all from in_studio or with_traveler (on a client's behalf)", () => {
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "in_studio" })).toBe(true);
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "with_traveler" })).toBe(true);
   });
   test("false once approved", () => {
     expect(selectCanApprove({ ...traveler, status: "approved" })).toBe(false);
@@ -201,54 +176,20 @@ describe("selectCanApprove", () => {
   });
 });
 
-describe("approval actions are inert without credentials (ADV-10)", () => {
-  test("propose / approve / approveNode / proposeCard are no-ops with null creds", () => {
+describe("approval actions are inert without credentials", () => {
+  test("approve / approveNode are no-ops with null creds", () => {
     const { result } = renderStore({
       role: "advisor",
-      status: "draft",
+      status: "in_studio",
       startLocked: true,
     });
     act(() => {
-      result.current.getState().propose();
       result.current.getState().approve();
       result.current.getState().approveNode("n1");
-      result.current.getState().proposeCard("n1");
     });
     // No credentials → guarded before any optimistic mutation; nothing changed.
-    expect(result.current.getState().status).toBe("draft");
+    expect(result.current.getState().status).toBe("in_studio");
     expect(result.current.getState().nodes[0]!.status).toBe("approved");
-  });
-});
-
-describe("proposeCard — advisor per-card hand-over gate (ADV-10)", () => {
-  // Guard coverage: each case is credentialed but bails BEFORE the network call
-  // (on the idea-only / advisor-only checks), so no fetch fires — matching this
-  // file's no-real-fetch philosophy. The optimistic flip + UI gating live in
-  // cardDetail.test.tsx / the advisor e2e (mocked wrapper / real backend).
-  test("is a no-op on a card that isn't an idea (only idea → proposed)", () => {
-    const { result } = renderStore({
-      timeline: timeline([NODE]), // NODE is `approved`, not an idea
-      role: "advisor",
-      status: "draft",
-      startLocked: true,
-      apiBaseUrl: "http://x",
-      accessToken: "t",
-    });
-    act(() => result.current.getState().proposeCard("n1"));
-    expect(result.current.getState().nodes[0]!.status).toBe("approved");
-  });
-
-  test("is a no-op for a traveler (propose is an advisor gesture)", () => {
-    const idea: NodeResponse = { ...NODE, id: "idea-1", status: "idea" };
-    const { result } = renderStore({
-      timeline: timeline([idea]),
-      role: "client",
-      status: "draft",
-      apiBaseUrl: "http://x",
-      accessToken: "t",
-    });
-    act(() => result.current.getState().proposeCard("idea-1"));
-    expect(result.current.getState().nodes[0]!.status).toBe("idea");
   });
 });
 
@@ -393,8 +334,12 @@ describe("selectIsDraftMine", () => {
     } as unknown as ItineraryGraphState;
     expect(selectIsDraftMine(onFork)).toBe(false);
   });
-  test("false for advisors, when approved, or without creds", () => {
-    expect(selectIsDraftMine({ ...draft, canEdit: true })).toBe(false);
+  test("role-agnostic: advisors get the same lazy-fork preview", () => {
+    // The advisor workspace enters through the same gesture as the traveler's
+    // "My version" — one shape for every working copy.
+    expect(selectIsDraftMine({ ...draft, canEdit: true })).toBe(true);
+  });
+  test("false when approved or without creds", () => {
     expect(selectIsDraftMine({ ...draft, status: "approved" })).toBe(false);
     expect(selectIsDraftMine({ ...draft, accessToken: null })).toBe(false);
   });

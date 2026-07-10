@@ -22,8 +22,7 @@ console = Console()
 err_console = Console(stderr=True)
 
 STATUS_STYLE: dict[str, str] = {
-    "idea": "white",
-    "proposed": "yellow",
+    "pending": "yellow",
     "approved": "green",
     "booked": "cyan",
     "confirmed": "bold blue",

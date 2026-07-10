@@ -42,7 +42,7 @@ interface CardShellProps {
 }
 
 // The card substrate as a tailwind-variants recipe. Structure only — `width`
-// sets the footprint + body padding; `status` carries the idea/discarded
+// sets the footprint + body padding; `status` carries the discarded
 // opacity cues. The status-escalating *material* (paper colour, border weight,
 // shadow depth) lives in globals.css keyed on [data-status] (the .card-substrate
 // layer), so every surface that renders a CardShell gets the identical paper.
@@ -62,15 +62,14 @@ const cardShell = tv({
       zoom: { root: "w-full max-w-[640px]", body: "px-5 pt-5" },
     },
     status: {
-      idea: { root: "opacity-80" },
-      proposed: {},
+      pending: {},
       approved: {},
       booked: {},
       confirmed: {},
       discarded: { root: "opacity-50 grayscale" },
     },
   },
-  defaultVariants: { width: "glance", status: "proposed" },
+  defaultVariants: { width: "glance", status: "pending" },
 });
 
 // Noise texture + a soft top sheen — a static image identical on every card, so
@@ -80,7 +79,7 @@ const SUBSTRATE_IMAGE = `${NOISE_BG}, linear-gradient(180deg, rgba(255,255,255,0
 
 export function CardShell({
   kind,
-  status = "proposed",
+  status = "pending",
   width = "glance",
   children,
   noteOverride,
@@ -103,7 +102,7 @@ export function CardShell({
 
   // A status-footer band (approved/booked/confirmed) or an actions row already
   // caps the card's bottom edge — the band sits flush and carries its own mt-3
-  // gap. When neither is present (an un-firmed proposed/idea/discarded card) the
+  // gap. When neither is present (an un-firmed pending/discarded card) the
   // body closes itself with bottom padding that mirrors its top/sides, so an
   // image-led card no longer bleeds flush against the bottom edge. Longhand
   // px/pt in the recipe keeps this a clean additive property (no p-3 override).
@@ -128,7 +127,7 @@ export function CardShell({
       data-note={isNote ? "true" : undefined}
       style={{ backgroundImage: SUBSTRATE_IMAGE } as CSSProperties}
     >
-      {status !== "idea" && status !== "discarded" ? (
+      {status !== "discarded" ? (
         <span
           aria-hidden
           className={`pointer-events-none absolute -top-0.5 ${
@@ -247,7 +246,7 @@ function StatusFooter({
       </div>
     );
   }
-  // idea / proposed / discarded carry their state via the substrate alone.
+  // pending / discarded carry their state via the substrate alone.
   return null;
 }
 

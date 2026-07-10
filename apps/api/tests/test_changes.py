@@ -23,8 +23,8 @@ from tests._graph_seed import LOCAL_DB_URL, insert_itinerary, integration
 
 
 def test_diff_reports_changed_added_and_removed_keys() -> None:
-    before = {"title": "Old", "status": "idea", "kept": 1}
-    after = {"title": "New", "status": "idea", "added": True}
+    before = {"title": "Old", "status": "pending", "kept": 1}
+    after = {"title": "New", "status": "pending", "added": True}
     assert diff_changed_keys(before, after) == ["added", "kept", "title"]
 
 
@@ -55,8 +55,8 @@ async def _seed_node_history(
         {
             "nid": uuid.uuid4(),
             "iid": itinerary_id,
-            "b": '{"status": "idea"}',
-            "a": f'{{"status": "proposed", "title": "{title}"}}',
+            "b": '{"status": "pending"}',
+            "a": f'{{"status": "approved", "title": "{title}"}}',
             "at": occurred_at,
         },
     )
@@ -111,8 +111,8 @@ async def test_replay_is_newest_first_and_projected() -> None:
         changes = await load_itinerary_changes(s, itinerary_id=w.itin, limit=50)
         assert len(changes) == 4
         assert changes[0].title == "Latest"
-        assert changes[0].status_before == "idea"
-        assert changes[0].status_after == "proposed"
+        assert changes[0].status_before == "pending"
+        assert changes[0].status_after == "approved"
         assert changes[0].changed_keys == ["status", "title"]
         assert {c.entity for c in changes} == {"node", "edge"}
         # The edge beat projects no title/status but does carry changed keys.

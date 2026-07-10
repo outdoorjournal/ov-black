@@ -47,21 +47,31 @@ async def insert_itinerary(
     session: AsyncSession,
     *,
     title: str = "Analyze test trip",
-    status: str = "draft",
     created_by: uuid.UUID | None = None,
     client_id: uuid.UUID | None = None,
+    forked_from_id: uuid.UUID | None = None,
+    fork_status: str | None = None,
 ) -> uuid.UUID:
     iid = uuid.uuid4()
+    if forked_from_id is not None and fork_status is None:
+        fork_status = "open"
     await session.execute(
         text(
             """
             insert into public.itineraries
-              (id, title, status, created_by, client_id)
+              (id, title, created_by, client_id, forked_from_id, fork_status)
             values
-              (:id, :t, cast(:s as public.itinerary_status), :cb, :cid)
+              (:id, :t, :cb, :cid, :ffi, cast(:fs as public.fork_status))
             """
         ),
-        {"id": iid, "t": title, "s": status, "cb": created_by, "cid": client_id},
+        {
+            "id": iid,
+            "t": title,
+            "cb": created_by,
+            "cid": client_id,
+            "ffi": forked_from_id,
+            "fs": fork_status,
+        },
     )
     await session.commit()
     return iid
@@ -73,7 +83,7 @@ async def insert_node(
     itinerary_id: uuid.UUID,
     type: str,
     title: str = "",
-    status: str = "proposed",
+    status: str = "pending",
     starts_lower: datetime | None = None,
     starts_upper: datetime | None = None,
     lat: float | None = None,
@@ -135,17 +145,17 @@ async def insert_node(
 
 def seed_itinerary_sync(
     *,
-    status: str = "approved",
     node_titles: tuple[str, ...] = ("Museum", "Lunch"),
     created_by: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """Seed an itinerary + plain nodes from a SYNC test (TestClient-based).
 
     Runs the async inserts on a throwaway engine via ``asyncio.run`` so sync
-    router tests can prepare real DB rows. Defaults to ``approved`` status so
-    the draft-read gate is skipped — any authenticated caller may then exercise
-    the analyze endpoints. Pass ``status='draft'`` (with ``created_by=None``) to
-    set up a row no non-advisor can read.
+    router tests can prepare real DB rows. The read gate is topology-derived
+    now: a trunk is readable by its owning client, its creator, or an advisor
+    — pass ``created_by`` matching the caller's auth user id to make it
+    readable by a non-advisor, or leave it None for a row only advisors can
+    read.
     """
 
     async def _seed() -> uuid.UUID:
@@ -153,10 +163,39 @@ def seed_itinerary_sync(
         maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
         try:
             async with maker() as s:
-                iid = await insert_itinerary(s, status=status, created_by=created_by)
+                iid = await insert_itinerary(s, created_by=created_by)
                 for t in node_titles:
                     await insert_node(s, itinerary_id=iid, type="experience", title=t)
                 return iid
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_seed())
+
+
+def seed_auth_user_sync() -> uuid.UUID:
+    """Insert a minimal ``auth.users`` row (fresh engine) and return its id.
+
+    The topology-derived read gate admits a trunk's creator, so router tests
+    that need a non-advisor caller with read access seed a real auth user,
+    mint the JWT with that sub, and stamp it as ``created_by``.
+    """
+
+    async def _seed() -> uuid.UUID:
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
+        maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+        uid = uuid.uuid4()
+        try:
+            async with maker() as s:
+                await s.execute(
+                    text(
+                        "insert into auth.users (id, email, is_sso_user, is_anonymous) "
+                        "values (:id, :email, false, false)"
+                    ),
+                    {"id": uid, "email": f"seed-{uid}@test.local"},
+                )
+                await s.commit()
+                return uid
         finally:
             await engine.dispose()
 

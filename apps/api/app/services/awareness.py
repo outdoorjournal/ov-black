@@ -32,8 +32,6 @@ The signals split into two tiers:
     - ``traveler_approved`` — the traveler approved cards in the last
       :data:`RECENT_WINDOW_DAYS` days (``node_history`` status → approved).
     - ``payment_received`` — a payment succeeded in the last window.
-    - ``trip_proposed`` — the advisor proposed a plan in the last window; the
-      ball is in the *traveler's* court, so it must never light the badge.
 
 Each item carries ``urgency`` (open-state signals with a clock — an expiring
 offer, an overdue invoice — rank above the rest) and ``deadline`` (the
@@ -67,7 +65,6 @@ from app.models import (
     Invoice,
     InvoiceStatus,
     Itinerary,
-    ItineraryStatus,
     Message,
     Node,
     NodeHistory,
@@ -96,7 +93,6 @@ AttentionKind = Literal[
     "booking_unconfirmed",
     "traveler_approved",
     "payment_received",
-    "trip_proposed",
 ]
 
 Urgency = Literal["urgent", "normal"]
@@ -228,7 +224,10 @@ async def load_advisor_attention(
     name_rows = (await session.execute(select(Client.id, Client.full_name).where(*scope))).all()
     name_by_client: dict[uuid.UUID, str] = dict(name_rows)  # type: ignore[arg-type]
 
-    # ── the itinerary spine: titles, ownership, reconcile + proposed flags ────
+    # ── the itinerary spine: titles, ownership, reconcile flags ───────────────
+    # (`trip_proposed` was retired with the stored itinerary lifecycle in 0044;
+    # a derived `trip_published` signal — fork_status=reconciled within the
+    # window — is a follow-up.)
     itinerary_rows = (
         await session.execute(
             select(
@@ -236,8 +235,6 @@ async def load_advisor_attention(
                 Itinerary.client_id,
                 Itinerary.title,
                 Itinerary.reconcile_requested_at,
-                Itinerary.status,
-                Itinerary.proposed_at,
             )
             .join(Client, Client.id == Itinerary.client_id)
             .where(*scope)
@@ -250,7 +247,7 @@ async def load_advisor_attention(
     def _add(cid: uuid.UUID, item: AttentionItem) -> None:
         by_client.setdefault(cid, []).append(item)
 
-    for itin_id, cid, title, reconcile_at, itin_status, proposed_at in itinerary_rows:
+    for itin_id, cid, title, reconcile_at in itinerary_rows:
         title_by_itinerary[itin_id] = title
         client_by_itinerary[itin_id] = cid
         if reconcile_at is not None:
@@ -262,21 +259,6 @@ async def load_advisor_attention(
                     itinerary_title=title,
                     count=1,
                     at=reconcile_at,
-                ),
-            )
-        if (
-            itin_status is ItineraryStatus.proposed
-            and proposed_at is not None
-            and proposed_at >= cutoff
-        ):
-            _add(
-                cid,
-                AttentionItem(
-                    kind="trip_proposed",
-                    itinerary_id=itin_id,
-                    itinerary_title=title,
-                    count=1,
-                    at=proposed_at,
                 ),
             )
 

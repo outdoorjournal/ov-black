@@ -35,13 +35,13 @@ from app.models import (
     EdgeHistory,
     EdgeType,
     Itinerary,
-    ItineraryStatus,
     ItineraryTimingKind,
     Node,
     NodeHistory,
     NodeStatus,
     NodeType,
 )
+from app.services.display_status import NON_APPROVABLE_TYPES
 
 logger = logging.getLogger("ov_black.itineraries")
 
@@ -57,6 +57,10 @@ class ItineraryOutcome(str, enum.Enum):
     FORBIDDEN = "forbidden"
     LOCKED = "locked"
     STATUS_LOCKED = "status_locked"
+    # Content mutation attempted directly on an official trunk by a non-advisor.
+    # The trunk is written only via fork reconcile (publish); travelers and the
+    # agent must work in a fork. Maps to HTTP 409 with detail "fork_required".
+    TRUNK_LOCKED = "trunk_locked"
     # A precondition on related state failed (e.g. M005's money gate: a node
     # can't go approved → booked without a covering paid invoice line). Maps to
     # HTTP 409 so the caller can tell "not allowed yet" from a 400 bad request.
@@ -482,30 +486,57 @@ def _check_cost(cost_amount: Decimal | None, cost_currency: str | None) -> Itine
     return None
 
 
-# ── Lock gate ───────────────────────────────────────────────────────────────
+# ── Write gates (editor lock + trunk guard) ─────────────────────────────────
 
 
-async def _check_lock(
+async def _check_write_gates(
     session: AsyncSession,
     itinerary_id: uuid.UUID,
     actor: ActorContext,
+    *,
+    pure_status_change: bool = False,
 ) -> ItineraryError | None:
-    """Reject non-advisor writes to an itinerary locked by a different user.
+    """Reject writes the itinerary-level gates forbid. One SELECT, two rules.
 
-    Advisors always bypass — they hold the lock during their editing session
-    and the advisor guard at the router layer is the authoritative gate.
-    A null ``locked_by`` means the itinerary is unlocked and any actor may
-    write. A ``locked_by`` that matches ``actor.user_id`` means the caller
-    owns the lock (same advisor re-entering).
+    **Trunk guard.** An official trunk (``forked_from_id IS NULL``) receives
+    content only via fork reconcile (publish). A USER/AGENT content mutation on
+    a trunk returns ``TRUNK_LOCKED`` / ``fork_required`` — fork first. Pure
+    node-status changes are exempt (traveler approval/discard happens directly
+    on the trunk), as are ADVISOR (reconcile applies through this path, plus
+    the deliberate escape hatch) and SYSTEM (seeds/demos) actors.
+
+    **Editor lock.** Non-advisor writes to an itinerary locked by a different
+    user are rejected. Advisors always bypass — they hold the lock during
+    their editing session and the advisor guard at the router layer is the
+    authoritative gate. A null ``locked_by`` means unlocked; a ``locked_by``
+    matching ``actor.user_id`` means the caller owns the lock.
     """
+    row = (
+        await session.execute(
+            select(Itinerary.locked_by, Itinerary.forked_from_id).where(
+                Itinerary.id == itinerary_id
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return None  # Existence is the caller's NOT_FOUND concern.
+    locked_by, forked_from_id = row
+
+    if (
+        forked_from_id is None
+        and not pure_status_change
+        and actor.kind not in (ActorKind.ADVISOR, ActorKind.SYSTEM)
+    ):
+        return ItineraryError(
+            outcome=ItineraryOutcome.TRUNK_LOCKED,
+            detail="fork_required",
+        )
+
     if actor.kind is ActorKind.ADVISOR:
         return None
-    row = (
-        await session.execute(select(Itinerary.locked_by).where(Itinerary.id == itinerary_id))
-    ).scalar_one_or_none()
-    if row is None:
+    if locked_by is None:
         return None
-    if actor.user_id is not None and row == actor.user_id:
+    if actor.user_id is not None and locked_by == actor.user_id:
         return None
     return ItineraryError(
         outcome=ItineraryOutcome.LOCKED,
@@ -518,7 +549,7 @@ async def _check_lock(
 # "Firmed" statuses are commitments: a node that's approved, booked, or
 # confirmed is immutable except through an explicit advisor-initiated status
 # change (demotion / cancellation / advance). The pre-firmed statuses are
-# freely editable — idea/proposed are still being shaped, and discarded is a
+# freely editable — pending is still being shaped, and discarded is a
 # reversible side-state that restores to a prior status.
 _FIRMED_STATUSES: frozenset[NodeStatus] = frozenset(
     {NodeStatus.approved, NodeStatus.booked, NodeStatus.confirmed}
@@ -564,7 +595,7 @@ def _check_status_gate(
     - **Non-advisor** (traveler / agent / system) cannot touch a firmed node at
       all.
 
-    Pre-firmed statuses (idea/proposed/discarded) are unconstrained here.
+    Pre-firmed statuses (pending/discarded) are unconstrained here.
     Promotion *into* a firmed status from a pre-firmed one is intentionally NOT
     gated in G1 — booked-promotion authority is M005's money gate (a node may
     move ``approved → booked`` only when a paid invoice line covers it).
@@ -616,7 +647,6 @@ async def create_itinerary(
         title=title,
         client_id=client_id,
         created_by=actor.user_id,
-        status=ItineraryStatus.draft,
         brief=brief,
         timing_kind=timing_kind,
         date_start=date_start,
@@ -831,7 +861,7 @@ async def retime_itinerary(
             detail="date_end_before_start",
         )
 
-    lock_err = await _check_lock(session, itinerary.id, actor)
+    lock_err = await _check_write_gates(session, itinerary.id, actor)
     if lock_err is not None:
         return lock_err
 
@@ -1067,7 +1097,7 @@ async def add_node(
     *,
     itinerary_id: uuid.UUID,
     type: NodeType,
-    status: NodeStatus = NodeStatus.idea,
+    status: NodeStatus = NodeStatus.pending,
     title: str = "",
     parent_subgraph_id: uuid.UUID | None = None,
     source: str | None = None,
@@ -1105,7 +1135,7 @@ async def add_node(
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_lock(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(session, itinerary_id, actor)
     if lock_err is not None:
         return lock_err
 
@@ -1243,10 +1273,6 @@ async def update_node(
     if node is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_lock(session, itinerary_id, actor)
-    if lock_err is not None:
-        return lock_err
-
     allowed = {
         "type",
         "status",
@@ -1259,6 +1285,19 @@ async def update_node(
         "cost_kind",
     }
     updates: dict[str, Any] = {k: v for k, v in fields.items() if k in allowed}
+    mutates_other_fields = any(key != "status" for key in updates)
+
+    # Pure status flips (traveler approval / discard, advisor demotion) are the
+    # one write a trunk accepts directly — everything else must go via a fork.
+    lock_err = await _check_write_gates(
+        session,
+        itinerary_id,
+        actor,
+        pure_status_change=bool(updates) and not mutates_other_fields,
+    )
+    if lock_err is not None:
+        return lock_err
+
     if not updates:
         return node  # No-op update is idempotent — don't write history.
 
@@ -1267,7 +1306,7 @@ async def update_node(
     status_err = _check_status_gate(
         current_status=node.status,
         actor=actor,
-        mutates_other_fields=any(key != "status" for key in updates),
+        mutates_other_fields=mutates_other_fields,
     )
     if status_err is not None:
         return status_err
@@ -1362,12 +1401,6 @@ async def update_node(
         before=before,
         after=_snapshot_node(node),
     )
-    # ADV-10: a node status change on a *proposed* itinerary can complete the
-    # traveler's approval (the last remaining proposed node just got actioned),
-    # deriving the itinerary itself to `approved`. Same transaction as the node
-    # write so the two land atomically. No-op unless the itinerary is proposed.
-    if "status" in updates:
-        await _maybe_derive_itinerary_approved(session, itinerary_id, actor)
     await session.commit()
     logger.info(
         "itinerary.mutate",
@@ -1400,7 +1433,7 @@ async def delete_node(
     if node is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_lock(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(session, itinerary_id, actor)
     if lock_err is not None:
         return lock_err
 
@@ -1499,7 +1532,7 @@ async def add_edge(
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_lock(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(session, itinerary_id, actor)
     if lock_err is not None:
         return lock_err
 
@@ -1564,7 +1597,7 @@ async def delete_edge(
     if edge is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_lock(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(session, itinerary_id, actor)
     if lock_err is not None:
         return lock_err
 
@@ -1700,14 +1733,14 @@ async def assemble_initial_draft(
     Pre-conditions enforced here:
       1. The itinerary row exists (NOT_FOUND otherwise).
       2. Every ``node_id`` referenced across the day_plan belongs to
-         ``itinerary_id`` AND currently has ``status='proposed'``. A stray
+         ``itinerary_id`` AND currently has ``status='pending'``. A stray
          ``status='discarded'`` or cross-itinerary id collapses the whole
          call to VALIDATION_ERROR — we do not partially assemble.
 
     Effect: within each ``DaySlot`` we append a ``follows`` edge between each
     consecutive pair of node ids. Slots of length 0 or 1 are a no-op.
-    Nodes keep their ``proposed`` status; the advisor approve step (a
-    separate call) is what flips the itinerary-level status.
+    Nodes keep their ``pending`` status; approval is the traveler's separate
+    per-node (or approve-all) gesture on the trunk.
 
     Returns a fresh :class:`GraphView` assembled via
     :func:`get_itinerary_graph` so the caller can hand it straight to the
@@ -1719,7 +1752,7 @@ async def assemble_initial_draft(
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_lock(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(session, itinerary_id, actor)
     if lock_err is not None:
         return lock_err
 
@@ -1741,10 +1774,10 @@ async def assemble_initial_draft(
                     outcome=ItineraryOutcome.VALIDATION_ERROR,
                     detail="node_not_in_itinerary",
                 )
-            if row.status != NodeStatus.proposed:
+            if row.status != NodeStatus.pending:
                 return ItineraryError(
                     outcome=ItineraryOutcome.VALIDATION_ERROR,
-                    detail="node_not_proposed",
+                    detail="node_not_pending",
                 )
 
     edge_count = 0
@@ -1799,233 +1832,91 @@ async def assemble_initial_draft(
     return view
 
 
-async def approve_itinerary(
+@dataclass(frozen=True, slots=True)
+class ApproveAllResult:
+    """Outcome of the approve-all gesture: how many flipped + the fresh graph."""
+
+    approved_count: int
+    view: GraphView
+
+
+async def approve_all_nodes(
     session: AsyncSession,
     actor: ActorContext,
     *,
     itinerary_id: uuid.UUID,
-) -> Itinerary | ItineraryError:
-    """Approve an itinerary all-at-once — the traveler's "Approve all".
+) -> ApproveAllResult | ItineraryError:
+    """Approve every pending approvable node on a trunk — the "Approve all" gesture.
 
-    Accepts a ``draft`` **or** ``proposed`` itinerary and flips it to
-    ``approved`` (idempotency guard: ``VALIDATION_ERROR`` / ``already_approved``
-    if it is already approved). ``proposed`` is the normal traveler path (the
-    advisor proposed it first, ADV-10); ``draft`` is retained so an advisor can
-    still approve on behalf of a client who has not signed in yet (the full-loop
-    path). The caller's entitlement to the itinerary is enforced by the route's
-    writability gate. Per-node approval (``update_node``) reaches the same
-    ``approved`` end state incrementally via :func:`_maybe_derive_itinerary_approved`.
+    The traveler's (or advisor-on-behalf) bulk action replacing the old
+    itinerary-level approve: flips each approvable ``pending`` node to
+    ``approved``, writing a per-node history row (the audit contract — no
+    blind bulk UPDATE). Annotation kinds (note/waiting/free_time), discarded
+    nodes, and deselected alternatives are untouched — see
+    :mod:`app.services.display_status` for the shared approvability rule.
+
+    Only meaningful on an official trunk: a fork is a working copy with
+    nothing to approve (CONFLICT / ``not_a_trunk``). Idempotent — zero
+    pending approvable nodes is a successful no-op. The caller's entitlement
+    to the itinerary is enforced by the route's writability gate.
     """
-    stmt = (
-        update(Itinerary)
-        .where(
-            Itinerary.id == itinerary_id,
-            Itinerary.status.in_((ItineraryStatus.draft, ItineraryStatus.proposed)),
-        )
-        .values(
-            status=ItineraryStatus.approved,
-            approved_by=actor.user_id,
-            approved_at=func.now(),
-        )
-        .returning(Itinerary)
-        .execution_options(synchronize_session="fetch")
-    )
-    result = await session.execute(stmt)
-    row = result.scalar_one_or_none()
-    if row is None:
-        await session.rollback()
-        return ItineraryError(
-            outcome=ItineraryOutcome.VALIDATION_ERROR,
-            detail="already_approved",
-        )
-    # Cascade (ADV-10): a single itinerary approval firms the whole plan — every
-    # remaining ``proposed`` node flips to ``approved`` in the same transaction.
-    # ``idea`` (wish-list maybes), already-firmed (booked/confirmed), and
-    # ``discarded`` nodes are untouched. The approver's entitlement to the
-    # itinerary is enforced by the route's writability gate.
-    await session.execute(
-        update(Node)
-        .where(
-            Node.itinerary_id == itinerary_id,
-            Node.status == NodeStatus.proposed,
-            Node.deleted_at.is_(None),
-        )
-        .values(status=NodeStatus.approved)
-    )
-    await session.commit()
-    await session.refresh(row)
-    counts = (
-        await session.execute(
-            select(
-                func.count(Node.id),
-                func.count(Node.id).filter(Node.status == NodeStatus.approved),
-            ).where(Node.itinerary_id == itinerary_id, Node.deleted_at.is_(None))
-        )
-    ).one()
-    logger.info(
-        "itinerary.approved",
-        extra={
-            "itinerary_id": str(itinerary_id),
-            "user_id": str(actor.user_id) if actor.user_id else None,
-            "node_count": int(counts[0]),
-            "approved_count": int(counts[1]),
-        },
-    )
-    return row
+    trunk_row = (
+        await session.execute(select(Itinerary.forked_from_id).where(Itinerary.id == itinerary_id))
+    ).one_or_none()
+    if trunk_row is None:
+        return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+    if trunk_row[0] is not None:
+        return ItineraryError(outcome=ItineraryOutcome.CONFLICT, detail="not_a_trunk")
 
+    # Approval is a pure status change, so the trunk guard admits it; the
+    # editor lock still applies to non-advisors.
+    lock_err = await _check_write_gates(session, itinerary_id, actor, pure_status_change=True)
+    if lock_err is not None:
+        return lock_err
 
-async def propose_itinerary(
-    session: AsyncSession,
-    actor: ActorContext,
-    *,
-    itinerary_id: uuid.UUID,
-) -> Itinerary | ItineraryError:
-    """Propose an itinerary — the advisor's finish-and-hand-over step (ADV-10).
-
-    Flips ``draft`` → ``proposed`` and stamps ``proposed_by`` / ``proposed_at``.
-    ``proposed`` is the "over to the traveler" state: the traveler can now approve
-    (node-by-node or all-at-once) and the advisor's build UI steps back. Advisor-
-    only (the route enforces ``require_advisor``). Returns ``VALIDATION_ERROR``
-    (``not_draft``) if the row is not currently ``draft`` — you can't propose an
-    already-proposed or approved plan (reopen it first).
-    """
-    stmt = (
-        update(Itinerary)
-        .where(
-            Itinerary.id == itinerary_id,
-            Itinerary.status == ItineraryStatus.draft,
+    nodes = (
+        (
+            await session.execute(
+                select(Node).where(
+                    Node.itinerary_id == itinerary_id,
+                    Node.deleted_at.is_(None),
+                    Node.status == NodeStatus.pending,
+                    Node.type.not_in(NON_APPROVABLE_TYPES),
+                    Node.is_selected_alt.is_(True),
+                )
+            )
         )
-        .values(
-            status=ItineraryStatus.proposed,
-            proposed_by=actor.user_id,
-            proposed_at=func.now(),
-        )
-        .returning(Itinerary)
-        .execution_options(synchronize_session="fetch")
+        .scalars()
+        .all()
     )
-    result = await session.execute(stmt)
-    row = result.scalar_one_or_none()
-    if row is None:
-        await session.rollback()
-        return ItineraryError(
-            outcome=ItineraryOutcome.VALIDATION_ERROR,
-            detail="not_draft",
+    for node in nodes:
+        before = _snapshot_node(node)
+        node.status = NodeStatus.approved
+        await session.flush()
+        await _write_node_history(
+            session,
+            node_id=node.id,
+            itinerary_id=itinerary_id,
+            op="update",
+            actor=actor,
+            before=before,
+            after=_snapshot_node(node),
         )
     await session.commit()
-    await session.refresh(row)
+
+    view = await get_itinerary_graph(session, itinerary_id)
+    if isinstance(view, ItineraryError):
+        return view
+
     logger.info(
-        "itinerary.proposed",
+        "itinerary.approve_all",
         extra={
             "itinerary_id": str(itinerary_id),
             "user_id": str(actor.user_id) if actor.user_id else None,
+            "approved_count": len(nodes),
         },
     )
-    return row
-
-
-async def reopen_itinerary(
-    session: AsyncSession,
-    actor: ActorContext,
-    *,
-    itinerary_id: uuid.UUID,
-) -> Itinerary | ItineraryError:
-    """Reopen a proposed itinerary back to ``draft`` — the advisor escape hatch.
-
-    Flips ``proposed`` → ``draft`` and clears ``proposed_by`` / ``proposed_at`` so
-    the advisor can resume building (the "frozen for review" state is reversible).
-    Advisor-only. Returns ``VALIDATION_ERROR`` (``not_proposed``) if the row is not
-    currently ``proposed`` — an approved plan is not reopened here (approval is the
-    traveler's, and un-approving is out of scope).
-    """
-    stmt = (
-        update(Itinerary)
-        .where(
-            Itinerary.id == itinerary_id,
-            Itinerary.status == ItineraryStatus.proposed,
-        )
-        .values(
-            status=ItineraryStatus.draft,
-            proposed_by=None,
-            proposed_at=None,
-        )
-        .returning(Itinerary)
-        .execution_options(synchronize_session="fetch")
-    )
-    result = await session.execute(stmt)
-    row = result.scalar_one_or_none()
-    if row is None:
-        await session.rollback()
-        return ItineraryError(
-            outcome=ItineraryOutcome.VALIDATION_ERROR,
-            detail="not_proposed",
-        )
-    await session.commit()
-    await session.refresh(row)
-    logger.info(
-        "itinerary.reopened",
-        extra={
-            "itinerary_id": str(itinerary_id),
-            "user_id": str(actor.user_id) if actor.user_id else None,
-        },
-    )
-    return row
-
-
-async def _maybe_derive_itinerary_approved(
-    session: AsyncSession,
-    itinerary_id: uuid.UUID,
-    actor: ActorContext,
-) -> None:
-    """Derive itinerary ``approved`` from its nodes (ADV-10 — "stateless" rollup).
-
-    The itinerary's approval is a reflection of its nodes, not a separate gesture:
-    once the advisor has *proposed* the plan and the traveler has actioned every
-    remaining ``proposed`` node (approving them, or discarding the odd one), the
-    itinerary itself is ``approved``. Called from ``update_node`` after a node
-    status change so a traveler who approves cards one-by-one reaches the same
-    ``approved`` end state as the all-at-once :func:`approve_itinerary` cascade.
-
-    Only fires while the itinerary is ``proposed`` (never auto-approves a ``draft``
-    the advisor is still building), and requires ≥1 node to have been approved (so
-    an all-discarded plan doesn't count as approved). Does **not** commit — it runs
-    inside the caller's transaction so the node change + derived approval are atomic.
-    """
-    status = (
-        await session.execute(select(Itinerary.status).where(Itinerary.id == itinerary_id))
-    ).scalar_one_or_none()
-    if status is not ItineraryStatus.proposed:
-        return
-    counts = (
-        await session.execute(
-            select(
-                func.count(Node.id).filter(Node.status == NodeStatus.proposed),
-                func.count(Node.id).filter(Node.status == NodeStatus.approved),
-            ).where(Node.itinerary_id == itinerary_id, Node.deleted_at.is_(None))
-        )
-    ).one()
-    remaining_proposed, approved_count = int(counts[0]), int(counts[1])
-    if remaining_proposed > 0 or approved_count == 0:
-        return
-    await session.execute(
-        update(Itinerary)
-        .where(
-            Itinerary.id == itinerary_id,
-            Itinerary.status == ItineraryStatus.proposed,
-        )
-        .values(
-            status=ItineraryStatus.approved,
-            approved_by=actor.user_id,
-            approved_at=func.now(),
-        )
-    )
-    logger.info(
-        "itinerary.approved_derived",
-        extra={
-            "itinerary_id": str(itinerary_id),
-            "user_id": str(actor.user_id) if actor.user_id else None,
-            "approved_count": approved_count,
-        },
-    )
+    return ApproveAllResult(approved_count=len(nodes), view=view)
 
 
 def _integrity_detail(exc: IntegrityError) -> str:

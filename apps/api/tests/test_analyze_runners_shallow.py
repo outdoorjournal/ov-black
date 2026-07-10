@@ -144,12 +144,12 @@ async def test_missing_required_on_firmed_node(db_session: AsyncSession) -> None
 @integration
 async def test_proposed_node_not_flagged_missing(db_session: AsyncSession) -> None:
     iid = await insert_itinerary(db_session)
-    # Still 'proposed' (not firmed) -> no missing_required nags.
+    # Still 'pending' (not firmed) -> no missing_required nags.
     await insert_node(
         db_session,
         itinerary_id=iid,
         type="flight",
-        status="proposed",
+        status="pending",
     )
     findings, _n, _f = await shallow.collect(db_session, itinerary_id=iid)
     assert [f for f in findings if f.category == "missing_required"] == []

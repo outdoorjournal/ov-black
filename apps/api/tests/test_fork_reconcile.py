@@ -4,7 +4,7 @@ Two layers, mirroring ``test_fork.py``:
 
 1. Integration tests against a local Supabase Postgres — ``diff_fork`` buckets a
    real divergence (added/removed/changed/moved, with the intrinsic
-   approved→proposed demotion *excluded*), ``reconcile_fork`` folds accepted
+   approved→pending demotion *excluded*), ``reconcile_fork`` folds accepted
    changes into the live baseline through the G1-gated service path (a booked
    baseline node is refused, not applied), the feasibility gate refuses a fork
    carrying a ``block`` finding, and ``request_reconcile`` / ``abandon_fork``
@@ -160,11 +160,11 @@ async def test_diff_buckets_added_removed_changed_moved(db_session: AsyncSession
     baseline = await create_itinerary(db_session, _actor(), title="diff")
     fork_id: uuid.UUID | None = None
     try:
-        keep = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="keep")
+        keep = await _node(db_session, baseline.id, status=NodeStatus.pending, title="keep")
         appr = await _node(db_session, baseline.id, status=NodeStatus.approved, title="appr")
-        remove = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="remove")
-        p = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="p")
-        q = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="q")
+        remove = await _node(db_session, baseline.id, status=NodeStatus.pending, title="remove")
+        p = await _node(db_session, baseline.id, status=NodeStatus.pending, title="p")
+        q = await _node(db_session, baseline.id, status=NodeStatus.pending, title="q")
 
         fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
         assert isinstance(fork, Itinerary)
@@ -192,7 +192,7 @@ async def test_diff_buckets_added_removed_changed_moved(db_session: AsyncSession
             type=EdgeType.follows,
         )
         # added: a brand-new node, native to the fork (no lineage).
-        added_node = await _node(db_session, fork.id, status=NodeStatus.proposed, title="added")
+        added_node = await _node(db_session, fork.id, status=NodeStatus.pending, title="added")
 
         diff = await diff_fork(db_session, fork_id=fork.id)
         assert isinstance(diff, ForkDiff)
@@ -206,7 +206,7 @@ async def test_diff_buckets_added_removed_changed_moved(db_session: AsyncSession
         moved_origins = {c.baseline_node_id for c in diff.moved}
         assert moved_origins and moved_origins <= {p.id, q.id}
 
-        # The intrinsic approved→proposed fork demotion is NOT a reported change.
+        # The intrinsic approved→pending fork demotion is NOT a reported change.
         touched = {c.baseline_node_id for c in (*diff.changed, *diff.moved, *diff.removed)}
         assert appr.id not in touched
     finally:
@@ -235,8 +235,8 @@ async def test_reconcile_applies_accepted_discards_rest(db_session: AsyncSession
     baseline = await create_itinerary(db_session, _actor(), title="recon")
     fork_id: uuid.UUID | None = None
     try:
-        e1 = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="e1")
-        e2 = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="e2")
+        e1 = await _node(db_session, baseline.id, status=NodeStatus.pending, title="e1")
+        e2 = await _node(db_session, baseline.id, status=NodeStatus.pending, title="e2")
         fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
         assert isinstance(fork, Itinerary)
         fork_id = fork.id
@@ -290,12 +290,12 @@ async def test_reconcile_applies_a_parent_subgraph_move(db_session: AsyncSession
     try:
         dest = NodeType.destination
         parent_a = await _node(
-            db_session, baseline.id, status=NodeStatus.proposed, title="A", type_=dest
+            db_session, baseline.id, status=NodeStatus.pending, title="A", type_=dest
         )
         parent_b = await _node(
-            db_session, baseline.id, status=NodeStatus.proposed, title="B", type_=dest
+            db_session, baseline.id, status=NodeStatus.pending, title="B", type_=dest
         )
-        child = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="child")
+        child = await _node(db_session, baseline.id, status=NodeStatus.pending, title="child")
         # The child sits under A in the baseline.
         await db_session.execute(
             text("update public.nodes set parent_subgraph_id = :p where id = :n"),
@@ -353,7 +353,7 @@ async def test_reconcile_refuses_booked_baseline_node(db_session: AsyncSession) 
         fork_id = fork.id
         fview = await get_itinerary_graph(db_session, fork.id)
         assert not isinstance(fview, ItineraryError)
-        bk_fork = _fork_node_for(fview, bk.id)  # demoted approved→proposed in the fork
+        bk_fork = _fork_node_for(fview, bk.id)  # demoted approved→pending in the fork
         await update_node(
             db_session, _actor(), itinerary_id=fork.id, node_id=bk_fork.id, title="bk-reworked"
         )
@@ -394,7 +394,7 @@ async def test_reconcile_feasibility_gate_blocks_without_override(db_session: As
     baseline = await create_itinerary(db_session, _actor(), title="feas")
     fork_id: uuid.UUID | None = None
     try:
-        await _node(db_session, baseline.id, status=NodeStatus.proposed, title="n")
+        await _node(db_session, baseline.id, status=NodeStatus.pending, title="n")
         fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
         assert isinstance(fork, Itinerary)
         fork_id = fork.id
@@ -428,6 +428,52 @@ async def test_reconcile_feasibility_gate_blocks_without_override(db_session: As
             override_block=True,
         )
         assert isinstance(overridden, ReconcileResult)
+    finally:
+        await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
+
+
+@integration
+@pytest.mark.asyncio
+async def test_reconcile_accept_all_applies_every_change(db_session: AsyncSession) -> None:
+    """``accept_all=True`` is the publish fast path: the server computes the
+    diff itself and accepts every change — ``decisions`` is ignored (empty)."""
+    baseline = await create_itinerary(db_session, _actor(), title="accept-all")
+    fork_id: uuid.UUID | None = None
+    try:
+        keep = await _node(db_session, baseline.id, status=NodeStatus.pending, title="keep")
+        fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
+        assert isinstance(fork, Itinerary)
+        fork_id = fork.id
+        fview = await get_itinerary_graph(db_session, fork.id)
+        assert not isinstance(fview, ItineraryError)
+        # changed: rework the forked node; added: a brand-new fork-native node.
+        keep_fork = _fork_node_for(fview, keep.id)
+        await update_node(
+            db_session, _actor(), itinerary_id=fork.id, node_id=keep_fork.id, title="keep-reworked"
+        )
+        added = await _node(db_session, fork.id, status=NodeStatus.pending, title="brand new")
+
+        result = await reconcile_fork(
+            db_session,
+            _actor(ActorKind.ADVISOR),
+            fork_id=fork.id,
+            decisions=[],
+            accept_all=True,
+        )
+        assert isinstance(result, ReconcileResult)
+        assert {o.result for o in result.outcomes} == {"applied"}
+        assert len(result.outcomes) == 2
+
+        # Both changes landed on the live baseline…
+        live = await get_itinerary_graph(db_session, baseline.id)
+        assert not isinstance(live, ItineraryError)
+        titles = {n.title for n in live.nodes}
+        assert "keep-reworked" in titles
+        assert "brand new" in titles
+        assert added.id not in {n.id for n in live.nodes}  # copied, not moved
+
+        # …and every change was covered, so the fork flips to reconciled.
+        assert result.fork.fork_status is ForkStatus.reconciled
     finally:
         await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
 

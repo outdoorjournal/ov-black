@@ -86,7 +86,7 @@ async def test_agent_edits_a_card_in_place_with_the_field_editor(
         built_itinerary,
         type="experience",
         title="Sunset kaiseki dinner",
-        status="proposed",
+        status="pending",
     )
 
     scenario = EvalScenario(

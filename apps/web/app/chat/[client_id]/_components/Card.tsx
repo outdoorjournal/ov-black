@@ -141,7 +141,7 @@ function MoodActions({
       <button
         type="button"
         onClick={() => onAction("keep")}
-        disabled={status === "proposed"}
+        disabled={status === "pending"}
         className="h-9 rounded-md border border-ink/15 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.18em] text-ink/80 transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-50"
         data-testid="mood-board-card-keep"
       >

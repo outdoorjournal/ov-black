@@ -138,7 +138,7 @@ export function CardComposer({
       itinerary_id: itineraryId,
       parent_subgraph_id: null,
       type,
-      status: "proposed",
+      status: "pending",
       title:
         mode === "link"
           ? trimmedUrl || "Pasted link"
@@ -400,7 +400,7 @@ export function CardComposer({
               data-testid="composer-preview"
               className="rounded-lg bg-ink/[0.03] p-3"
             >
-              <CardShell kind={kind} status="proposed" width="glance" lockLabel={type}>
+              <CardShell kind={kind} status="pending" width="glance" lockLabel={type}>
                 <CardBody node={draft} kind={kind} tzOffsetHours={0} />
               </CardShell>
               {priceCells ? (

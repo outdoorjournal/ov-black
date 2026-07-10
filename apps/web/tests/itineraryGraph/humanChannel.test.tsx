@@ -49,7 +49,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 function timeline(): ItineraryTimeline {
@@ -72,7 +72,7 @@ function init(role: UserRole): ItineraryGraphInit {
   return {
     timeline: timeline(),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role,
     apiBaseUrl: "http://api.test",
     accessToken: "tok",

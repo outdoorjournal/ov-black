@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import {
   type AdvisorItinerarySummary,
-  type ItineraryStatus,
+  type DisplayStatus,
   listAdvisorItineraries,
 } from "@ov-black/api-client";
 
@@ -34,7 +34,7 @@ export const dynamic = "force-dynamic";
 
 const BASE = "/command-center/trips" as Route;
 const PARAMS_CONFIG = {
-  statuses: ["draft", "proposed", "approved"],
+  statuses: ["in_studio", "with_traveler", "approved"],
   sorts: ["updated_at", "created_at", "title"],
 } as const;
 
@@ -48,7 +48,7 @@ export default async function TripsPage({
 
   const result = await listAdvisorItineraries(api, {
     ...(params.q ? { q: params.q } : {}),
-    ...(params.status ? { status: params.status as ItineraryStatus } : {}),
+    ...(params.status ? { status: params.status as DisplayStatus } : {}),
     ...(params.sort
       ? { sort: params.sort as "updated_at" | "created_at" | "title" }
       : {}),
@@ -81,8 +81,8 @@ export default async function TripsPage({
           noun="trip"
           searchPlaceholder="Search title or client…"
           statuses={[
-            { value: "draft", label: "Draft" },
-            { value: "proposed", label: "Proposed" },
+            { value: "in_studio", label: "In studio" },
+            { value: "with_traveler", label: "With traveler" },
             { value: "approved", label: "Approved" },
           ]}
         />

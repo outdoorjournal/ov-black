@@ -75,7 +75,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Sailing in Greece",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
   brief: "Two weeks island-hopping with the family",
   timing_kind: "exact",
   date_start: "2024-06-20",
@@ -135,7 +135,7 @@ function renderDashboard(
   const init: ItineraryGraphInit = {
     timeline: timeline(nodes),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",

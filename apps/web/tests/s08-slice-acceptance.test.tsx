@@ -100,7 +100,7 @@ afterEach(() => {
 test("(1) draft editor renders assembled nodes from getItinerary fixture", () => {
   // No fetch needed — the editor takes initialNodes directly. Bullet 1 is the
   // hydrated-render contract: given the assembled graph, three nodes show up
-  // and the itinerary status data-attribute is `draft`.
+  // and the itinerary status data-attribute is `in_studio`.
   globalThis.fetch = vi.fn().mockResolvedValue(
     jsonResponse({ detail: "unexpected" }, 500),
   ) as unknown as typeof fetch;
@@ -112,12 +112,12 @@ test("(1) draft editor renders assembled nodes from getItinerary fixture", () =>
       accessToken="test-token"
       initialNodes={fixture.nodes}
       initialEdges={fixture.edges}
-      initialStatus={fixture.itinerary.status ?? "draft"}
+      initialStatus={fixture.itinerary.display_status ?? "in_studio"}
     />,
   );
 
   const editor = getByTestId("draft-itinerary-editor");
-  expect(editor.getAttribute("data-itinerary-status")).toBe("draft");
+  expect(editor.getAttribute("data-itinerary-status")).toBe("in_studio");
 
   const titleInputs = editor.querySelectorAll<HTMLInputElement>(
     '[data-testid="draft-itinerary-node-title"]',
@@ -155,7 +155,7 @@ test("(2) Edit button acquires lock and enables inline editors", async () => {
       accessToken="test-token"
       initialNodes={fixture.nodes}
       initialEdges={fixture.edges}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 
@@ -184,9 +184,19 @@ test("(2) Edit button acquires lock and enables inline editors", async () => {
 test("(3) Approve transitions status optimistically and disables the button on approved", async () => {
   const seen: CapturedRequest[] = [];
   globalThis.fetch = captureFetch(seen, (req) => {
-    if (req.method === "POST" && req.url.endsWith(`/itinerary/${ITINERARY_ID}/approve`)) {
+    if (
+      req.method === "POST" &&
+      req.url.endsWith(`/itinerary/${ITINERARY_ID}/nodes/approve-all`)
+    ) {
       return jsonResponse(
-        { ...fixture.itinerary, status: "approved" },
+        {
+          approved_count: fixture.nodes.length,
+          graph: {
+            itinerary: { ...fixture.itinerary, display_status: "approved" },
+            nodes: fixture.nodes,
+            edges: fixture.edges,
+          },
+        },
         200,
       );
     }
@@ -200,7 +210,7 @@ test("(3) Approve transitions status optimistically and disables the button on a
       accessToken="test-token"
       initialNodes={fixture.nodes}
       initialEdges={fixture.edges}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 
@@ -224,7 +234,7 @@ test("(3) Approve transitions status optimistically and disables the button on a
   const approveCalls = seen.filter(
     (r) =>
       r.method === "POST" &&
-      r.url.endsWith(`/itinerary/${ITINERARY_ID}/approve`),
+      r.url.endsWith(`/itinerary/${ITINERARY_ID}/nodes/approve-all`),
   );
   expect(approveCalls).toHaveLength(1);
   expect(approveButton.disabled).toBe(true);
@@ -244,7 +254,7 @@ test("(4) craft-feel invariants under data-testid='draft-itinerary-editor'", () 
       accessToken="test-token"
       initialNodes={fixture.nodes}
       initialEdges={fixture.edges}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 
@@ -287,7 +297,7 @@ test("(5) Release dispatches releaseItineraryLock and clears lock indicator opti
       accessToken="test-token"
       initialNodes={fixture.nodes}
       initialEdges={fixture.edges}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 

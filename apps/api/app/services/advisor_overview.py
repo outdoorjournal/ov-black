@@ -44,6 +44,7 @@ from app.models import (
     PaymentStatus,
     TurnRole,
 )
+from app.services.display_status import display_status_expr
 
 SESSION_WINDOW_DAYS = 7
 
@@ -58,9 +59,15 @@ class ClientCounts:
 
 @dataclass(frozen=True, slots=True)
 class ItineraryCounts:
+    """Trunk lifecycle counts (derived buckets) + the fork/reconcile pulse.
+
+    Buckets count official trunks only; forks appear in ``open_forks`` /
+    ``reconcile_requested``.
+    """
+
     total: int
-    draft: int
-    proposed: int
+    in_studio: int
+    with_traveler: int
     approved: int
     open_forks: int
     reconcile_requested: int
@@ -138,8 +145,8 @@ def derive_portfolio(
         ),
         itineraries=ItineraryCounts(
             total=sum(itins.values()),
-            draft=itins.get("draft", 0),
-            proposed=itins.get("proposed", 0),
+            in_studio=itins.get("in_studio", 0),
+            with_traveler=itins.get("with_traveler", 0),
             approved=itins.get("approved", 0),
             open_forks=open_forks,
             reconcile_requested=reconcile_requested,
@@ -181,15 +188,16 @@ async def load_advisor_overview(
         ).all()
     ]
 
-    # ── itineraries by status + the fork/reconcile pulse ──────────────────────
+    # ── trunks by derived display status + the fork/reconcile pulse ───────────
+    bucket_expr = display_status_expr()
     itinerary_rows = [
-        (status.value, int(count))
-        for status, count in (
+        (str(bucket), int(count))
+        for bucket, count in (
             await session.execute(
-                select(Itinerary.status, func.count(Itinerary.id))
+                select(bucket_expr, func.count(Itinerary.id))
                 .join(Client, Client.id == Itinerary.client_id)
-                .where(scope)
-                .group_by(Itinerary.status)
+                .where(scope, Itinerary.forked_from_id.is_(None))
+                .group_by(bucket_expr)
             )
         ).all()
     ]

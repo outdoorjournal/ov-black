@@ -54,7 +54,7 @@ async def _approved_priced_node(advisor: Ovb, itin: str, *, amount: str, currenc
         pytest.skip("no bookable node in the seeded itinerary to invoice")
     node_id = str(node.id)
     if str(node.status) in _FIRMED:
-        await advisor.update_node(itin, node_id, fields={"status": "proposed"})
+        await advisor.update_node(itin, node_id, fields={"status": "pending"})
     await advisor.update_node(
         itin,
         node_id,

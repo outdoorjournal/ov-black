@@ -69,7 +69,7 @@ const ITINERARY: ItineraryResponse = {
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
 };
 
 function timeline(forkedFromId?: string): ItineraryTimeline {
@@ -94,7 +94,7 @@ function init(role: UserRole, forkedFromId?: string): ItineraryGraphInit {
   return {
     timeline: timeline(forkedFromId),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role,
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
@@ -124,7 +124,7 @@ function renderShell(
       timeline={timeline()}
       baselineTitle={null}
       itineraryId="it-1"
-      status="draft"
+      status="in_studio"
       role={role}
       apiBaseUrl="http://api.test"
       accessToken="tok"
@@ -160,7 +160,7 @@ describe("ItineraryShell · three regions", () => {
         timeline={timeline()}
         baselineTitle={null}
         itineraryId="it-1"
-        status="draft"
+        status="in_studio"
         role="client"
         apiBaseUrl="http://api.test"
         accessToken="tok"

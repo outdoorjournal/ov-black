@@ -17,7 +17,7 @@
 
 import { useState } from "react";
 
-import type { ItineraryStatus } from "@ov-black/api-client";
+import type { DisplayStatus } from "@ov-black/api-client";
 
 import { ItineraryIntake } from "@/app/_components/itinerary-graph/intake/ItineraryIntake";
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/horizontalTypes";
@@ -37,11 +37,13 @@ export type ItineraryShellProps = {
   timeline: ItineraryTimeline;
   baselineTitle: string | null;
   itineraryId: string;
-  status: ItineraryStatus;
+  status: DisplayStatus;
   role: UserRole;
   apiBaseUrl: string | null;
   accessToken: string | null;
   viewerOpenForkId: string | null;
+  /** Traveler on an advisor-crafted trunk with nothing published yet (teaser). */
+  awaitingProposal?: boolean;
   /** Per-currency plan price from the graph read (ADV-10) — `{}` when unpriced. */
   totals?: Record<string, string>;
   /** True when the trip has no brief yet — gate on the first-run intake. */
@@ -60,6 +62,7 @@ export function ItineraryShell({
   apiBaseUrl,
   accessToken,
   viewerOpenForkId,
+  awaitingProposal = false,
   totals = {},
   needsBrief,
   audience,
@@ -101,6 +104,7 @@ export function ItineraryShell({
         apiBaseUrl,
         accessToken,
         viewerOpenForkId,
+        awaitingProposal,
         totals,
       }}
     >

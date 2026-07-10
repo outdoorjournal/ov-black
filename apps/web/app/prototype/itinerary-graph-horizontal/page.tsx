@@ -17,7 +17,7 @@ export default function ItineraryGraphHorizontalPrototypePage() {
     <ItineraryGraphView
       timeline={timeline}
       itineraryId={timeline.itinerary.id}
-      status="draft"
+      status="in_studio"
       role="advisor"
       startLocked
     />

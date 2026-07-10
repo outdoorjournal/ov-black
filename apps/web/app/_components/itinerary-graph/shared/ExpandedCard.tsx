@@ -82,7 +82,7 @@ export function Card({
       {...motionProps}
       whileHover={isDragging ? {} : { y: -1 }}
     >
-      {node.status !== "idea" && node.status !== "discarded" ? (
+      {node.status !== "discarded" ? (
         <span
           aria-hidden
           className="pointer-events-none absolute -top-1 left-3 h-3 w-12 -rotate-3 opacity-70"
@@ -98,9 +98,9 @@ export function Card({
           Approved
         </span>
       ) : null}
-      {node.type !== "note" && node.status === "proposed" ? (
+      {node.type !== "note" && node.status === "pending" ? (
         <span className="absolute bottom-1.5 right-2 text-[9px] uppercase tracking-[0.2em] text-ink/40">
-          Proposed
+          Pending
         </span>
       ) : null}
       {node.type !== "note" && node.status === "discarded" ? (
@@ -411,8 +411,6 @@ function typeLabel(type: NodeType): string {
 
 function statusShellClasses(status: NodeStatus): string {
   switch (status) {
-    case "idea":
-      return "opacity-70";
     case "discarded":
       return "opacity-50 grayscale";
     default:

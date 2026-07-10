@@ -276,6 +276,17 @@ async def test_rls_participant_sees_thread_nonmember_blind() -> None:
             assert thread is not None
             tid = thread.id
 
+        # The subject here is the POLICY, not the bootstrap grants: local
+        # `supabase db reset` baselines don't re-grant table privileges to the
+        # `authenticated` role (the hosted project has them), so grant SELECT
+        # explicitly — RLS still decides row visibility.
+        async with w.engine.begin() as conn:
+            await conn.execute(text("grant select on public.threads to authenticated"))
+            # The threads policy reads thread_participants (membership) and
+            # clients (advisor ownership) to decide visibility.
+            await conn.execute(text("grant select on public.thread_participants to authenticated"))
+            await conn.execute(text("grant select on public.clients to authenticated"))
+
         async def _visible_as(uid: uuid.UUID) -> int:
             # A fresh connection so SET LOCAL ROLE / claims are isolated.
             async with w.engine.connect() as conn:

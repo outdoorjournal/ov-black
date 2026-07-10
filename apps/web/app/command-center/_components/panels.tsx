@@ -72,10 +72,16 @@ export function StatusPill({ status }: { status: string }) {
   const tone =
     status === "approved"
       ? "border-paper/40 text-paper"
-      : status === "proposed"
+      : status === "with_traveler"
         ? "border-brand/40 text-brand"
         : "border-paper/15 text-paper/65";
-  return <span className={`${PILL_BASE} ${tone}`}>{status}</span>;
+  const label =
+    status === "in_studio"
+      ? "In studio"
+      : status === "with_traveler"
+        ? "With traveler"
+        : status;
+  return <span className={`${PILL_BASE} ${tone}`}>{label}</span>;
 }
 
 export function InvitePill({ status }: { status: AccessStatus }) {

@@ -2,8 +2,9 @@
 
 Pure tests over :func:`app.services.graph_digest.render_graph_digest`; the
 async loader is thin SELECT plumbing exercised by the live stack. What matters
-here: every lifecycle status renders with its propose-flow hint, counts /
-totals / uninvoiced / reconcile / analysis lines appear exactly when they have
+here: every derived display-status bucket renders with its publish-flow hint
+(and the fork framing wins when pinned to a working copy), counts / totals /
+uninvoiced / reconcile / analysis lines appear exactly when they have
 something to say, and an empty plan degrades gracefully.
 """
 
@@ -12,19 +13,21 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from app.models import InvoiceStatus, ItineraryStatus, NodeStatus
+from app.models import InvoiceStatus, NodeStatus
 from app.services.billing_summary import (
     BillingCurrencyRow,
     BillingState,
     InvoiceBrief,
     UnbilledNode,
 )
+from app.services.display_status import DisplayStatus
 from app.services.graph_digest import render_graph_digest
 
 
 def _digest(**overrides: object) -> str:
     base: dict = {
-        "itinerary_status": ItineraryStatus.draft,
+        "display_status": DisplayStatus.in_studio,
+        "is_fork": False,
         "status_counts": {},
         "totals": {},
         "party_size": 1,
@@ -40,37 +43,42 @@ def _digest(**overrides: object) -> str:
 def test_empty_plan_renders_status_and_no_cards() -> None:
     out = _digest()
     assert out.startswith("Live plan state")
-    assert "Status: draft" in out
+    assert "Status: in the studio" in out
     assert "Cards: none yet" in out
     assert "Trip total" not in out
     assert "Uninvoiced" not in out
 
 
-def test_every_itinerary_status_carries_its_propose_flow_hint() -> None:
-    draft = _digest(itinerary_status=ItineraryStatus.draft)
-    proposed = _digest(itinerary_status=ItineraryStatus.proposed)
-    approved = _digest(itinerary_status=ItineraryStatus.approved)
-    assert "advisor proposes it" in draft
-    assert "handed to the traveler for review" in proposed
+def test_every_display_status_carries_its_publish_flow_hint() -> None:
+    in_studio = _digest(display_status=DisplayStatus.in_studio)
+    with_traveler = _digest(display_status=DisplayStatus.with_traveler)
+    approved = _digest(display_status=DisplayStatus.approved)
+    assert "in the studio" in in_studio
+    assert "with the traveler" in with_traveler
     assert "the traveler has approved" in approved
+
+
+def test_fork_hint_wins_over_display_status() -> None:
+    out = _digest(display_status=DisplayStatus.with_traveler, is_fork=True)
+    assert "working version" in out
+    assert "with the traveler —" not in out
 
 
 def test_card_counts_render_in_lifecycle_order_with_lock_note() -> None:
     out = _digest(
         status_counts={
-            NodeStatus.proposed: 6,
-            NodeStatus.idea: 2,
+            NodeStatus.pending: 8,
             NodeStatus.approved: 3,
             NodeStatus.booked: 1,
         }
     )
-    assert "Cards: 12 — 2 idea, 6 proposed, 3 approved, 1 booked" in out
+    assert "Cards: 12 — 8 pending, 3 approved, 1 booked" in out
     assert "booked/confirmed cards are locked" in out
 
 
 def test_discarded_cards_never_render() -> None:
-    out = _digest(status_counts={NodeStatus.proposed: 2, NodeStatus.discarded: 5})
-    assert "Cards: 2 — 2 proposed" in out
+    out = _digest(status_counts={NodeStatus.pending: 2, NodeStatus.discarded: 5})
+    assert "Cards: 2 — 2 pending" in out
     assert "discarded" not in out
 
 

@@ -1,4 +1,4 @@
-"""Advisor-facing roster of itineraries — one row per draft/approved trip.
+"""Advisor-facing roster of itineraries — one row per official trunk.
 
 This is the plural-namespace counterpart to ``/itinerary/{id}`` (singular,
 shared between advisor + traveler) and ``/me/itineraries`` (traveler's
@@ -32,9 +32,10 @@ from sqlalchemy import and_, func, or_, select
 from app.auth import AuthenticatedUser
 from app.auth_guards import require_advisor
 from app.db import get_session
-from app.models import Client, Itinerary, ItineraryStatus
+from app.models import Client, Itinerary
 from app.routers.clients import _advisor_id, _escape_like
 from app.services.awareness import ACTIONABLE_KINDS, load_advisor_attention
+from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.pagination import clamp_limit, encode_cursor, require_cursor
 
 if TYPE_CHECKING:
@@ -63,10 +64,11 @@ class AdvisorItinerarySummary(BaseModel):
 
     id: uuid.UUID
     title: str
-    status: ItineraryStatus
+    # Derived trunk lifecycle bucket (in_studio / with_traveler / approved) —
+    # computed in SQL from the trip's nodes, never stored.
+    status: DisplayStatus
     created_at: datetime
     updated_at: datetime
-    approved_at: datetime | None
     last_activity_at: datetime
     client: AdvisorItineraryClient
     # True when the trip carries an open-state awareness signal (changes
@@ -103,7 +105,7 @@ async def list_advisor_itineraries_endpoint(
     limit: int = 50,
     cursor: str | None = None,
     q: str | None = None,
-    status: ItineraryStatus | None = None,
+    status: DisplayStatus | None = None,
     client_id: uuid.UUID | None = None,
     sort: Literal["updated_at", "created_at", "title"] = "updated_at",
     order: Literal["asc", "desc"] | None = None,
@@ -113,7 +115,8 @@ async def list_advisor_itineraries_endpoint(
     direction = order or ("asc" if sort == "title" else "desc")
     sort_col = _SORT_COLS[sort]
 
-    filters: list[Any] = [Client.owner_id == advisor_id]
+    # Trunks only — forks are private working copies, not roster rows.
+    filters: list[Any] = [Client.owner_id == advisor_id, Itinerary.forked_from_id.is_(None)]
     if q:
         needle = f"%{_escape_like(q)}%"
         filters.append(
@@ -123,7 +126,7 @@ async def list_advisor_itineraries_endpoint(
             )
         )
     if status is not None:
-        filters.append(Itinerary.status == status)
+        filters.append(display_status_expr() == status.value)
     if client_id is not None:
         filters.append(Client.id == client_id)
 
@@ -137,7 +140,11 @@ async def list_advisor_itineraries_endpoint(
         ).scalar_one()
     )
 
-    stmt = select(Itinerary, Client).join(Client, Client.id == Itinerary.client_id).where(*filters)
+    stmt = (
+        select(Itinerary, Client, display_status_expr())
+        .join(Client, Client.id == Itinerary.client_id)
+        .where(*filters)
+    )
     payload = require_cursor(cursor)
     if payload is not None:
         cur_id = uuid.UUID(str(payload["id"]))
@@ -173,10 +180,9 @@ async def list_advisor_itineraries_endpoint(
             AdvisorItinerarySummary(
                 id=itinerary.id,
                 title=itinerary.title,
-                status=itinerary.status or ItineraryStatus.draft,
+                status=DisplayStatus(bucket),
                 created_at=itinerary.created_at,
                 updated_at=itinerary.updated_at,
-                approved_at=itinerary.approved_at,
                 last_activity_at=itinerary.updated_at,
                 client=AdvisorItineraryClient(
                     id=client.id,
@@ -185,7 +191,7 @@ async def list_advisor_itineraries_endpoint(
                 ),
                 needs_attention=itinerary.id in attention_itineraries,
             )
-            for itinerary, client in rows
+            for itinerary, client, bucket in rows
         ],
         next_cursor=next_cursor,
         total=total,

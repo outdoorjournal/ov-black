@@ -155,7 +155,7 @@ def test_creates_flight_node_with_card_attrs(
     assert captured_add_node["type"] is NodeType.flight
     assert captured_add_node["source"] == "duffel"
     assert captured_add_node["source_id"] == "off_0000ANA105"
-    assert captured_add_node["status"].value == "proposed"
+    assert captured_add_node["status"].value == "pending"
     meta = captured_add_node["metadata"]
     assert meta["kind"] == "flight"
     assert meta["iata_from"] == "LAX"

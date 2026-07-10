@@ -30,7 +30,7 @@ def node_add(
     itinerary_id: str = typer.Argument(..., help="Itinerary UUID."),
     type: str = typer.Option(..., "--type", help="Node type (hotel, flight, experience, …)."),
     title: str = typer.Option("", "--title", "-t"),
-    status: str = typer.Option("idea", "--status"),
+    status: str = typer.Option("pending", "--status"),
     cost_amount: str | None = typer.Option(None, "--cost-amount"),
     cost_currency: str | None = typer.Option(None, "--cost-currency"),
     cost_kind: str | None = typer.Option(None, "--cost-kind", help="per_person | total"),
@@ -65,7 +65,7 @@ def node_from_inventory(
     itinerary_id: str = typer.Argument(..., help="Itinerary UUID."),
     source: str = typer.Option(..., "--source", help="Provider source (duffel, ratehawk, ov…)."),
     source_id: str = typer.Option(..., "--source-id", help="Provider item id."),
-    status: str = typer.Option("proposed", "--status"),
+    status: str = typer.Option("pending", "--status"),
 ) -> None:
     """Propose a node from a live inventory item (typed card metadata)."""
     state = state_of(ctx)

@@ -103,7 +103,7 @@ class FixtureItem:
     starts_at: datetime
     duration_minutes: int
     attrs: CardAttributes
-    status: str = "proposed"
+    status: str = "pending"
 
 
 @dataclass(frozen=True)
@@ -455,7 +455,7 @@ DAY_02 = FixtureDay(
             title="Open afternoon · rest before the studio",
             starts_at=_at("2024-06-21", "14:30"),
             duration_minutes=75,
-            status="proposed",
+            status="pending",
             attrs=FreeTimeCardAttrs(
                 location=ASAKUSA_STN,
                 weather="Clear · 27°C",
@@ -627,7 +627,7 @@ DAY_05 = FixtureDay(
             title="Fushimi Inari Taisha · torii path",
             starts_at=_at("2024-06-24", "15:30"),
             duration_minutes=120,
-            status="proposed",
+            status="pending",
             attrs=ExperienceCardAttrs(
                 category="cultural",
                 location=FUSHIMI_INARI,

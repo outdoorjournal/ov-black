@@ -4,7 +4,7 @@ Two layers:
 
 1. Integration tests against a local Supabase Postgres — the real ``fork_itinerary``
    deep-copies a mixed-status graph: lineage on every node, status transforms
-   (approved→proposed editable, booked/confirmed carried locked), edge remap,
+   (approved→pending editable, booked/confirmed carried locked), edge remap,
    PostGIS copy, and baseline independence.
 2. Router tests (service stubbed) — the HTTP contract: 201 + the fork graph,
    404 on a missing baseline, 403 when the caller can't fork it, 401 without a JWT.
@@ -24,7 +24,6 @@ from app.models import (
     EdgeType,
     ForkStatus,
     Itinerary,
-    ItineraryStatus,
     Node,
     NodeStatus,
     NodeType,
@@ -83,9 +82,8 @@ def _actor(kind: ActorKind = ActorKind.ADVISOR) -> ActorContext:
 @pytest.mark.parametrize(
     ("baseline", "forked"),
     [
-        (NodeStatus.idea, NodeStatus.idea),
-        (NodeStatus.proposed, NodeStatus.proposed),
-        (NodeStatus.approved, NodeStatus.proposed),  # pre-booked → editable
+        (NodeStatus.pending, NodeStatus.pending),
+        (NodeStatus.approved, NodeStatus.pending),  # pre-booked → editable
         (NodeStatus.booked, NodeStatus.booked),  # carried locked
         (NodeStatus.confirmed, NodeStatus.confirmed),  # carried locked
         (NodeStatus.discarded, NodeStatus.discarded),
@@ -151,7 +149,7 @@ async def test_fork_clones_graph_with_lineage(db_session: AsyncSession) -> None:
     baseline = await create_itinerary(db_session, _actor(), title="Japan")
     fork_id: uuid.UUID | None = None
     try:
-        idea = await _node(db_session, baseline.id, status=NodeStatus.idea, title="idea")
+        pending = await _node(db_session, baseline.id, status=NodeStatus.pending, title="pend")
         approved = await _node(db_session, baseline.id, status=NodeStatus.approved, title="appr")
         booked = await _node(
             db_session, baseline.id, status=NodeStatus.booked, title="Aman", type_=NodeType.hotel
@@ -172,7 +170,6 @@ async def test_fork_clones_graph_with_lineage(db_session: AsyncSession) -> None:
         # Fork-level lineage + lifecycle.
         assert fork.forked_from_id == baseline.id
         assert fork.fork_status is ForkStatus.open
-        assert fork.status is ItineraryStatus.draft
         assert fork.client_id == baseline.client_id
         assert fork.id != baseline.id
 
@@ -183,14 +180,14 @@ async def test_fork_clones_graph_with_lineage(db_session: AsyncSession) -> None:
 
         by_origin = {n.forked_from_node_id: n for n in view.nodes}
         # Every fork node carries lineage to a distinct baseline node.
-        assert set(by_origin) == {idea.id, approved.id, booked.id}
+        assert set(by_origin) == {pending.id, approved.id, booked.id}
 
-        # Status transforms: approved→proposed (editable), booked carried locked.
-        assert by_origin[approved.id].status is NodeStatus.proposed
+        # Status transforms: approved→pending (editable), booked carried locked.
+        assert by_origin[approved.id].status is NodeStatus.pending
         assert by_origin[approved.id].lock_reason is None
         assert by_origin[booked.id].status is NodeStatus.booked
         assert by_origin[booked.id].lock_reason == "status_locked"
-        assert by_origin[idea.id].status is NodeStatus.idea
+        assert by_origin[pending.id].status is NodeStatus.pending
 
         # The edge was remapped onto the fork's own node ids.
         edge = view.edges[0]
@@ -209,7 +206,7 @@ async def test_fork_is_independent_of_baseline(db_session: AsyncSession) -> None
     baseline = await create_itinerary(db_session, _actor(), title="base")
     fork_id: uuid.UUID | None = None
     try:
-        original = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="keep")
+        original = await _node(db_session, baseline.id, status=NodeStatus.pending, title="keep")
         fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
         assert isinstance(fork, Itinerary)
         fork_id = fork.id
@@ -242,7 +239,7 @@ async def test_fork_copies_postgis_location(db_session: AsyncSession) -> None:
     baseline = await create_itinerary(db_session, _actor(), title="geo")
     fork_id: uuid.UUID | None = None
     try:
-        node = await _node(db_session, baseline.id, status=NodeStatus.proposed, title="Tokyo")
+        node = await _node(db_session, baseline.id, status=NodeStatus.pending, title="Tokyo")
         # Stamp a PostGIS point the ORM can't see, then fork.
         await db_session.execute(
             text(

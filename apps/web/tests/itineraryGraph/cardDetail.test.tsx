@@ -65,12 +65,15 @@ import { TimelineDataProvider } from "@/app/_components/itinerary-graph/Timeline
 import { CardDetailView } from "@/app/itinerary/[id]/_shell/CardDetailView";
 import { ConciergeColumn } from "@/app/itinerary/[id]/_shell/ConciergeColumn";
 
+// The advisor authoring surface is a WORKING COPY (a fork of the trunk) —
+// trunk content only arrives via publish, so editable scenarios play out here.
 const ITINERARY: ItineraryResponse = {
   id: "it-1",
   title: "Trip",
   client_id: "c-1",
   created_by: "u-1",
-  status: "draft",
+  display_status: "in_studio",
+  forked_from_id: "trunk-0",
 };
 
 function node(id: string, over: Partial<NodeResponse> = {}): NodeResponse {
@@ -133,6 +136,15 @@ function charges(over: Record<string, unknown> = {}) {
   };
 }
 
+
+// The OFFICIAL trunk variant — no forked_from_id: read-only for everyone
+// (content arrives via publish; approval happens here).
+function trunkTimeline(nodes: NodeResponse[]): ItineraryTimeline {
+  const t = timeline(nodes);
+  const { forked_from_id: _omit, ...trunk } = ITINERARY;
+  return { ...t, itinerary: trunk };
+}
+
 function renderDetail(
   ui: ReactNode,
   nodes: NodeResponse[],
@@ -141,7 +153,7 @@ function renderDetail(
   const init: ItineraryGraphInit = {
     timeline: timeline(nodes),
     itineraryId: "it-1",
-    status: "draft",
+    status: "in_studio",
     role: "advisor",
     apiBaseUrl: "http://api.test",
     accessToken: "tok",
@@ -185,7 +197,7 @@ describe("CardDetailView · remove", () => {
   });
 
   test("a pre-firmed card shows Remove from itinerary", () => {
-    const n = node("n-idea", { type: "hotel", status: "idea" });
+    const n = node("n-idea", { type: "hotel", status: "pending" });
     renderDetail(<CardDetailView nodeId="n-idea" />, [n], { role: "client" });
     const facet = screen.getByTestId("card-detail-remove");
     expect(within(facet).getByText("Remove from itinerary")).toBeInTheDocument();
@@ -242,8 +254,11 @@ describe("CardDetailView · facets", () => {
     expect(getNodeChargesMock).toHaveBeenCalledWith(expect.anything(), "it-1", "n-1");
   });
 
-  test("a viewer without the lock gets no scheduling facet, still asks + sees money", async () => {
-    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], { role: "client" });
+  test("a read-only viewer (traveler on the trunk) gets no scheduling facet, still asks + sees money", async () => {
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], {
+      role: "client",
+      timeline: trunkTimeline([HOTEL]),
+    });
     expect(screen.queryByTestId("card-detail-schedule")).not.toBeInTheDocument();
     expect(screen.getByTestId("card-detail-ask")).toBeInTheDocument();
     await waitFor(() =>
@@ -277,53 +292,23 @@ describe("CardDetailView · facets", () => {
   });
 });
 
-describe("CardDetailView · per-card hand-over (ADV-10)", () => {
-  const IDEA = node("idea-1", { title: "Kaiseki dinner", status: "idea" });
-  const PROPOSED = node("prop-1", { title: "Kaiseki dinner", status: "proposed" });
+describe("CardDetailView · per-card approve", () => {
+  const PENDING = node("prop-1", { title: "Kaiseki dinner", status: "pending" });
 
-  test("advisor sees 'Propose this' on an idea card — never the traveler's approve", () => {
-    renderDetail(<CardDetailView nodeId="idea-1" />, [IDEA], {
-      role: "advisor",
-      status: "draft",
-    });
-    expect(screen.getByTestId("card-detail-proposal")).toBeInTheDocument();
-    expect(screen.getByTestId("card-detail-propose-node")).toBeInTheDocument();
-    // The advisor proposes; they never get the traveler's "Approve this" here.
-    expect(screen.queryByTestId("card-detail-approval")).not.toBeInTheDocument();
-  });
-
-  test("clicking 'Propose this' flips the card idea → proposed at the seam", async () => {
-    renderDetail(<CardDetailView nodeId="idea-1" />, [IDEA], {
-      role: "advisor",
-      status: "draft",
-    });
-    fireEvent.click(screen.getByTestId("card-detail-propose-node"));
-    expect(updateNodeStatusMock).toHaveBeenCalledWith(expect.anything(), {
-      itineraryId: "it-1",
-      nodeId: "idea-1",
-      status: "proposed",
-    });
-    // Optimistic: the card is proposed now, so the hand-over action is spent.
-    await waitFor(() =>
-      expect(screen.queryByTestId("card-detail-propose-node")).not.toBeInTheDocument(),
-    );
-  });
-
-  test("traveler sees 'Approve this' on a proposed card — never the propose action", () => {
-    renderDetail(<CardDetailView nodeId="prop-1" />, [PROPOSED], {
+  test("traveler sees 'Approve this' on a pending card", () => {
+    renderDetail(<CardDetailView nodeId="prop-1" />, [PENDING], {
       role: "client",
-      status: "proposed",
+      status: "with_traveler",
+      timeline: trunkTimeline([PENDING]),
     });
     expect(screen.getByTestId("card-detail-approval")).toBeInTheDocument();
-    expect(screen.queryByTestId("card-detail-proposal")).not.toBeInTheDocument();
   });
 
-  test("advisor on an already-proposed card gets neither action (nothing to do)", () => {
-    renderDetail(<CardDetailView nodeId="prop-1" />, [PROPOSED], {
+  test("advisor gets no per-card approve facet (traveler gesture)", () => {
+    renderDetail(<CardDetailView nodeId="prop-1" />, [PENDING], {
       role: "advisor",
-      status: "draft",
+      status: "in_studio",
     });
-    expect(screen.queryByTestId("card-detail-proposal")).not.toBeInTheDocument();
     expect(screen.queryByTestId("card-detail-approval")).not.toBeInTheDocument();
   });
 });
@@ -413,8 +398,11 @@ describe("CardDetailView \u00b7 edit facet (ADV-13)", () => {
     expect(patch["metadata"]).toBeUndefined();
   });
 
-  test("a viewer without the lock gets no edit facet", () => {
-    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], { role: "client" });
+  test("a read-only viewer (traveler on the trunk) gets no edit facet", () => {
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], {
+      role: "client",
+      timeline: trunkTimeline([HOTEL]),
+    });
     expect(screen.queryByTestId("card-detail-edit")).not.toBeInTheDocument();
   });
 });

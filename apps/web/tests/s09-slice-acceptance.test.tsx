@@ -48,7 +48,7 @@ const ITINERARY_ID = fixture.itinerary.id;
 function renderView() {
   return render(
     <FinalItineraryView
-      status={fixture.itinerary.status ?? "approved"}
+      status={fixture.itinerary.display_status ?? "approved"}
       nodes={fixture.nodes}
       edges={fixture.edges}
       title={fixture.itinerary.title}

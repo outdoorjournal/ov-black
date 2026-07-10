@@ -76,15 +76,14 @@ export function inferCardKind(node: NodeResponse): CardKind {
 
 export function statusToKind(status: NodeResponse["status"]): StatusKind {
   switch (status) {
-    case "idea":
-    case "proposed":
+    case "pending":
     case "approved":
     case "booked":
     case "confirmed":
     case "discarded":
       return status;
     default:
-      return "proposed";
+      return "pending";
   }
 }
 

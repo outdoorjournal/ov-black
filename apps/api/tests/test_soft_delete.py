@@ -142,7 +142,7 @@ async def test_delete_note_hides_from_graph_but_keeps_row(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.note,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="dinner between these?",
             starts_at="2025-07-02T19:30:00+09:00",
         )
@@ -175,7 +175,7 @@ async def test_delete_note_bypasses_firmed_status_gate(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="tea ceremony",
         )
         assert not isinstance(host, ItineraryError)
@@ -215,7 +215,7 @@ async def test_delete_prefirmed_regular_node_soft_deletes(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.hotel,
-            status=NodeStatus.idea,
+            status=NodeStatus.pending,
             title="maybe this ryokan",
         )
         assert not isinstance(card, ItineraryError)
@@ -276,7 +276,7 @@ async def test_delete_cascades_to_attached_notes_and_edges(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="host card",
         )
         neighbour = await add_node(
@@ -284,7 +284,7 @@ async def test_delete_cascades_to_attached_notes_and_edges(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="next card",
         )
         assert not isinstance(host, ItineraryError)
@@ -294,7 +294,7 @@ async def test_delete_cascades_to_attached_notes_and_edges(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.note,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="ride-along note",
             attached_to_node_id=host.id,
         )
@@ -337,7 +337,7 @@ async def test_delete_is_idempotent(db_session: AsyncSession) -> None:
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.note,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="delete me twice",
             starts_at="2025-07-02T19:30:00+09:00",
         )

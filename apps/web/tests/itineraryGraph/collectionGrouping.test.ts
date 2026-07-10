@@ -15,7 +15,7 @@ function node(id: string, over: Partial<NodeResponse> = {}): NodeResponse {
     itinerary_id: "it-1",
     parent_subgraph_id: null,
     type: "experience",
-    status: "proposed",
+    status: "pending",
     title: id,
     source: null,
     source_id: null,

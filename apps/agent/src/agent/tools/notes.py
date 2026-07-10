@@ -45,7 +45,7 @@ async def add_note(
     if not itinerary_id:
         raise BackendError(status=None, reason="no_itinerary_pinned")
 
-    payload: dict[str, Any] = {"type": "note", "status": "proposed", "title": text}
+    payload: dict[str, Any] = {"type": "note", "status": "pending", "title": text}
     if node_id is not None:
         payload["attached_to_node_id"] = node_id
     elif starts_at is not None:

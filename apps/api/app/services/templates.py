@@ -43,7 +43,6 @@ from app.models import (
     Edge,
     EdgeType,
     Itinerary,
-    ItineraryStatus,
     ItineraryTimingKind,
     NodeRole,
     NodeStatus,
@@ -210,7 +209,6 @@ async def instantiate_template(
         title=title or template.name,
         client_id=client_id,
         created_by=created_by,
-        status=ItineraryStatus.draft,
     )
     session.add(itinerary)
     await session.flush()
@@ -388,15 +386,16 @@ async def instantiate_template(
 
 def _coerce_node_status(raw: Any) -> str:
     """Validate a ``_seed_status`` metadata value against the node_status
-    enum, falling back to ``proposed`` for missing / unknown values so a
-    malformed template can never wedge instantiation.
+    enum, falling back to ``pending`` for missing / unknown values (legacy
+    ``idea`` / ``proposed`` seeds included) so a malformed template can never
+    wedge instantiation.
     """
     if isinstance(raw, str):
         try:
             return NodeStatus(raw).value
         except ValueError:
             pass
-    return NodeStatus.proposed.value
+    return NodeStatus.pending.value
 
 
 def _to_json(value: dict[str, Any]) -> str:

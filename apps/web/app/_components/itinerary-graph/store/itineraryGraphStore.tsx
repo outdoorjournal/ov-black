@@ -26,7 +26,7 @@
 import {
   abandonFork,
   acquireItineraryLock,
-  approveItinerary,
+  approveAllNodes,
   cancelReconcile,
   createApiClient,
   createNode,
@@ -38,9 +38,8 @@ import {
   getAnalysis,
   getItinerary,
   listInvoices,
-  proposeItinerary,
+  reconcileFork,
   releaseItineraryLock,
-  reopenItinerary,
   requestReconcile,
   searchInventory,
   startAnalysis,
@@ -48,9 +47,9 @@ import {
   updateNodeStatus,
   type AnalysisStatus,
   type CostKind,
+  type DisplayStatus,
   type FillProposalResponse,
   type FindingResponse,
-  type ItineraryStatus,
   type SearchInventoryQuery,
   type SearchInventoryResponse,
 } from "@ov-black/api-client";
@@ -157,19 +156,14 @@ export type ItineraryGraphState = {
   assemblePulse: number;
 
   // ── staff editing lifecycle ──
-  status: ItineraryStatus;
+  /** Derived trunk lifecycle from the API (in_studio / with_traveler / approved). */
+  status: DisplayStatus;
   lockStatus: LockStatus;
   lockPending: boolean;
   releasePending: boolean;
   approvePending: boolean;
-  // ADV-10 propose → approve. The advisor *proposes* (draft→proposed), which
-  // freezes the build; the traveler *approves* (node-by-node or all-at-once).
-  proposePending: boolean;
-  reopenPending: boolean;
   /** id of the node whose per-node approve is in flight (disables its button). */
   approvingNodeId: string | null;
-  /** id of the node whose per-node propose is in flight (disables its button). */
-  proposingNodeId: string | null;
   /** Per-currency price of the plan (ADV-10), `{ currency: amount }` from the
    *  GraphResponse — amounts are strings; empty when nothing is priced. */
   totals: Record<string, string>;
@@ -191,6 +185,15 @@ export type ItineraryGraphState = {
   mergeRequested: boolean;
   cancelingMerge: boolean;
   discarding: boolean;
+  /** Publish (advisor): reconcile this working copy into the trunk, accept-all. */
+  publishing: boolean;
+  /** The publish was refused by a blocking feasibility finding — the advisor
+   *  reviews/overrides in the diff panel instead of the fast path. */
+  publishBlocked: boolean;
+  /** Traveler on an advisor-crafted trunk with nothing published yet — the
+   *  timeline shows the "being crafted" teaser instead of the builder empty
+   *  state (which is the solo/self-serve prompt). */
+  awaitingProposal: boolean;
 
   // ── horizontal-view UI state ──
   pxPerMinute: number;
@@ -233,18 +236,12 @@ export type ItineraryGraphState = {
   // ── staff editing actions (no-op unless editable) ──
   acquireLock: () => void;
   releaseLock: () => void;
-  // ADV-10. `propose` (advisor): draft→proposed, hands the plan to the traveler.
-  // `reopen` (advisor): proposed→draft, resume building. `approve` (traveler, or
-  // advisor on a client's behalf): the all-at-once "Approve all" — cascades
-  // remaining `proposed` nodes to `approved`. `approveNode` (traveler): approve a
-  // single proposed card; clearing the last one derives the itinerary to approved.
-  // `proposeCard` (advisor): the per-card mirror of `propose` — firm up one idea
-  // card to `proposed` (hand it over) without freezing the whole build.
-  propose: () => void;
-  reopen: () => void;
+  // `approve` (traveler, or advisor on a client's behalf): the all-at-once
+  // "Approve all" on the official trunk — cascades remaining `pending` nodes to
+  // `approved` via the approve-all endpoint. `approveNode` (traveler): approve a
+  // single pending card; clearing the last one derives the itinerary to approved.
   approve: () => void;
   approveNode: (id: string) => void;
-  proposeCard: (id: string) => void;
   /** ADV-15: (re)load the per-card billing chips from the live ledger. Advisor
    *  only — a no-op for travelers or without credentials. */
   refreshBilling: () => void;
@@ -332,6 +329,11 @@ export type ItineraryGraphState = {
   cancelMerge: () => void;
   // Discard this whole alternative (abandon the fork) and go back to Official.
   discardMine: (navigate: (id: string) => void) => void;
+  /** Publish (advisor, on their working copy): reconcile every change into the
+   *  official trunk (`accept_all`) and navigate back to it. A blocking
+   *  feasibility finding refuses the fast path and sets `publishBlocked` —
+   *  the diff panel's review/override flow is the escape hatch. */
+  publishMine: (navigate: (id: string) => void) => void;
 
   // ── authoring (B7): inventory search · analyze · fill ──
   // Reads (search/analyze/fill) gate on `canEdit`; the two writes
@@ -372,7 +374,7 @@ export type ItineraryGraphState = {
 export type ItineraryGraphInit = {
   timeline: ItineraryTimeline;
   itineraryId: string;
-  status: ItineraryStatus;
+  status: DisplayStatus;
   /** The viewer's resolved role; `canEdit` is derived from it in the store. */
   role: UserRole;
   apiBaseUrl: string | null;
@@ -380,6 +382,9 @@ export type ItineraryGraphInit = {
   /** The viewer's own OPEN fork of this baseline (from `GraphResponse`), so the
    *  two-version toggle resolves to it instead of spawning a duplicate. */
   viewerOpenForkId?: string | null;
+  /** Traveler viewing an advisor-crafted trunk with nothing published yet —
+   *  drives the "being crafted" teaser over the empty timeline. */
+  awaitingProposal?: boolean;
   /** Per-currency plan price from the `GraphResponse` (ADV-10). Empty by default. */
   totals?: Record<string, string>;
   // Demo/sandbox escape hatch: start already locked-by-me so the prototype
@@ -389,14 +394,22 @@ export type ItineraryGraphInit = {
 };
 
 /**
- * A node is editable only when the viewer is staff (`canEdit`), holds the
- * lock, and the itinerary is still a **draft**. Centralised so views and
- * actions agree on the gate. Once the advisor *proposes* the plan (ADV-10) the
- * build freezes for the traveler's review — the advisor must `reopen` it (back
- * to draft) to resume editing — so `proposed` (like `approved`) is not editable.
+ * The advisor's authoring surface is their WORKING COPY — a fork. The official
+ * trunk only ever takes content via publish (reconcile), so staff build in a
+ * private fork exactly like travelers do; the server's trunk guard is the
+ * authority (409 `fork_required` for non-advisors, and the UI keeps advisors
+ * honest by only offering authoring on a fork). The editor lock still exists
+ * (legacy escape-hatch surfaces) but no longer grants trunk editability here.
+ *
+ * Credential-less sandbox exception: the design prototype has no API to fork
+ * against, so it keeps the old lock-gated rule — nothing can persist anyway.
  */
 export function selectEditable(s: ItineraryGraphState): boolean {
-  return s.canEdit && s.lockStatus === "locked-by-me" && s.status === "draft";
+  if (!s.canEdit) return false;
+  if (hasCredentials(s)) {
+    return Boolean(s.sample.itinerary?.forked_from_id);
+  }
+  return s.lockStatus === "locked-by-me" && s.status === "in_studio";
 }
 
 function hasCredentials(s: ItineraryGraphState): boolean {
@@ -404,39 +417,18 @@ function hasCredentials(s: ItineraryGraphState): boolean {
 }
 
 /**
- * The advisor may *propose* the plan to the traveler (draft → proposed) — the
- * finish-and-hand-over step (ADV-10). Only on the official baseline (not a
- * fork) while it's still a draft.
- */
-export function selectCanPropose(s: ItineraryGraphState): boolean {
-  return (
-    s.canEdit &&
-    s.status === "draft" &&
-    !s.sample.itinerary?.forked_from_id &&
-    hasCredentials(s)
-  );
-}
-
-/**
- * The advisor may *reopen* a proposed plan back to draft (the escape hatch to
- * resume building). Advisor-only, only while proposed.
- */
-export function selectCanReopen(s: ItineraryGraphState): boolean {
-  return s.canEdit && s.status === "proposed" && hasCredentials(s);
-}
-
-/**
  * Whether the viewer may approve — the all-at-once "Approve all" and the
- * per-node approve (ADV-10). The traveler approves a plan the advisor has
- * *proposed* to them; an advisor may also approve-all (on behalf of a client
- * who hasn't signed in yet) from either draft or proposed. Never on a fork
- * (approval is on the official baseline) or an already-approved plan.
+ * per-node approve. The traveler approves cards the advisor has published to
+ * them (`with_traveler`); an advisor may also approve-all (on behalf of a
+ * client who hasn't signed in yet) before that. Never on a fork (approval is
+ * on the official trunk) or an already-approved plan.
  */
 export function selectCanApprove(s: ItineraryGraphState): boolean {
   if (!hasCredentials(s) || s.status === "approved") return false;
   if (s.sample.itinerary?.forked_from_id) return false;
-  // Advisor: approve-all from draft or proposed. Traveler: only a proposed plan.
-  return s.canEdit || s.status === "proposed";
+  // Advisor: approve-all any time before approval. Traveler: only once the
+  // plan is with them for review.
+  return s.canEdit || s.status === "with_traveler";
 }
 
 /**
@@ -464,15 +456,16 @@ export function selectTravelerEditable(s: ItineraryGraphState): boolean {
 }
 
 /**
- * The traveler is on the OFFICIAL baseline but has toggled into the editable
- * "My version" preview, with no fork created yet. Edits here don't persist to
- * the baseline — the FIRST edit lazily forks (see `forkAndMove`) and carries
- * the change onto the new fork. Distinct from `selectTravelerEditable` (a real
- * fork) so the drop handler knows which path to take.
+ * The viewer is on the OFFICIAL trunk but has toggled into the editable
+ * working-copy preview, with no fork created yet. Edits here don't persist to
+ * the trunk — the FIRST edit lazily forks (see `forkAndMove`) and carries
+ * the change onto the new fork. Role-agnostic: advisors enter their private
+ * workspace and travelers their "My version" through the same gesture.
+ * Distinct from `selectTravelerEditable`/`selectEditable` (a real fork) so
+ * the drop handler knows which path to take.
  */
 export function selectIsDraftMine(s: ItineraryGraphState): boolean {
   return (
-    !s.canEdit &&
     s.status !== "approved" &&
     !s.sample.itinerary?.forked_from_id &&
     s.draftMine &&
@@ -662,6 +655,7 @@ export const itineraryGraphStore = createStoreContext<
     apiBaseUrl,
     accessToken,
     viewerOpenForkId = null,
+    awaitingProposal = false,
     totals = {},
     startLocked = false,
   }) =>
@@ -714,10 +708,7 @@ export const itineraryGraphStore = createStoreContext<
         lockPending: false,
         releasePending: false,
         approvePending: false,
-        proposePending: false,
-        reopenPending: false,
         approvingNodeId: null,
-        proposingNodeId: null,
         totals,
         billingChips: {},
 
@@ -728,6 +719,9 @@ export const itineraryGraphStore = createStoreContext<
         mergeRequested: Boolean(timeline.itinerary?.reconcile_requested_at),
         cancelingMerge: false,
         discarding: false,
+        publishing: false,
+        publishBlocked: false,
+        awaitingProposal,
 
         pxPerMinute: ZOOM_PRESETS.day,
 
@@ -809,7 +803,7 @@ export const itineraryGraphStore = createStoreContext<
               itinerary_id: node.itinerary_id,
               parent_subgraph_id: null,
               type: node.type as NodeResponse["type"],
-              status: "proposed",
+              status: "pending",
               title: node.title,
               source: node.source,
               source_id: node.source_id,
@@ -884,39 +878,11 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ releasePending: false }));
         },
-        // ADV-10: the advisor proposes the plan to the traveler (draft →
-        // proposed), freezing the build. Optimistic; reverts on failure.
-        propose: () => {
-          const s = get();
-          if (!selectCanPropose(s) || s.proposePending) return;
-          const c = client();
-          if (!c) return;
-          const previousStatus = s.status;
-          set({ proposePending: true, status: "proposed" });
-          void proposeItinerary(c, s.itineraryId)
-            .then((result) => {
-              if (!result.ok) set({ status: previousStatus });
-            })
-            .finally(() => set({ proposePending: false }));
-        },
-        // ADV-10: the advisor reopens a proposed plan back to draft to resume
-        // building (the escape hatch out of the frozen review state).
-        reopen: () => {
-          const s = get();
-          if (!selectCanReopen(s) || s.reopenPending) return;
-          const c = client();
-          if (!c) return;
-          const previousStatus = s.status;
-          set({ reopenPending: true, status: "draft" });
-          void reopenItinerary(c, s.itineraryId)
-            .then((result) => {
-              if (!result.ok) set({ status: previousStatus });
-            })
-            .finally(() => set({ reopenPending: false }));
-        },
-        // ADV-10 "Approve all": approve the whole plan in one action. Optimistic
-        // — the itinerary flips to approved and every remaining `proposed` node
-        // cascades to `approved` (mirroring the backend); reverts on failure.
+        // "Approve all": approve the whole plan in one action via the trunk's
+        // approve-all endpoint. Optimistic — the itinerary flips to approved and
+        // every remaining `pending` node cascades to `approved` (mirroring the
+        // backend); on success the server's canonical graph is adopted; reverts
+        // on failure.
         approve: () => {
           const s = get();
           if (!selectCanApprove(s) || s.approvePending) return;
@@ -928,23 +894,30 @@ export const itineraryGraphStore = createStoreContext<
             approvePending: true,
             status: "approved",
             nodes: s.nodes.map((n) =>
-              n.status === "proposed" ? { ...n, status: "approved" } : n,
+              n.status === "pending" ? { ...n, status: "approved" } : n,
             ),
           });
-          void approveItinerary(c, s.itineraryId)
+          void approveAllNodes(c, s.itineraryId)
             .then((result) => {
-              if (!result.ok) set({ status: previousStatus, nodes: previousNodes });
+              if (result.ok) {
+                set({
+                  nodes: [...result.graph.nodes],
+                  status: result.graph.itinerary.display_status ?? "approved",
+                });
+              } else {
+                set({ status: previousStatus, nodes: previousNodes });
+              }
             })
             .finally(() => set({ approvePending: false }));
         },
-        // ADV-10 node-by-node approve: the traveler approves a single proposed
-        // card. Optimistic; when this clears the LAST remaining proposed node,
-        // the itinerary derives to `approved` (the same rollup the backend does).
+        // Node-by-node approve: the traveler approves a single pending card.
+        // Optimistic; when this clears the LAST remaining pending node, the
+        // itinerary derives to `approved` (the same rollup the backend does).
         approveNode: (id) => {
           const s = get();
           if (!selectCanApprove(s) || s.approvingNodeId) return;
           const target = s.nodes.find((n) => n.id === id);
-          if (!target || target.status !== "proposed") return;
+          if (!target || target.status !== "pending") return;
           const c = client();
           if (!c) return;
           const previousStatus = s.status;
@@ -952,12 +925,14 @@ export const itineraryGraphStore = createStoreContext<
           const nextNodes = s.nodes.map((n) =>
             n.id === id ? { ...n, status: "approved" as const } : n,
           );
-          const anyProposedLeft = nextNodes.some((n) => n.status === "proposed");
+          const anyPendingLeft = nextNodes.some((n) => n.status === "pending");
           set({
             approvingNodeId: id,
             nodes: nextNodes,
             status:
-              !anyProposedLeft && s.status === "proposed" ? "approved" : s.status,
+              !anyPendingLeft && s.status === "with_traveler"
+                ? "approved"
+                : s.status,
           });
           void updateNodeStatus(c, {
             itineraryId: s.itineraryId,
@@ -968,34 +943,6 @@ export const itineraryGraphStore = createStoreContext<
               if (!result.ok) set({ status: previousStatus, nodes: previousNodes });
             })
             .finally(() => set({ approvingNodeId: null }));
-        },
-        // ADV-10 node-by-node propose: the advisor firms up a single `idea` card
-        // to `proposed` — the per-card mirror of the whole-plan `propose`. Only
-        // moves that one node; the itinerary itself stays `draft` (the advisor is
-        // still building). Optimistic; reverts on failure.
-        proposeCard: (id) => {
-          const s = get();
-          if (!selectCanPropose(s) || s.proposingNodeId) return;
-          const target = s.nodes.find((n) => n.id === id);
-          if (!target || target.status !== "idea") return;
-          const c = client();
-          if (!c) return;
-          const previousNodes = s.nodes;
-          set({
-            proposingNodeId: id,
-            nodes: s.nodes.map((n) =>
-              n.id === id ? { ...n, status: "proposed" as const } : n,
-            ),
-          });
-          void updateNodeStatus(c, {
-            itineraryId: s.itineraryId,
-            nodeId: id,
-            status: "proposed",
-          })
-            .then((result) => {
-              if (!result.ok) set({ nodes: previousNodes });
-            })
-            .finally(() => set({ proposingNodeId: null }));
         },
         // ADV-15: the board's per-card money chips. Advisor-only (billing is
         // advisor workflow) and self-contained like InvoicePanel's fetch — it
@@ -1181,7 +1128,7 @@ export const itineraryGraphStore = createStoreContext<
             itinerary_id: s.itineraryId,
             parent_subgraph_id: null,
             type,
-            status: "idea",
+            status: "pending",
             title,
             source: null,
             source_id: null,
@@ -1193,7 +1140,7 @@ export const itineraryGraphStore = createStoreContext<
             body: {
               type,
               title,
-              status: "idea",
+              status: "pending",
               metadata: metadata ?? {},
             },
           }).then((result) => {
@@ -1275,7 +1222,7 @@ export const itineraryGraphStore = createStoreContext<
             itinerary_id: s.itineraryId,
             parent_subgraph_id: null,
             type,
-            status: "proposed",
+            status: "pending",
             title: cleanTitle,
             source: null,
             source_id: null,
@@ -1290,7 +1237,7 @@ export const itineraryGraphStore = createStoreContext<
             body: {
               type,
               title: cleanTitle,
-              status: "proposed",
+              status: "pending",
               ...(priced ?? {}),
               ...(scheduled ?? {}),
             },
@@ -1337,7 +1284,7 @@ export const itineraryGraphStore = createStoreContext<
             itinerary_id: s.itineraryId,
             parent_subgraph_id: null,
             type: "note",
-            status: "proposed",
+            status: "pending",
             title: body,
             source: null,
             source_id: null,
@@ -1350,7 +1297,7 @@ export const itineraryGraphStore = createStoreContext<
             body: {
               type: "note",
               title: body,
-              status: "proposed",
+              status: "pending",
               attached_to_node_id: hostId,
             },
           }).then((result) => {
@@ -1460,6 +1407,25 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ discarding: false }));
         },
+        publishMine: (navigate) => {
+          const s = get();
+          const forkedFrom = s.sample.itinerary?.forked_from_id ?? null;
+          if (s.publishing || !s.canEdit || !forkedFrom) return;
+          const c = client();
+          if (!c) return;
+          set({ publishing: true, publishBlocked: false });
+          void reconcileFork(c, s.itineraryId, { accept_all: true })
+            .then((result) => {
+              if (result.ok) {
+                navigate(forkedFrom);
+                return;
+              }
+              if (result.detail === "fork_infeasible") {
+                set({ publishBlocked: true });
+              }
+            })
+            .finally(() => set({ publishing: false }));
+        },
         addFreeStandingNote: (dayKey, text) => {
           const s = get();
           const body = text.trim();
@@ -1478,7 +1444,7 @@ export const itineraryGraphStore = createStoreContext<
             itinerary_id: s.itineraryId,
             parent_subgraph_id: null,
             type: "note",
-            status: "proposed",
+            status: "pending",
             title: body,
             source: null,
             source_id: null,
@@ -1490,7 +1456,7 @@ export const itineraryGraphStore = createStoreContext<
             body: {
               type: "note",
               title: body,
-              status: "proposed",
+              status: "pending",
               starts_at: startIso,
             },
           }).then((result) => {
@@ -1539,7 +1505,7 @@ export const itineraryGraphStore = createStoreContext<
             itinerary_id: s.itineraryId,
             parent_subgraph_id: null,
             type: "note",
-            status: "proposed",
+            status: "pending",
             title: body,
             source: null,
             source_id: null,
@@ -1548,7 +1514,7 @@ export const itineraryGraphStore = createStoreContext<
           set({ nodes: [...s.nodes, optimistic], flashNodeId: tempId });
           void createNode(c, {
             itineraryId: s.itineraryId,
-            body: { type: "note", title: body, status: "proposed" },
+            body: { type: "note", title: body, status: "pending" },
           }).then((result) => {
             set((cur) => ({
               nodes: result.ok

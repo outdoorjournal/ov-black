@@ -12,8 +12,7 @@ const t = TYPE_TOKENS.experience;
 const STATUSES: StatusKind[] = ["approved", "booked", "confirmed"];
 
 const SERIAL: Record<StatusKind, string | null> = {
-  idea: null,
-  proposed: null,
+  pending: null,
   approved: null,
   booked: "URASEN-AC-2904",
   confirmed: "URASEN-AC-2904 · Mar 12, 2026",
@@ -21,8 +20,7 @@ const SERIAL: Record<StatusKind, string | null> = {
 };
 
 const STATUS_DATE: Record<StatusKind, string> = {
-  idea: "",
-  proposed: "",
+  pending: "",
   approved: "Mar 10",
   booked: "Mar 12",
   confirmed: "Mar 12, 2026",
@@ -571,12 +569,7 @@ const HYBRID_CFG: Record<
   StatusKind,
   { bg: string; border: string; shadow: string }
 > = {
-  idea: {
-    bg: "#f7f4ee",
-    border: "1px dashed rgba(10,10,10,0.18)",
-    shadow: "0 1px 0 rgba(0,0,0,0.04)",
-  },
-  proposed: {
+  pending: {
     bg: "#f7f4ee",
     border: "1px solid rgba(10,10,10,0.10)",
     shadow:
@@ -611,12 +604,7 @@ const SUBSTRATE_CFG: Record<
   StatusKind,
   { bg: string; border: string; shadow: string }
 > = {
-  idea: {
-    bg: "#f7f4ee",
-    border: "1px dashed rgba(10,10,10,0.18)",
-    shadow: "0 1px 0 rgba(0,0,0,0.04)",
-  },
-  proposed: {
+  pending: {
     bg: "#f7f4ee",
     border: "1px solid rgba(10,10,10,0.10)",
     shadow:

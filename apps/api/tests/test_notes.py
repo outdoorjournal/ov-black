@@ -101,7 +101,7 @@ async def test_free_standing_note_persists_starts_at_and_mirrors_metadata(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.note,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="something for dinner between these",
             starts_at="2025-07-02T19:30:00+09:00",
             duration_minutes=90,
@@ -135,7 +135,7 @@ async def test_attached_note_persists_attachment_and_no_range(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.experience,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="Tea ceremony at 1:30",
         )
         assert not isinstance(host, ItineraryError)
@@ -144,7 +144,7 @@ async def test_attached_note_persists_attachment_and_no_range(
             _actor(),
             itinerary_id=itinerary.id,
             type=NodeType.note,
-            status=NodeStatus.proposed,
+            status=NodeStatus.pending,
             title="why are we doing this at 1:30?",
             attached_to_node_id=host.id,
         )

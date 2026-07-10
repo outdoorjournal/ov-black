@@ -1,12 +1,13 @@
 // S08 T05 — vitest for the advisor draft-itinerary editor surface.
 //
-// Covers the four S08 plan bullets for this task:
+// Covers the S08 plan bullets for this task:
 //   (a) Edit click → acquireItineraryLock POST fires
 //   (b) Release click → releaseItineraryLock POST fires
-//   (c) Approve click → approveItinerary POST fires + button disables on
-//       successful status flip
 //   (d) locked-by-other (409 on lock) disables Edit and renders the
 //       advisory-notice copy
+//
+// The old (c) approve-button flow was deleted with the whole-itinerary
+// approve endpoint (trunk + forks model); the editor is rebuilt next wave.
 //
 // The component is rendered directly (not through the RSC) because the
 // server-side branch is trivial typecheck-territory — these bullets are
@@ -36,7 +37,7 @@ function buildNodes(): NodeResponse[] {
       itinerary_id: ITINERARY_ID,
       parent_subgraph_id: null,
       type: "experience",
-      status: "proposed",
+      status: "pending",
       title: "Heli-ski Chugach",
       source: "ov",
       source_id: "ov-123",
@@ -47,7 +48,7 @@ function buildNodes(): NodeResponse[] {
       itinerary_id: ITINERARY_ID,
       parent_subgraph_id: null,
       type: "experience",
-      status: "proposed",
+      status: "pending",
       title: "Sahara glamping",
       source: "ov",
       source_id: "ov-42",
@@ -62,9 +63,7 @@ function buildItineraryBody(overrides: Partial<ItineraryResponse> = {}): Itinera
     title: "Concierge draft",
     client_id: "client-s08",
     created_by: "advisor-s08",
-    status: "draft",
-    approved_by: null,
-    approved_at: null,
+    display_status: "in_studio",
     ...overrides,
   };
 }
@@ -141,7 +140,7 @@ test("Edit click calls acquireItineraryLock and flips lock status", async () => 
       accessToken="test-token"
       initialNodes={buildNodes()}
       initialEdges={edges}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 
@@ -195,7 +194,7 @@ test("Release click calls releaseItineraryLock and clears lock status", async ()
       accessToken="test-token"
       initialNodes={buildNodes()}
       initialEdges={[]}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 
@@ -223,47 +222,6 @@ test("Release click calls releaseItineraryLock and clears lock status", async ()
     .toBe("unlocked");
 });
 
-// ── (c) Approve → approveItinerary fires + disables on success ─────────────
-
-test("Approve click calls approveItinerary and disables the button on success", async () => {
-  const seen: CapturedRequest[] = [];
-  globalThis.fetch = captureFetch(seen, (req) => {
-    if (req.url.endsWith("/approve")) {
-      return jsonResponse(buildItineraryBody({ status: "approved" }), 200);
-    }
-    return jsonResponse({ detail: "unexpected" }, 500);
-  }) as unknown as typeof fetch;
-
-  const { getByTestId } = render(
-    <DraftItineraryEditor
-      itineraryId={ITINERARY_ID}
-      apiBaseUrl="http://api.test"
-      accessToken="test-token"
-      initialNodes={buildNodes()}
-      initialEdges={[]}
-      initialStatus="draft"
-    />,
-  );
-
-  const approveButton = getByTestId("draft-itinerary-approve") as HTMLButtonElement;
-  expect(approveButton.disabled).toBe(false);
-
-  await act(async () => {
-    fireEvent.click(approveButton);
-  });
-
-  await waitFor(() => {
-    const approveCalls = seen.filter(
-      (r) =>
-        r.method === "POST" && r.url.endsWith(`/itinerary/${ITINERARY_ID}/approve`),
-    );
-    expect(approveCalls).toHaveLength(1);
-  });
-  expect(getByTestId("draft-itinerary-editor").getAttribute("data-itinerary-status"))
-    .toBe("approved");
-  expect(approveButton.disabled).toBe(true);
-});
-
 // ── (d) locked-by-other → Edit disabled + notice rendered ──────────────────
 
 test("locked-by-other collapses Edit to disabled + shows advisory notice", async () => {
@@ -282,7 +240,7 @@ test("locked-by-other collapses Edit to disabled + shows advisory notice", async
       accessToken="test-token"
       initialNodes={buildNodes()}
       initialEdges={[]}
-      initialStatus="draft"
+      initialStatus="in_studio"
     />,
   );
 

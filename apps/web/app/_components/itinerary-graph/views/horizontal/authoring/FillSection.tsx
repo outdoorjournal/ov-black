@@ -101,7 +101,7 @@ export function FillSection({ tzOffsetHours, days, heading = true }: FillSection
             >
               <CardShell
                 kind={inferCardKind(node)}
-                status="proposed"
+                status="pending"
                 width="glance"
                 lockLabel={node.type}
               >
