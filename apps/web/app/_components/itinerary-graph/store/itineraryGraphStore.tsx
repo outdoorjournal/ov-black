@@ -124,6 +124,15 @@ export function clampZoom(value: number): number {
  */
 export type AskContext = { nodeId: string; title: string };
 
+/**
+ * How the focused node became focused (the Journal's scroll-active system).
+ * `click` is a deliberate pin — scroll observation must not steal it until the
+ * pinned card leaves the viewport band; `scroll` is ambient and freely
+ * superseded. `null` means no Journal interaction has happened yet (the rail
+ * shows its idle state even though a default focus may be set).
+ */
+export type FocusSource = "scroll" | "click";
+
 // Place mode (PS5): pick-then-place scheduling. `HeldItem` is the card lifted
 // off the Collection and floating, waiting for a slot; `PlacedItem` is the
 // just-dropped card the undo toast can return to the Collection.
@@ -152,6 +161,8 @@ export type ItineraryGraphState = {
   pendingProposals: NodeResponse[];
   messages: ChatMessage[];
   focusedNodeId: string | null;
+  /** Provenance of `focusedNodeId` — see `FocusSource`. */
+  focusSource: FocusSource | null;
   flashNodeId: string | null;
   assemblePulse: number;
 
@@ -219,7 +230,9 @@ export type ItineraryGraphState = {
   /** The card the concierge is scoped to (PS4 "ask about this"); null = general. */
   askContext: AskContext | null;
   setAskContext: (ctx: AskContext | null) => void;
-  focusNode: (id: string | null) => void;
+  /** Focus a node. `source` defaults to `click` (a deliberate pin); the
+   *  Journal's scroll observer passes `scroll` so a click-pin can outrank it. */
+  focusNode: (id: string | null, source?: FocusSource) => void;
   appendUserMessage: (id: string, text: string) => void;
   appendAssistantMessage: (id: string, text?: string) => void;
   appendDelta: (id: string, text: string) => void;
@@ -697,6 +710,9 @@ export const itineraryGraphStore = createStoreContext<
           },
         ],
         focusedNodeId: defaultFocus?.id ?? null,
+        // The default focus is a seed, not an interaction: `focusSource` stays
+        // null so idle surfaces (the Journal rail) don't jump straight to it.
+        focusSource: null,
         flashNodeId: null,
         assemblePulse: 0,
         askContext: null,
@@ -772,7 +788,11 @@ export const itineraryGraphStore = createStoreContext<
         },
         clearLastPlacement: () => set({ lastPlacement: null }),
 
-        focusNode: (id) => set({ focusedNodeId: id }),
+        focusNode: (id, source) =>
+          set({
+            focusedNodeId: id,
+            focusSource: id === null ? null : (source ?? "click"),
+          }),
         appendUserMessage: (id, text) =>
           set((s) => ({
             messages: [...s.messages, { id, role: "user", text }],

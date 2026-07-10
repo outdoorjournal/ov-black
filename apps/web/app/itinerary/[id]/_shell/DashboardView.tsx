@@ -1,15 +1,15 @@
 "use client";
 
-// The per-trip Dashboard (M006/PS3) — the "you're not lost" home the itinerary
-// index lands on. It gathers the trip-management surfaces the old eight-tab aside
-// scattered (design §4): an editable brief/splash HERO, ONE guided next best
-// action, the money ROLL-UP (total owed · issued · what-to-pay, which the PS4
-// card money facet rolls up into and deep-links back down from), the travel
-// PARTY, and — for an advisor — the Vault/Invoices/Booking management panels
-// rehomed out of the transitional Studio (Studio keeps Build/Diff, PS6 finalises).
-// Role-agnostic: both roles land here; affordances differ by `role`.
+// The per-trip Dashboard — the itinerary index lands here, and the Journal IS
+// the dashboard (traveler-journal design, phase 1): the editable brief/splash
+// HERO, then the narrative Journal (spine of cards + reactive right rail). The
+// old modules relocate rather than vanish — next action + approve-all +
+// balance become the rail's RESTING state, and the money ledger, travel party,
+// and advisor Vault/Invoices/Booking panels move to a quiet footer after the
+// journey ("The practical part"). Role-agnostic: both roles land here (Studio
+// stays one click away as the workbench); affordances differ by `role`.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,6 +30,7 @@ import {
   selectScheduledCount,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
+import { JournalView } from "@/app/_components/itinerary-graph/views/journal/JournalView";
 import { BookingPanel } from "@/app/_components/itinerary-graph/views/horizontal/BookingPanel";
 import { InvoicePanel } from "@/app/_components/itinerary-graph/views/horizontal/InvoicePanel";
 import { PartyPanel } from "@/app/_components/itinerary-graph/views/horizontal/PartyPanel";
@@ -71,6 +72,9 @@ export function DashboardView() {
 
   const [editing, setEditing] = useState(false);
   const [money, setMoney] = useState<MoneyState>({ kind: "loading" });
+  // The dashboard's scroll container — the Journal's scroll-active center band
+  // is measured against it.
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!apiBaseUrl || !accessToken) {
@@ -137,6 +141,7 @@ export function DashboardView() {
 
   return (
     <div
+      ref={scrollRef}
       data-testid="dashboard"
       className="min-h-0 flex-1 overflow-y-auto bg-paper"
     >
@@ -149,27 +154,64 @@ export function DashboardView() {
         onEdit={() => setEditing(true)}
       />
 
-      <div className="mx-auto flex max-w-5xl flex-col gap-6 p-4 sm:p-6">
-        <NextActionCard action={nextAction} onConcierge={openConcierge} />
-        <ApprovalSection />
-        <MoneySection state={money} role={isAdvisor ? "advisor" : "client"} itineraryId={itineraryId} />
-        <PartySection
-          isAdvisor={isAdvisor}
-          clientId={clientId}
-          itineraryId={itineraryId}
-          apiBaseUrl={apiBaseUrl}
-          accessToken={accessToken}
-        />
-        {isAdvisor ? (
-          <AdvisorManagement
-            itineraryId={itineraryId}
+      {/* The Journal — the trip read as a story. Its right rail rests on the
+          relocated "trip at a glance" (next action · approval · balance). */}
+      <JournalView
+        scrollRootRef={scrollRef}
+        railIdle={
+          <>
+            <NextActionCard action={nextAction} onConcierge={openConcierge} />
+            <ApprovalSection />
+            <BalanceGlance state={money} />
+          </>
+        }
+      />
+
+      {/* The practical part — money · party · advisor management, after the
+          end of the journey so invoices never interrupt the story mid-scroll. */}
+      <div data-testid="dashboard-practical" className="border-t border-ink/10">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
+          <h2 className="font-serif text-xl text-ink">The practical part</h2>
+          <MoneySection state={money} role={isAdvisor ? "advisor" : "client"} itineraryId={itineraryId} />
+          <PartySection
+            isAdvisor={isAdvisor}
             clientId={clientId}
+            itineraryId={itineraryId}
             apiBaseUrl={apiBaseUrl}
             accessToken={accessToken}
           />
-        ) : null}
+          {isAdvisor ? (
+            <AdvisorManagement
+              itineraryId={itineraryId}
+              clientId={clientId}
+              apiBaseUrl={apiBaseUrl}
+              accessToken={accessToken}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
+  );
+}
+
+// ── Balance glance — the rail's resting-state money line ─────────────────────
+// The trip's per-currency owed/settled at a glance; the full ledger (invoice
+// rows, pay links) lives below in "The practical part".
+function BalanceGlance({ state }: { state: MoneyState }) {
+  if (state.kind !== "ready") return null;
+  const { byCurrency, hasOwed } = rollupInvoices(state.invoices);
+  if (byCurrency.length === 0) return null;
+  return (
+    <SectionCard label="Balance" testid="dashboard-balance">
+      <div className="flex flex-col gap-1.5">
+        {byCurrency.map((c) => (
+          <RollupRow key={c.currency} rollup={c} />
+        ))}
+        <p className="pt-1 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
+          {hasOwed ? "Details after the journey ↓" : "All settled"}
+        </p>
+      </div>
+    </SectionCard>
   );
 }
 
