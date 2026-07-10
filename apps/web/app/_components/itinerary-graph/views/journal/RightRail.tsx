@@ -25,10 +25,23 @@
 //     blur, Escape cancels); deeper edits route to "ask Artemis";
 //   · legibility over disabled buttons: on the official trunk the rail says
 //     where content edits live instead of graying anything out.
+//
+// Phase 4 (diff mode) rethreads both states:
+//   · IDLE becomes the divergence summary ("4 additions, 1 change") with the
+//     role-decided CTA — the traveler's request-reconcile ask-path, or the
+//     advisor's one-pass reconcile (accept_all stays the fast path when
+//     nothing was kept);
+//   · ACTIVE on a diffed node leads with the change: field-level before/after
+//     for `changed`, old vs new time for `moved`, and — advisor only — the
+//     accept / keep-the-original decision wired to the per-`change_id`
+//     reconcile decisions. `refused_booked` (G1 immutable) renders as a lock
+//     explanation, not an error. The edit panel stays out of diff mode — it's
+//     a reading/deciding mode (notes stay open).
 
 import { useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
 
@@ -50,8 +63,23 @@ import {
 import { useTimelineData } from "../../TimelineDataContext";
 
 import { journalProblems, type JournalProblem } from "./problems";
+import {
+  changedFieldRows,
+  isGhostId,
+  movedTimeLabels,
+  type JournalDiffView,
+  type JournalNodeDiff,
+} from "./toJournalDiff";
 
-export function RightRail({ idle }: { idle: React.ReactNode }) {
+export function RightRail({
+  idle,
+  diffView = null,
+}: {
+  idle: React.ReactNode;
+  /** Diff mode's derived view (annotations + ghosts) — null when reading
+   *  normally. Presence flips the rail into compare register. */
+  diffView?: JournalDiffView | null;
+}) {
   const { timeline } = useTimelineData();
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
@@ -68,10 +96,18 @@ export function RightRail({ idle }: { idle: React.ReactNode }) {
 
   // Only a real Journal interaction (scroll or click) flips the rail to the
   // node detail — the store's seeded default focus keeps the idle glance.
+  // In diff mode the active node may be a GHOST (trunk-only, synthesized by
+  // toJournalDiff) — it never lives in the store's nodes.
   const active =
     focusSource !== null && focusedNodeId
-      ? (nodes.find((n) => n.id === focusedNodeId) ?? null)
+      ? (nodes.find((n) => n.id === focusedNodeId) ??
+        diffView?.ghosts.get(focusedNodeId) ??
+        null)
       : null;
+  const activeIsGhost = active ? isGhostId(active.id) : false;
+  const activeDiff = active
+    ? (diffView?.annotations.get(active.id) ?? null)
+    : null;
 
   const problems = useMemo(
     () => journalProblems(nodes, findings),
@@ -88,7 +124,7 @@ export function RightRail({ idle }: { idle: React.ReactNode }) {
           active ? "flex lg:hidden" : "flex",
         ].join(" ")}
       >
-        {idle}
+        {diffView ? <RailDiffSummary diffView={diffView} /> : idle}
       </div>
       {active ? (
         <div
@@ -99,20 +135,31 @@ export function RightRail({ idle }: { idle: React.ReactNode }) {
             node={active}
             tzOffsetHours={timeline.timezoneOffsetHours}
           />
+          {activeDiff ? (
+            <RailDiffChange
+              nodeDiff={activeDiff}
+              isAdvisor={role === "advisor"}
+              tz={timeline.timezoneOffsetHours}
+            />
+          ) : null}
           {activeProblem ? (
             <RailProblem node={active} problem={activeProblem} />
           ) : null}
           <RailApprove node={active} />
-          <div className="flex items-center gap-5">
-            <Link
-              href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
-              data-testid="journal-rail-open-detail"
-              className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
-            >
-              Open full detail →
-            </Link>
-          </div>
-          {editableFork && active.type !== "note" ? (
+          {!activeIsGhost ? (
+            <div className="flex items-center gap-5">
+              <Link
+                href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
+                data-testid="journal-rail-open-detail"
+                className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
+              >
+                Open full detail →
+              </Link>
+            </div>
+          ) : null}
+          {/* Diff mode is a reading/deciding mode — the in-place editors sit
+              out; notes stay open (below). */}
+          {editableFork && !diffView && active.type !== "note" ? (
             <RailEditPanel
               key={active.id}
               node={active}
@@ -135,10 +182,280 @@ export function RightRail({ idle }: { idle: React.ReactNode }) {
               and reshaping happens in your version.
             </p>
           ) : null}
-          <RailNoteAction nodeId={active.id} />
+          {!activeIsGhost ? <RailNoteAction nodeId={active.id} /> : null}
         </div>
       ) : null}
     </>
+  );
+}
+
+// ── Diff mode: the idle divergence summary + the role-decided CTA ────────────
+function RailDiffSummary({ diffView }: { diffView: JournalDiffView }) {
+  const router = useRouter();
+  const role = itineraryGraphStore.useStore((s) => s.role);
+  const diffLoading = itineraryGraphStore.useStore((s) => s.diffLoading);
+  const diffError = itineraryGraphStore.useStore((s) => s.diffError);
+  const diffBlocked = itineraryGraphStore.useStore((s) => s.diffBlocked);
+  const diffApplying = itineraryGraphStore.useStore((s) => s.diffApplying);
+  const diffDecisions = itineraryGraphStore.useStore((s) => s.diffDecisions);
+  const requestingMerge = itineraryGraphStore.useStore((s) => s.requestingMerge);
+  const mergeRequested = itineraryGraphStore.useStore((s) => s.mergeRequested);
+  const cancelingMerge = itineraryGraphStore.useStore((s) => s.cancelingMerge);
+  const storeApi = itineraryGraphStore.useStoreApi();
+
+  const isAdvisor = role === "advisor";
+  const keptCount = Object.values(diffDecisions).filter((a) => !a).length;
+
+  return (
+    <section
+      data-testid="journal-rail-diff-summary"
+      className="rounded-lg border border-ink/10 bg-white/60 p-4 sm:p-5"
+    >
+      <h2 className="mb-3 font-sans text-[10px] uppercase tracking-[0.2em] text-ink/45">
+        Compared with the trip
+      </h2>
+      {diffError ? (
+        <p className="font-serif text-[13px] italic text-ink/45">
+          The comparison isn&rsquo;t available right now.
+        </p>
+      ) : diffLoading && diffView.total === 0 ? (
+        <p className="font-serif text-[13px] italic text-ink/45">
+          Reading the two versions…
+        </p>
+      ) : diffView.total === 0 ? (
+        <p
+          data-testid="journal-rail-diff-agree"
+          className="font-serif text-[13px] italic text-ink/45"
+        >
+          {isAdvisor
+            ? "This version matches the official trip — nothing to fold in."
+            : "Your version matches the official trip."}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <p
+            data-testid="journal-rail-diff-counts"
+            className="font-serif text-xl text-ink"
+          >
+            {diffView.summary}
+          </p>
+          <p className="font-sans text-[12px] leading-snug text-ink/55">
+            {isAdvisor
+              ? "Read the story below — activate a marked card to accept it or keep the original."
+              : "The marks below show where your version diverges from the official trip."}
+          </p>
+          {isAdvisor ? (
+            <>
+              <button
+                type="button"
+                data-testid="journal-rail-reconcile"
+                onClick={() =>
+                  storeApi
+                    .getState()
+                    .applyDiffDecisions((id) => router.push(`/itinerary/${id}`))
+                }
+                disabled={diffApplying}
+                className="h-9 self-start rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+              >
+                {diffApplying
+                  ? "Reconciling…"
+                  : keptCount > 0
+                    ? "Reconcile the decisions"
+                    : "Accept all into the trip"}
+              </button>
+              {keptCount > 0 ? (
+                <p className="font-sans text-[11px] text-ink/50">
+                  {keptCount} kept as the original
+                </p>
+              ) : null}
+              {diffBlocked ? (
+                <p
+                  data-testid="journal-rail-diff-blocked"
+                  className="font-sans text-[12px] leading-snug text-[#8b2a1d]"
+                >
+                  A blocking feasibility finding refused the reconcile — review
+                  and override it from the Timeline&rsquo;s Diff tab.
+                </p>
+              ) : null}
+            </>
+          ) : mergeRequested ? (
+            <div className="flex flex-col gap-1.5">
+              <p
+                data-testid="journal-rail-merge-requested"
+                className="font-sans text-[12px] text-ink/60"
+              >
+                Reconcile requested ✓ — your advisor will fold this in.
+              </p>
+              <button
+                type="button"
+                data-testid="journal-rail-cancel-reconcile"
+                onClick={() => storeApi.getState().cancelMerge()}
+                disabled={cancelingMerge}
+                className="self-start font-sans text-[10px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline disabled:opacity-50"
+              >
+                {cancelingMerge ? "Cancelling…" : "Cancel the request"}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-testid="journal-rail-request-reconcile"
+              onClick={() => storeApi.getState().requestMerge()}
+              disabled={requestingMerge}
+              className="h-9 self-start rounded-full bg-ink px-5 font-sans text-[11px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+            >
+              {requestingMerge ? "Sending…" : "Request reconcile"}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Diff mode: the active node's change — before/after + accept / keep ───────
+const DIFF_KIND_LABEL: Record<JournalNodeDiff["kind"], string> = {
+  added: "New in this version",
+  removed: "Not in this version",
+  changed: "Changed in this version",
+  moved: "Moved in this version",
+};
+
+function RailDiffChange({
+  nodeDiff,
+  isAdvisor,
+  tz,
+}: {
+  nodeDiff: JournalNodeDiff;
+  isAdvisor: boolean;
+  tz: number;
+}) {
+  const diffDecisions = itineraryGraphStore.useStore((s) => s.diffDecisions);
+  const diffOutcomes = itineraryGraphStore.useStore((s) => s.diffOutcomes);
+  const storeApi = itineraryGraphStore.useStoreApi();
+
+  const { kind, change } = nodeDiff;
+  const accepted = diffDecisions[change.change_id] ?? true;
+  const outcome = diffOutcomes[change.change_id];
+
+  // G1: a booked/confirmed node on the official trip is immutable — the
+  // decision is a LOCK explanation, not a pair of buttons (and a reconcile
+  // pass that already refused it says so too).
+  const beforeStatus =
+    typeof change.before?.["status"] === "string"
+      ? change.before["status"]
+      : null;
+  const locked =
+    outcome === "refused_booked" ||
+    beforeStatus === "booked" ||
+    beforeStatus === "confirmed";
+
+  const fieldRows = kind === "changed" ? changedFieldRows(change, tz) : [];
+  const movedTimes = kind === "moved" ? movedTimeLabels(change, tz) : null;
+  const detailsUpdated =
+    kind === "changed" && (change.fields ?? []).includes("metadata");
+
+  const decisionBtn = (isActive: boolean) =>
+    [
+      "rounded-full border px-3.5 py-1 font-sans text-[10px] uppercase tracking-[0.16em] transition-colors",
+      isActive
+        ? "border-ink bg-ink text-paper"
+        : "border-ink/25 text-ink/60 hover:border-ink/50 hover:text-ink",
+    ].join(" ");
+
+  return (
+    <div
+      data-testid="journal-rail-diff-change"
+      data-kind={kind}
+      className="flex flex-col gap-2.5 rounded-md border border-brand/30 bg-[rgba(245,112,31,0.04)] p-3"
+    >
+      <p className="font-sans text-[9px] uppercase tracking-[0.22em] text-brand">
+        {DIFF_KIND_LABEL[kind]}
+      </p>
+
+      {fieldRows.length > 0 ? (
+        <dl className="flex flex-col gap-1.5">
+          {fieldRows.map((row) => (
+            <div
+              key={row.field}
+              data-testid="journal-rail-diff-field"
+              data-field={row.field}
+              className="flex flex-col gap-0.5"
+            >
+              <dt className="font-sans text-[9px] uppercase tracking-[0.18em] text-ink/40">
+                {row.label}
+              </dt>
+              <dd className="font-serif text-[13px] leading-snug text-ink/85">
+                <span className="text-ink/50 line-through decoration-ink/25">
+                  {row.before}
+                </span>
+                <span aria-hidden className="px-1.5 text-ink/35">
+                  →
+                </span>
+                {row.after}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {detailsUpdated ? (
+        <p className="font-sans text-[11px] italic text-ink/50">
+          Details updated
+        </p>
+      ) : null}
+      {movedTimes ? (
+        <p
+          data-testid="journal-rail-diff-times"
+          className="font-serif text-[13px] leading-snug text-ink/85"
+        >
+          <span className="text-ink/50 line-through decoration-ink/25">
+            {movedTimes.before}
+          </span>
+          <span aria-hidden className="px-1.5 text-ink/35">
+            →
+          </span>
+          {movedTimes.after}
+        </p>
+      ) : null}
+
+      {locked ? (
+        <p
+          data-testid="journal-rail-diff-locked"
+          className="flex items-start gap-1.5 font-sans text-[12px] leading-snug text-ink/60"
+        >
+          <span aria-hidden>⚿</span>
+          <span>
+            This card is booked on the official trip — booked cards stay as
+            they are, so this change can&rsquo;t be folded in.
+          </span>
+        </p>
+      ) : isAdvisor ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            data-testid="journal-rail-diff-accept"
+            aria-pressed={accepted}
+            onClick={() =>
+              storeApi.getState().setDiffDecision(change.change_id, true)
+            }
+            className={decisionBtn(accepted)}
+          >
+            Accept
+          </button>
+          <button
+            type="button"
+            data-testid="journal-rail-diff-keep"
+            aria-pressed={!accepted}
+            onClick={() =>
+              storeApi.getState().setDiffDecision(change.change_id, false)
+            }
+            className={decisionBtn(!accepted)}
+          >
+            Keep the original
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

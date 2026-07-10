@@ -29,6 +29,7 @@ import {
   selectScheduledCount,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
+import { JournalVersionChip } from "@/app/_components/itinerary-graph/views/journal/JournalVersionChip";
 import { JournalView } from "@/app/_components/itinerary-graph/views/journal/JournalView";
 import { BookingPanel } from "@/app/_components/itinerary-graph/views/horizontal/BookingPanel";
 import { InvoicePanel } from "@/app/_components/itinerary-graph/views/horizontal/InvoicePanel";
@@ -119,6 +120,13 @@ export function DashboardView() {
           inline editors; the intake overlay is first-run only (ItineraryShell's
           brief gate), never the edit path. */}
       <DashboardHero />
+
+      {/* The version chip near the hero (phase 4) — names which version this
+          is and carries the *Compare with the trip* toggle (diff mode: a
+          toggle over the Journal DOM below, never a route). */}
+      <div className="mx-auto w-full max-w-6xl px-4 pt-4 sm:px-6">
+        <JournalVersionChip />
+      </div>
 
       {/* The Journal — the trip read as a story. Its right rail rests on the
           relocated "trip at a glance" (next action · approval · balance). */}

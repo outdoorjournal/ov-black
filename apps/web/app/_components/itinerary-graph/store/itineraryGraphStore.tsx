@@ -36,6 +36,7 @@ import {
   fillGap,
   forkItinerary,
   getAnalysis,
+  getForkDiff,
   getItinerary,
   listInvoices,
   reconcileFork,
@@ -50,6 +51,7 @@ import {
   type DisplayStatus,
   type FillProposalResponse,
   type FindingResponse,
+  type ForkDiffResponse,
   type SearchInventoryQuery,
   type SearchInventoryResponse,
 } from "@ov-black/api-client";
@@ -206,6 +208,32 @@ export type ItineraryGraphState = {
    *  state (which is the solo/self-serve prompt). */
   awaitingProposal: boolean;
 
+  // ── diff mode (phase 4): unified fork-vs-trunk compare over the Journal ──
+  /** Reading this fork AGAINST its baseline — a toggle over the same Journal
+   *  DOM (never a route). Only meaningful on a fork; content editing gestures
+   *  are disabled while on (a reading/deciding mode — notes stay open). */
+  diffMode: boolean;
+  /** The G3 `diff_fork` response the Journal renders from; null until the
+   *  first fetch lands. */
+  diff: ForkDiffResponse | null;
+  diffLoading: boolean;
+  diffError: boolean;
+  /** change_id → accept (true) | keep the original (false). Defaults to
+   *  accept — the same convention as the DiffPanel. Advisor-facing: the rail's
+   *  per-change accept/keep toggles write here; `applyDiffDecisions` sends the
+   *  whole map in one reconcile pass (full coverage flips the fork's status
+   *  server-side; per-change calls never would). */
+  diffDecisions: Record<string, boolean>;
+  /** change_id → outcome result from the last reconcile pass (applied /
+   *  discarded / refused_booked / …) — `refused_booked` renders as a lock
+   *  explanation, not an error. */
+  diffOutcomes: Record<string, string>;
+  /** The reconcile pass in flight. */
+  diffApplying: boolean;
+  /** The reconcile was refused by a blocking feasibility finding — review /
+   *  override lives in the Timeline's Diff tab (the full panel). */
+  diffBlocked: boolean;
+
   // ── horizontal-view UI state ──
   pxPerMinute: number;
 
@@ -353,6 +381,21 @@ export type ItineraryGraphState = {
    *  feasibility finding refuses the fast path and sets `publishBlocked` —
    *  the diff panel's review/override flow is the escape hatch. */
   publishMine: (navigate: (id: string) => void) => void;
+  // ── diff mode actions (phase 4) ──
+  /** Enter/leave compare. Entering needs a fork + credentials (a no-op
+   *  otherwise) and fetches the diff. */
+  setDiffMode: (on: boolean) => void;
+  /** (Re)fetch `diff_fork` for this fork; seeds `diffDecisions` (accept by
+   *  default) preserving any choices already made. */
+  refreshDiff: () => void;
+  /** The rail's per-change accept / keep-the-original toggle (advisor). */
+  setDiffDecision: (changeId: string, accept: boolean) => void;
+  /** Reconcile the decided changes into the trunk in ONE pass (advisor).
+   *  All-accept takes the server-side `accept_all` fast path (no staleness
+   *  window). Fully resolved → navigate to the trunk; refusals
+   *  (`refused_booked` — G1 immutable) stay honest: outcomes recorded, the
+   *  diff refreshed, the fork stays open. */
+  applyDiffDecisions: (navigate: (id: string) => void) => void;
 
   // ── authoring (B7): inventory search · analyze · fill ──
   // Reads (search/analyze/fill) gate on `canEdit`; the two writes
@@ -1461,6 +1504,115 @@ export const itineraryGraphStore = createStoreContext<
             })
             .finally(() => set({ publishing: false }));
         },
+
+        // ── diff mode (phase 4) ─────────────────────────────────────────────
+        diffMode: false,
+        diff: null,
+        diffLoading: false,
+        diffError: false,
+        diffDecisions: {},
+        diffOutcomes: {},
+        diffApplying: false,
+        diffBlocked: false,
+        setDiffMode: (on) => {
+          const s = get();
+          if (!on) {
+            set({ diffMode: false });
+            return;
+          }
+          // Compare is inherently pairwise: this fork against its baseline —
+          // there is nothing to diff on the trunk or without credentials.
+          if (!s.sample.itinerary?.forked_from_id || !client()) return;
+          set({ diffMode: true, diffBlocked: false });
+          s.refreshDiff();
+        },
+        refreshDiff: () => {
+          const s = get();
+          if (!s.sample.itinerary?.forked_from_id) return;
+          const c = client();
+          if (!c) return;
+          set({ diffLoading: true, diffError: false });
+          void getForkDiff(c, s.itineraryId)
+            .then((result) => {
+              if (!result.ok) {
+                set({ diffError: true });
+                return;
+              }
+              // Seed accept-by-default decisions, preserving choices already
+              // made (the DiffPanel convention).
+              const prev = get().diffDecisions;
+              const decisions: Record<string, boolean> = {};
+              const d = result.diff;
+              for (const change of [
+                ...d.added,
+                ...d.removed,
+                ...d.changed,
+                ...d.moved,
+              ]) {
+                decisions[change.change_id] = prev[change.change_id] ?? true;
+              }
+              set({ diff: d, diffDecisions: decisions });
+            })
+            .finally(() => set({ diffLoading: false }));
+        },
+        setDiffDecision: (changeId, accept) =>
+          set((s) => ({
+            diffDecisions: { ...s.diffDecisions, [changeId]: accept },
+          })),
+        applyDiffDecisions: (navigate) => {
+          const s = get();
+          const forkedFrom = s.sample.itinerary?.forked_from_id ?? null;
+          if (!s.canEdit || s.diffApplying || !s.diff || !forkedFrom) return;
+          const c = client();
+          if (!c) return;
+          const changes = [
+            ...s.diff.added,
+            ...s.diff.removed,
+            ...s.diff.changed,
+            ...s.diff.moved,
+          ];
+          const decisions = changes.map((change) => ({
+            change_id: change.change_id,
+            accept: s.diffDecisions[change.change_id] ?? true,
+          }));
+          // Everything accepted → the server-side accept_all fast path (the
+          // diff is recomputed in the same transaction, no staleness window).
+          const allAccept = decisions.every((d) => d.accept);
+          set({ diffApplying: true, diffBlocked: false, diffOutcomes: {} });
+          void reconcileFork(
+            c,
+            s.itineraryId,
+            allAccept ? { accept_all: true } : { decisions },
+          )
+            .then((result) => {
+              if (!result.ok) {
+                if (result.detail === "fork_infeasible") {
+                  set({ diffBlocked: true });
+                } else {
+                  set({ diffError: true });
+                }
+                return;
+              }
+              const outcomes: Record<string, string> = {};
+              for (const o of result.result.outcomes) {
+                outcomes[o.change_id] = o.result;
+              }
+              set({ diffOutcomes: outcomes });
+              const unresolved = result.result.outcomes.some(
+                (o) => o.result === "refused_booked" || o.result === "failed",
+              );
+              if (!unresolved) {
+                // Fully folded in — the review is done; read the trunk.
+                navigate(forkedFrom);
+                return;
+              }
+              // Honest partial: booked cards stayed (G1). Re-diff so the
+              // remaining divergence (with its locks) is what's on screen.
+              get().refreshDiff();
+            })
+            .finally(() => set({ diffApplying: false }));
+        },
+
         editNoteText: (id, text) => {
           const s = get();
           const body = text.trim();

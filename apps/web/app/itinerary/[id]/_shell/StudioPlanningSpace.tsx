@@ -1,27 +1,32 @@
 "use client";
 
-// The advisor Studio destination — now Diff-only (M006). Since the harmonization,
-// the Build authoring tools live on the Timeline toolbar (the unified Add composer
-// + the Analyze modal), so Studio's sole remaining job is reconciling an
-// alternative version against its baseline. The route is advisor-gated server-side
-// and its rail item only shows for alternatives, so a non-alternative reaching here
-// (a stale direct link) gets a quiet empty state rather than an empty panel.
+// The advisor Studio destination. Since M006 this was Diff-only (reconciling
+// an alternative against its baseline); with the Journal's diff mode (phase 4)
+// the RECONCILE REVIEW lives in the Journal itself — the unified fork-vs-trunk
+// compare with per-change accept/keep in the rail — so this destination now
+// routes there (`/dashboard?compare=1` seeds the toggle). The full DiffPanel
+// survives on the Timeline's Diff tab for the feasibility-check + override
+// escape hatch; a non-alternative reaching here (a stale direct link) still
+// gets the quiet empty state.
 
-import { DiffPanel } from "@/app/_components/itinerary-graph/views/horizontal/DiffPanel";
-import {
-  itineraryGraphStore,
-  selectEditable,
-} from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
+import { useEffect } from "react";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
+
+import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
 
 export function StudioPlanningSpace() {
   const { timeline } = useTimelineData();
-  const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
-  const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
+  const router = useRouter();
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
-  const editable = itineraryGraphStore.useStore(selectEditable);
 
   const forkedFromId = timeline.itinerary.forked_from_id ?? null;
+
+  useEffect(() => {
+    if (!forkedFromId) return;
+    router.replace(`/itinerary/${itineraryId}/dashboard?compare=1` as Route);
+  }, [forkedFromId, itineraryId, router]);
 
   if (!forkedFromId) {
     return (
@@ -38,14 +43,13 @@ export function StudioPlanningSpace() {
   }
 
   return (
-    <div data-testid="studio" className="flex min-h-0 flex-1 flex-col">
-      <DiffPanel
-        apiBaseUrl={apiBaseUrl}
-        accessToken={accessToken}
-        forkItineraryId={itineraryId}
-        baselineItineraryId={forkedFromId}
-        editable={editable}
-      />
+    <div
+      data-testid="studio"
+      className="flex min-h-0 flex-1 items-center justify-center px-6 py-10"
+    >
+      <p className="max-w-sm text-center font-serif text-[15px] italic leading-relaxed text-ink/55">
+        Opening the review in the Journal…
+      </p>
     </div>
   );
 }

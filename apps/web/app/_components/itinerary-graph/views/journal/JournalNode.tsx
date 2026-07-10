@@ -21,11 +21,23 @@
 //     existing per-node approval; the unchosen collapse to a ghost chip
 //     ("you also considered…", tap to restore). Vocabulary rule: alternatives
 //     split the spine; version diffs (phase 4) never will.
+//
+// Phase 4 (diff mode) annotates the SAME rows — stitches/ghosts/dots only,
+// never a spine split (that vocabulary belongs to alternatives):
+//   · added   — the card renders vivid with a "new in this version" stitch on
+//     its spine segment (a dashed brand thread over the line);
+//   · changed — a change dot on the circle; the rail shows the field-level
+//     before/after;
+//   · moved   — a chip on the card; the rail shows old vs new time (no
+//     ghost-at-old-position arrows — too much ink);
+//   · removed — JournalGhostNode below: a trunk-only row at its trunk time,
+//     dashed circle, muted card, "not in your version".
 
 import { useDraggable } from "@dnd-kit/core";
 import { Fragment, useCallback, useState, type RefCallback } from "react";
 
 import { inferCardKind, statusToKind } from "../../shared/cards/CardBody";
+import { TYPE_TOKENS } from "../../shared/cards/tokens";
 import type { NodeResponse } from "../../model/types";
 import { NodeCard } from "../horizontal/NodeCard";
 import {
@@ -38,6 +50,7 @@ import { MarginNotes, SpineNoteCard } from "./JournalNotes";
 import type { JournalProblem } from "./problems";
 import { SPINE_COL_PX, SpineCircle } from "./Spine";
 import type { GroupedRole } from "./toJournal";
+import type { JournalNodeDiff } from "./toJournalDiff";
 
 const spineColStyle = {
   "--spine-col": `${SPINE_COL_PX}px`,
@@ -53,6 +66,7 @@ export function JournalNode({
   dragEnabled = false,
   problem = null,
   bracket = null,
+  diff = null,
   marginInline = false,
 }: {
   node: NodeResponse;
@@ -70,6 +84,9 @@ export function JournalNode({
   problem?: JournalProblem | null;
   /** Position inside a `grouped_with` run — draws the spanning bracket. */
   bracket?: GroupedRole | null;
+  /** Diff-mode annotation (added / changed / moved) — stitches and dots only;
+   *  removed rows render as JournalGhostNode instead. Null = versions agree. */
+  diff?: JournalNodeDiff | null;
   /** Render margin notes in-flow (used inside alt branches, where the
    *  absolute margin would overlay the neighbouring branch). */
   marginInline?: boolean;
@@ -106,6 +123,7 @@ export function JournalNode({
       data-node-id={node.id}
       data-active={active ? "true" : undefined}
       data-dragging={isDragging ? "true" : undefined}
+      data-diff={diff?.kind}
       className={[
         "group/jnode grid grid-cols-[var(--spine-col)_minmax(0,1fr)] items-start gap-x-4",
         isDragging ? "opacity-40" : "",
@@ -113,12 +131,33 @@ export function JournalNode({
       style={spineColStyle}
     >
       <div className="relative flex justify-center pt-3">
+        {/* "New in this version" — a dashed brand STITCH over the spine
+            segment (never a split; version divergence keeps one spine). */}
+        {diff?.kind === "added" ? (
+          <span
+            aria-hidden
+            data-testid="journal-diff-stitch"
+            className="absolute -bottom-1 -top-1 w-0 border-l-2 border-dashed border-brand/70"
+            style={{ left: SPINE_COL_PX / 2 }}
+          />
+        ) : null}
         <SpineCircle
           kind={kind}
           status={status}
           active={active}
           problem={problem !== null}
         />
+        {/* The change DOT on the circle — a quiet "this differs" marker; the
+            rail carries the field-level before/after. */}
+        {diff?.kind === "changed" ? (
+          <span
+            aria-hidden
+            data-testid="journal-diff-dot"
+            title="Changed in this version"
+            className="absolute top-2 z-20 h-2.5 w-2.5 rounded-full bg-brand ring-2 ring-paper"
+            style={{ left: SPINE_COL_PX / 2 + 8 }}
+          />
+        ) : null}
         {/* The non-color problem glyph — OUTSIDE the circle, per the spec. */}
         {problem ? (
           <span
@@ -173,6 +212,27 @@ export function JournalNode({
             />
           </div>
         )}
+        {/* Diff captions — manuscript margin marks, not paint: a brand line
+            for "new", a small chip for "moved" (the rail shows old vs new). */}
+        {diff?.kind === "added" ? (
+          <p
+            data-testid="journal-diff-added-caption"
+            className="mt-1 pl-1 font-sans text-[9px] uppercase tracking-[0.2em] text-brand"
+          >
+            new in this version
+          </p>
+        ) : null}
+        {diff?.kind === "moved" ? (
+          <p className="mt-1 pl-1">
+            <span
+              data-testid="journal-diff-moved"
+              title="Moved in this version"
+              className="inline-flex items-center gap-1 rounded-full border border-brand/40 px-2 py-0.5 font-sans text-[9px] uppercase tracking-[0.18em] text-brand"
+            >
+              <span aria-hidden>⇅</span> moved
+            </span>
+          </p>
+        ) : null}
         {/* The one-line problem caption — the rail carries the explanation
             and the "get help" action when the card is active. */}
         {problem ? (
@@ -215,6 +275,7 @@ export function JournalAltGroup({
   onActivate,
   observeRef,
   problems,
+  diffs,
 }: {
   nodes: NodeResponse[];
   tzOffsetHours: number;
@@ -223,6 +284,8 @@ export function JournalAltGroup({
   onActivate: (nodeId: string) => void;
   observeRef: (nodeId: string) => RefCallback<HTMLElement>;
   problems?: Map<string, JournalProblem> | undefined;
+  /** Diff-mode annotations (phase 4) — a member can be added/changed/moved. */
+  diffs?: Map<string, JournalNodeDiff> | undefined;
 }) {
   const canApprove = itineraryGraphStore.useStore(selectCanApprove);
   const approvingNodeId = itineraryGraphStore.useStore((s) => s.approvingNodeId);
@@ -255,6 +318,7 @@ export function JournalAltGroup({
           onActivate={onActivate}
           observeRef={observeRef(chosen.id)}
           problem={problems?.get(chosen.id) ?? null}
+          diff={diffs?.get(chosen.id) ?? null}
         />
         <div
           className="grid grid-cols-[var(--spine-col)_minmax(0,1fr)] gap-x-4"
@@ -330,6 +394,7 @@ export function JournalAltGroup({
                 onActivate={onActivate}
                 observeRef={observeRef(node.id)}
                 problem={problems?.get(node.id) ?? null}
+                diff={diffs?.get(node.id) ?? null}
                 marginInline
               />
               {/* Choosing = the existing approval action. Only before any
@@ -383,5 +448,80 @@ export function JournalAltGroup({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * A trunk-only row in diff mode (phase 4): the node exists on the official
+ * trip but not in this version. A GHOST — dashed circle, muted card, "not in
+ * your version" — sitting at its TRUNK time in the unified sequence. It is
+ * synthesized from the diff's `before` snapshot (never in the store), so it is
+ * read/activate-only: activating it puts the removal (and, for an advisor,
+ * the accept/keep decision) in the rail.
+ */
+export function JournalGhostNode({
+  node,
+  active,
+  caption,
+  onActivate,
+  observeRef,
+}: {
+  node: NodeResponse;
+  active: boolean;
+  /** Role-aware: "not in your version" (traveler) / "not in this version"
+   *  (advisor reviewing someone else's fork). */
+  caption: string;
+  onActivate: (nodeId: string) => void;
+  observeRef: RefCallback<HTMLElement>;
+}) {
+  const kind = inferCardKind(node);
+  const token = TYPE_TOKENS[kind];
+  return (
+    <article
+      ref={observeRef}
+      data-testid="journal-ghost"
+      data-node-id={node.id}
+      data-active={active ? "true" : undefined}
+      data-diff="removed"
+      className="grid grid-cols-[var(--spine-col)_minmax(0,1fr)] items-start gap-x-4"
+      style={spineColStyle}
+    >
+      <div className="relative flex justify-center pt-3">
+        {/* The dashed circle — the type still reads, the presence doesn't. */}
+        <span
+          role="img"
+          aria-label={`${token.label} — ${caption}`}
+          data-testid="journal-ghost-circle"
+          data-kind={kind}
+          className={[
+            "relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed bg-paper text-ink/40 transition-transform duration-200",
+            active ? "scale-110 border-ink/45" : "border-ink/30",
+          ].join(" ")}
+        >
+          <token.Icon size={13} strokeWidth={1.8} aria-hidden />
+        </span>
+      </div>
+      <div className="relative max-w-[420px] pb-1 pt-3">
+        <span
+          aria-hidden
+          className={[
+            "pointer-events-none absolute -left-2 bottom-3 top-3 w-[2.5px] rounded-full bg-brand transition-opacity duration-200",
+            active ? "opacity-80" : "opacity-0",
+          ].join(" ")}
+        />
+        <button
+          type="button"
+          onClick={() => onActivate(node.id)}
+          className="w-full rounded-lg border border-dashed border-ink/25 bg-paper/60 px-3.5 py-2.5 text-left opacity-75 transition-opacity hover:opacity-100"
+        >
+          <p className="font-serif text-[14px] leading-snug text-ink/55 line-through decoration-ink/25">
+            {node.title}
+          </p>
+          <p className="mt-0.5 font-sans text-[9px] uppercase tracking-[0.2em] text-ink/40">
+            {caption}
+          </p>
+        </button>
+      </div>
+    </article>
   );
 }

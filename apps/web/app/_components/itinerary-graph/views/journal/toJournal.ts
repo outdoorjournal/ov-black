@@ -34,6 +34,11 @@ export type JournalEntry =
   /** A real graph node, rendered as a card on the spine. `groupedWith` marks
    *  membership in a consecutive `grouped_with` run (the bracket). */
   | { kind: "node"; node: NodeResponse; groupedWith?: GroupedRole }
+  /** DIFF MODE ONLY (toJournalDiff): a trunk-only node — "removed" in this
+   *  version — rendered as a ghost card at its trunk time. `toJournal` itself
+   *  never emits one; the node is SYNTHESIZED from the diff's `before`
+   *  snapshot and never exists in the store. */
+  | { kind: "ghost"; node: NodeResponse }
   /** An alternative group ("choose one of these") — members ordered by start
    *  time; rendered as the spine splitting (fork-in-the-spine, phase 3). */
   | { kind: "alt"; groupKey: string; nodes: NodeResponse[] }

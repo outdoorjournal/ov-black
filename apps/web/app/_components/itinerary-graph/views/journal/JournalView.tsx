@@ -17,6 +17,14 @@
 //   · alternatives render as the spine splitting (JournalAltGroup) and
 //     problems as red-ring/⚠/caption (problems.ts), explained in the rail.
 //
+// Phase 4 adds DIFF MODE — a toggle over this same DOM (never a route): the
+// unified fork-vs-trunk compare (toJournalDiff) rendered as tracked changes on
+// ONE spine — stitches, dots, moved chips, and ghost rows for trunk-only
+// nodes; a slim dashed second thread runs beside the spine through diverged
+// days as a region cue. The spine never splits for a version diff (splits are
+// the alternatives vocabulary). Diff mode is a reading/deciding mode: content
+// gestures (drag, insert, in-place edit) sit out; notes stay open.
+//
 // Same screen, responsive: below lg the rail column disappears, the Journal
 // goes full-width, and activating a card deep-links to /item/[nodeId] (the
 // existing full-detail destination) instead of driving the rail.
@@ -57,12 +65,20 @@ import {
   nodeIdFromJournalDragId,
   SLOT_EMPTY_DAY_MIN,
 } from "./journalEditing";
-import { JournalAltGroup, JournalNode } from "./JournalNode";
+import { JournalAltGroup, JournalGhostNode, JournalNode } from "./JournalNode";
 import { AddNoteOnLine } from "./JournalNotes";
 import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
 import { NightSegment, SPINE_COL_PX } from "./Spine";
 import { toJournal, type JournalDaySection } from "./toJournal";
+import {
+  isGhostId,
+  toJournalDiff,
+  type JournalDiffView,
+  type JournalNodeDiff,
+} from "./toJournalDiff";
+
+type JournalDiffViewOrNull = JournalDiffView | null;
 import { useScrollActive } from "./useScrollActive";
 import { ElisionMarker, GapSegment, VirtualNode } from "./VirtualNode";
 
@@ -95,6 +111,9 @@ export function JournalView({
   const focusNode = itineraryGraphStore.useStore((s) => s.focusNode);
   const awaitingProposal = itineraryGraphStore.useStore((s) => s.awaitingProposal);
   const viewerOpenForkId = itineraryGraphStore.useStore((s) => s.viewerOpenForkId);
+  const role = itineraryGraphStore.useStore((s) => s.role);
+  const diffMode = itineraryGraphStore.useStore((s) => s.diffMode);
+  const diff = itineraryGraphStore.useStore((s) => s.diff);
   // What a spine drop DOES here — role (via the selectors) is the source of
   // truth: move on an editable fork, lazy-fork on the draft preview, offer the
   // fork on the trunk, nothing at all otherwise (no drag affordance).
@@ -102,15 +121,40 @@ export function JournalView({
   const storeApi = itineraryGraphStore.useStoreApi();
 
   const tz = timeline.timezoneOffsetHours;
+  // Diff mode is only meaningful on a fork (compare is inherently pairwise:
+  // this version against its baseline). The gesture gates flip as soon as the
+  // toggle is on; the annotated sequence lands when the diff response does.
+  const diffActive = diffMode && Boolean(timeline.itinerary.forked_from_id);
+  const diffView = useMemo<JournalDiffViewOrNull>(() => {
+    if (!diffActive) return null;
+    const base = {
+      nodes,
+      edges,
+      days: timeline.days,
+      timezoneOffsetHours: tz,
+    };
+    if (diff) return toJournalDiff({ ...base, diff });
+    // Toggled on, response not landed yet — the compare register (and the
+    // gesture gates) apply immediately; the annotations arrive with the diff.
+    return {
+      journal: toJournal(base),
+      annotations: new Map(),
+      ghosts: new Map(),
+      counts: { added: 0, removed: 0, changed: 0, moved: 0 },
+      total: 0,
+      summary: "",
+    };
+  }, [diffActive, diff, nodes, edges, timeline.days, tz]);
   const journal = useMemo(
     () =>
+      diffView?.journal ??
       toJournal({
         nodes,
         edges,
         days: timeline.days,
         timezoneOffsetHours: tz,
       }),
-    [nodes, edges, timeline.days, tz],
+    [diffView, nodes, edges, timeline.days, tz],
   );
   const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
   // Problem states — driven by whatever problem data exists client-side today
@@ -129,7 +173,8 @@ export function JournalView({
   );
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [forkOffer, setForkOffer] = useState<ForkOffer | null>(null);
-  const dragEnabled = dropMode !== "none";
+  // Diff mode is a reading/deciding mode — the content gestures sit out.
+  const dragEnabled = !diffActive && dropMode !== "none";
 
   const activeDragNode = useMemo(
     () =>
@@ -208,6 +253,9 @@ export function JournalView({
   const onActivate = useCallback(
     (nodeId: string) => {
       focusNode(nodeId, "click");
+      // A diff-mode GHOST is synthesized (trunk-only) — there is no
+      // /item/[nodeId] destination for it, so it only drives the rail.
+      if (isGhostId(nodeId)) return;
       const desktop =
         typeof window !== "undefined" &&
         typeof window.matchMedia === "function" &&
@@ -258,6 +306,13 @@ export function JournalView({
                     observe={observe}
                     dragEnabled={dragEnabled}
                     dragging={activeDragId !== null}
+                    diffs={diffView?.annotations ?? null}
+                    diffActive={diffActive}
+                    ghostCaption={
+                      role === "advisor"
+                        ? "not in this version"
+                        : "not in your version"
+                    }
                   />
                 ),
               )}
@@ -276,7 +331,7 @@ export function JournalView({
           className="w-full lg:order-2 lg:w-[340px] lg:shrink-0"
         >
           <div className="lg:sticky lg:top-4">
-            <RightRail idle={railIdle} />
+            <RightRail idle={railIdle} diffView={diffView} />
           </div>
         </aside>
       </div>
@@ -345,6 +400,9 @@ function DaySection({
   observe,
   dragEnabled,
   dragging,
+  diffs = null,
+  diffActive = false,
+  ghostCaption = "not in your version",
 }: {
   section: JournalDaySection;
   tz: number;
@@ -359,6 +417,13 @@ function DaySection({
   dragEnabled: boolean;
   /** A spine drag is in flight — materialize the drop slots (the gaps). */
   dragging: boolean;
+  /** Diff-mode annotations, node id → change (phase 4); null when reading
+   *  normally. */
+  diffs?: Map<string, JournalNodeDiff> | null;
+  /** Diff mode is on — insert affordances sit out (a reading/deciding mode). */
+  diffActive?: boolean;
+  /** Role-aware ghost caption ("not in your/this version"). */
+  ghostCaption?: string;
 }) {
   // The gaps between cards are the drop slots; each assigns the sensible
   // slot time derived from its neighbours (journalEditing.ts — no pixel math).
@@ -397,6 +462,20 @@ function DaySection({
             dragEnabled={dragEnabled}
             problem={problems.get(entry.node.id) ?? null}
             bracket={entry.groupedWith ?? null}
+            diff={diffs?.get(entry.node.id) ?? null}
+          />,
+        );
+        break;
+      case "ghost":
+        // A trunk-only row (diff mode) — a ghost at its trunk time.
+        rows.push(
+          <JournalGhostNode
+            key={entry.node.id}
+            node={entry.node}
+            active={focusedNodeId === entry.node.id}
+            caption={ghostCaption}
+            onActivate={onActivate}
+            observeRef={observe(entry.node.id)}
           />,
         );
         break;
@@ -411,6 +490,7 @@ function DaySection({
             onActivate={onActivate}
             observeRef={observe}
             problems={problems}
+            diffs={diffs ?? undefined}
           />,
         );
         break;
@@ -441,6 +521,18 @@ function DaySection({
     );
   }
 
+  // A diverged day (any annotated card or ghost) wears the slim dashed SECOND
+  // THREAD beside the spine — a region cue, never a split (that vocabulary
+  // belongs to alternatives).
+  const hasDivergence =
+    diffs !== null &&
+    section.entries.some(
+      (entry) =>
+        entry.kind === "ghost" ||
+        (entry.kind === "node" && diffs.has(entry.node.id)) ||
+        (entry.kind === "alt" && entry.nodes.some((n) => diffs.has(n.id))),
+    );
+
   return (
     <section data-testid="journal-day" data-date={section.date}>
       <DayHeader label={section.label} date={section.date} datesPinned={pinned} />
@@ -451,15 +543,29 @@ function DaySection({
           className="absolute bottom-0 top-0 w-px bg-ink/15"
           style={{ left: SPINE_COL_PX / 2 }}
         />
+        {/* Diff mode's diverged-region cue: a second, dashed thread running
+            alongside the spine through this day. */}
+        {hasDivergence ? (
+          <span
+            aria-hidden
+            data-testid="journal-diff-thread"
+            className="absolute bottom-0 top-0 w-0 border-l border-dashed border-brand/45"
+            style={{ left: SPINE_COL_PX / 2 - 6 }}
+          />
+        ) : null}
         {rows}
         {/* The `+`-on-the-line: each day closes with the quiet insert
             affordance — Note only on the trunk; the Collection-first picker
             on an editable fork (phase 3). Content lands after the day's last
-            card (the same slot arithmetic the drops use). */}
-        <AddNoteOnLine
-          dayKey={section.date}
-          insertMinute={slotMinutes[slotMinutes.length - 1] ?? SLOT_EMPTY_DAY_MIN}
-        />
+            card (the same slot arithmetic the drops use). Diff mode is a
+            reading/deciding pass — the line offers nothing while it's on
+            (margin notes and the rail's note stay open). */}
+        {!diffActive ? (
+          <AddNoteOnLine
+            dayKey={section.date}
+            insertMinute={slotMinutes[slotMinutes.length - 1] ?? SLOT_EMPTY_DAY_MIN}
+          />
+        ) : null}
         {section.night ? (
           <NightSegment title={section.night.node?.title} />
         ) : null}
