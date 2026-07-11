@@ -40,6 +40,7 @@ from app.routers.bookings import router as bookings_router
 from app.routers.client_documents import router as client_documents_router
 from app.routers.clients import router as clients_router
 from app.routers.demos import router as demos_router
+from app.routers.export import router as export_router
 from app.routers.facts import router as facts_router
 from app.routers.fill import router as fill_router
 from app.routers.integrations.flight_status import router as flight_status_router
@@ -236,6 +237,7 @@ app.add_middleware(
         "/agent/profile/facts",
         "/agent/dossier/facts",
         "/agent/party-members",
+        "/agent/trip-travelers",
         "/agent/thread-message",
         "/agent/route",
         # Places photo proxy — loaded by a browser <img> tag (no bearer
@@ -244,8 +246,9 @@ app.add_middleware(
         "/integrations/google-places/photo",
     },
     # Whitelisted agent routes with a path parameter can't be listed as exact
-    # strings — PATCH /agent/party-members/{id} self-gates on the agent token.
-    public_prefixes={"/agent/party-members/"},
+    # strings — PATCH /agent/party-members/{id} and DELETE /agent/trip-travelers/{id}
+    # self-gate on the agent token.
+    public_prefixes={"/agent/party-members/", "/agent/trip-travelers/"},
 )
 
 # Starlette stacks middleware LIFO — CORS is added *after* the JWT middleware
@@ -287,6 +290,7 @@ install_exception_handlers(app)
 
 app.include_router(auth_router)
 app.include_router(itineraries_router)
+app.include_router(export_router)
 app.include_router(invoices_router)
 app.include_router(bookings_router)
 app.include_router(advisor_itineraries_router)

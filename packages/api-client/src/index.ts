@@ -34,6 +34,11 @@ import {
   createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost,
   createNodeFromLinkEndpointItineraryItineraryIdNodesFromLinkPost,
   getCollectionEndpointItineraryItineraryIdCollectionGet,
+  exportItineraryEndpointItineraryItineraryIdExportGet,
+  listDayNotesEndpointItineraryItineraryIdDayNotesGet,
+  putDayNoteEndpointItineraryItineraryIdDayNotesDayDatePut,
+  deleteDayNoteEndpointItineraryItineraryIdDayNotesDayDateDelete,
+  generateDayNotesEndpointItineraryItineraryIdDayNotesGeneratePost,
   createOsintFactEndpointClientsClientIdOsintFactsPost,
   createProfileFactEndpointClientsClientIdProfileFactsPost,
   createSessionEndpointSessionsPost,
@@ -4969,5 +4974,158 @@ export async function getPlaceBrief(
     };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+// ── Itinerary export (PDF / XLSX) + day notes ────────────────────────────────
+
+export type DayNoteResponse =
+  import("./generated/types.gen.js").DayNoteResponse;
+export type DayNoteContent =
+  import("./generated/types.gen.js").DayNoteContent;
+export type DayNotesListResponse =
+  import("./generated/types.gen.js").DayNotesListResponse;
+
+export type ItineraryExportResult =
+  | { ok: true; blob: Blob; filename: string }
+  | { ok: false; status: number };
+
+export type DayNotesListResult =
+  | { ok: true; notes: DayNoteResponse[] }
+  | { ok: false; status: number };
+
+export type DayNoteResult =
+  | { ok: true; note: DayNoteResponse }
+  | { ok: false; status: number };
+
+function _filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1]);
+    } catch {
+      // fall through to the ASCII form
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1] ?? fallback;
+}
+
+/**
+ * Download an itinerary (trunk or any fork the caller can read) as a PDF or
+ * XLSX. Returns the raw bytes as a Blob plus the server-suggested filename —
+ * the caller creates an object URL and clicks a download link. Uses
+ * `parseAs: "blob"` so the binary body isn't JSON-parsed.
+ */
+export async function downloadItineraryExport(
+  client: Client,
+  itineraryId: string,
+  format: "pdf" | "xlsx",
+): Promise<ItineraryExportResult> {
+  try {
+    const { data, error, response } =
+      await exportItineraryEndpointItineraryItineraryIdExportGet({
+        client,
+        path: { itinerary_id: itineraryId },
+        query: { format },
+        parseAs: "blob",
+      });
+    if (error === undefined && data !== undefined) {
+      const filename = _filenameFromDisposition(
+        response.headers.get("content-disposition"),
+        `itinerary.${format}`,
+      );
+      return { ok: true, blob: data as Blob, filename };
+    }
+    return { ok: false, status: response.status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+/** List an itinerary's per-day notes (readable by anyone who can read it). */
+export async function listDayNotes(
+  client: Client,
+  itineraryId: string,
+): Promise<DayNotesListResult> {
+  try {
+    const { data, error, response } =
+      await listDayNotesEndpointItineraryItineraryIdDayNotesGet({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, notes: data.notes };
+    }
+    return { ok: false, status: response.status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+/** Advisor: upsert hand-written notes for one day (source=advisor). */
+export async function putDayNote(
+  client: Client,
+  itineraryId: string,
+  dayDate: string,
+  content: DayNoteContent,
+): Promise<DayNoteResult> {
+  try {
+    const { data, error, response } =
+      await putDayNoteEndpointItineraryItineraryIdDayNotesDayDatePut({
+        client,
+        path: { itinerary_id: itineraryId, day_date: dayDate },
+        body: content,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, note: data };
+    }
+    return { ok: false, status: response.status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+/** Advisor: delete a day's notes (reverts to auto-fill on next export). */
+export async function deleteDayNote(
+  client: Client,
+  itineraryId: string,
+  dayDate: string,
+): Promise<{ ok: true } | { ok: false; status: number }> {
+  try {
+    const { error, response } =
+      await deleteDayNoteEndpointItineraryItineraryIdDayNotesDayDateDelete({
+        client,
+        path: { itinerary_id: itineraryId, day_date: dayDate },
+      });
+    if (error === undefined) {
+      return { ok: true };
+    }
+    return { ok: false, status: response.status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+/** Advisor: (re)generate day notes with AI (409 when the LLM lane is off). */
+export async function generateDayNotes(
+  client: Client,
+  itineraryId: string,
+  days?: string[],
+): Promise<DayNotesListResult> {
+  try {
+    const { data, error, response } =
+      await generateDayNotesEndpointItineraryItineraryIdDayNotesGeneratePost({
+        client,
+        path: { itinerary_id: itineraryId },
+        body: { days: days ?? null },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, notes: data.notes };
+    }
+    return { ok: false, status: response.status };
+  } catch {
+    return { ok: false, status: 0 };
   }
 }
