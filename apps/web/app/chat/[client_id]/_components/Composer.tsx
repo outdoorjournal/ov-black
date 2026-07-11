@@ -1,15 +1,18 @@
 "use client";
 
-// The send surface. A shadcn Textarea + Button with Enter-to-send semantics
-// (Shift+Enter inserts a newline). We deliberately avoid any busy-state
-// affordances while streaming — the S05 craft-feel brief forbids the usual
-// loading primitives. Instead the button is disabled and the placeholder
-// text shifts, which is enough signal.
+// The send surface. An auto-growing textarea + Button with Enter-to-send
+// semantics (Shift+Enter inserts a newline). We deliberately avoid any
+// busy-state affordances while streaming — the S05 craft-feel brief forbids the
+// usual loading primitives. Instead the button is disabled and the placeholder
+// text shifts, which is enough signal. The auto-grow behaviour is shared with
+// every other concierge composer via AutoGrowTextarea; Up/Down recall of prior
+// sent messages is shared via useSentHistory.
 
-import { useState, type KeyboardEvent } from "react";
+import { useState } from "react";
 
+import { AutoGrowTextarea } from "@/components/ui/auto-grow-textarea";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { useSentHistory } from "@/lib/useSentHistory";
 
 export type ComposerProps = {
   disabled: boolean;
@@ -18,20 +21,14 @@ export type ComposerProps = {
 
 export function Composer({ disabled, onSend }: ComposerProps) {
   const [value, setValue] = useState("");
+  const history = useSentHistory(setValue);
 
   function submit(): void {
     const trimmed = value.trim();
     if (trimmed.length === 0 || disabled) return;
     onSend(trimmed);
+    history.record(trimmed);
     setValue("");
-  }
-
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    // Enter submits; Shift+Enter allows multi-line drafting.
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      submit();
-    }
   }
 
   return (
@@ -40,15 +37,17 @@ export function Composer({ disabled, onSend }: ComposerProps) {
       data-testid="chat-composer"
     >
       <div className="flex items-end gap-3">
-        <Textarea
+        <AutoGrowTextarea
           value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onKeyDown}
+          onValueChange={history.onValueChange}
+          onKeyDown={history.onKeyDown}
+          onSubmit={submit}
           disabled={disabled}
+          minHeightPx={56}
           placeholder={
             disabled ? "The concierge is writing…" : "Write to your concierge"
           }
-          className="min-h-[72px] resize-none border-ink/15 bg-paper font-sans text-base text-ink placeholder:text-ink/40"
+          className="flex w-full rounded-md border border-ink/15 bg-paper px-3 py-2 font-sans text-base text-ink ring-offset-background placeholder:text-ink/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="chat-composer-textarea"
         />
         <Button

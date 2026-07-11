@@ -1,0 +1,48 @@
+{
+  "scenarios": [
+    {
+      "name": "olympus-kickoff-build",
+      "description": "On the campaign dashboard, the agent lays the length-snapped skeleton.",
+      "audience": "traveler",
+      "turns": [
+        {
+          "say": "I'm ready — build out the trip.",
+          "expect_tools": ["assemble_campaign_spine"],
+          "expect_diff": { "min_nodes_added": 1 },
+          "rubric": "Lays down a real Mt Olympus skeleton and, if it changed the trip length, explains the snap in plain terms (why Olympus wants a certain number of days). Does not ask where they want to go — it already knows it's Olympus."
+        }
+      ]
+    },
+    {
+      "name": "olympus-reading-list",
+      "description": "The agent drops articles from the concierge's own properties into the Collection.",
+      "audience": "traveler",
+      "turns": [
+        {
+          "say": "Can you add a few good reads about climbing Olympus to my collection?",
+          "expect_tools": ["save_link_to_collection"],
+          "expect_diff": { "min_nodes_added": 1 },
+          "rubric": "Saves one or more reading-list articles (from outsideonline.com / climbing.com / backpacker.com) as article cards — not scheduled days."
+        }
+      ]
+    },
+    {
+      "name": "olympus-airport-transfer",
+      "description": "A real, tier-aware ground transfer via the routing engine.",
+      "audience": "traveler",
+      "turns": [
+        {
+          "say": "Arrange a black car from Thessaloniki airport to Litochoro when we land.",
+          "expect_tools": ["add_transfer"],
+          "expect_diff": { "min_nodes_added": 1 },
+          "rubric": "Adds a chauffeured ground-transfer card with a real route (distance / drive time), sized to the party."
+        },
+        {
+          "say": "Actually, a normal taxi is fine — swap it.",
+          "expect_tools": ["add_transfer"],
+          "rubric": "Re-does the transfer at the standard-taxi tier; the route stays real, only the tier/vehicle changes."
+        }
+      ]
+    }
+  ]
+}

@@ -80,6 +80,14 @@ class Client(Base):
     )
     full_name: Mapped[str] = mapped_column(nullable=False)
     email: Mapped[str] = mapped_column(nullable=False)
+    # Traveler logistics (0048). All nullable — unknown until the advisor or the
+    # agent records them. ``address`` is free text (international addresses are
+    # irregular); ``favorite_airport`` is a 3-letter IATA code; and
+    # ``preferred_currency`` is the ISO 4217 the traveler wants money shown in,
+    # which drives read-time FX conversion of totals and the agent's quoting.
+    address: Mapped[str | None] = mapped_column(nullable=True)
+    favorite_airport: Mapped[str | None] = mapped_column(nullable=True)
+    preferred_currency: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

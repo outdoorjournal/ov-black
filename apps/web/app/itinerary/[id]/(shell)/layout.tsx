@@ -145,6 +145,8 @@ export default async function ItineraryLayout({
         viewerOpenForkId={result.viewer_open_fork_id ?? null}
         awaitingProposal={awaitingProposal}
         totals={result.totals}
+        displayCurrency={result.display_currency ?? null}
+        totalDisplay={result.total_display ?? null}
       >
         {children}
       </ItineraryShell>

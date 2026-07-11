@@ -2,8 +2,8 @@
 // flight) must render as its own compact card — route + airport-local wall clock
 // + cabin — not the bare "accept/dismiss" title stub the generic path shows.
 
-import { render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { expect, test, vi } from "vitest";
 
 import {
   ConversationPanel,
@@ -59,4 +59,34 @@ test("a non-typed proposal falls back to the bare title", () => {
     <ConversationPanel messages={[]} onSubmit={() => {}} proposals={[generic]} />,
   );
   expect(screen.getByText("Sunrise at Torres del Paine")).toBeTruthy();
+});
+
+test("Up/Down recall previously sent messages, then restore the draft", () => {
+  const onSubmit = vi.fn();
+  render(<ConversationPanel messages={[]} onSubmit={onSubmit} />);
+  const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+
+  // Send two messages; the composer clears after each.
+  fireEvent.change(box, { target: { value: "first message" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  fireEvent.change(box, { target: { value: "second message" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(onSubmit).toHaveBeenCalledTimes(2);
+  expect(box.value).toBe("");
+
+  // Start a fresh draft, then walk back through history with Up.
+  fireEvent.change(box, { target: { value: "half-typed" } });
+  fireEvent.keyDown(box, { key: "ArrowUp" });
+  expect(box.value).toBe("second message");
+  fireEvent.keyDown(box, { key: "ArrowUp" });
+  expect(box.value).toBe("first message");
+  // Oldest entry holds — no wrap.
+  fireEvent.keyDown(box, { key: "ArrowUp" });
+  expect(box.value).toBe("first message");
+
+  // Down walks forward, then restores the in-progress draft.
+  fireEvent.keyDown(box, { key: "ArrowDown" });
+  expect(box.value).toBe("second message");
+  fireEvent.keyDown(box, { key: "ArrowDown" });
+  expect(box.value).toBe("half-typed");
 });

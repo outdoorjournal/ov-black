@@ -25,12 +25,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.auth import AuthenticatedUser
+from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
+from app.campaigns import get_campaign
 from app.db import get_session
 from app.inventory.registry import InventoryProviderRegistry
 from app.models import Client
 from app.routers.inventory import get_inventory_registry
+from app.services.itineraries import ActorContext, ActorKind, create_itinerary
 from app.services.japan_live import build_live_japan_itinerary
 from app.services.japan_template import build_japan_template
 from app.services.templates import instantiate_template
@@ -113,6 +115,77 @@ async def _resolve_client_owned_by(
     if client.owner_id != advisor_user_id:
         raise HTTPException(status_code=403, detail="client_not_owned")
     return client
+
+
+class CampaignSeedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: uuid.UUID
+
+
+class CampaignSeedResponse(BaseModel):
+    itinerary_id: uuid.UUID
+    campaign_id: str
+    title: str
+    mood: str
+
+
+@router.post(
+    "/campaign/{campaign_id}",
+    response_model=CampaignSeedResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Seed a shell itinerary from an inbound campaign (Olympus demo).",
+)
+async def seed_campaign_itinerary(
+    campaign_id: str,
+    payload: CampaignSeedRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> CampaignSeedResponse:
+    """Create the behind-the-scenes shell itinerary for a campaign landing.
+
+    Traveler self-serve, mirroring ``startNewItinerary``: the traveler clicked a
+    campaign CTA, so THEY create their own campaign trip linked to their own
+    client row (``created_by`` = the caller, so the immersive intake runs on
+    their fork). The shell is stamped with the campaign's ``campaign_id``, title,
+    and hero ``mood`` — but NOT a brief (an empty brief is what keeps the intake
+    from skipping straight to the dashboard). No spine is built here (the length
+    isn't known until intake picks dates) and no facts are applied.
+    """
+    campaign = get_campaign(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="unknown_campaign")
+
+    try:
+        user_uuid = uuid.UUID(user.sub)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid_user_sub") from exc
+
+    actor = ActorContext(user_id=user_uuid, kind=ActorKind.USER, actor_id=user.sub)
+    itinerary = await create_itinerary(
+        session,
+        actor,
+        title=campaign.title,
+        client_id=payload.client_id,
+        campaign_id=campaign.id,
+        mood=campaign.mood,
+    )
+
+    logger.info(
+        "demos.campaign.seeded",
+        extra={
+            "user_id": str(user_uuid),
+            "client_id": str(payload.client_id),
+            "itinerary_id": str(itinerary.id),
+            "campaign_id": campaign.id,
+        },
+    )
+    return CampaignSeedResponse(
+        itinerary_id=itinerary.id,
+        campaign_id=campaign.id,
+        title=campaign.title,
+        mood=campaign.mood,
+    )
 
 
 @router.post(

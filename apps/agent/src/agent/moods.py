@@ -33,6 +33,7 @@ MoodId = Literal[
     "monsoon",
     "riviera",
     "highland",
+    "olympus",
 ]
 
 
@@ -54,6 +55,7 @@ MOOD_DESCRIPTIONS: dict[str, str] = {
     "monsoon": "river-soft greens — Kerala, Halong Bay, Mekong, Vietnam rains.",
     "riviera": "Mediterranean blue — Amalfi, Capri, Positano, yacht decks.",
     "highland": "Scottish-isle greys and heather — fjords, lochs, stone cottages.",
+    "olympus": "sun-warmed Greek stone + Aegean light — Olympus, Litochoro, mythic peaks.",
 }
 
 

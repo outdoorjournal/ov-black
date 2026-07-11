@@ -79,6 +79,33 @@ const CONTACT_KIND_LABELS: Record<ContactKind, string> = {
 const TIERS = ["dossier", "profile", "osint"] as const;
 type Tier = (typeof TIERS)[number];
 
+const TIER_LABELS: Record<Tier, string> = {
+  dossier: "Dossier",
+  profile: "Profile",
+  osint: "OSINT",
+};
+
+const KIND_LABELS: Record<string, string> = {
+  passion: "Passion",
+  motivation: "Motivation",
+  travel_history: "Travel History",
+  trigger: "Trigger",
+  constraint: "Constraint",
+  deal_breaker: "Deal Breaker",
+  dream_signal: "Dream Signal",
+  preference: "Preference",
+  aspiration: "Aspiration",
+  medical: "Medical",
+  party: "Party",
+  other: "Other",
+  linkedin: "LinkedIn",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  press: "Press",
+  company: "Company",
+  public_record: "Public Record",
+};
+
 const KIND_OPTIONS: Record<Tier, readonly string[]> = {
   dossier: [
     "passion",
@@ -102,6 +129,7 @@ const KIND_OPTIONS: Record<Tier, readonly string[]> = {
     "dream_signal",
     "preference",
     "aspiration",
+    "medical",
     "other",
   ],
   osint: [
@@ -604,7 +632,7 @@ export function DossierForm() {
                             <SelectContent>
                               {TIERS.map((t) => (
                                 <SelectItem key={t} value={t}>
-                                  {t}
+                                  {TIER_LABELS[t]}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -629,7 +657,7 @@ export function DossierForm() {
                             <SelectContent>
                               {kinds.map((k) => (
                                 <SelectItem key={k} value={k}>
-                                  {k}
+                                  {KIND_LABELS[k] ?? k}
                                 </SelectItem>
                               ))}
                             </SelectContent>

@@ -28,8 +28,9 @@ from strands import tool
 from agent.backend import BackendError, get_json, pin_ctx, post_json
 
 # The Collection categories a pasted link can be filed under (a 1:1 subset of
-# NodeType). Anything else is better handled by search_inventory + save.
-CollectionKind = Literal["experience", "meal", "hotel", "flight", "note"]
+# NodeType). ``article`` is the reading-list card (non-schedulable — a saved
+# read). Anything else is better handled by search_inventory + save.
+CollectionKind = Literal["experience", "meal", "hotel", "flight", "note", "article"]
 
 
 async def _ensure_itinerary() -> str:
@@ -91,8 +92,9 @@ async def save_link_to_collection(
         url: The link to save (http/https).
         kind: Which Collection lane to file it under — ``meal`` for a
             restaurant, ``hotel`` for a stay, ``experience`` for a thing to do,
-            ``flight`` for a way in, or ``note`` (default) when it doesn't fit
-            one cleanly. Pick the best fit from what the traveler said.
+            ``flight`` for a way in, ``article`` for a read / reading-list link
+            (a magazine or blog piece — non-schedulable), or ``note`` (default)
+            when it doesn't fit one cleanly. Pick the best fit.
         note: An optional short note to keep alongside the link.
 
     Lands unscheduled in the Collection. Auto-creates + pins a draft itinerary

@@ -12,7 +12,7 @@ from agent.prompts.intake import build_intake_prompt
 from agent.prompts.onboarding import build_onboarding_prompt
 from agent.prompts.planning import build_planning_prompt
 from agent.prompts.qa import build_qa_prompt
-from agent.prompts.shared import RENDERING_NOTE, VOICE_PREAMBLE
+from agent.prompts.shared import ADVISOR_AUDIENCE, RENDERING_NOTE, VOICE_PREAMBLE
 from agent.schemas import Mode
 
 
@@ -43,6 +43,16 @@ def build_prompt(
         )
     else:
         rubric = build_qa_prompt(itinerary_id_present=itinerary_id_present)
+
+    # Audience override. Every mode's rubric + the shared preamble/rendering
+    # note are written traveler-facing (second person, "the traveler sees your
+    # reply"). When the reader is the advisor, prepend an authoritative block
+    # that reframes the whole turn: address staff as a peer and speak ABOUT the
+    # traveler in the third person. Placed right after the preamble so it
+    # dominates the traveler-voice framing that precedes it, and applies across
+    # every mode — not just the one planning rubric that branches on actor_kind.
+    if actor_kind == "advisor":
+        return f"{preamble}\n\n{ADVISOR_AUDIENCE}\n\n{rubric}\n\n{RENDERING_NOTE}"
 
     return f"{preamble}\n\n{rubric}\n\n{RENDERING_NOTE}"
 

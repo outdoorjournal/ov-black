@@ -18,18 +18,16 @@ import { MapCompassIndicator } from "@/app/_components/MapCompassIndicator";
 import { CRAFTED_FALLBACK_COPY } from "@/app/chat/[client_id]/_components/ConversationStream";
 import { OnboardingMilestoneCard } from "@/app/chat/[client_id]/_components/OnboardingMilestoneCard";
 import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
+import { AutoGrowTextarea } from "@/components/ui/auto-grow-textarea";
+import { ScrollControls } from "@/components/ui/scroll-controls";
+import { useSentHistory } from "@/lib/useSentHistory";
 
 // A single conversation row. `role` is the union across every surface: the
 // itinerary concierge only ever produces user/assistant/system; basecamp adds
 // the client-synthesized `milestone` card and the `error` fallback row. `tool`
 // rows are agent plumbing — rendered quietly, kept in the DOM for parity.
 export type ConversationRole =
-  | "user"
-  | "assistant"
-  | "system"
-  | "tool"
-  | "error"
-  | "milestone";
+  "user" | "assistant" | "system" | "tool" | "error" | "milestone";
 
 export type ConversationMessage = {
   id: string;
@@ -90,6 +88,7 @@ export function ConversationPanel({
   working = false,
 }: ConversationPanelProps) {
   const [text, setText] = useState("");
+  const history = useSentHistory(setText);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,12 +97,17 @@ export function ConversationPanel({
     }
   }, [messages, proposals.length]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitText = () => {
     const trimmed = text.trim();
     if (!trimmed || disabled || sending) return;
     onSubmit(trimmed);
+    history.record(trimmed);
     setText("");
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitText();
   };
 
   return (
@@ -119,73 +123,85 @@ export function ConversationPanel({
           <div className="font-serif text-lg text-ink">Conversation</div>
         </div>
       )}
-      {/* min-h-0 lets this flex child shrink below its content so overflow-y-auto
-          actually scrolls, instead of growing the panel past the viewport. */}
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 bg-white">
-        <AnimatePresence initial={false}>
-          {messages.map((m) => (
-            <MessageBubble key={m.id} message={m} working={working} />
-          ))}
-          {proposals.map((p) => (
-            <motion.div
-              key={`inline-${p.id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="rounded-md border border-dashed border-ink/25 bg-paper p-2.5 text-[12px]"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-ink/55">
-                  Proposed · {p.type}
+      {/* Relative viewport wrapper so the scroll jump-buttons pin to the scroll
+          area (not the composer below). min-h-0 lets it shrink below its content
+          so overflow-y-auto actually scrolls, instead of growing past the panel. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 bg-white"
+        >
+          <AnimatePresence initial={false}>
+            {messages.map((m) => (
+              <MessageBubble key={m.id} message={m} working={working} />
+            ))}
+            {proposals.map((p) => (
+              <motion.div
+                key={`inline-${p.id}`}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                className="rounded-md border border-dashed border-ink/25 bg-paper p-2.5 text-[12px]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-ink/55">
+                    Proposed · {p.type}
+                  </div>
+                  {onScrollToNode ? (
+                    <button
+                      type="button"
+                      onClick={() => onScrollToNode(p.id)}
+                      title="Show on timeline"
+                      aria-label="Show on timeline"
+                      className="shrink-0 rounded-md border border-ink/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-ink/65 hover:border-ink/40 hover:text-ink"
+                    >
+                      Show ↗
+                    </button>
+                  ) : null}
                 </div>
-                {onScrollToNode ? (
+                {/* A typed proposal renders as its own card; everything else keeps
+                  the bare title. Flights read their FlightCardAttrs metadata. */}
+                {p.type === "flight" && p.metadata ? (
+                  <FlightProposalBody meta={p.metadata} />
+                ) : (
+                  <div className="mt-0.5 font-serif text-[15px] text-ink">
+                    {p.title}
+                  </div>
+                )}
+                <div className="mt-2 flex gap-1.5">
                   <button
                     type="button"
-                    onClick={() => onScrollToNode(p.id)}
-                    title="Show on timeline"
-                    aria-label="Show on timeline"
-                    className="shrink-0 rounded-md border border-ink/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-ink/65 hover:border-ink/40 hover:text-ink"
+                    onClick={() => onAccept?.(p.id)}
+                    className="rounded-md bg-ink px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-paper"
                   >
-                    Show ↗
+                    Accept
                   </button>
-                ) : null}
-              </div>
-              {/* A typed proposal renders as its own card; everything else keeps
-                  the bare title. Flights read their FlightCardAttrs metadata. */}
-              {p.type === "flight" && p.metadata ? (
-                <FlightProposalBody meta={p.metadata} />
-              ) : (
-                <div className="mt-0.5 font-serif text-[15px] text-ink">{p.title}</div>
-              )}
-              <div className="mt-2 flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onAccept?.(p.id)}
-                  className="rounded-md bg-ink px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-paper"
-                >
-                  Accept
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDismiss?.(p.id)}
-                  className="rounded-md border border-ink/20 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-ink/70"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+                  <button
+                    type="button"
+                    onClick={() => onDismiss?.(p.id)}
+                    className="rounded-md border border-ink/20 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-ink/70"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+        <ScrollControls targetRef={scrollRef} />
       </div>
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 border-t border-ink/10 px-3 py-2"
+        className="flex items-end gap-2 border-t border-ink/10 px-3 py-2"
       >
-        <input
-          className="flex-1 rounded-md border border-ink/15 bg-paper/90 px-3 py-2 text-[13px] outline-hidden focus:border-ink/40"
+        <AutoGrowTextarea
+          className="min-w-0 flex-1 rounded-md border border-ink/15 bg-paper/90 px-3 py-2 text-[13px] outline-hidden focus:border-ink/40"
+          maxHeightPx={160}
           placeholder={placeholder}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onValueChange={history.onValueChange}
+          onKeyDown={history.onKeyDown}
+          onSubmit={submitText}
           disabled={disabled}
         />
         <button
@@ -208,8 +224,18 @@ export function ConversationPanel({
 // offset (a leg crosses zones), with no viewer-tz round-trip. Price isn't in the
 // card frame, so it's intentionally omitted here.
 const MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 
 function asStr(v: unknown): string | null {
@@ -228,7 +254,10 @@ function wallClock(iso: unknown): { day: string; time: string } | null {
   const s = asStr(iso);
   const m = s ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s) : null;
   if (!m) return null;
-  return { day: `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`, time: `${m[4]}:${m[5]}` };
+  return {
+    day: `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`,
+    time: `${m[4]}:${m[5]}`,
+  };
 }
 
 function cabinLabel(v: unknown): string | null {
@@ -251,16 +280,24 @@ function FlightProposalBody({ meta }: { meta: { [key: string]: unknown } }) {
     <div className="mt-1.5">
       <div className="flex items-baseline justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-serif text-[17px] leading-none text-ink">{from}</div>
+          <div className="font-serif text-[17px] leading-none text-ink">
+            {from}
+          </div>
           {fromCity ? (
-            <div className="mt-0.5 truncate text-[10px] text-ink/55">{fromCity}</div>
+            <div className="mt-0.5 truncate text-[10px] text-ink/55">
+              {fromCity}
+            </div>
           ) : null}
         </div>
         <div className="shrink-0 translate-y-px text-[12px] text-ink/40">✈</div>
         <div className="min-w-0 text-right">
-          <div className="font-serif text-[17px] leading-none text-ink">{to}</div>
+          <div className="font-serif text-[17px] leading-none text-ink">
+            {to}
+          </div>
           {toCity ? (
-            <div className="mt-0.5 truncate text-[10px] text-ink/55">{toCity}</div>
+            <div className="mt-0.5 truncate text-[10px] text-ink/55">
+              {toCity}
+            </div>
           ) : null}
         </div>
       </div>

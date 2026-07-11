@@ -27,6 +27,7 @@ class ProfileFactKind(str, enum.Enum):
     dream_signal = "dream_signal"
     preference = "preference"
     aspiration = "aspiration"
+    medical = "medical"
     other = "other"
 
 

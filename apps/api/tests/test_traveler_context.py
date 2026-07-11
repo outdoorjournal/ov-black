@@ -137,6 +137,38 @@ def test_empty_tiers_are_skipped_entirely() -> None:
     assert "OSINT (external research" not in out
 
 
+def test_logistics_section_renders_currency_airport_address() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[],
+        osint_facts=[],
+        client_full_name="Robin Thurston",
+        home_airport="JFK",
+        preferred_currency="USD",
+        home_address="1 Park Ave, New York",
+    )
+    assert "Traveler logistics:" in out
+    # The currency line is imperative so the agent quotes in it.
+    assert "Preferred currency: USD" in out
+    assert "quote all prices in USD" in out
+    assert "Home airport: JFK" in out
+    assert "1 Park Ave, New York" in out
+    # Logistics leads the client-specific context (right after the name).
+    assert out.index("Client: Robin Thurston") < out.index("Traveler logistics:")
+
+
+def test_logistics_section_omitted_when_all_unset() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[],
+        osint_facts=[],
+        client_full_name="Robin Thurston",
+    )
+    assert "Traveler logistics:" not in out
+
+
 def test_dossier_section_skipped_when_no_dossier_and_no_facts() -> None:
     out = assemble_traveler_context(
         dossier=None,

@@ -24,6 +24,8 @@ import {
 } from "@ov-black/api-client";
 
 import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
+import { AutoGrowTextarea } from "@/components/ui/auto-grow-textarea";
+import { useSentHistory } from "@/lib/useSentHistory";
 
 const POLL_MS = 6000;
 // While a summoned Artemis reply is expected, poll harder so it lands promptly.
@@ -60,6 +62,7 @@ export function HumanThread({
   const [threadId, setThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [draft, setDraft] = useState("");
+  const history = useSentHistory(setDraft);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   // PS8: after summoning Artemis, show a quiet "composing" hint until the reply
@@ -156,6 +159,7 @@ export function HumanThread({
     const result = await sendMessage(client, threadId, { content: text });
     setSending(false);
     if (result.ok) {
+      history.record(text);
       setDraft("");
       // Optimistic append; the next poll reconciles ordering with the server.
       setMessages((prev) => [...prev, result.message]);
@@ -172,7 +176,7 @@ export function HumanThread({
         }, AWAIT_TIMEOUT_MS);
       }
     }
-  }, [draft, threadId, sending, api, artemisCount]);
+  }, [draft, threadId, sending, api, artemisCount, history]);
 
   // Prepend the @Artemis mention (once) and focus the composer so the human can
   // finish their question. Summoning is the mention itself — the send does the rest.
@@ -230,23 +234,20 @@ export function HumanThread({
           >
             @ Artemis
           </button>
-          <textarea
+          <AutoGrowTextarea
             ref={composerRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={1}
+            onValueChange={history.onValueChange}
+            onKeyDown={history.onKeyDown}
+            onSubmit={() => void send()}
+            minHeightPx={36}
+            maxHeightPx={112}
             placeholder={
               viewerKind === "advisor" ? "Message the traveler…" : "Message your advisor…"
             }
             disabled={!canApi || status === "error"}
             data-testid="human-composer"
-            className="max-h-28 min-h-9 min-w-0 flex-1 resize-none rounded-md border border-ink/15 bg-paper px-2.5 py-1.5 font-serif text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden disabled:opacity-40"
+            className="min-w-0 flex-1 rounded-md border border-ink/15 bg-paper px-2.5 py-1.5 font-serif text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden disabled:opacity-40"
           />
           <button
             type="button"

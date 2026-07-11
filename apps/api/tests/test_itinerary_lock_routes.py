@@ -169,6 +169,13 @@ def stub_routes(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
 
     monkeypatch.setattr(routers_itineraries, "resolve_party_size", _party_size)
 
+    # GET also converts totals/nodes into the client's preferred currency (0048)
+    # with a real client query — stub it off the DB-less session.
+    async def _apply_display(_s: Any, *, client_id: Any, response: Any) -> None:
+        return None
+
+    monkeypatch.setattr(routers_itineraries, "_apply_display_currency", _apply_display)
+
     async def _session_dep() -> Iterator[object]:
         yield object()
 

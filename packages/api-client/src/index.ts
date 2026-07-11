@@ -29,6 +29,7 @@ import {
   createDossierFactEndpointClientsClientIdDossierFactsPost,
   createEdgeEndpointItineraryItineraryIdEdgesPost,
   createItineraryEndpointItineraryPost,
+  seedCampaignItineraryDemosCampaignCampaignIdPost,
   createMyPartyMemberEndpointMePartyMembersPost,
   createNodeEndpointItineraryItineraryIdNodesPost,
   createNodeFromInventoryEndpointItineraryItineraryIdNodesFromInventoryPost,
@@ -75,6 +76,7 @@ import {
   fillGapEndpointItineraryItineraryIdFillPost,
   getAnalysisEndpointItineraryItineraryIdAnalysesAnalysisIdGet,
   getClientEndpointClientsClientIdGet,
+  updateClientEndpointClientsClientIdPatch,
   getItineraryEndpointItineraryItineraryIdGet,
   updateItineraryEndpointItineraryItineraryIdPatch,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
@@ -145,8 +147,10 @@ import type {
   ClientContactUpdate,
   ClientCreatePayload,
   ClientDetail,
+  CampaignSeedResponse,
   ClientSessionSummary,
   ClientSummary,
+  ClientUpdatePayload,
   CreateEdgeRequest,
   CreateItineraryRequest,
   CreateNodeRequest,
@@ -348,6 +352,7 @@ export type {
   ClientCreateResponse,
   ClientSummary,
   ClientDetail,
+  ClientUpdatePayload,
   DossierPayload,
   DossierDetail,
   DossierTyped,
@@ -745,6 +750,37 @@ function parseGetClientDetail(status: number): GetClientDetail {
   if (status === 404) return "client_not_found";
   if (status === 403) return "advisor_only";
   return "unknown";
+}
+
+/**
+ * Typed wrapper for PATCH /clients/{client_id} — the traveler-logistics
+ * fields (address, favorite_airport, preferred_currency). Only the keys
+ * present in `payload` are applied server-side. Returns the refreshed
+ * ClientDetail on success (same not-found shape as GET).
+ */
+export async function updateClient(
+  client: Client,
+  clientId: string,
+  payload: ClientUpdatePayload,
+): Promise<GetClientResult> {
+  try {
+    const { data, error, response } =
+      await updateClientEndpointClientsClientIdPatch({
+        client,
+        path: { client_id: clientId },
+        body: payload,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, client: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: parseGetClientDetail(response.status),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
 }
 
 export type { AttentionItemOut, AwarenessResponse, ClientAttentionOut };
@@ -1400,6 +1436,11 @@ export type GetItineraryResult =
       // over priced, non-discarded, selected nodes (per-person expanded by party
       // size). Amounts are strings like `cost_amount`; `{}` when nothing priced.
       totals: Record<string, string>;
+      // 0048: the traveler's preferred display currency and the plan's total
+      // converted into it. Both null when the client has no preferred currency
+      // or FX can't resolve — the UI then falls back to the native `totals`.
+      display_currency: string | null;
+      total_display: string | null;
       // The itinerary's effective traveler count (floored at 1), matching the
       // party expansion applied to `per_person` costs. Lets the billing UI derive
       // a node's effective cost (and thus its remaining balance) client-side.
@@ -1432,6 +1473,8 @@ export async function getItinerary(
         nodes: data.nodes,
         edges: data.edges,
         totals: data.totals ?? {},
+        display_currency: data.display_currency ?? null,
+        total_display: data.total_display ?? null,
         party_size: data.party_size ?? 1,
         viewer_open_fork_id: data.viewer_open_fork_id ?? null,
       };
@@ -1479,6 +1522,42 @@ export async function createItinerary(
       status: response.status,
       detail: response.status === 422 ? "validation_error" : "unknown",
     };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type SeedCampaignResult =
+  | { ok: true; seed: CampaignSeedResponse }
+  | { ok: false; status: number; detail: "unknown_campaign" | "forbidden" | "unknown" | "network_error" };
+
+/**
+ * Seed the behind-the-scenes shell itinerary for an inbound campaign landing
+ * (advisor-only). Returns the new itinerary id + campaign title/mood so the
+ * landing can redirect the traveler straight into the pre-warmed intake.
+ */
+export async function seedCampaign(
+  client: Client,
+  campaignId: string,
+  clientRowId: string,
+): Promise<SeedCampaignResult> {
+  try {
+    const { data, error, response } =
+      await seedCampaignItineraryDemosCampaignCampaignIdPost({
+        client,
+        path: { campaign_id: campaignId },
+        body: { client_id: clientRowId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, seed: data };
+    }
+    const detail =
+      response.status === 404
+        ? "unknown_campaign"
+        : response.status === 403
+          ? "forbidden"
+          : "unknown";
+    return { ok: false, status: response.status, detail };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

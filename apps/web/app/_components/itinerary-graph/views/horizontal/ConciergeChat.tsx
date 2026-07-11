@@ -65,6 +65,11 @@ type ConciergeChatProps = {
    *  "left" (the HorizontalView prototype's right-hand aside); the routed
    *  shell's ConciergeColumn sits on the LEFT, so it passes "right". */
   surfaceSide?: "left" | "right";
+  /** Campaign dashboard: fire ONE agent-first "kickoff" turn on mount — the
+   *  agent lays down the skeleton (spine + transfer + reading list) unprompted.
+   *  The caller only sets this when it's the right moment (traveler's own
+   *  campaign trip, empty graph); this component fires it at most once. */
+  autoKickoff?: boolean;
 };
 
 export function ConciergeChat({
@@ -80,6 +85,7 @@ export function ConciergeChat({
   sessionId,
   onSessionOpened,
   surfaceSide = "left",
+  autoKickoff = false,
 }: ConciergeChatProps) {
   const pendingProposals = itineraryGraphStore.useStore(
     (s) => s.pendingProposals,
@@ -243,7 +249,9 @@ export function ConciergeChat({
             ? "user"
             : t.role === "assistant"
               ? "assistant"
-              : "system",
+              : t.role === "error"
+                ? "error"
+                : "system",
         text: t.content,
       }));
       setMessages((prev) => {
@@ -302,6 +310,34 @@ export function ConciergeChat({
     },
     [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],
   );
+
+  // Campaign dashboard kickoff (fires at most once). The agent speaks first and
+  // builds the skeleton, so there's NO visible user bubble — just the streaming
+  // assistant reply. The `surface: "kickoff"` hint puts the backend turn into
+  // campaign-planning mode (spine + transfer + reading list). The trigger text
+  // is stored server-side but reads naturally if ever replayed.
+  const kickedOff = useRef(false);
+  useEffect(() => {
+    if (!autoKickoff || kickedOff.current || !canChat) return;
+    kickedOff.current = true;
+    const n = (seqRef.current += 1);
+    const assistantId = `${audience}-a-${n}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: "assistant", text: "", streaming: true },
+    ]);
+    streamingIdRef.current = assistantId;
+    setStreaming(true);
+    void (async () => {
+      const sid = await ensureSession();
+      if (!sid) {
+        streamingIdRef.current = null;
+        setStreaming(false);
+        return;
+      }
+      await sendTurn("Let's build it out.", { surface: "kickoff" });
+    })();
+  }, [autoKickoff, canChat, audience, ensureSession, sendTurn]);
 
   // A tapped option answers through the ordinary turn path, phrased as the
   // traveler's own reply — the agent reads it like any message.

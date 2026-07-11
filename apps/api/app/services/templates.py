@@ -193,17 +193,9 @@ async def instantiate_template(
 ) -> Itinerary:
     """Create a new Itinerary materialized from ``template`` at ``trip_start_at``.
 
-    Walks the template subgraph in two passes so FK references resolve:
-
-    1. Parents-first node insert — sort template_nodes by depth so a
-       child's ``parent_id`` always finds its freshly-inserted parent.
-       Same for attached notes (host always inserted first).
-    2. Edge insert — every from/to template_node id maps to the new
-       node id via the lookup built in pass (1).
-
-    Each new node receives ``template_id`` + ``template_node_id`` +
-    ``template_version`` snapshots so future drift checks can run
-    without re-reading the template.
+    Thin wrapper over :func:`_materialize_template_into`: creates a fresh
+    itinerary container, then clones the template subgraph into it. See that
+    helper for the two-pass FK-resolution walk.
     """
     itinerary = Itinerary(
         title=title or template.name,
@@ -213,6 +205,83 @@ async def instantiate_template(
     session.add(itinerary)
     await session.flush()
 
+    node_count, edge_count = await _materialize_template_into(
+        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at
+    )
+
+    await session.commit()
+    logger.info(
+        "templates.instantiate",
+        extra={
+            "template_id": str(template.id),
+            "slug": template.slug,
+            "version": template.version,
+            "itinerary_id": str(itinerary.id),
+            "node_count": node_count,
+            "edge_count": edge_count,
+        },
+    )
+    await session.refresh(itinerary)
+    return itinerary
+
+
+async def instantiate_into(
+    session: AsyncSession,
+    *,
+    template: CardTemplate,
+    itinerary: Itinerary,
+    trip_start_at: datetime,
+) -> tuple[int, int]:
+    """Clone ``template``'s subgraph into an EXISTING itinerary at ``trip_start_at``.
+
+    Unlike :func:`instantiate_template` (which spins up a brand-new itinerary),
+    this lands the template's nodes + edges onto an itinerary that already
+    exists — the campaign spine dropping onto the traveler's working fork once
+    intake has chosen the dates. Timing fields are re-stamped to the
+    materialized span. Returns ``(node_count, edge_count)``.
+    """
+    node_count, edge_count = await _materialize_template_into(
+        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at
+    )
+    await session.commit()
+    logger.info(
+        "templates.instantiate_into",
+        extra={
+            "template_id": str(template.id),
+            "slug": template.slug,
+            "version": template.version,
+            "itinerary_id": str(itinerary.id),
+            "node_count": node_count,
+            "edge_count": edge_count,
+        },
+    )
+    await session.refresh(itinerary)
+    return node_count, edge_count
+
+
+async def _materialize_template_into(
+    session: AsyncSession,
+    *,
+    template: CardTemplate,
+    itinerary: Itinerary,
+    trip_start_at: datetime,
+) -> tuple[int, int]:
+    """Clone a template subgraph into ``itinerary`` at ``trip_start_at``.
+
+    Walks the template subgraph in two passes so FK references resolve:
+
+    1. Parents-first node insert — topologically order template_nodes so a
+       child's ``parent_id`` / attached host always finds its freshly-inserted
+       parent.
+    2. Edge insert — every from/to template_node id maps to the new node id via
+       the lookup built in pass (1).
+
+    Each new node receives ``template_id`` + ``template_node_id`` +
+    ``template_version`` snapshots for later drift checks. Stamps the
+    itinerary's timing to the materialized span (born PINNED, Wave E). Does NOT
+    commit — the caller owns the transaction boundary. Returns
+    ``(node_count, edge_count)``.
+    """
     # Load every template_node + edge in one round-trip each.
     template_nodes = (
         (await session.execute(select(TemplateNode).where(TemplateNode.template_id == template.id)))
@@ -366,22 +435,8 @@ async def instantiate_template(
     itinerary.date_end = (trip_start_at + timedelta(minutes=max_offset)).date()
     itinerary.days_anchor = trip_start_date
 
-    await session.commit()
-    logger.info(
-        "templates.instantiate",
-        extra={
-            "template_id": str(template.id),
-            "slug": template.slug,
-            "version": template.version,
-            "itinerary_id": str(itinerary.id),
-            "node_count": len(template_nodes),
-            "edge_count": len(template_edges),
-        },
-    )
-    # Re-load so callers see all server defaults.
-    await session.refresh(itinerary)
     _ = by_id  # silence: kept for future debug paths
-    return itinerary
+    return len(template_nodes), len(template_edges)
 
 
 def _coerce_node_status(raw: Any) -> str:
@@ -412,5 +467,6 @@ __all__ = [
     "add_template_node",
     "find_or_create_template",
     "has_subgraph",
+    "instantiate_into",
     "instantiate_template",
 ]

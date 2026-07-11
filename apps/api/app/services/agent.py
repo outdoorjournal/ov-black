@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent.bedrock import AgentRuntimeClient, AgentRuntimeError
 from app.agent.prompt import build_system_prompt
 from app.agent.traveler_context import assemble_traveler_context, format_trip_brief
+from app.campaigns import Campaign, get_campaign
 from app.config import Settings, get_settings
 from app.models import (
     AgentSession,
@@ -659,6 +660,48 @@ async def _fork_baseline_title(session: AsyncSession, itinerary_id: uuid.UUID | 
         await session.execute(select(Itinerary.title).where(Itinerary.id == forked_from_id))
     ).scalar_one_or_none()
     return title or ""
+
+
+async def _campaign_for_itinerary(
+    session: AsyncSession, itinerary_id: uuid.UUID | None
+) -> Campaign | None:
+    """The campaign this itinerary was started from, or None.
+
+    Reads the itinerary's ``campaign_id`` and resolves the registry entry — a
+    fork carries its baseline's ``campaign_id`` through, so an alternative of a
+    campaign trip stays campaign-aware.
+    """
+    if itinerary_id is None:
+        return None
+    campaign_id = (
+        await session.execute(select(Itinerary.campaign_id).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
+    if not campaign_id:
+        return None
+    return get_campaign(campaign_id)
+
+
+def _campaign_kickoff_directive(campaign: Campaign) -> str:
+    """The dashboard-kickoff instruction: build the skeleton, then trim it.
+
+    Appended to the traveler context on a ``surface="kickoff"`` turn (planning
+    mode). The agent speaks first here — it should act, not ask.
+    """
+    reading = "\n".join(f"- {a.url} ({a.publication})" for a in campaign.reading_list)
+    return (
+        "KICKOFF: You are opening the dashboard for this campaign trip and you "
+        "speak first — build, don't ask. In THIS turn, in order:\n"
+        "1. Call ``assemble_campaign_spine`` to lay down the skeleton. It returns "
+        "a ``reason`` when it snapped the trip length — narrate that reason warmly "
+        "in your prose (e.g. why Olympus wants a certain number of days).\n"
+        "2. Add the airport ground transfer with ``add_transfer`` — origin the "
+        "arrival airport, destination the first hotel/base, "
+        "service_class='chauffeur_black', party_size = the trip's party.\n"
+        "3. Add the reading list to the Collection: for each link below call "
+        "``save_link_to_collection`` with kind='article':\n" + reading + "\n"
+        "4. Close with a short, warm line inviting the traveler to look it over "
+        "and change anything. Keep the prose tight — the cards carry the detail."
+    )
 
 
 async def trip_brief_for_itinerary(
@@ -1286,6 +1329,11 @@ async def stream_turn(
         # agent grounds its first suggestions in what they're actually planning.
         trip_brief = await trip_brief_for_itinerary(db, agent_session.itinerary_id)
 
+        # Campaign-awareness: if the trip was started from a campaign, open
+        # grounded in it (Olympus) without a forked prompt.
+        campaign = await _campaign_for_itinerary(db, agent_session.itinerary_id)
+        campaign_directive = campaign.directive if campaign is not None else None
+
         # Graph digest (AGT-2): the pinned plan's live state — lifecycle status,
         # node counts, totals, uninvoiced remainder — computed fresh per turn and
         # injected into the system prompt so the agent never has to burn a
@@ -1299,10 +1347,18 @@ async def stream_turn(
             profile_facts=profile_facts,
             osint_facts=osint_facts,
             client_full_name=client_row.full_name,
+            home_airport=client_row.favorite_airport,
+            preferred_currency=client_row.preferred_currency,
+            home_address=client_row.address,
             alternative_of=fork_baseline_title,
+            campaign_directive=campaign_directive,
             trip_brief=trip_brief,
             graph_digest=graph_digest,
         )
+        # Campaign dashboard kickoff: the agent speaks first and builds the
+        # skeleton. Append the build directive so this planning turn acts.
+        if surface == "kickoff" and campaign is not None:
+            traveler_ctx = traveler_ctx + "\n\n" + _campaign_kickoff_directive(campaign)
         system_prompt = build_system_prompt(traveler_ctx)
         agentcore_session_id = agent_session.agentcore_session_id
         client_id = client_row.id
@@ -1319,6 +1375,10 @@ async def stream_turn(
         # escalate anything.
         if surface == "intake" and pinned_itinerary_id is not None and actor.actor_kind == "user":
             mode = "intake"
+        # The campaign dashboard kickoff needs the full planning toolkit
+        # (spine, transfer, articles). Traveler-only; pin it explicitly.
+        if surface == "kickoff" and pinned_itinerary_id is not None and actor.actor_kind == "user":
+            mode = "planning"
         prior_turns = await _load_prior_turns(db, session_id=session_id)
 
         # Auto-title from the first user message (M006/PS2) — only when the
@@ -1971,13 +2031,19 @@ async def summon_artemis_in_thread(
         # never consulted, so the disclosure boundary is the thread's.
         fork_baseline_title = await _fork_baseline_title(db, itinerary_id)
         trip_brief = await trip_brief_for_itinerary(db, itinerary_id)
+        thread_campaign = await _campaign_for_itinerary(db, itinerary_id)
+        campaign_directive = thread_campaign.directive if thread_campaign is not None else None
         traveler_ctx = assemble_traveler_context(
             dossier=ctx_rows.dossier,
             dossier_facts=ctx_rows.dossier_facts,
             profile_facts=ctx_rows.profile_facts,
             osint_facts=ctx_rows.osint_facts,
             client_full_name=ctx_rows.client.full_name,
+            home_airport=ctx_rows.client.favorite_airport,
+            preferred_currency=ctx_rows.client.preferred_currency,
+            home_address=ctx_rows.client.address,
             alternative_of=fork_baseline_title,
+            campaign_directive=campaign_directive,
             trip_brief=trip_brief,
         )
         system_prompt = build_system_prompt(traveler_ctx)

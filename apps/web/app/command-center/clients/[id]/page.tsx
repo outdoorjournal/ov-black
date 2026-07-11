@@ -33,6 +33,7 @@ import { advisorApi } from "@/app/command-center/_lib/api";
 import { ClientContactsSection } from "./_components/ClientContactsSection";
 import { ClientDocumentsSection } from "./_components/ClientDocumentsSection";
 import { ClientFactColumns } from "./_components/ClientFactColumns";
+import { ClientLogisticsSection } from "./_components/ClientLogisticsSection";
 import { ClientPartySection } from "./_components/ClientPartySection";
 import { ClientSubNav, type SubNavSection } from "./_components/ClientSubNav";
 import { NewItineraryButton } from "./_components/NewItineraryButton";
@@ -107,6 +108,7 @@ export default async function ClientDetailPage({
 
   const sections: SubNavSection[] = [
     ...(client.dossier ? [{ id: "basics", label: "Basics" }] : []),
+    { id: "logistics", label: "Logistics" },
     { id: "contacts", label: "Contacts" },
     { id: "party", label: "Party" },
     { id: "vault", label: "Vault" },
@@ -195,6 +197,20 @@ export default async function ClientDetailPage({
             </dl>
           </Panel>
         ) : null}
+
+        <Panel id="logistics" className="scroll-mt-16" aria-labelledby="logistics-heading">
+          <SectionHeader
+            id="logistics-heading"
+            title="Logistics"
+            eyebrow="currency · airport · address"
+          />
+          <ClientLogisticsSection
+            clientId={client.id}
+            address={client.address ?? null}
+            favoriteAirport={client.favorite_airport ?? null}
+            preferredCurrency={client.preferred_currency ?? null}
+          />
+        </Panel>
 
         <Panel id="contacts" className="scroll-mt-16" aria-labelledby="contacts-heading">
           <SectionHeader

@@ -110,6 +110,11 @@ async def create_client_with_dossier(
         owner_id=advisor_id,
         full_name=payload.full_name,
         email=email,
+        address=payload.address,
+        favorite_airport=(payload.favorite_airport.upper() if payload.favorite_airport else None),
+        preferred_currency=(
+            payload.preferred_currency.upper() if payload.preferred_currency else None
+        ),
     )
     session.add(client)
 

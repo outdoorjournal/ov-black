@@ -64,7 +64,9 @@ async def search_inventory(
         checkin: Hotel check-in date, ``YYYY-MM-DD``.
         checkout: Hotel check-out date, ``YYYY-MM-DD``.
         residency: Hotel guest residency, ISO-3166 alpha-2 lowercase (e.g. ``us``).
-        currency: Hotel display currency, ISO 4217 (e.g. ``USD``).
+        currency: Hotel display currency, ISO 4217 (e.g. ``USD``). Pass the
+            traveler's preferred currency (from the Traveler logistics block)
+            so quotes come back in it rather than the supplier's local currency.
         near_lat: Google Places location-bias latitude (paired with near_lng).
             Optional — biases meal/experience results toward this point.
         near_lng: Google Places location-bias longitude (paired with near_lat).

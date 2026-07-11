@@ -25,7 +25,8 @@ export type MoodId =
   | "andes"
   | "monsoon"
   | "riviera"
-  | "highland";
+  | "highland"
+  | "olympus";
 
 export type MoodPalette = {
   bg: string;
@@ -181,6 +182,12 @@ export const MOODS: Record<MoodId, MoodEntry> = {
   highland: {
     palette: { bg: "#181c1a", fg: "#cdd2c8", accent: "#7e8a78" },
     imageUrl: UNSPLASH("1732045133230-1a670eef8620"),
+    keywords: [],
+  },
+  // Mount Olympus / Greece campaign — sun-warmed stone + Aegean light.
+  olympus: {
+    palette: { bg: "#1c1913", fg: "#e8dcc4", accent: "#c69a54" },
+    imageUrl: UNSPLASH("1602343168117-bb8ffe3e2e9f"),
     keywords: [],
   },
 };

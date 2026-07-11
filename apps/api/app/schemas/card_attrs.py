@@ -319,6 +319,13 @@ class DriveCardAttrs(_CardBase):
     # Encoded polyline string. PostGIS LineString lives on Node.route,
     # already created in Phase 1; this field is the on-the-wire summary.
     route_polyline: str | None = None
+    distance_meters: int | None = Field(default=None, ge=0)
+    # Ground-transfer tier (``add_transfer`` / from-route). ``service_class``
+    # scales the product from a chauffeured black car down to a standard taxi;
+    # ``party_size`` is the head-count the vehicle was sized for. Both None on a
+    # plain drive leg that isn't a booked transfer.
+    service_class: Literal["chauffeur_black", "first_class", "standard_taxi"] | None = None
+    party_size: int | None = Field(default=None, ge=1)
 
 
 class WalkCardAttrs(_CardBase):
@@ -439,6 +446,21 @@ class NoteCardAttrs(_CardBase):
     visibility: Literal["private", "team", "shared"] | None = None
 
 
+class ArticleCardAttrs(_CardBase):
+    """Reading-list card (0046). A saved read from an editorial property or a
+    pasted link — non-schedulable, lives in the Collection only. Fields mirror
+    the OpenGraph preview the from-link fetch derives (title/image/description
+    land in ``snapshot``); the rest is editorial metadata.
+    """
+
+    kind: Literal["article"] = "article"
+    url: str | None = None
+    publication: str | None = None
+    byline: str | None = None
+    reading_time_minutes: int | None = Field(default=None, ge=0)
+    snapshot: CardSnapshot | None = None
+
+
 class DestinationCardAttrs(_CardBase):
     """Legacy ``destination`` node_type. Phase 1 introduced ``node_role``
     as the structural axis; new code should set ``role='destination'``
@@ -468,6 +490,7 @@ CardAttributes = Annotated[
     | FreeTimeCardAttrs
     | WaitingCardAttrs
     | NoteCardAttrs
+    | ArticleCardAttrs
     | DestinationCardAttrs,
     Field(discriminator="kind"),
 ]
@@ -502,6 +525,7 @@ def parse_card_attrs(node_type: str, raw: dict[str, Any] | None) -> CardAttribut
 
 
 __all__ = [
+    "ArticleCardAttrs",
     "BoatCardAttrs",
     "CardAttributes",
     "CardSnapshot",

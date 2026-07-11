@@ -94,7 +94,10 @@ export interface AgentNode {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  // `error` renders the crafted D015 fallback copy (content ignored). It's a
+  // persisted turn role, so replayed history must be able to carry it — see
+  // ConciergeChat history hydration.
+  role: "user" | "assistant" | "system" | "error";
   text: string;
   streaming?: boolean;
 }
@@ -201,6 +204,12 @@ export type ItineraryGraphState = {
   /** Per-currency price of the plan (ADV-10), `{ currency: amount }` from the
    *  GraphResponse — amounts are strings; empty when nothing is priced. */
   totals: Record<string, string>;
+  /** 0048: the traveler's preferred display currency + the whole plan's total
+   *  converted into it (across mixed native currencies). Both null when the
+   *  client has no preferred currency or FX can't resolve — the UI then falls
+   *  back to the native `totals` map above. */
+  displayCurrency: string | null;
+  totalDisplay: string | null;
   /** ADV-15: node id → its billing chip (unbilled / partial / billed / paid),
    *  the board-side read of "how do the invoices relate to the inventory".
    *  Populated by `refreshBilling` (advisor only); empty otherwise. */
@@ -493,6 +502,9 @@ export type ItineraryGraphInit = {
   awaitingProposal?: boolean;
   /** Per-currency plan price from the `GraphResponse` (ADV-10). Empty by default. */
   totals?: Record<string, string>;
+  /** 0048: preferred display currency + converted grand total (both nullable). */
+  displayCurrency?: string | null;
+  totalDisplay?: string | null;
   // Demo/sandbox escape hatch: start already locked-by-me so the prototype
   // (which has no API to acquire a real lock against) can exercise the editing
   // affordances. Production leaves this false — staff must click Edit to lock.
@@ -778,6 +790,8 @@ export const itineraryGraphStore = createStoreContext<
     viewerOpenForkId = null,
     awaitingProposal = false,
     totals = {},
+    displayCurrency = null,
+    totalDisplay = null,
     startLocked = false,
   }) =>
     (set, get) => {
@@ -867,6 +881,8 @@ export const itineraryGraphStore = createStoreContext<
         approvePending: false,
         approvingNodeId: null,
         totals,
+        displayCurrency,
+        totalDisplay,
         billingChips: {},
 
         viewerOpenForkId,

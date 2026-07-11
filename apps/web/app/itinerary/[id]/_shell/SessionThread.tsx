@@ -30,6 +30,7 @@ export function SessionThread({
   apiBaseUrl,
   accessToken,
   intro,
+  autoKickoff = false,
 }: {
   audience: Audience;
   clientId: string | null;
@@ -37,6 +38,8 @@ export function SessionThread({
   apiBaseUrl: string | null;
   accessToken: string | null;
   intro?: string;
+  /** Campaign dashboard: the agent speaks first + builds the skeleton once. */
+  autoKickoff?: boolean;
 }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -226,6 +229,7 @@ export function SessionThread({
           itineraryId={itineraryId}
           hideHeader
           hydrateHistory={Boolean(boundId)}
+          autoKickoff={autoKickoff}
           {...(boundId ? { sessionId: boundId } : {})}
           {...(intro ? { intro } : {})}
           onSessionOpened={handleOpened}

@@ -12,6 +12,7 @@
 import { useEffect, useRef } from "react";
 
 import { MapCompassIndicator } from "@/app/_components/MapCompassIndicator";
+import { ScrollControls } from "@/components/ui/scroll-controls";
 
 import { OnboardingMilestoneCard } from "./OnboardingMilestoneCard";
 import { ProseMessage } from "./ProseMessage";
@@ -58,41 +59,44 @@ export function ConversationStream({
   }, [turns, streaming?.buffer]);
 
   return (
-    <section
-      id="conversation"
-      ref={scrollRef}
-      className="relative overflow-y-auto bg-paper text-ink"
-      data-testid="conversation-stream"
-    >
-      <div className="mx-auto flex max-w-2xl flex-col gap-8 px-8 py-12">
-        {turns.map((turn) => (
-          <TurnRow key={turn.id} turn={turn} />
-        ))}
-        {streaming ? (
-          <div
-            data-testid="streaming-turn"
-            data-role="assistant"
-            data-turn-index={streaming.turnIndex}
-            className="font-serif text-[21px] leading-relaxed text-ink"
-          >
-            {streaming.buffer.trim() ? (
-              <>
-                <ProseMessage content={streaming.buffer} />
-                {working ? (
-                  <div className="mt-2">
-                    <MapCompassIndicator />
-                  </div>
-                ) : null}
-              </>
-            ) : working ? (
-              <MapCompassIndicator />
-            ) : (
-              "\u00a0"
-            )}
-          </div>
-        ) : null}
-      </div>
-    </section>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <section
+        id="conversation"
+        ref={scrollRef}
+        className="relative min-h-0 flex-1 overflow-y-auto bg-paper text-ink"
+        data-testid="conversation-stream"
+      >
+        <div className="mx-auto flex max-w-2xl flex-col gap-8 px-8 py-12">
+          {turns.map((turn) => (
+            <TurnRow key={turn.id} turn={turn} />
+          ))}
+          {streaming ? (
+            <div
+              data-testid="streaming-turn"
+              data-role="assistant"
+              data-turn-index={streaming.turnIndex}
+              className="font-serif text-[24px] leading-relaxed text-ink"
+            >
+              {streaming.buffer.trim() ? (
+                <>
+                  <ProseMessage content={streaming.buffer} />
+                  {working ? (
+                    <div className="mt-2">
+                      <MapCompassIndicator />
+                    </div>
+                  ) : null}
+                </>
+              ) : working ? (
+                <MapCompassIndicator />
+              ) : (
+                "\u00a0"
+              )}
+            </div>
+          ) : null}
+        </div>
+      </section>
+      <ScrollControls targetRef={scrollRef} />
+    </div>
   );
 }
 
@@ -118,7 +122,7 @@ function TurnRow({ turn }: { turn: AgentTurnView }) {
       <div
         data-turn-id={turn.id}
         data-role="assistant"
-        className="font-serif text-[21px] leading-relaxed text-ink"
+        className="font-serif text-[24px] leading-relaxed text-ink"
       >
         <ProseMessage content={turn.content} />
       </div>
@@ -130,7 +134,7 @@ function TurnRow({ turn }: { turn: AgentTurnView }) {
       <div
         data-turn-id={turn.id}
         data-role="user"
-        className="self-end rounded-md bg-ink/5 px-4 py-3 font-sans text-lg leading-relaxed text-ink"
+        className="self-end rounded-md bg-ink/5 px-4 py-3 font-sans text-xl leading-relaxed text-ink"
       >
         {turn.content}
       </div>

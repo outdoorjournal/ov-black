@@ -24,6 +24,7 @@ const TYPE_COLOR: Record<NodeType, string> = {
   free_time: "#a0a0a0",
   waiting: "#a0a0a0",
   note: "#bbb6ad",
+  article: "#bbb6ad",
 };
 
 export function DurationBar({ type, barH, durationMinutes }: DurationBarProps) {

@@ -40,6 +40,7 @@ const TYPE_LABEL: Record<NodeType, string> = {
   walk: "Walks",
   boat: "Boats",
   waiting: "Waiting",
+  article: "Reading list",
 };
 
 function groupNodesByType(

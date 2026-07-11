@@ -58,6 +58,7 @@ const DEFAULT_DURATION_MIN: Record<NodeType, number> = {
   free_time: 120,
   waiting: 30,
   note: 20,
+  article: 20,
 };
 
 // Synthesis anchor for itineraries with zero scheduled nodes: the first

@@ -192,6 +192,74 @@ class Ovb:
             body["duration_nights"] = duration_nights
         return await self._model(gm.ItineraryResponse, "POST", "/itinerary", json_body=body)
 
+    async def update_itinerary(self, itinerary_id: str, **fields: Any) -> gm.ItineraryResponse:
+        """PATCH /itinerary/{id} — partial update (title, brief, timing, …)."""
+        return await self._model(
+            gm.ItineraryResponse, "PATCH", f"/itinerary/{itinerary_id}", json_body=fields
+        )
+
+    async def seed_campaign(self, campaign_id: str, *, client_id: str) -> gm.CampaignSeedResponse:
+        """POST /demos/campaign/{id} — seed a campaign shell itinerary (self-serve).
+
+        Stamps the itinerary with the campaign's ``campaign_id``, title, and hero
+        ``mood``; no spine (length unknown until intake) and no facts.
+        """
+        return await self._model(
+            gm.CampaignSeedResponse,
+            "POST",
+            f"/demos/campaign/{campaign_id}",
+            json_body={"client_id": client_id},
+        )
+
+    async def campaign_kickoff(self, itinerary_id: str) -> gm.CampaignKickoffResponse:
+        """POST /itinerary/{id}/campaign/kickoff — snap length + land the spine.
+
+        Reads the trip's chosen nights, snaps to the nearest shipped spine
+        length, and instantiates it onto this itinerary. Returns the snap
+        ``reason`` + node/edge counts.
+        """
+        return await self._model(
+            gm.CampaignKickoffResponse,
+            "POST",
+            f"/itinerary/{itinerary_id}/campaign/kickoff",
+            json_body={},
+        )
+
+    async def add_transfer(
+        self,
+        itinerary_id: str,
+        *,
+        origin: str,
+        destination: str,
+        mode: str = "drive",
+        party_size: int = 1,
+        service_class: str = "chauffeur_black",
+    ) -> gm.NodeResponse:
+        """POST /itinerary/{id}/nodes/from-route — a real, tier-aware transfer card."""
+        return await self._model(
+            gm.NodeResponse,
+            "POST",
+            f"/itinerary/{itinerary_id}/nodes/from-route",
+            json_body={
+                "origin": origin,
+                "destination": destination,
+                "mode": mode,
+                "party_size": party_size,
+                "service_class": service_class,
+            },
+        )
+
+    async def save_article(
+        self, itinerary_id: str, *, url: str, note: str | None = None
+    ) -> gm.NodeResponse:
+        """POST /itinerary/{id}/nodes/from-link kind=article — a reading-list card."""
+        body: dict[str, Any] = {"url": url, "kind": "article"}
+        if note is not None:
+            body["note"] = note
+        return await self._model(
+            gm.NodeResponse, "POST", f"/itinerary/{itinerary_id}/nodes/from-link", json_body=body
+        )
+
     async def retime(
         self, itinerary_id: str, *, date_start: str, date_end: str | None = None
     ) -> gm.RetimeItineraryResponse:

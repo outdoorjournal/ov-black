@@ -14,6 +14,7 @@ import {
   type OsintFactUpdate,
   type PartyMemberCreate,
   type PartyMemberUpdate,
+  type ClientUpdatePayload,
   type ProfileFactCreate,
   type ProfileFactUpdate,
   type RedactRequest,
@@ -33,6 +34,7 @@ import {
   redactDossierFact,
   redactOsintFact,
   redactProfileFact,
+  updateClient,
   updateClientContact,
   updateClientDocument,
   updateClientPartyMember,
@@ -188,6 +190,23 @@ export async function redactOsintFactAction(
 ): Promise<FactActionResult> {
   const api = await _api();
   const result = await redactOsintFact(api, clientId, factId, body);
+  if (!result.ok) return _shape(result.detail);
+  _bust(clientId);
+  return { ok: true };
+}
+
+// ── Traveler logistics (0048) ─────────────────────────────────────────────
+//
+// Address, home airport, and preferred currency — the last of which drives
+// read-time FX conversion of itinerary totals and the currency the agent
+// quotes in.
+
+export async function updateClientLogisticsAction(
+  clientId: string,
+  payload: ClientUpdatePayload,
+): Promise<FactActionResult> {
+  const api = await _api();
+  const result = await updateClient(api, clientId, payload);
   if (!result.ok) return _shape(result.detail);
   _bust(clientId);
   return { ok: true };

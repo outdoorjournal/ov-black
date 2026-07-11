@@ -135,6 +135,29 @@ class Settings(BaseSettings):
         description="Duffel API version sent as the Duffel-Version header (flights + Stays).",
     )
 
+    exchange_rate_api_base_url: str = Field(
+        default="https://v6.exchangerate-api.com/v6",
+        description=(
+            "Base URL for exchangerate-api.com v6 (shared with voyage-site). "
+            "Rates are fetched as ``/{key}/latest/{base}`` and cached in-process."
+        ),
+    )
+    exchange_rates_api_key: str = Field(
+        default="",
+        description=(
+            "exchangerate-api.com v6 API key. When empty the FX service is "
+            "disabled and money is displayed in its native (provider) currency "
+            "with no conversion. NEVER log this value."
+        ),
+        repr=False,
+    )
+    exchange_rate_cache_ttl_seconds: int = Field(
+        default=21600,
+        ge=60,
+        le=86400,
+        description="In-process cache lifetime for fetched exchange-rate tables (default 6h).",
+    )
+
     ratehawk_base_url: str = Field(
         default="https://api.worldota.net/api/b2b/v3",
         description="Base URL for the Ratehawk (ETG / Worldota) B2B hotels API.",

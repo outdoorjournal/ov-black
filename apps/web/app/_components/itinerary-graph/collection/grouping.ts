@@ -42,9 +42,10 @@ const TYPE_LANE: Record<string, { key: string; label: string }> = {
   walk: { key: "travel", label: "Getting there" },
   boat: { key: "travel", label: "Getting there" },
   destination: { key: "places", label: "Places" },
+  article: { key: "reading", label: "Reading list" },
   note: { key: "notes", label: "Notes" },
 };
-const TYPE_LANE_ORDER = ["do", "eat", "stay", "travel", "places", "notes", "other"];
+const TYPE_LANE_ORDER = ["do", "eat", "stay", "travel", "places", "reading", "notes", "other"];
 const TYPE_LANE_FALLBACK = { key: "other", label: "Other" };
 
 // ── Axis: cost ────────────────────────────────────────────────────────────

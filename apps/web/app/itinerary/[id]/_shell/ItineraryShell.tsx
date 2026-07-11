@@ -49,6 +49,9 @@ export type ItineraryShellProps = {
   awaitingProposal?: boolean;
   /** Per-currency plan price from the graph read (ADV-10) — `{}` when unpriced. */
   totals?: Record<string, string>;
+  /** 0048: traveler's preferred display currency + converted grand total. */
+  displayCurrency?: string | null;
+  totalDisplay?: string | null;
   /** The active routed destination (timeline / collection / studio / …). */
   children: React.ReactNode;
 };
@@ -64,6 +67,8 @@ export function ItineraryShell({
   viewerOpenForkId,
   awaitingProposal = false,
   totals = {},
+  displayCurrency = null,
+  totalDisplay = null,
   children,
 }: ItineraryShellProps) {
   // <1100px the concierge is a summonable overlay (opened from the Rail on a
@@ -101,6 +106,8 @@ export function ItineraryShell({
         viewerOpenForkId,
         awaitingProposal,
         totals,
+        displayCurrency,
+        totalDisplay,
       }}
     >
       <TimelineDataProvider value={{ timeline, baselineTitle }}>

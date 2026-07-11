@@ -153,6 +153,32 @@ def _facts_section(
     return f"{title}\n" + "\n".join(rendered)
 
 
+def _logistics_lines(
+    *,
+    home_airport: str | None,
+    preferred_currency: str | None,
+    home_address: str | None,
+) -> list[str]:
+    """Render the client-level logistics (0048) into prompt lines.
+
+    Non-private: the agent may reference the home airport / currency naturally
+    (the traveler told us, or would expect us to know). The currency line is
+    imperative so the agent quotes money in it instead of the provider's
+    native currency (bugs.md: "you keep giving me things in euros").
+    """
+    bits: list[str] = []
+    if preferred_currency:
+        bits.append(
+            f"Preferred currency: {preferred_currency} — quote all prices in "
+            f"{preferred_currency} unless the traveler asks otherwise."
+        )
+    if home_airport:
+        bits.append(f"Home airport: {home_airport} (default departure origin for flights).")
+    if home_address:
+        bits.append(f"Home base: {home_address}")
+    return bits
+
+
 def assemble_traveler_context(
     *,
     dossier: Dossier | None,
@@ -160,7 +186,11 @@ def assemble_traveler_context(
     profile_facts: list[ProfileFact],
     osint_facts: list[OsintFact],
     client_full_name: str | None = None,
+    home_airport: str | None = None,
+    preferred_currency: str | None = None,
+    home_address: str | None = None,
     alternative_of: str | None = None,
+    campaign_directive: str | None = None,
     trip_brief: str | None = None,
     graph_digest: str | None = None,
 ) -> str:
@@ -174,8 +204,17 @@ def assemble_traveler_context(
     leading directive frames it as "an alternative version" of the named
     baseline so the agent's prose never calls it a fork and never claims it can
     merge it itself.
+
+    When ``campaign_directive`` is set, the trip was started from an inbound
+    campaign (e.g. Olympus): a leading private directive tells the agent to open
+    grounded in the destination without a forked prompt. It's guidance, never
+    shown raw to the traveler.
     """
     sections: list[str] = []
+
+    # Lead with the campaign directive so the agent opens grounded in it.
+    if campaign_directive:
+        sections.append(campaign_directive)
 
     # Lead with the fork framing so it's the most salient instruction every turn.
     if alternative_of is not None:
@@ -189,6 +228,17 @@ def assemble_traveler_context(
 
     if client_full_name:
         sections.append(f"Client: {client_full_name}")
+
+    # ── Traveler logistics (0048) ─────────────────────────────────────────
+    # Home airport / preferred currency / home base — client-level, non-private.
+    # Placed high so the currency instruction frames every money mention.
+    logistics = _logistics_lines(
+        home_airport=home_airport,
+        preferred_currency=preferred_currency,
+        home_address=home_address,
+    )
+    if logistics:
+        sections.append("Traveler logistics:\n" + "\n".join(logistics))
 
     # ── Trip brief (0033) ─────────────────────────────────────────────────
     # Leads the substantive context (right after the client name) so the goal +

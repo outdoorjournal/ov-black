@@ -51,6 +51,7 @@ from app.schemas.clients import (
     ClientDetail,
     ClientsPage,
     ClientSummary,
+    ClientUpdatePayload,
 )
 from app.schemas.contacts import (
     ClientContactCreate,
@@ -338,6 +339,9 @@ async def get_client_endpoint(
         accepted_at=client.accepted_at,
         created_at=client.created_at,
         updated_at=client.updated_at,
+        address=client.address,
+        favorite_airport=client.favorite_airport,
+        preferred_currency=client.preferred_currency,
         dossier=_dossier_detail(ctx.dossier),
         dossier_facts=[
             DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts
@@ -351,6 +355,52 @@ async def get_client_endpoint(
         contacts=[
             ClientContactDetail.model_validate(c, from_attributes=True) for c in contact_rows
         ],
+    )
+
+
+@router.patch(
+    "/{client_id}",
+    response_model=ClientDetail,
+    responses={
+        404: {"description": "No client with this id owned by the calling advisor."},
+    },
+    summary="Update a client's traveler-logistics fields (address, airport, currency).",
+)
+async def update_client_endpoint(
+    client_id: uuid.UUID,
+    payload: ClientUpdatePayload,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+) -> ClientDetail:
+    advisor_id = _advisor_id(user)
+
+    client_result = await session.execute(
+        select(Client).where(Client.id == client_id, Client.owner_id == advisor_id)
+    )
+    client = client_result.scalar_one_or_none()
+    if client is None:
+        # Collapsed shape (S01 D015) — never 403 on cross-advisor.
+        raise HTTPException(status_code=404, detail="client_not_found")
+
+    # Only apply keys the caller actually sent, so an explicit null clears a
+    # field while an omitted one is left untouched. Codes are stored upper-cased.
+    provided = payload.model_fields_set
+    if "address" in provided:
+        client.address = payload.address
+    if "favorite_airport" in provided:
+        client.favorite_airport = (
+            payload.favorite_airport.upper() if payload.favorite_airport else None
+        )
+    if "preferred_currency" in provided:
+        client.preferred_currency = (
+            payload.preferred_currency.upper() if payload.preferred_currency else None
+        )
+
+    await session.flush()
+    await session.commit()
+
+    return await get_client_endpoint(
+        client_id=client_id, user=user, session=session, include_redacted=False
     )
 
 

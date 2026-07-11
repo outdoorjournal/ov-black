@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -31,6 +32,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
+from app.campaigns import get_campaign
+from app.config import get_settings
 from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
 from app.inventory.schemas import ExperienceItem, FlightItem
@@ -41,6 +44,7 @@ from app.models import (
     ForkStatus,
     Itinerary,
     ItineraryTimingKind,
+    Node,
     NodeStatus,
     NodeType,
     Profile,
@@ -48,6 +52,7 @@ from app.models import (
 )
 from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
+from app.services.campaign_spine import snap_length
 from app.services.card_mapping import (
     flight_item_to_card_attrs,
     flight_slice_count,
@@ -68,6 +73,7 @@ from app.services.fork import (
     request_reconcile,
     withdraw_reconcile,
 )
+from app.services.fx import get_fx_service
 from app.services.inventory import get_inventory_detail
 from app.services.itineraries import (
     ActorContext,
@@ -99,8 +105,13 @@ from app.services.node_cost import (
     resolve_party_size,
     sum_node_costs,
 )
+from app.services.node_kinds import is_schedulable
+from app.services.olympus_template import build_olympus_template
 from app.services.pagination import clamp_limit, require_cursor
+from app.services.route_plan import RoutePlanError, compute_route
 from app.services.subgraph import SubgraphMaterializeError, materialize_day_subgraph
+from app.services.templates import instantiate_into
+from app.services.transfers import build_transfer_card
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -190,6 +201,13 @@ class ItineraryResponse(BaseModel):
     # unpinned trip, so relative Day-N labels are stable. None until the first
     # card is scheduled; equals date_start once the dates are pinned (retime).
     days_anchor: date | None = None
+    # Campaign provenance + hero mood (0047). ``campaign_id`` is the inbound
+    # campaign slug a trip was started from (None on ordinary trips); it drives
+    # the dashboard auto-kickoff, hero preset, and agent campaign-awareness.
+    # ``mood`` is the persisted atmospheric mood id the hero renders; None
+    # resolves to the default mood client-side.
+    campaign_id: str | None = None
+    mood: str | None = None
 
 
 class RetimeItineraryRequest(BaseModel):
@@ -320,6 +338,12 @@ class NodeResponse(BaseModel):
     cost_amount: Decimal | None = None
     cost_currency: str | None = None
     cost_kind: CostKind | None = None
+    # Read-time FX conversion (0048) of ``cost_amount`` into the traveler's
+    # preferred currency. Populated only by the graph-read endpoint when the
+    # client has a ``preferred_currency`` and a rate resolves; None everywhere
+    # else, so the card falls back to the native ``cost_amount``/``cost_currency``.
+    cost_display_amount: Decimal | None = None
+    cost_display_currency: str | None = None
     # Scheduled timing, derived from the node's ``starts_at`` tstzrange.
     # ``starts_at`` is the ISO-8601 lower bound; ``duration_minutes`` is the
     # whole-minute span (upper - lower), or None when there is no upper bound
@@ -342,6 +366,12 @@ class NodeResponse(BaseModel):
     # leg. Empty for every single-node write; nested entries carry none of their
     # own. The agent turn loop fans these out into one card_proposed frame each.
     additional_nodes: list[NodeResponse] = Field(default_factory=list)
+    # Whether this card may be placed on the timeline (derived from ``type``).
+    # Non-schedulable cards (articles) live in the Collection only; the web
+    # blocks drag-to-timeline for them and the write path refuses a time.
+    # Defaulted so existing callers/fixtures stay valid; the serializers set it
+    # explicitly from ``is_schedulable(type)``.
+    schedulable: bool = True
 
 
 class CreateEdgeRequest(BaseModel):
@@ -370,6 +400,15 @@ class GraphResponse(BaseModel):
     # as strings like ``cost_amount``. Empty when nothing is priced. Populated on
     # the graph-read endpoint; other producers (fork/reconcile) leave it empty.
     totals: dict[str, str] = Field(default_factory=dict)
+    # Traveler's preferred display currency (0048) and the plan's whole price
+    # converted into it — one comfortable number across mixed native currencies
+    # (bugs.md: "you keep giving me things in euros"). ``display_currency`` is
+    # the client's ``preferred_currency``; ``total_display`` is the summed,
+    # converted total as a string. Both None when the client has no preferred
+    # currency or the FX service is disabled/can't resolve every currency, in
+    # which case the UI falls back to the native ``totals`` map above.
+    display_currency: str | None = None
+    total_display: str | None = None
     # The itinerary's effective traveler count (floored at 1), matching the party
     # expansion the money-gate applies to ``per_person`` costs. Surfaced so the
     # billing UI can compute a node's EFFECTIVE cost (``per_person`` × party) and
@@ -846,6 +885,7 @@ def _node_response_from_out(n: Any) -> NodeResponse:
         lock_reason=n.lock_reason,
         forked_from_node_id=n.forked_from_node_id,
         attached_to_node_id=n.attached_to_node_id,
+        schedulable=is_schedulable(n.type),
     )
 
 
@@ -877,6 +917,7 @@ def _node_response_from_node(node: Any) -> NodeResponse:
         lock_reason=compute_lock_reason(node.status),
         forked_from_node_id=getattr(node, "forked_from_node_id", None),
         attached_to_node_id=getattr(node, "attached_to_node_id", None),
+        schedulable=is_schedulable(node.type),
     )
 
 
@@ -975,6 +1016,64 @@ async def create_itinerary_endpoint(
     return _itinerary_to_response(itinerary)
 
 
+_CENTS = Decimal("0.01")
+
+
+async def _apply_display_currency(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID | None,
+    response: GraphResponse,
+) -> None:
+    """Convert totals + node costs into the client's preferred currency (0048).
+
+    Read-side, best-effort: when the itinerary's client has a
+    ``preferred_currency`` and the FX service resolves rates, we fill
+    ``display_currency`` + ``total_display`` and each priced node's
+    ``cost_display_*``. Anything that can't be resolved is left None so the UI
+    falls back to native amounts — the plan's native ``totals`` are untouched.
+    """
+    if client_id is None:
+        return
+    # Cheap gate first: with no FX key there's nothing to convert, so skip the
+    # extra client query entirely (also spares session-stubbing callers).
+    fx = get_fx_service()
+    if not fx.enabled:
+        return
+    target = (
+        await session.execute(select(Client.preferred_currency).where(Client.id == client_id))
+    ).scalar_one_or_none()
+    if not target:
+        return
+    response.display_currency = target
+
+    # Whole-plan total: convert every native currency bucket and sum. If any
+    # bucket can't be converted, leave total_display None rather than under-count.
+    grand = Decimal(0)
+    ok = bool(response.totals)
+    for currency, amount in response.totals.items():
+        converted = await fx.convert(Decimal(amount), currency, target)
+        if converted is None:
+            ok = False
+            break
+        grand += converted
+    if ok:
+        response.total_display = str(grand.quantize(_CENTS))
+
+    # Per-node display conversion (including sibling ``additional_nodes``).
+    async def _convert_node(node: NodeResponse) -> None:
+        if node.cost_amount is not None and node.cost_currency:
+            converted = await fx.convert(node.cost_amount, node.cost_currency, target)
+            if converted is not None:
+                node.cost_display_amount = converted.quantize(_CENTS)
+                node.cost_display_currency = target
+        for child in node.additional_nodes:
+            await _convert_node(child)
+
+    for node in response.nodes:
+        await _convert_node(node)
+
+
 @router.get(
     "/{itinerary_id}",
     response_model=GraphResponse,
@@ -996,6 +1095,8 @@ async def get_itinerary_endpoint(
     totals = {c: str(a) for c, a in (await sum_node_costs(session, itinerary_id)).items()}
     party_size = await resolve_party_size(session, itinerary_id)
     response = _graph_to_response(result, totals=totals, party_size=party_size)
+    # Convert totals + node costs into the client's preferred currency (0048).
+    await _apply_display_currency(session, client_id=result.itinerary.client_id, response=response)
     response.itinerary.display_status = await _display_status_for(session, itinerary_id)
     # On a baseline, surface the caller's own OPEN fork so the traveler's
     # two-version toggle ("My version") resolves to it rather than re-forking.
@@ -1354,6 +1455,12 @@ async def create_node_from_link_endpoint(
     metadata: dict[str, Any] = {"snapshot": preview.to_snapshot()}
     if payload.note:
         metadata["note"] = payload.note
+    # An article card is the reading-list case: carry the canonical url + a
+    # publication derived from the host so the card reads as a real read, not a
+    # bare link. The OpenGraph title/image/description already live in snapshot.
+    if payload.kind is NodeType.article:
+        metadata["url"] = preview.url
+        metadata["publication"] = _publication_from_url(preview.url)
 
     result = await add_node(
         session,
@@ -1370,6 +1477,224 @@ async def create_node_from_link_endpoint(
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
     return _node_response_from_node(result)
+
+
+#: Known editorial hosts → display publication name (reading-list cards).
+_PUBLICATION_BY_HOST: dict[str, str] = {
+    "outsideonline.com": "Outside",
+    "climbing.com": "Climbing",
+    "backpacker.com": "Backpacker",
+}
+
+
+def _publication_from_url(url: str) -> str | None:
+    """Derive a human publication name from a URL's host (``www.`` stripped).
+
+    Known editorial hosts map to a curated name; anything else falls back to the
+    bare registrable host so the card still credits a source.
+    """
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    if not host:
+        return None
+    return _PUBLICATION_BY_HOST.get(host, host)
+
+
+class CreateNodeFromRouteRequest(BaseModel):
+    """Compute a real route (Google Routes) and persist it as a transfer card."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin: str
+    destination: str
+    mode: Literal["drive", "walk", "bicycle", "transit"] = "drive"
+    waypoints: list[str] = Field(default_factory=list)
+    party_size: int = Field(default=1, ge=1)
+    service_class: Literal["chauffeur_black", "first_class", "standard_taxi"] = "chauffeur_black"
+
+
+@router.post(
+    "/{itinerary_id}/nodes/from-route",
+    status_code=status.HTTP_201_CREATED,
+    response_model=NodeResponse,
+    summary="Compute a real route and save it as a tier-aware transfer card.",
+)
+async def create_node_from_route_endpoint(
+    itinerary_id: uuid.UUID,
+    payload: CreateNodeFromRouteRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> NodeResponse:
+    """Persist a ground transfer whose geometry comes from a live routing engine.
+
+    Unlike ``present_route`` (a drawer surface, no graph write), this computes
+    the route server-side (the Google key stays on the backend) and lands a
+    schedulable ``drive`` card in the Collection carrying the real duration /
+    distance / polyline plus the chosen service tier + a coarse price estimate.
+    Because the numbers are real, the card survives a live "make it a taxi"
+    change — only the trim flexes.
+    """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
+    actor = await _resolve_actor(session, user)
+
+    client = httpx.AsyncClient(timeout=10.0)
+    try:
+        route = await compute_route(
+            origin=payload.origin,
+            destination=payload.destination,
+            waypoints=payload.waypoints,
+            mode=payload.mode,
+            settings=get_settings(),
+            client=client,
+        )
+    except RoutePlanError as exc:
+        if exc.reason == "route_not_found":
+            raise HTTPException(status_code=404, detail="route_not_found") from exc
+        raise HTTPException(status_code=502, detail=exc.reason) from exc
+    finally:
+        await client.aclose()
+
+    title, attrs, price = build_transfer_card(
+        route=route, service_class=payload.service_class, party_size=payload.party_size
+    )
+    result = await add_node(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        type=NodeType.drive,
+        title=title,
+        source="route",
+        source_id=f"{payload.origin}→{payload.destination}:{payload.mode}:{payload.service_class}",
+        metadata=attrs.model_dump(mode="json", exclude_none=True),
+        cost_amount=price,
+        cost_currency="EUR",
+        cost_kind=CostKind.total,
+    )
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    return _node_response_from_node(result)
+
+
+def _itinerary_requested_nights(itinerary: Itinerary) -> int | None:
+    """The traveler's chosen trip length in nights, or None if not yet settled.
+
+    Prefers an explicit ``duration_nights`` (a window intake), else derives it
+    from a pinned ``date_start``/``date_end`` span (an exact intake).
+    """
+    nights = getattr(itinerary, "duration_nights", None)
+    if isinstance(nights, int) and nights > 0:
+        return nights
+    start = getattr(itinerary, "date_start", None)
+    end = getattr(itinerary, "date_end", None)
+    if start is not None and end is not None:
+        span = (end - start).days
+        return span if span > 0 else None
+    return None
+
+
+def _itinerary_trip_start(itinerary: Itinerary) -> datetime:
+    """Anchor datetime the spine offsets from — the itinerary's ``date_start`` at
+    local midnight, or ~30 days out if the trip has no dates yet.
+    """
+    start = getattr(itinerary, "date_start", None)
+    if start is not None:
+        return datetime(start.year, start.month, start.day, tzinfo=UTC)
+    now = datetime.now(UTC)
+    return datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=30)
+
+
+class CampaignKickoffResponse(BaseModel):
+    """Result of instantiating the length-snapped campaign spine onto a fork."""
+
+    itinerary_id: uuid.UUID
+    campaign_id: str
+    requested_nights: int | None
+    snapped_length: int
+    # Human sentence explaining a length snap ("Olympus really wants at least 5
+    # days…"), or empty when the chosen dates matched a shipped length. The agent
+    # narrates this verbatim-ish to the traveler.
+    reason: str
+    node_count: int
+    edge_count: int
+
+
+@router.post(
+    "/{itinerary_id}/campaign/kickoff",
+    response_model=CampaignKickoffResponse,
+    summary="Instantiate the length-snapped campaign spine onto the traveler's fork.",
+)
+async def campaign_kickoff_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> CampaignKickoffResponse:
+    """Drop the right-sized campaign spine onto a campaign itinerary.
+
+    Called once, from the dashboard auto-kickoff, after intake has settled the
+    dates. Reads the itinerary's ``campaign_id``, snaps the chosen nights to the
+    nearest shipped spine length, and clones that template onto THIS itinerary
+    (the traveler's fork) via ``instantiate_into``. Deterministic — the LLM
+    narrates the returned ``reason``, it doesn't pick the number.
+    """
+    itinerary = await _load_itinerary(session, itinerary_id)
+    if itinerary is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    await assert_itinerary_writable(session, user, itinerary)
+
+    campaign_id = getattr(itinerary, "campaign_id", None)
+    if not campaign_id:
+        raise HTTPException(status_code=409, detail="not_a_campaign_itinerary")
+    campaign = get_campaign(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=409, detail="unknown_campaign")
+
+    requested_nights = _itinerary_requested_nights(itinerary)
+    snapped, reason = snap_length(requested_nights, campaign.supported_lengths)
+
+    # Idempotent: the spine is laid down once. If this itinerary already has any
+    # nodes, a re-fire (double dashboard mount, retry) must NOT stack a second
+    # skeleton — return the no-op shape so the agent narrates without rebuilding.
+    existing = (
+        await session.execute(
+            select(Node.id).where(Node.itinerary_id == itinerary_id).limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return CampaignKickoffResponse(
+            itinerary_id=itinerary.id,
+            campaign_id=campaign.id,
+            requested_nights=requested_nights,
+            snapped_length=snapped,
+            reason="",
+            node_count=0,
+            edge_count=0,
+        )
+
+    # Build (idempotent) + resolve the length-matched spine template. Only the
+    # Olympus campaign ships spines today; dispatch by id keeps the seam clean.
+    if campaign.id == "olympus":
+        template = await build_olympus_template(session, nights=snapped)
+    else:  # pragma: no cover - guarded by the registry today
+        raise HTTPException(status_code=409, detail="campaign_has_no_spine")
+
+    trip_start_at = _itinerary_trip_start(itinerary)
+    node_count, edge_count = await instantiate_into(
+        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at
+    )
+
+    return CampaignKickoffResponse(
+        itinerary_id=itinerary.id,
+        campaign_id=campaign.id,
+        requested_nights=requested_nights,
+        snapped_length=snapped,
+        reason=reason,
+        node_count=node_count,
+        edge_count=edge_count,
+    )
 
 
 @router.patch(
@@ -1448,6 +1773,8 @@ def _itinerary_to_response(
         duration_nights=getattr(itinerary, "duration_nights", None),
         timing_note=getattr(itinerary, "timing_note", None),
         days_anchor=getattr(itinerary, "days_anchor", None),
+        campaign_id=getattr(itinerary, "campaign_id", None),
+        mood=getattr(itinerary, "mood", None),
     )
 
 

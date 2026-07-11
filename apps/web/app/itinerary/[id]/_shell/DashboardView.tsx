@@ -123,6 +123,8 @@ function ApprovalSection() {
   const role = itineraryGraphStore.useStore((s) => s.role);
   const status = itineraryGraphStore.useStore((s) => s.status);
   const totals = itineraryGraphStore.useStore((s) => s.totals);
+  const displayCurrency = itineraryGraphStore.useStore((s) => s.displayCurrency);
+  const totalDisplay = itineraryGraphStore.useStore((s) => s.totalDisplay);
   const canApprove = itineraryGraphStore.useStore(selectCanApprove);
   const approvePending = itineraryGraphStore.useStore((s) => s.approvePending);
   const approve = itineraryGraphStore.useStore((s) => s.approve);
@@ -130,6 +132,17 @@ function ApprovalSection() {
   const isAdvisor = role === "advisor";
   const totalEntries = Object.entries(totals);
   const hasTotals = totalEntries.length > 0;
+  // 0048: when the client has a preferred currency and FX resolved, lead with
+  // the converted grand total; keep the native per-currency breakdown as a
+  // muted secondary line (unless the plan is already all in that currency).
+  const converted =
+    totalDisplay != null && displayCurrency != null
+      ? { currency: displayCurrency, amount: Number(totalDisplay) }
+      : null;
+  const showNativeBreakdown =
+    !converted ||
+    totalEntries.length > 1 ||
+    (totalEntries.length === 1 && totalEntries[0]?.[0] !== converted.currency);
 
   // Nothing to show on a plan still in the studio with no price (e.g. a
   // traveler looking at a plan the advisor is still building).
@@ -171,16 +184,32 @@ function ApprovalSection() {
               <span className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
                 Trip total
               </span>
-              {totalEntries.map(([currency, amount]) => (
+              {converted ? (
                 <span
-                  key={currency}
-                  data-testid="dashboard-trip-total-row"
-                  data-currency={currency}
+                  data-testid="dashboard-trip-total-display"
+                  data-currency={converted.currency}
                   className="font-serif text-lg text-ink"
                 >
-                  {money(currency, Number(amount))}
+                  {money(converted.currency, converted.amount)}
                 </span>
-              ))}
+              ) : null}
+              {showNativeBreakdown
+                ? totalEntries.map(([currency, amount]) => (
+                    <span
+                      key={currency}
+                      data-testid="dashboard-trip-total-row"
+                      data-currency={currency}
+                      className={
+                        converted
+                          ? "font-sans text-[11px] text-ink/45"
+                          : "font-serif text-lg text-ink"
+                      }
+                    >
+                      {converted ? "from " : ""}
+                      {money(currency, Number(amount))}
+                    </span>
+                  ))
+                : null}
             </div>
           ) : null}
         </div>

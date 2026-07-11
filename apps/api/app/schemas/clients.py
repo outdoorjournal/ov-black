@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -31,6 +31,12 @@ from app.schemas.facts import (
     ProfileFactCreate,
     ProfileFactDetail,
 )
+
+# Shared validated field types for the three traveler-logistics columns (0048).
+# ``favorite_airport`` is an IATA code, ``preferred_currency`` an ISO 4217 code;
+# both are stored upper-case and pinned to 3 letters (matching the DB CHECKs).
+IataAirport = Annotated[str, Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")]
+Iso4217Currency = Annotated[str, Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")]
 
 
 class ClientCreatePayload(BaseModel):
@@ -46,6 +52,11 @@ class ClientCreatePayload(BaseModel):
 
     full_name: str = Field(min_length=1, max_length=200)
     email: EmailStr
+    # Optional traveler-logistics seeds (0048) — the onboarding form may know
+    # the home airport / preferred currency / address up front.
+    address: str | None = Field(default=None, max_length=2000)
+    favorite_airport: IataAirport | None = None
+    preferred_currency: Iso4217Currency | None = None
     dossier: DossierPayload
     dossier_facts: list[DossierFactCreate] = Field(default_factory=list)
     profile_facts: list[ProfileFactCreate] = Field(default_factory=list)
@@ -69,6 +80,22 @@ class ClientCreateResponse(BaseModel):
 
     client_id: uuid.UUID
     email: EmailStr
+
+
+class ClientUpdatePayload(BaseModel):
+    """Partial update for the traveler-logistics fields via ``PATCH /clients/{id}``.
+
+    Every field is optional; only the keys actually present in the request
+    body are applied (the route reads ``model_fields_set``), so passing an
+    explicit ``null`` clears a field while omitting it leaves it untouched.
+    Airport + currency codes are stored upper-cased.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    address: str | None = Field(default=None, max_length=2000)
+    favorite_airport: IataAirport | None = None
+    preferred_currency: Iso4217Currency | None = None
 
 
 # Where the client sits on the invite → sign-in path. Derived server-side from
@@ -128,6 +155,10 @@ class ClientDetail(BaseModel):
     accepted_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Traveler logistics (0048). None = not yet recorded.
+    address: str | None = None
+    favorite_airport: str | None = None
+    preferred_currency: str | None = None
     dossier: DossierDetail | None
     dossier_facts: list[DossierFactDetail] = Field(default_factory=list)
     profile_facts: list[ProfileFactDetail] = Field(default_factory=list)

@@ -280,7 +280,13 @@ export type UseAgentStreamOptions = {
   abortRef?: React.MutableRefObject<AbortController | null>;
 };
 
-export type SendTurnFn = (content: string) => Promise<void>;
+// `extra` is merged into the turn POST body for THIS call only (e.g.
+// `{ surface: "kickoff" }` for the campaign dashboard's first, agent-first turn)
+// — distinct from `extraBody`, which rides every turn of the stream.
+export type SendTurnFn = (
+  content: string,
+  extra?: Record<string, unknown>,
+) => Promise<void>;
 
 export type UseAgentStreamResult = {
   sendTurn: SendTurnFn;
@@ -315,7 +321,7 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
   optsRef.current = options;
 
   const sendTurn = useCallback<SendTurnFn>(
-    async (content: string) => {
+    async (content: string, extra?: Record<string, unknown>) => {
       const current = optsRef.current;
       const controller = new AbortController();
       if (abortRef) {
@@ -351,7 +357,7 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
             "Content-Type": "application/json",
             Accept: "text/event-stream",
           },
-          body: JSON.stringify({ ...current.extraBody, content }),
+          body: JSON.stringify({ ...current.extraBody, ...extra, content }),
           signal: controller.signal,
         });
       } catch (err) {

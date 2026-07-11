@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from agent.schemas import Mode
 from agent.tools.analyze import get_analysis_findings, run_analysis
+from agent.tools.campaign import assemble_campaign_spine
 from agent.tools.collection import (
     add_collection_note,
     get_collection,
@@ -38,6 +39,7 @@ from agent.tools.set_mood import set_mood
 from agent.tools.surfaces import present_options, present_route
 from agent.tools.thread import post_thread_message
 from agent.tools.timeline import propose_timeline
+from agent.tools.transfer import add_transfer
 from agent.tools.traveler import (
     add_trip_traveler,
     get_traveler_context,
@@ -117,6 +119,10 @@ _TOOLS_PLANNING = [
     # Drawer surfaces — a route brochure or a laid-out decision beside the chat.
     present_route,
     present_options,
+    # Real, tier-aware ground transfer (airport car, etc.) from a live route.
+    add_transfer,
+    # Campaign spine — lay down the length-snapped skeleton on a campaign trip.
+    assemble_campaign_spine,
     assemble_draft,
     update_node_status,
     update_node_details,

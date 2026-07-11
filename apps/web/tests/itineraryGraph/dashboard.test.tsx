@@ -229,4 +229,32 @@ describe("DashboardView · travel party", () => {
     expect(popover).toHaveTextContent("Ada");
     expect(within(popover).queryByTestId("stub-party-panel")).not.toBeInTheDocument();
   });
+
+  // 0048: when the client has a preferred currency, the trip total leads with
+  // the converted figure and keeps the native amount as a muted "from" line.
+  test("trip total leads with the converted preferred-currency figure", () => {
+    renderDashboard({
+      status: "with_traveler",
+      totals: { EUR: "2000.00" },
+      displayCurrency: "USD",
+      totalDisplay: "2200.00",
+    });
+
+    const display = screen.getByTestId("dashboard-trip-total-display");
+    expect(display).toHaveAttribute("data-currency", "USD");
+    expect(display).toHaveTextContent("USD 2200.00");
+    // The native bucket stays visible as the secondary "from" line.
+    const native = screen.getByTestId("dashboard-trip-total-row");
+    expect(native).toHaveTextContent("from EUR 2000.00");
+  });
+
+  test("trip total shows native only when no preferred currency is set", () => {
+    renderDashboard({
+      status: "with_traveler",
+      totals: { EUR: "2000.00" },
+    });
+
+    expect(screen.queryByTestId("dashboard-trip-total-display")).not.toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-trip-total-row")).toHaveTextContent("EUR 2000.00");
+  });
 });

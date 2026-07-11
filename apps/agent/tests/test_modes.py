@@ -66,6 +66,31 @@ def test_planning_prompt_client_vs_advisor_voice_differ() -> None:
     assert "advisor" in advisor_prompt.lower()
 
 
+def test_advisor_turns_reframe_audience_in_every_mode() -> None:
+    # Only the planning rubric branches on actor_kind; the audience override in
+    # build_prompt is what stops the agent addressing the advisor as though they
+    # were the traveler in qa/onboarding too. Assert it lands in every mode and
+    # never leaks into a traveler turn.
+    for mode in (Mode.onboarding, Mode.planning, Mode.qa):
+        it_present = mode is not Mode.onboarding
+        advisor = build_prompt(
+            mode=mode,
+            api_system="VP",
+            actor_kind="advisor",
+            itinerary_id_present=it_present,
+        )
+        traveler = build_prompt(
+            mode=mode,
+            api_system="VP",
+            actor_kind="user",
+            itinerary_id_present=it_present,
+        )
+        assert "addressing the ADVISOR" in advisor, mode
+        assert "third person" in advisor, mode
+        assert "addressing the ADVISOR" not in traveler, mode
+        assert advisor != traveler, mode
+
+
 def test_planning_without_pin_tells_agent_how_to_bootstrap() -> None:
     prompt = build_prompt(
         mode=Mode.planning,

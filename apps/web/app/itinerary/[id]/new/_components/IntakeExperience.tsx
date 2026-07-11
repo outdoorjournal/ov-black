@@ -58,6 +58,10 @@ export type IntakeExperienceProps = {
   /** The route id the traveler arrived on (the trunk, usually). */
   trunkId: string;
   initial: IntakeDetails;
+  /** Opening line, baked into turn 0. Overridden for a campaign intake so the
+   *  first line matches the destination (agent is already campaign-aware via the
+   *  server directive). Defaults to the generic "Where shall we take you?". */
+  seededOpener?: string;
 };
 
 export function IntakeExperience({
@@ -67,6 +71,7 @@ export function IntakeExperience({
   itineraryId,
   trunkId,
   initial,
+  seededOpener = SEEDED_OPENER,
 }: IntakeExperienceProps) {
   const router = useRouter();
   const reduced = useReducedMotion() ?? false;
@@ -225,7 +230,7 @@ export function IntakeExperience({
         client_id: clientId,
         itinerary_id: itineraryId,
         audience: "traveler",
-        seeded_opener: SEEDED_OPENER,
+        seeded_opener: seededOpener,
       });
       if (!opened.ok || cancelled) return;
       sessionIdRef.current = opened.session_id;

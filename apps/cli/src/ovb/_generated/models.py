@@ -272,6 +272,34 @@ class OfferAmount(RootModel[str]):
     ]
 
 
+class CampaignKickoffResponse(BaseModel):
+    """
+    Result of instantiating the length-snapped campaign spine onto a fork.
+    """
+
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    campaign_id: Annotated[str, Field(title='Campaign Id')]
+    requested_nights: Annotated[int | None, Field(title='Requested Nights')]
+    snapped_length: Annotated[int, Field(title='Snapped Length')]
+    reason: Annotated[str, Field(title='Reason')]
+    node_count: Annotated[int, Field(title='Node Count')]
+    edge_count: Annotated[int, Field(title='Edge Count')]
+
+
+class CampaignSeedRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    client_id: Annotated[UUID, Field(title='Client Id')]
+
+
+class CampaignSeedResponse(BaseModel):
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    campaign_id: Annotated[str, Field(title='Campaign Id')]
+    title: Annotated[str, Field(title='Title')]
+    mood: Annotated[str, Field(title='Mood')]
+
+
 class Reason(RootModel[str]):
     root: Annotated[str, Field(max_length=2048, title='Reason')]
 
@@ -355,6 +383,34 @@ class ClientCountsOut(BaseModel):
     active: Annotated[int, Field(title='Active')]
 
 
+class Address(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Address')]
+
+
+class FavoriteAirport(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            max_length=3,
+            min_length=3,
+            pattern='^[A-Za-z]{3}$',
+            title='Favorite Airport',
+        ),
+    ]
+
+
+class PreferredCurrency(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            max_length=3,
+            min_length=3,
+            pattern='^[A-Za-z]{3}$',
+            title='Preferred Currency',
+        ),
+    ]
+
+
 class ClientCreateResponse(BaseModel):
     """
     Response for ``POST /clients`` on the successful path.
@@ -416,6 +472,28 @@ class ClientSummary(BaseModel):
     invited_at: Annotated[AwareDatetime | None, Field(title='Invited At')]
     accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+
+class ClientUpdatePayload(BaseModel):
+    """
+    Partial update for the traveler-logistics fields via ``PATCH /clients/{id}``.
+
+    Every field is optional; only the keys actually present in the request
+    body are applied (the route reads ``model_fields_set``), so passing an
+    explicit ``null`` clears a field while omitting it leaves it untouched.
+    Airport + currency codes are stored upper-cased.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    address: Annotated[Address | None, Field(title='Address')] = None
+    favorite_airport: Annotated[
+        FavoriteAirport | None, Field(title='Favorite Airport')
+    ] = None
+    preferred_currency: Annotated[
+        PreferredCurrency | None, Field(title='Preferred Currency')
+    ] = None
 
 
 class ClientsPage(BaseModel):
@@ -504,6 +582,37 @@ class Note(RootModel[str]):
     root: Annotated[str, Field(max_length=2000, title='Note')]
 
 
+class Mode(StrEnum):
+    drive = 'drive'
+    walk = 'walk'
+    bicycle = 'bicycle'
+    transit = 'transit'
+
+
+class ServiceClass(StrEnum):
+    chauffeur_black = 'chauffeur_black'
+    first_class = 'first_class'
+    standard_taxi = 'standard_taxi'
+
+
+class CreateNodeFromRouteRequest(BaseModel):
+    """
+    Compute a real route (Google Routes) and persist it as a transfer card.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    origin: Annotated[str, Field(title='Origin')]
+    destination: Annotated[str, Field(title='Destination')]
+    mode: Annotated[Mode | None, Field(title='Mode')] = 'drive'
+    waypoints: Annotated[list[str] | None, Field(title='Waypoints')] = None
+    party_size: Annotated[int | None, Field(ge=1, title='Party Size')] = 1
+    service_class: Annotated[ServiceClass | None, Field(title='Service Class')] = (
+        'chauffeur_black'
+    )
+
+
 class CostAmount(RootModel[str]):
     model_config = ConfigDict(
         regex_engine="python-re",
@@ -511,6 +620,23 @@ class CostAmount(RootModel[str]):
     root: Annotated[
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Cost Amount')
     ]
+
+
+class DayNoteContent(BaseModel):
+    bring: Annotated[list[str] | None, Field(title='Bring')] = None
+    tips: Annotated[list[str] | None, Field(title='Tips')] = None
+
+
+class DayNoteResponse(BaseModel):
+    day_date: Annotated[date_aliased, Field(title='Day Date')]
+    source: Annotated[str, Field(title='Source')]
+    content: DayNoteContent
+    generated_at: Annotated[str, Field(title='Generated At')]
+
+
+class DayNotesListResponse(BaseModel):
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    notes: Annotated[list[DayNoteResponse], Field(title='Notes')]
 
 
 class DaySlotPayload(BaseModel):
@@ -833,12 +959,37 @@ class ForkStatus(StrEnum):
     abandoned = 'abandoned'
 
 
+class GalleryImage(BaseModel):
+    """
+    One image in an experience's editorial gallery ("Moments that define
+    this adventure" on OV).
+
+    ``photos`` flattens every image to a bare URL for a hero pick; this keeps
+    the vendor's per-image caption + credit so the card can attribute and
+    describe each moment. Hero-first, ordered as the provider ordered it.
+    """
+
+    url: Annotated[str, Field(title='Url')]
+    caption: Annotated[str | None, Field(title='Caption')] = None
+    credit: Annotated[str | None, Field(title='Credit')] = None
+
+
 class GapModel(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     start: Annotated[AwareDatetime, Field(title='Start')]
     end: Annotated[AwareDatetime, Field(title='End')]
+
+
+class GenerateDayNotesRequest(BaseModel):
+    days: Annotated[
+        list[date_aliased] | None,
+        Field(
+            description='Restrict regeneration to these dates; omit for all days.',
+            title='Days',
+        ),
+    ] = None
 
 
 class GeoPoint(BaseModel):
@@ -1096,6 +1247,12 @@ class MyItinerarySummary(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
     has_open_fork: Annotated[bool | None, Field(title='Has Open Fork')] = False
+    date_start: Annotated[date_aliased | None, Field(title='Date Start')] = None
+    date_end: Annotated[date_aliased | None, Field(title='Date End')] = None
+    timing_kind: ItineraryTimingKind | None = None
+    duration_nights: Annotated[int | None, Field(title='Duration Nights')] = None
+    cover_image: Annotated[str | None, Field(title='Cover Image')] = None
+    cover_photo_token: Annotated[str | None, Field(title='Cover Photo Token')] = None
 
 
 class MyOnboardingSessionResponse(BaseModel):
@@ -1154,6 +1311,16 @@ class NodeChangeResponse(BaseModel):
     after: Annotated[dict[str, Any] | None, Field(title='After')] = None
 
 
+class CostDisplayAmount(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str,
+        Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Cost Display Amount'),
+    ]
+
+
 class NodeStatus(StrEnum):
     """
     Mirrors the public.node_status Postgres enum (collapsed in 0043).
@@ -1196,6 +1363,7 @@ class NodeType(StrEnum):
     walk = 'walk'
     boat = 'boat'
     waiting = 'waiting'
+    article = 'article'
 
 
 class OfferResponse(BaseModel):
@@ -1502,6 +1670,7 @@ class ProfileFactKind(StrEnum):
     dream_signal = 'dream_signal'
     preference = 'preference'
     aspiration = 'aspiration'
+    medical = 'medical'
     other = 'other'
 
 
@@ -1906,6 +2075,9 @@ class TransitItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -1924,18 +2096,34 @@ class TransitItem(BaseModel):
     mode: Annotated[str | None, Field(title='Mode')] = None
 
 
+class SurfaceEnum(StrEnum):
+    intake = 'intake'
+
+
+class Surface(RootModel[SurfaceEnum | None]):
+    root: Annotated[SurfaceEnum | None, Field(title='Surface')] = None
+
+
 class TurnRequest(BaseModel):
     """
     Body of ``POST /sessions/{session_id}/turn``.
 
     ``content`` is bounded to 8000 chars to cap payload amplification into
     the Bedrock model context (threat surface). Empty strings are 422.
+
+    ``surface`` is an optional hint naming the UI surface sending the turn.
+    ``"intake"`` (the immersive first conversation on a brand-new trip) keeps
+    the agent in intake mode for the whole immersive screen — mode detection
+    would otherwise flip to planning the moment the brief lands mid-
+    conversation. It only ever *narrows* the toolset (intake is the least
+    capable mode), so a forged value grants nothing.
     """
 
     model_config = ConfigDict(
         extra='forbid',
     )
     content: Annotated[str, Field(max_length=8000, min_length=1, title='Content')]
+    surface: Annotated[Surface | None, Field(title='Surface')] = None
 
 
 class TurnRole(StrEnum):
@@ -2395,6 +2583,9 @@ class DestinationItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -2579,6 +2770,9 @@ class FlightItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -2615,6 +2809,9 @@ class HotelItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -2733,6 +2930,8 @@ class ItineraryResponse(BaseModel):
     duration_nights: Annotated[int | None, Field(title='Duration Nights')] = None
     timing_note: Annotated[str | None, Field(title='Timing Note')] = None
     days_anchor: Annotated[date_aliased | None, Field(title='Days Anchor')] = None
+    campaign_id: Annotated[str | None, Field(title='Campaign Id')] = None
+    mood: Annotated[str | None, Field(title='Mood')] = None
 
 
 class MealItem(BaseModel):
@@ -2741,6 +2940,9 @@ class MealItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -2829,6 +3031,12 @@ class NodeResponse(BaseModel):
     cost_amount: Annotated[CostAmount | None, Field(title='Cost Amount')] = None
     cost_currency: Annotated[str | None, Field(title='Cost Currency')] = None
     cost_kind: CostKind | None = None
+    cost_display_amount: Annotated[
+        CostDisplayAmount | None, Field(title='Cost Display Amount')
+    ] = None
+    cost_display_currency: Annotated[
+        str | None, Field(title='Cost Display Currency')
+    ] = None
     starts_at: Annotated[str | None, Field(title='Starts At')] = None
     duration_minutes: Annotated[int | None, Field(title='Duration Minutes')] = None
     depth: Annotated[int | None, Field(title='Depth')] = None
@@ -2839,6 +3047,10 @@ class NodeResponse(BaseModel):
     attached_to_node_id: Annotated[UUID | None, Field(title='Attached To Node Id')] = (
         None
     )
+    additional_nodes: Annotated[
+        list[NodeResponse] | None, Field(title='Additional Nodes')
+    ] = None
+    schedulable: Annotated[bool | None, Field(title='Schedulable')] = True
 
 
 class NoteItem(BaseModel):
@@ -2847,6 +3059,9 @@ class NoteItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -3129,6 +3344,13 @@ class ClientCreatePayload(BaseModel):
     )
     full_name: Annotated[str, Field(max_length=200, min_length=1, title='Full Name')]
     email: Annotated[EmailStr, Field(title='Email')]
+    address: Annotated[Address | None, Field(title='Address')] = None
+    favorite_airport: Annotated[
+        FavoriteAirport | None, Field(title='Favorite Airport')
+    ] = None
+    preferred_currency: Annotated[
+        PreferredCurrency | None, Field(title='Preferred Currency')
+    ] = None
     dossier: DossierPayload
     dossier_facts: Annotated[
         list[DossierFactCreate] | None, Field(title='Dossier Facts')
@@ -3165,6 +3387,9 @@ class ClientDetail(BaseModel):
     accepted_at: Annotated[AwareDatetime | None, Field(title='Accepted At')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+    address: Annotated[str | None, Field(title='Address')] = None
+    favorite_airport: Annotated[str | None, Field(title='Favorite Airport')] = None
+    preferred_currency: Annotated[str | None, Field(title='Preferred Currency')] = None
     dossier: DossierDetail | None
     dossier_facts: Annotated[
         list[DossierFactDetail] | None, Field(title='Dossier Facts')
@@ -3201,6 +3426,9 @@ class ExperienceItem(BaseModel):
     title: Annotated[str, Field(title='Title')]
     description: Annotated[str | None, Field(title='Description')] = None
     photos: Annotated[list[str] | None, Field(title='Photos')] = []
+    gallery: Annotated[
+        list[GalleryImage] | None, Field(title='Gallery', validate_default=True)
+    ] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: Annotated[
@@ -3228,6 +3456,8 @@ class GraphResponse(BaseModel):
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
     edges: Annotated[list[EdgeResponse], Field(title='Edges')]
     totals: Annotated[dict[str, str] | None, Field(title='Totals')] = None
+    display_currency: Annotated[str | None, Field(title='Display Currency')] = None
+    total_display: Annotated[str | None, Field(title='Total Display')] = None
     party_size: Annotated[int | None, Field(title='Party Size')] = 1
     viewer_open_fork_id: Annotated[UUID | None, Field(title='Viewer Open Fork Id')] = (
         None
@@ -3293,3 +3523,6 @@ class ApproveAllResponse(BaseModel):
 
     approved_count: Annotated[int, Field(title='Approved Count')]
     graph: GraphResponse
+
+
+NodeResponse.model_rebuild()

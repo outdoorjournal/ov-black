@@ -26,6 +26,7 @@ import {
   updateItinerary,
 } from "@ov-black/api-client";
 
+import { campaignOpener } from "@/lib/campaigns";
 import { publicEnv } from "@/lib/env";
 import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -36,10 +37,13 @@ export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ campaign?: string }>;
 };
 
-export default async function NewItineraryPage({ params }: PageProps) {
+export default async function NewItineraryPage({ params, searchParams }: PageProps) {
   const { id: routeId } = await params;
+  const { campaign } = await searchParams;
+  const opener = campaignOpener(campaign);
 
   const supabase = await createServerSupabase();
   const {
@@ -115,6 +119,7 @@ export default async function NewItineraryPage({ params }: PageProps) {
       clientId={clientId}
       itineraryId={target.itinerary.id}
       trunkId={routeId}
+      {...(opener ? { seededOpener: opener } : {})}
       initial={{
         // The fork of an unnamed trunk carries a placeholder like "(fork)" —
         // that's lineage bookkeeping, not a name. Show "still listening…"

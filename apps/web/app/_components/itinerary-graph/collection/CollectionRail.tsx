@@ -63,7 +63,10 @@ export function CollectionRail({
   const [showScheduled, setShowScheduled] = useState(false);
 
   const items = useMemo(
-    () => collectionItemsOf(nodes, pending),
+    // Notes are feedback for staff, not wish-list cards — they have their own
+    // home in the Journal, so they're kept OUT of the Collection (bugs.md:
+    // "notes not needed in collection"). Articles (reading list) stay in.
+    () => collectionItemsOf(nodes, pending).filter((n) => n.type !== "note"),
     [nodes, pending],
   );
   // Split the pile: unscheduled maybes (the wish list proper) vs cards that
@@ -323,8 +326,13 @@ function CollectionCard({
   scheduled?: boolean;
   onOpen?: (nodeId: string) => void;
 }) {
+  // Non-schedulable cards (articles / reading list) live in the Collection only
+  // — they never go on a day. Disable the drag + hide the Place affordance; the
+  // card still opens to read. `schedulable` is derived server-side on the node.
+  const schedulable = node.schedulable !== false;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: collectionDragId(node.id),
+    disabled: !schedulable,
   });
   const storeApi = itineraryGraphStore.useStoreApi();
   // Pick-then-place (PS5): the primary, no-drag way to schedule. Click "Place"
@@ -389,7 +397,7 @@ function CollectionCard({
           a drag). Click a slot on the timeline to drop it — no held mouse.
           Desktop-only: place targets live on the ≥md timeline canvas; on a phone
           the card-detail schedule facet (PS4) sets the day/time instead. */}
-      {canSchedule ? (
+      {canSchedule && schedulable ? (
         <button
           type="button"
           onClick={() => storeApi.getState().holdItem(node.id)}

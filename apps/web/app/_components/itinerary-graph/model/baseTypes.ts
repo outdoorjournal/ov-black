@@ -100,6 +100,7 @@ export const NODE_TYPE_ORDER: Record<NodeType, number> = {
   free_time: 11,
   waiting: 12,
   note: 13,
+  article: 14,
 };
 
 export const STATUS_LABELS: Record<NodeStatus, string> = {

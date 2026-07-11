@@ -146,7 +146,10 @@ class FakeSession:
 
         raise AssertionError(f"unexpected statement: {sql}")
 
-    async def commit(self) -> None:  # pragma: no cover — router does not commit
+    async def flush(self) -> None:  # PATCH /clients/{id} flushes before commit
+        return None
+
+    async def commit(self) -> None:
         return None
 
     async def rollback(self) -> None:  # pragma: no cover — router does not rollback
@@ -512,6 +515,75 @@ def test_get_client_by_id_returns_joined_payload_for_own_client(
     assert body["dossier_facts"] == []
     assert body["profile_facts"] == []
     assert body["osint_facts"] == []
+
+
+def test_patch_client_updates_logistics_and_uppercases_codes(
+    client: TestClient,
+    fake_session: FakeSession,
+    override_require_advisor: uuid.UUID,
+    auth_headers: dict[str, str],
+) -> None:
+    """0048: PATCH sets address / favorite_airport / preferred_currency,
+    upper-casing the codes, and returns the refreshed detail."""
+    advisor_a = override_require_advisor
+    own = _client_row(owner_id=advisor_a, email="own@example.com")
+    fake_session.clients_by_id[own.id] = own
+    fake_session.dossiers_by_client[own.id] = _dossier_for(own.id, advisor_a)
+
+    resp = client.patch(
+        f"/clients/{own.id}",
+        headers=auth_headers,
+        json={
+            "address": "1 Park Ave, New York",
+            "favorite_airport": "jfk",
+            "preferred_currency": "usd",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["address"] == "1 Park Ave, New York"
+    assert body["favorite_airport"] == "JFK"
+    assert body["preferred_currency"] == "USD"
+    # The mutation stuck on the persisted row.
+    assert own.favorite_airport == "JFK"
+    assert own.preferred_currency == "USD"
+
+
+def test_patch_client_other_advisors_client_returns_404(
+    client: TestClient,
+    fake_session: FakeSession,
+    override_require_advisor: uuid.UUID,
+    auth_headers: dict[str, str],
+) -> None:
+    advisor_b = uuid.uuid4()
+    other = _client_row(owner_id=advisor_b, email="other@example.com")
+    fake_session.clients_by_id[other.id] = other
+
+    resp = client.patch(
+        f"/clients/{other.id}",
+        headers=auth_headers,
+        json={"preferred_currency": "USD"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "client_not_found"
+
+
+def test_patch_client_rejects_bad_currency_code(
+    client: TestClient,
+    fake_session: FakeSession,
+    override_require_advisor: uuid.UUID,
+    auth_headers: dict[str, str],
+) -> None:
+    advisor_a = override_require_advisor
+    own = _client_row(owner_id=advisor_a, email="own@example.com")
+    fake_session.clients_by_id[own.id] = own
+
+    resp = client.patch(
+        f"/clients/{own.id}",
+        headers=auth_headers,
+        json={"preferred_currency": "dollars"},
+    )
+    assert resp.status_code == 422
 
 
 def test_get_client_by_id_other_advisors_client_returns_404_not_403(

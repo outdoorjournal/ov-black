@@ -26,6 +26,18 @@ const KINDS = [
   "other",
 ] as const;
 
+const KIND_LABELS: Record<(typeof KINDS)[number], string> = {
+  passion: "Passion",
+  motivation: "Motivation",
+  travel_history: "Travel History",
+  trigger: "Trigger",
+  constraint: "Constraint",
+  deal_breaker: "Deal Breaker",
+  dream_signal: "Dream Signal",
+  preference: "Preference",
+  other: "Other",
+};
+
 const SOURCE_KINDS = ["advisor", "agent_inferred"] as const;
 
 export function AddDossierFactForm({ clientId }: { clientId: string }) {
@@ -71,7 +83,7 @@ export function AddDossierFactForm({ clientId }: { clientId: string }) {
           <SelectContent>
             {KINDS.map((k) => (
               <SelectItem key={k} value={k}>
-                {k}
+                {KIND_LABELS[k]}
               </SelectItem>
             ))}
           </SelectContent>

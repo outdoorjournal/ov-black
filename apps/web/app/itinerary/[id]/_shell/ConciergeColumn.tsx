@@ -36,7 +36,15 @@ export function ConciergeColumn({
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
+  const nodeCount = itineraryGraphStore.useStore((s) => s.nodes.length);
   const clientId = timeline.itinerary.client_id;
+
+  // Campaign dashboard auto-kickoff: on the traveler's OWN campaign trip whose
+  // skeleton hasn't been built yet, the agent speaks first and lays it out. The
+  // spine-build is what fills the graph, so an empty graph is the once-only
+  // trigger (the kickoff endpoint is idempotent as a backstop).
+  const autoKickoff =
+    !canEdit && Boolean(timeline.itinerary.campaign_id) && nodeCount === 0;
 
   // Which people-circle is open: the AI session list, or the human channel (PS7).
   const [channel, setChannel] = useState<"artemis" | "human">("artemis");
@@ -148,6 +156,7 @@ export function ConciergeColumn({
               itineraryId={itineraryId}
               apiBaseUrl={apiBaseUrl}
               accessToken={accessToken}
+              autoKickoff={autoKickoff}
               {...(canEdit
                 ? {
                     intro:

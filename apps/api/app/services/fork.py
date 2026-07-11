@@ -106,6 +106,11 @@ async def fork_itinerary(
         title=title or f"{baseline.title} (fork)",
         forked_from_id=baseline.id,
         fork_status=ForkStatus.open,
+        # Carry campaign provenance + hero mood onto the working copy so the
+        # agent stays campaign-aware and the dashboard hero/kickoff still fire
+        # when intake runs on the fork (0047).
+        campaign_id=baseline.campaign_id,
+        mood=baseline.mood,
     )
     session.add(fork)
     await session.flush()  # assign fork.id

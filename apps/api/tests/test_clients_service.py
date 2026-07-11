@@ -186,6 +186,33 @@ async def test_ok_path_inserts_client_dossier_facts_with_one_commit(
 
 
 @pytest.mark.asyncio
+async def test_ok_path_persists_traveler_logistics_uppercased(
+    stub_admin_ok: list[tuple[str, str]],
+) -> None:
+    """0048: address / favorite_airport / preferred_currency ride the create,
+    with the airport + currency codes upper-cased on the way in."""
+    advisor_id = uuid.uuid4()
+    session = FakeSession()
+
+    payload = _payload(email="logistics@example.com")
+    payload = payload.model_copy(
+        update={
+            "address": "1 Park Ave, New York",
+            "favorite_airport": "jfk",
+            "preferred_currency": "usd",
+        }
+    )
+
+    result = await create_client_with_dossier(session, advisor_id=advisor_id, payload=payload)
+
+    assert result.outcome is ClientCreateOutcome.OK
+    client_row = next(o for o in session.added if isinstance(o, Client))
+    assert client_row.address == "1 Park Ave, New York"
+    assert client_row.favorite_airport == "JFK"
+    assert client_row.preferred_currency == "USD"
+
+
+@pytest.mark.asyncio
 async def test_notify_false_creates_silently_without_invite(
     stub_admin_ok: list[tuple[str, str]],
 ) -> None:

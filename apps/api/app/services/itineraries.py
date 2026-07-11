@@ -42,6 +42,7 @@ from app.models import (
     NodeType,
 )
 from app.services.display_status import NON_APPROVABLE_TYPES
+from app.services.node_kinds import is_schedulable
 
 logger = logging.getLogger("ov_black.itineraries")
 
@@ -667,12 +668,16 @@ async def create_itinerary(
     date_end: date | None = None,
     duration_nights: int | None = None,
     timing_note: str | None = None,
+    campaign_id: str | None = None,
+    mood: str | None = None,
 ) -> Itinerary:
     """Create a new itinerary container.
 
     Optional ``brief`` + timing fields (0033) let a caller seed the trip goal /
     when at creation; they usually arrive later via ``update_itinerary_details``
-    from the builder's first-run intake, so all default to None.
+    from the builder's first-run intake, so all default to None. ``campaign_id``
+    + ``mood`` (0047) let a campaign seed stamp provenance + the hero mood up
+    front; None for ordinary trips.
 
     Itineraries themselves are not audited in node_history / edge_history —
     those tables only track graph mutations. Auditing of itinerary-level
@@ -688,6 +693,8 @@ async def create_itinerary(
         date_end=date_end,
         duration_nights=duration_nights,
         timing_note=timing_note,
+        campaign_id=campaign_id,
+        mood=mood,
     )
     session.add(itinerary)
     await session.flush()
@@ -1176,6 +1183,17 @@ async def add_node(
     if cost_err is not None:
         return cost_err
 
+    # Non-schedulable cards (articles) are Collection-only reads — they never
+    # carry a time. Reject an explicit anchor rather than silently placing them
+    # on the timeline (mirrors the write-path guard in move/retime).
+    if not is_schedulable(type) and (
+        starts_at is not None or (metadata or {}).get("start_time") is not None
+    ):
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail=f"{type.value} nodes are not schedulable",
+        )
+
     # Confirm parent itinerary exists up front so we return NOT_FOUND
     # instead of an FK violation.
     itinerary_exists = (
@@ -1415,6 +1433,13 @@ async def update_node(
         and not (node.type is NodeType.note and node.attached_to_node_id is not None)
     ):
         iso = node.metadata_.get("start_time")
+        # A non-schedulable card (article) can never take a time — reject the
+        # drag-to-timeline gesture instead of pinning a reading-list item.
+        if isinstance(iso, str) and iso and not is_schedulable(node.type):
+            return ItineraryError(
+                outcome=ItineraryOutcome.VALIDATION_ERROR,
+                detail=f"{node.type.value} nodes are not schedulable",
+            )
         if isinstance(iso, str) and iso:
             dur = node.metadata_.get("duration_minutes")
             rng = _build_starts_at(iso, dur if isinstance(dur, int) else None)
