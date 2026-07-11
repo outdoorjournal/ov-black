@@ -454,6 +454,25 @@ class Settings(BaseSettings):
             "long-running sessions can ask for a refresh in a later slice."
         ),
     )
+    export_day_notes_enabled: bool = Field(
+        default=False,
+        description=(
+            "Gate the LLM lane of export day notes (the PDF's per-day 'what "
+            "to bring / tips' section). When False (default) exports use the "
+            "deterministic fallback rules only — local mock lanes, pytest, "
+            "and CI stay AWS-free. When True, stale/missing days are filled "
+            "by one bedrock-runtime converse call per export (cached in "
+            "itinerary_day_notes; advisor-authored rows are never touched)."
+        ),
+    )
+    export_day_notes_model_id: str = Field(
+        default="us.anthropic.claude-haiku-4-5",
+        description=(
+            "Bedrock model id (cross-region inference profile) for export "
+            "day-notes generation. A small/fast Claude — the call is one "
+            "short JSON-only prompt per export."
+        ),
+    )
     places_photo_signing_secret: str = Field(
         default="",
         description=(
