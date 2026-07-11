@@ -15,6 +15,8 @@ dependencies = [
     "email-validator>=2.2,<3",
     "boto3>=1.35,<2",
     "braintree>=4.45.0",
+    "fpdf2>=2.8,<3",
+    "openpyxl>=3.1,<4",
 ]
 
 [dependency-groups]
@@ -72,5 +74,5 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # Third-party packages that ship no type information / stubs.
-module = ["boto3.*", "botocore.*", "asyncpg.*", "braintree.*"]
+module = ["boto3.*", "botocore.*", "asyncpg.*", "braintree.*", "openpyxl.*"]
 ignore_missing_imports = true

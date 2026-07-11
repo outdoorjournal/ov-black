@@ -402,6 +402,60 @@ class Edge(Base):
     )
 
 
+class DayNotesSource(str, enum.Enum):
+    """Authorship of an ``itinerary_day_notes`` row (0045 CHECK constraint).
+
+    ``advisor`` rows are hand-written and never auto-touched by export
+    generation (``nodes_hash`` is NULL — the content is not derived from the
+    day's nodes). ``llm`` / ``fallback`` rows are generated and regenerate
+    when their ``nodes_hash`` no longer matches the day's node content.
+    """
+
+    advisor = "advisor"
+    llm = "llm"
+    fallback = "fallback"
+
+
+class ItineraryDayNotes(Base):
+    """Per-day trip notes ("what to bring", tips) — one row per local day.
+
+    Written by the export day-notes service (auto-fill) and the advisor
+    day-notes CRUD routes. ``content`` is ``{"bring": [...], "tips": [...]}``,
+    built from graph data ONLY — never dossier/OSINT/profile input.
+    """
+
+    __tablename__ = "itinerary_day_notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    itinerary_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("itineraries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    day_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Plain text (not a PG enum) — the 0045 CHECK owns the value set.
+    source: Mapped[str] = mapped_column(nullable=False)
+    nodes_hash: Mapped[str | None] = mapped_column(nullable=True)
+    content: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class NodeHistory(Base):
     """Append-only audit log for node mutations.
 
