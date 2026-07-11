@@ -3,9 +3,9 @@
 // The Journal's hero, edit-in-place (traveler-journal design, phase 2). Each
 // text element — title, brief, timing — is its own inline editor styled
 // identically to its display state; a quiet ✎ appears on hover/focus as the
-// only affordance (light-editorial: no chrome, no bar under the hero, and the
-// full-page ItineraryIntake overlay is never the edit path again — it survives
-// only as the first-run brief gate in ItineraryShell).
+// only affordance (light-editorial: no chrome, no bar under the hero). The old
+// full-page "What are we planning?" intake overlay is fully retired — this
+// edit-in-place hero is the only way an advisor or traveler sets the brief.
 //
 //   title   click → an input in the same serif, save on blur/Enter
 //   brief   click → an auto-growing textarea over the image, save on blur
@@ -60,6 +60,7 @@ import {
   type MoneyState,
   type PartyState,
 } from "./dashboardModel";
+import { DownloadMenu } from "./DownloadMenu";
 
 /** The quiet pencil — visible on hover/focus only, punctuation not paint. */
 function Pencil() {
@@ -134,6 +135,9 @@ export function DashboardHero({
       <div className="pointer-events-none absolute bottom-4 right-4 sm:bottom-6 sm:right-6">
         <CinemaPlayButton />
       </div>
+      {/* Download (PDF / Excel), top-left — export the version being viewed.
+          Both roles; mirrors the money callout's chip styling. */}
+      <DownloadMenu />
       {/* Money, called out in the hero's top-right space — the trip's balance is
           the one number worth surfacing above the story (the full ledger lives
           behind the tap, on the invoices surface). */}
