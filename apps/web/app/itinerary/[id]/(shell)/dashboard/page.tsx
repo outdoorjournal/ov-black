@@ -3,7 +3,7 @@
 // route just mounts the view, which reads the shared store + timeline context.
 // Role-agnostic: both a traveler and an advisor land here, affordances differ.
 
-import { DashboardView } from "../_shell/DashboardView";
+import { DashboardView } from "../../_shell/DashboardView";
 
 export const dynamic = "force-dynamic";
 

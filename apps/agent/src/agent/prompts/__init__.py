@@ -8,6 +8,7 @@ surface — we iterate the wording without redeploying FastAPI.
 
 from __future__ import annotations
 
+from agent.prompts.intake import build_intake_prompt
 from agent.prompts.onboarding import build_onboarding_prompt
 from agent.prompts.planning import build_planning_prompt
 from agent.prompts.qa import build_qa_prompt
@@ -33,6 +34,8 @@ def build_prompt(
 
     if mode is Mode.onboarding:
         rubric = build_onboarding_prompt()
+    elif mode is Mode.intake:
+        rubric = build_intake_prompt()
     elif mode is Mode.planning:
         rubric = build_planning_prompt(
             actor_kind=actor_kind,

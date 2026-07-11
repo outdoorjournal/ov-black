@@ -500,3 +500,71 @@ def test_activity_pulse_never_identifies_the_tool() -> None:
     assert len(activity) == 2
     for frame in activity:
         assert set(frame) == {"type", "phase"}
+
+
+# ── Intake-surface frames (update_trip_details / party / complete_intake) ────
+
+
+def test_update_trip_details_result_becomes_itinerary_updated() -> None:
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("t1", "update_trip_details")))
+    frames = _ui(
+        t.translate(
+            _tool_result_message_event(
+                "t1", {"id": "abc", "title": "Dolomites by First Light"}
+            )
+        )
+    )
+    assert frames == [
+        {
+            "type": "itinerary_updated",
+            "itinerary": {"id": "abc", "title": "Dolomites by First Light"},
+        }
+    ]
+
+
+def test_party_member_result_becomes_whitelisted_party_updated() -> None:
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("t1", "record_party_member")))
+    frames = _ui(
+        t.translate(
+            _tool_result_message_event(
+                "t1",
+                {
+                    "id": "pm-1",
+                    "full_name": "Quinn",
+                    "relationship_to_primary": "daughter",
+                    "is_primary": False,
+                    # Private-ish fields that must NOT ride the frame:
+                    "dietary": "shellfish allergy",
+                    "medical": "asthma",
+                    "notes": "secret",
+                },
+            )
+        )
+    )
+    assert len(frames) == 1
+    frame = frames[0]
+    assert frame["type"] == "party_updated"
+    assert frame["member"] == {
+        "id": "pm-1",
+        "full_name": "Quinn",
+        "relationship_to_primary": "daughter",
+        "is_primary": False,
+    }
+    blob = json.dumps(frame)
+    assert "shellfish" not in blob and "asthma" not in blob and "secret" not in blob
+
+
+def test_complete_intake_result_becomes_intake_complete() -> None:
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("t1", "complete_intake")))
+    frames = _ui(t.translate(_tool_result_message_event("t1", {"completed": True})))
+    assert frames == [{"type": "intake_complete"}]
+
+
+def test_complete_intake_error_result_emits_nothing() -> None:
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("t1", "complete_intake")))
+    frames = _ui(t.translate(_tool_result_message_event("t1", {"error": "boom"})))
+    assert frames == []

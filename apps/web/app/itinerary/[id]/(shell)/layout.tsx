@@ -11,6 +11,7 @@
 // collapses a non-entitled viewer to notFound() so a draft's existence stays
 // hidden — now guarding the whole segment from the layout.
 
+import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
 import { createApiClient, getItinerary } from "@ov-black/api-client";
@@ -22,7 +23,7 @@ import { publicEnv } from "@/lib/env";
 import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
-import { ItineraryShell } from "./_shell/ItineraryShell";
+import { ItineraryShell } from "../_shell/ItineraryShell";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,23 @@ export default async function ItineraryLayout({
   // empty state (which is the self-serve prompt).
   const awaitingProposal = role !== "advisor" && isTrunk && !isOwnBuild;
 
+  // Immersive first-run intake (traveler-only): a brand-new adventure the
+  // viewer started — no brief, no cards yet — lands on /new, the full-screen
+  // conversation with Artemis, instead of any planner surface. A trunk with
+  // an open fork already bounced to the fork above, so this fires on the
+  // bare trunk or on the (still-blank) fork itself. /new sets the dismissal
+  // cookie on skip / move-on so the redirect never loops within the browser
+  // session.
+  const briefEmpty = (result.itinerary.brief ?? "").trim().length === 0;
+  const intakePending =
+    role !== "advisor" && isOwnBuild && briefEmpty && result.nodes.length === 0;
+  if (intakePending) {
+    const jar = await cookies();
+    if (!jar.get(`ovb-intake-dismissed-${itineraryId}`)) {
+      redirect(`/itinerary/${itineraryId}/new`);
+    }
+  }
+
   const timeline = toItineraryTimeline(
     result.itinerary,
     result.nodes,
@@ -104,11 +122,10 @@ export default async function ItineraryLayout({
   const homeHref = role === "advisor" ? "/command-center" : "/basecamp";
   const crumbs: Crumb[] = [{ label: tripTitle }];
 
-  // First-run gate: no brief yet → capture the goal + timing before the shell.
-  // A fork inherits its baseline's intent, so only baselines gate.
-  const needsBrief =
-    !result.itinerary.forked_from_id &&
-    (result.itinerary.brief ?? "").trim().length === 0;
+  // First-run gate (ADVISOR only — travelers get the immersive /new intake
+  // above): no brief yet → capture the goal + timing before the shell. A
+  // fork inherits its baseline's intent, so only baselines gate.
+  const needsBrief = role === "advisor" && isTrunk && briefEmpty;
 
   return (
     <div className="flex h-dvh flex-col bg-paper">

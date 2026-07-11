@@ -161,6 +161,42 @@ async def move_node(node_id: str, starts_at: str) -> dict:
 
 
 @tool
+async def update_trip_details(
+    title: str | None = None,
+    brief: str | None = None,
+) -> dict:
+    """Name the adventure and/or capture its brief — the trip's own identity.
+
+    Use this the moment the trip's direction is clear enough to deserve a
+    name: ``title`` is the short evocative name the traveler will see
+    everywhere ("Dolomites by First Light"), and ``brief`` is the trip's goal
+    in a sentence, in the traveler's own terms ("A week of via ferrata with
+    my brother, somewhere quiet"). Pass only what you're setting — an omitted
+    field is left untouched. Refine either as the picture sharpens; this is
+    an edit, not a one-shot.
+
+    This edits the trip itself (not a card). Requires an itinerary pinned to
+    the session. Returns the updated itinerary; the entrypoint observes the
+    result and yields an ``itinerary_updated`` frame so the surface showing
+    the trip's details refreshes.
+    """
+    pin = pin_ctx.get() or {}
+    itinerary_id = pin.get("itinerary_id")
+    if not itinerary_id:
+        raise BackendError(status=None, reason="missing_itinerary_id")
+
+    body: dict[str, Any] = {}
+    if title is not None and title.strip():
+        body["title"] = title.strip()
+    if brief is not None and brief.strip():
+        body["brief"] = brief.strip()
+    if not body:
+        raise BackendError(status=None, reason="nothing_to_update")
+
+    return await patch_json(f"/itinerary/{itinerary_id}", json=body)
+
+
+@tool
 async def update_trip_timing(
     timing_kind: Literal["exact", "window", "flexible"],
     date_start: str | None = None,

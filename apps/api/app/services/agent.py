@@ -1201,6 +1201,7 @@ async def stream_turn(
     content: str,
     auth_bearer: str | None = None,
     settings: Settings | None = None,
+    surface: str | None = None,
 ) -> AsyncIterator[bytes]:
     """Orchestrate one turn end-to-end and yield SSE frames as bytes.
 
@@ -1310,6 +1311,14 @@ async def stream_turn(
 
         # Mode + prior turns — both cheap SELECTs, same transaction.
         mode = await _detect_mode(db, itinerary_id=pinned_itinerary_id, client_id=client_id)
+        # The immersive first-conversation surface pins the mode explicitly:
+        # detection would flip to planning the moment the agent lands the brief
+        # mid-conversation, and the intake screen must keep the gathering
+        # rubric until the traveler leaves it. Traveler-only and only ever a
+        # NARROWING (intake is the least-capable toolset), so the hint can't
+        # escalate anything.
+        if surface == "intake" and pinned_itinerary_id is not None and actor.actor_kind == "user":
+            mode = "intake"
         prior_turns = await _load_prior_turns(db, session_id=session_id)
 
         # Auto-title from the first user message (M006/PS2) — only when the

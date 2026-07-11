@@ -74,6 +74,22 @@ class TimeOfDayWindow(BaseModel):
     end_hour: int = Field(ge=0, le=24)
 
 
+class GalleryImage(BaseModel):
+    """One image in an experience card's "moments" gallery — a direct image
+    URL plus the vendor's caption/credit.
+
+    Sourced from a captioned provider gallery (OV ``images[]``); the detail
+    zoom renders these as a thumbnail strip beneath the hero. Public CDN URLs
+    (no keyed photo proxy), so ``url`` is used directly by the client.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    caption: str | None = None
+    credit: str | None = None
+
+
 class PlaceFacts(BaseModel):
     """Point-of-interest facts (Google Places et al.) surfaced on experience /
     meal cards: crowd rating, opening hours, contact details, an external map
@@ -372,6 +388,9 @@ class ExperienceCardAttrs(_CardBase):
     group_size: str | None = None
     snapshot: CardSnapshot | None = None
     place: PlaceFacts | None = None
+    # Editorial "moments" gallery (OV ``images[]``) — supporting photos beyond
+    # the hero, rendered as a captioned thumbnail strip on the detail zoom.
+    gallery: list[GalleryImage] = Field(default_factory=list)
 
 
 class MealCardAttrs(_CardBase):
@@ -493,6 +512,7 @@ __all__ = [
     "ExperienceCardAttrs",
     "FlightCardAttrs",
     "FreeTimeCardAttrs",
+    "GalleryImage",
     "GeoPoint",
     "HotelCardAttrs",
     "MealCardAttrs",

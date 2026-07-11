@@ -111,6 +111,28 @@ export type MoodFrame = {
   mood_id: string;
 };
 
+// Emitted when the agent records or updates a party member during the
+// immersive intake conversation. Whitelisted subset only — the runtime never
+// puts dietary/medical/notes on this frame; the intake details card just
+// needs a name and a relationship for "who's coming".
+export type PartyUpdatedFrame = {
+  type: "party_updated";
+  member: {
+    id: string;
+    full_name?: string;
+    relationship_to_primary?: string;
+    is_primary?: boolean;
+  };
+};
+
+// Emitted when the agent calls `complete_intake` — the immersive first
+// conversation is done. The intake surface docks the chat into its normal
+// column and lands the traveler on the trip dashboard; every other surface
+// can ignore it.
+export type IntakeCompleteFrame = {
+  type: "intake_complete";
+};
+
 // Anonymous tool-activity pulse, emitted by the agent runtime for every tool
 // call and result. Deliberately carries NOTHING but the phase — no tool name,
 // id, status or payload — because even a tool's name can disclose private
@@ -145,6 +167,8 @@ export type SseFrame =
   | DraftAssembledFrame
   | NodeUpdatedFrame
   | ItineraryUpdatedFrame
+  | PartyUpdatedFrame
+  | IntakeCompleteFrame
   | MoodFrame
   | ActivityFrame
   | SurfaceFrame;

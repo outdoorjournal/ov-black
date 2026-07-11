@@ -101,7 +101,12 @@ export function AmbientLayer() {
       aria-hidden
       data-testid="journal-ambient"
       data-cinema={cinemaMode ? "true" : undefined}
-      className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+      // `absolute`, not `fixed`: the host (DashboardView) gives this a `relative`
+      // parent so the wash is confined to the dashboard content region and held
+      // still there while the story scrolls. A `fixed` backdrop escapes to the
+      // whole viewport and paints its veil over the sibling rail + concierge
+      // chrome, washing them grey.
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
     >
       {/* The resting wash — the trip's mood tint, always beneath the image. */}
       <div

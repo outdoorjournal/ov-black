@@ -56,6 +56,22 @@ class EditorialLink(BaseModel):
     title: str | None = None
 
 
+class GalleryImage(BaseModel):
+    """One image in an experience's editorial gallery ("Moments that define
+    this adventure" on OV).
+
+    ``photos`` flattens every image to a bare URL for a hero pick; this keeps
+    the vendor's per-image caption + credit so the card can attribute and
+    describe each moment. Hero-first, ordered as the provider ordered it.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    url: str
+    caption: str | None = None
+    credit: str | None = None
+
+
 class ItineraryDay(BaseModel):
     """One day inside a multi-day experience (OV adventure itineraries).
 
@@ -90,6 +106,12 @@ class InventoryItemBase(BaseModel):
     title: str
     description: str | None = None
     photos: list[str] = []  # hero image first
+    # The editorial "moments" gallery — the same images as ``photos`` but with
+    # each one's caption + credit preserved. Providers that carry captioned
+    # galleries (OV) populate it; others leave it empty and the card falls back
+    # to the bare ``photos`` hero. Kept separate from ``photos`` so the flat
+    # URL list stays a cheap hero source.
+    gallery: list[GalleryImage] = []
     location: Location | None = None
     price: Price | None = None
     editorial_links: list[EditorialLink] = []

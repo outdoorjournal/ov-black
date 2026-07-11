@@ -495,6 +495,7 @@ async def _check_write_gates(
     actor: ActorContext,
     *,
     pure_status_change: bool = False,
+    note_write: bool = False,
 ) -> ItineraryError | None:
     """Reject writes the itinerary-level gates forbid. One SELECT, two rules.
 
@@ -503,7 +504,11 @@ async def _check_write_gates(
     a trunk returns ``TRUNK_LOCKED`` / ``fork_required`` — fork first. Pure
     node-status changes are exempt (traveler approval/discard happens directly
     on the trunk), as are ADVISOR (reconcile applies through this path, plus
-    the deliberate escape hatch) and SYSTEM (seeds/demos) actors.
+    the deliberate escape hatch) and SYSTEM (seeds/demos) actors. **Note writes
+    are exempt too** (``note_write``): a note is feedback, not a plan
+    commitment (the Journal lets a traveler annotate the trunk directly), so —
+    like a status change and like the delete path's note carve-out — it lands
+    on the trunk without a fork. The editor lock below still applies.
 
     **Editor lock.** Non-advisor writes to an itinerary locked by a different
     user are rejected. Advisors always bypass — they hold the lock during
@@ -525,6 +530,7 @@ async def _check_write_gates(
     if (
         forked_from_id is None
         and not pure_status_change
+        and not note_write
         and actor.kind not in (ActorKind.ADVISOR, ActorKind.SYSTEM)
     ):
         return ItineraryError(
@@ -1135,7 +1141,9 @@ async def add_node(
     if itinerary_exists is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_write_gates(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(
+        session, itinerary_id, actor, note_write=type is NodeType.note
+    )
     if lock_err is not None:
         return lock_err
 
@@ -1294,6 +1302,7 @@ async def update_node(
         itinerary_id,
         actor,
         pure_status_change=bool(updates) and not mutates_other_fields,
+        note_write=node.type is NodeType.note,
     )
     if lock_err is not None:
         return lock_err
@@ -1433,7 +1442,9 @@ async def delete_node(
     if node is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
-    lock_err = await _check_write_gates(session, itinerary_id, actor)
+    lock_err = await _check_write_gates(
+        session, itinerary_id, actor, note_write=node.type is NodeType.note
+    )
     if lock_err is not None:
         return lock_err
 

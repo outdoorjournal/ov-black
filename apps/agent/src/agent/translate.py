@@ -54,6 +54,16 @@ _TOOL_FRAME_TYPES = {
     # the browser store adopts it and the card re-renders.
     "update_node_details": "node_updated",
     "update_trip_timing": "itinerary_updated",
+    # Naming the adventure (intake) — same frame as a timing edit: the browser
+    # re-reads the trip's server-rendered details either way.
+    "update_trip_details": "itinerary_updated",
+    # Party writes surface so the intake details card can show "who's coming"
+    # live. The frame carries a whitelisted subset — never dietary/medical.
+    "record_party_member": "party_updated",
+    "update_party_member": "party_updated",
+    # The intake hand-off: the immersive surface docks the chat and lands the
+    # traveler on the trip dashboard when this frame arrives.
+    "complete_intake": "intake_complete",
     "set_mood": "mood",
     # Presentation surfaces (the drawer beside the chat). The tool result is
     # already ``{surface_id, kind, payload}``-shaped; an error result is
@@ -165,6 +175,25 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
         return {"type": "node_updated", "node": output}
     if frame_type == "itinerary_updated":
         return {"type": "itinerary_updated", "itinerary": output}
+    if frame_type == "party_updated":
+        # Whitelisted subset only: the intake details card needs a name and a
+        # relationship, never the member's dietary/medical/notes fields.
+        if "error" in output or not isinstance(output.get("id"), str | int):
+            return None
+        member: dict[str, Any] = {"id": str(output["id"])}
+        full_name = output.get("full_name")
+        if isinstance(full_name, str):
+            member["full_name"] = full_name
+        relationship = output.get("relationship_to_primary")
+        if isinstance(relationship, str):
+            member["relationship_to_primary"] = relationship
+        if isinstance(output.get("is_primary"), bool):
+            member["is_primary"] = output["is_primary"]
+        return {"type": "party_updated", "member": member}
+    if frame_type == "intake_complete":
+        if "error" in output:
+            return None
+        return {"type": "intake_complete"}
     if frame_type == "mood":
         # An invalid mood_id payload (the tool returned `{"error": ...}`)
         # is dropped on the floor — the browser never sees a malformed

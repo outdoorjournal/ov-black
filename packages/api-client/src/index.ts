@@ -452,6 +452,20 @@ export type {
   OnboardingOpenerResponse,
 } from "./generated/types.gen.js";
 
+/**
+ * A Supabase access token, or a getter that resolves the *current* one.
+ *
+ * A bare string is captured once — correct for server components / server
+ * actions, which build a fresh client per request from a just-read session.
+ * A getter is for long-lived browser clients: it's called on every request,
+ * so a page held open past the token's ~1h TTL sends the refreshed token
+ * (from `supabase.auth.getSession()`) instead of the stale one it rendered
+ * with. Returning null/undefined sends no `Authorization` header.
+ */
+export type AccessTokenInput =
+  | string
+  | (() => string | null | undefined | Promise<string | null | undefined>);
+
 export interface ApiClientConfig {
   /** Base URL of the API — e.g. https://<alb-dns> or http://localhost:8000 */
   baseUrl: string;
@@ -459,8 +473,9 @@ export interface ApiClientConfig {
    * Supabase access token forwarded as `Authorization: Bearer <token>` on
    * every request via a @hey-api client request interceptor. Omit for
    * unauthenticated flows (the invite-redeem call still runs without one).
+   * Pass a getter (see {@link AccessTokenInput}) to track a live session.
    */
-  accessToken?: string;
+  accessToken?: AccessTokenInput;
 }
 
 /**
@@ -469,16 +484,20 @@ export interface ApiClientConfig {
  * components) without stepping on each other's auth headers later.
  *
  * When `accessToken` is provided, a @hey-api request interceptor is
- * registered that stamps `Authorization: Bearer ${accessToken}` on every
- * outgoing Request. The interceptor is a no-op when the token is absent,
+ * registered that stamps `Authorization: Bearer <token>` on every outgoing
+ * Request, resolving a getter per-request so browser clients always send the
+ * current session token. No header is set when the token resolves empty,
  * which is intentional: POST /auth/redeem-invite runs unauthenticated.
  */
 export function createApiClient(config: ApiClientConfig): Client {
   const client = createClient({ baseUrl: config.baseUrl });
   const token = config.accessToken;
-  if (token) {
-    client.interceptors.request.use((request) => {
-      request.headers.set("Authorization", `Bearer ${token}`);
+  if (token !== undefined) {
+    client.interceptors.request.use(async (request) => {
+      const resolved = typeof token === "function" ? await token() : token;
+      if (resolved) {
+        request.headers.set("Authorization", `Bearer ${resolved}`);
+      }
       return request;
     });
   }

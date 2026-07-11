@@ -9,7 +9,7 @@ import { notFound, redirect } from "next/navigation";
 import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
-import { StudioPlanningSpace } from "../_shell/StudioPlanningSpace";
+import { StudioPlanningSpace } from "../../_shell/StudioPlanningSpace";
 
 export const dynamic = "force-dynamic";
 

@@ -197,6 +197,48 @@ async def test_user_status_flips_on_trunk_succeed(db_session: AsyncSession) -> N
         await _cleanup([trunk])
 
 
+# ── Note writes by USER on a trunk still work (feedback, not plan content) ────
+
+
+@integration
+@pytest.mark.parametrize("kind", [ActorKind.USER, ActorKind.AGENT])
+async def test_note_writes_on_trunk_succeed(db_session: AsyncSession, kind: ActorKind) -> None:
+    """A note is feedback, not a plan commitment — the Journal lets a traveler
+    annotate the trunk directly, so create/edit/delete of a note node bypasses
+    the fork gate (like a pure status change)."""
+    trunk = await insert_itinerary(db_session, title="annotatable trunk")
+    try:
+        # Create a free-standing (Collection) note directly on the trunk.
+        created = await add_node(
+            db_session,
+            _actor(kind),
+            itinerary_id=trunk,
+            type=NodeType.note,
+            title="loved this idea",
+        )
+        assert isinstance(created, Node), created
+        assert created.type is NodeType.note
+
+        # Edit its text on the trunk.
+        edited = await update_node(
+            db_session,
+            _actor(kind),
+            itinerary_id=trunk,
+            node_id=created.id,
+            title="on second thought, skip it",
+        )
+        assert isinstance(edited, Node)
+        assert edited.title == "on second thought, skip it"
+
+        # Remove it from the trunk.
+        deleted = await delete_node(
+            db_session, _actor(kind), itinerary_id=trunk, node_id=created.id
+        )
+        assert deleted is None  # delete_node returns None on success
+    finally:
+        await _cleanup([trunk])
+
+
 # ── ADVISOR content edits on a trunk succeed ─────────────────────────────────
 
 
@@ -442,5 +484,14 @@ async def test_route_user_node_write_on_trunk_is_409_fork_required(
         )
         assert resp.status_code == 409, resp.text
         assert resp.json()["detail"] == "fork_required"
+
+        # …but a NOTE is feedback, not plan content — it lands on the trunk.
+        note_resp = real_db_client.post(
+            f"/itinerary/{trunk}/nodes",
+            json={"type": "note", "title": "leaving a note"},
+            headers=headers,
+        )
+        assert note_resp.status_code == 201, note_resp.text
+        assert note_resp.json()["type"] == "note"
     finally:
         await _cleanup([i for i in (trunk,) if i is not None], user_ids=[creator])

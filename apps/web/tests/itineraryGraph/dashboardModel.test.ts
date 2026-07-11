@@ -1,6 +1,6 @@
 // Pure derivations behind the per-trip Dashboard (M006/PS3): the money roll-up
-// (grouped by currency, drafts/void excluded, payments net owed) and the single
-// "next best action" chosen from real trip state. No React — just the judgement.
+// (grouped by currency, drafts/void excluded, payments net owed) and the timing
+// summary. No React — just the judgement.
 
 import { describe, expect, test } from "vitest";
 
@@ -10,7 +10,6 @@ import {
   type ChargeableNode,
   chargedByNode,
   coverageByNode,
-  deriveNextAction,
   effectiveNodeCost,
   firstUnpaidIssued,
   formatTiming,
@@ -305,41 +304,6 @@ describe("firstUnpaidIssued / isPayable", () => {
 
   test("returns null when nothing is owed", () => {
     expect(firstUnpaidIssued([invoice({ status: "paid", payments: [payment("1000.00")] })])).toBeNull();
-  });
-});
-
-describe("deriveNextAction", () => {
-  const base = { scheduledCount: 3, pendingCount: 0, firstUnpaid: null, itineraryId: "it-1" };
-
-  test("a traveler with a balance is pointed at paying it", () => {
-    const a = deriveNextAction({
-      ...base,
-      role: "client",
-      firstUnpaid: { id: "inv-9", currency: "USD", owed: 200 },
-    });
-    expect(a.target).toEqual({ kind: "href", href: "/invoices/inv-9" });
-    expect(a.label).toMatch(/settle/i);
-  });
-
-  test("a traveler with an empty timeline is sent to the concierge", () => {
-    const a = deriveNextAction({ ...base, role: "client", scheduledCount: 0 });
-    expect(a.target).toEqual({ kind: "concierge" });
-  });
-
-  test("an advisor reviews proposals before anything else", () => {
-    const a = deriveNextAction({
-      ...base,
-      role: "advisor",
-      pendingCount: 2,
-      firstUnpaid: { id: "inv-9", currency: "USD", owed: 200 },
-    });
-    expect(a.target).toEqual({ kind: "href", href: "/itinerary/it-1/timeline" });
-    expect(a.detail).toMatch(/2 suggestions/);
-  });
-
-  test("an advisor with a settled, built trip lands on the timeline", () => {
-    const a = deriveNextAction({ ...base, role: "advisor" });
-    expect(a.target).toEqual({ kind: "href", href: "/itinerary/it-1/timeline" });
   });
 });
 

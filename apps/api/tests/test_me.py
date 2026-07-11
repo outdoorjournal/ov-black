@@ -275,6 +275,65 @@ async def test_list_my_itineraries_excludes_forks(db_session: AsyncSession) -> N
 
 @integration
 @pytest.mark.asyncio
+async def test_list_my_itineraries_falls_back_to_open_fork_title(
+    db_session: AsyncSession,
+) -> None:
+    """A solo traveler's title/dates live in their private fork; the empty trunk
+    would otherwise render the "Your itinerary" placeholder. The card must
+    surface the caller's open-fork title (and mark has_open_fork)."""
+    from app.auth import AuthenticatedUser
+    from app.routers.me import list_my_itineraries_endpoint
+
+    owner = uuid.uuid4()
+    traveler = uuid.uuid4()
+    for uid in (owner, traveler):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.commit()
+
+    client_id = await _insert_linked_client(db_session, owner, traveler, "fork-title-traveler")
+    # Empty-titled trunk (unpublished) + the traveler's own open fork carrying
+    # the real title — the exact shape of a solo trip built entirely in a fork.
+    baseline = await insert_itinerary(db_session, title="", client_id=client_id)
+    fork = await insert_itinerary(
+        db_session,
+        title="Patagonia on Foot",
+        client_id=client_id,
+        created_by=traveler,
+        forked_from_id=baseline,
+        fork_status="open",
+    )
+    try:
+        user = AuthenticatedUser(
+            sub=str(traveler), email=f"{traveler}@x.com", role="authenticated", claims={}
+        )
+        resp = await list_my_itineraries_endpoint(user=user, session=db_session)
+        by_id = {it.id: it for it in resp.itineraries}
+        assert baseline in by_id
+        assert fork not in by_id
+        card = by_id[baseline]
+        assert card.title == "Patagonia on Foot"
+        assert card.has_open_fork is True
+    finally:
+        await _cleanup(baseline, fork, client_ids=(client_id,), owner=owner)
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
+        finally:
+            await engine.dispose()
+
+
+@integration
+@pytest.mark.asyncio
 async def test_onboarding_session_ignores_advisor_audience(
     db_session: AsyncSession,
 ) -> None:

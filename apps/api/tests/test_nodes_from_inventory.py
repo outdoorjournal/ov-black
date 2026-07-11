@@ -162,6 +162,11 @@ def test_creates_flight_node_with_card_attrs(
     assert meta["iata_to"] == "HND"
     assert meta["cabin"] == "business"
     assert meta["depart_at"].startswith("2026-07-10T11:05:00")
+    # Timed inventory schedules itself: the flight lands ON the timeline at its
+    # depart_at (with the leg duration) instead of unscheduled in the Collection,
+    # so it's immediately visible in the journal rather than a silent wish-list add.
+    assert captured_add_node["starts_at"] == meta["depart_at"]
+    assert captured_add_node["duration_minutes"] == 755
     # B4: the Duffel offer's total_amount is promoted to first-class cost
     # columns (a flight is a whole-booking total, D-COST cost_kind=total).
     from decimal import Decimal

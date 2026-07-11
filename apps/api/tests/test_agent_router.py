@@ -373,6 +373,7 @@ def test_post_turn_happy_path_streams_sse_frames_in_order(
         session_id: uuid.UUID,
         content: str,
         auth_bearer: str | None = None,
+        surface: str | None = None,
     ) -> AsyncIterator[bytes]:
         assert actor.actor_kind == "advisor"
         assert content == "Plan me a trip."

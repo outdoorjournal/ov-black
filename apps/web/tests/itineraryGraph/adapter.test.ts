@@ -143,6 +143,42 @@ describe("toItineraryTimeline — duration resolution", () => {
   });
 });
 
+describe("toItineraryTimeline — flight timing is intrinsic", () => {
+  test("a flight pins to depart_at + its leg, overriding a generic placement", () => {
+    const flight = makeNode("f", {
+      type: "flight",
+      // A stale generic placement (noon + 2h) picked up when the card was placed
+      // from the Collection — the flight's own times must win over it.
+      starts_at: "2026-11-10T12:00:00-03:00",
+      duration_minutes: 120,
+      metadata: {
+        start_time: "2026-11-10T12:00:00-03:00",
+        duration_minutes: 120,
+        depart_at: "2026-11-10T16:10:00-05:00",
+        arrive_at: "2026-11-11T07:50:00-03:00",
+      },
+    });
+    const tl = toItineraryTimeline(ITINERARY, [flight], []);
+    const m = meta(tl.nodes[0]!);
+    // Start is the real departure, not the noon slot.
+    expect(m.start_time).toBe("2026-11-10T16:10:00-05:00");
+    // Duration is the real leg: depart 21:10Z (16:10 -05:00) → arrive 10:50Z next
+    // day (07:50 -03:00) = 13h40m, not the 2h default/stale value.
+    expect(m.duration_minutes).toBe(820);
+  });
+
+  test("a flight missing arrive_at keeps its depart_at start, default duration", () => {
+    const flight = makeNode("f", {
+      type: "flight",
+      metadata: { depart_at: "2026-11-10T16:10:00-05:00" },
+    });
+    const tl = toItineraryTimeline(ITINERARY, [flight], []);
+    const m = meta(tl.nodes[0]!);
+    expect(m.start_time).toBe("2026-11-10T16:10:00-05:00");
+    expect(m.duration_minutes).toBe(120); // flight type default
+  });
+});
+
 describe("toItineraryTimeline — days + tz", () => {
   test("builds a contiguous day span and recovers the trip tz", () => {
     const day1 = makeNode("d1", {
@@ -244,9 +280,10 @@ describe("toItineraryTimeline — exact trip window (0033)", () => {
     expect(tl.days[tl.days.length - 1]!.date).toBe("2026-08-20");
   });
 
-  test("window/flexible kinds stay node-driven (no fabricated days)", () => {
+  test("an empty loose window scaffolds a week, never the whole window", () => {
     // A loose window with dates set but nothing scheduled must NOT fabricate a
-    // wall of empty days — only `exact` owns the span.
+    // wall of empty days (the 92-day window) — an empty non-exact trip gets
+    // the default 7-day canvas (QA-13) anchored on the window start.
     const loose: ItineraryResponse = {
       ...ITINERARY,
       timing_kind: "window",
@@ -256,6 +293,38 @@ describe("toItineraryTimeline — exact trip window (0033)", () => {
     const tl = toItineraryTimeline(loose, [], [], {
       synthAnchorDate: "2026-06-15",
     });
+    expect(tl.days).toHaveLength(7);
+    expect(tl.days[0]!.date).toBe("2026-06-15");
+    expect(tl.days[0]!.label).toBe("Day 1");
+    expect(tl.days[6]!.label).toBe("Day 7");
+  });
+
+  test("an empty trip with a captured duration scaffolds nights + 1 days", () => {
+    const loose: ItineraryResponse = {
+      ...ITINERARY,
+      timing_kind: "window",
+      date_start: "2026-06-01",
+      date_end: "2026-08-31",
+      duration_nights: 9,
+    };
+    const tl = toItineraryTimeline(loose, [], [], {
+      synthAnchorDate: "2026-06-15",
+    });
+    expect(tl.days).toHaveLength(10);
+  });
+
+  test("the first real node collapses the scaffold back to node-driven", () => {
+    const loose: ItineraryResponse = {
+      ...ITINERARY,
+      timing_kind: "window",
+      date_start: "2026-06-01",
+      date_end: "2026-08-31",
+    };
+    const tl = toItineraryTimeline(
+      loose,
+      [makeNode("a", { starts_at: "2026-06-15T09:00:00+00:00" })],
+      [],
+    );
     expect(tl.days).toHaveLength(1);
     expect(tl.days[0]!.date).toBe("2026-06-15");
   });

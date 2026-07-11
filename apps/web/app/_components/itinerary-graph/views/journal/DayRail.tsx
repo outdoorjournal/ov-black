@@ -11,7 +11,9 @@
 // In diff mode a diverged day's dot wears a quiet brand ring (fed by the SAME
 // `divergedDays` set as the spine's second thread).
 //
-// Same screen, responsive: a vertical rail on the left edge ≥lg; below lg the
+// Same screen, responsive: an in-flow sticky vertical rail immediately left of
+// the Journal spine ≥lg (rendered as the first column of the Journal container,
+// so it hugs the timeline and never overlaps the left nav); below lg the
 // same dots become a slim floating bottom pill (the Journal's DayStrip — a
 // horizontal, auto-centering strip, adapted to jump-not-page). Cinema fades
 // the rail out with the rest of the chrome.
@@ -144,11 +146,16 @@ export function DayRail({
 
   return (
     <>
-      {/* ≥lg: the vertical rail, floating on the left edge. */}
+      {/* ≥lg: the vertical rail, an in-flow sticky column immediately left of
+          the Journal spine. Top-anchored (self-start + top-4, matching the
+          right rail) so it hugs the top of the story and stays aligned with the
+          spine — never viewport-centered, which stranded the lone active dot up
+          over the hero on a sparse journey. In-flow — not viewport-fixed — so it
+          never overlaps the left nav / concierge column. */}
       <nav
         aria-label="Journey days"
         data-testid="journal-day-rail"
-        className={`fixed left-2 top-1/2 z-30 hidden -translate-y-1/2 flex-col items-center transition-opacity duration-500 lg:flex xl:left-4 ${chrome}`}
+        className={`sticky top-4 z-30 hidden flex-col items-center self-start transition-opacity duration-500 lg:order-1 lg:flex ${chrome}`}
       >
         <div className="flex max-h-[58vh] flex-col items-center gap-1 overflow-y-auto py-1 [scrollbar-width:none]">
           {items.map((item) => dot(item, false))}

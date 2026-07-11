@@ -30,19 +30,11 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// The management panels each have their own tests; stub them so this asserts
-// the Dashboard's own wiring (which panels appear for whom).
+// The travel-party panel (the advisor's attach/detach, opened from the hero
+// party popover) has its own tests; stub it so this asserts the Dashboard's own
+// wiring, not the panel's guts.
 vi.mock("@/app/_components/itinerary-graph/views/horizontal/PartyPanel", () => ({
   PartyPanel: () => <div data-testid="stub-party-panel" />,
-}));
-vi.mock("@/app/_components/itinerary-graph/views/horizontal/VaultPanel", () => ({
-  VaultPanel: () => <div data-testid="stub-vault-panel" />,
-}));
-vi.mock("@/app/_components/itinerary-graph/views/horizontal/InvoicePanel", () => ({
-  InvoicePanel: () => <div data-testid="stub-invoice-panel" />,
-}));
-vi.mock("@/app/_components/itinerary-graph/views/horizontal/BookingPanel", () => ({
-  BookingPanel: () => <div data-testid="stub-booking-panel" />,
 }));
 const listInvoicesMock = vi.fn();
 const listItineraryPartyMock = vi.fn();
@@ -170,8 +162,8 @@ describe("DashboardView · hero", () => {
   });
 });
 
-describe("DashboardView · money roll-up", () => {
-  test("shows owed per currency, a pay link, and the per-inventory deep-link", async () => {
+describe("DashboardView · money callout", () => {
+  test("the hero surfaces the balance due and deep-links to the pay page", async () => {
     listInvoicesMock.mockResolvedValue({
       ok: true,
       invoices: [
@@ -180,81 +172,61 @@ describe("DashboardView · money roll-up", () => {
           status: "issued",
           total: "1000.00",
           payments: [{ id: "p1", status: "succeeded", amount: "400.00", currency: "USD", gateway: "s", gateway_reference: "r" }],
-          lines: [
-            { id: "l1", invoice_id: "inv-1", node_id: "n-1", kind: "charge", description: "Aman Tokyo", amount: "1000.00", currency: "USD", created_at: "x" },
-          ],
         }),
       ],
     });
     renderDashboard();
 
-    const money = await screen.findByTestId("dashboard-money");
+    const callout = await screen.findByTestId("hero-money");
     // Owed = 1000 − 400 settled.
-    expect(money).toHaveTextContent("USD 600.00");
-    expect(money).toHaveTextContent(/1 invoice issued/);
-
-    // Pay from the roll-up → the existing /invoices/[id] page.
-    expect(within(money).getByTestId("dashboard-invoice-pay")).toHaveAttribute(
-      "href",
-      "/invoices/inv-1",
-    );
-    // The charge line rolls down to that card's own money facet.
-    expect(within(money).getByTestId("dashboard-invoice-line")).toHaveAttribute(
-      "href",
-      "/itinerary/it-1/item/n-1",
-    );
+    expect(callout).toHaveTextContent("USD 600.00");
+    expect(callout).toHaveTextContent(/Balance due/i);
+    // Pay from the callout → the existing /invoices/[id] page (first unpaid).
+    expect(callout).toHaveAttribute("href", "/invoices/inv-1");
   });
 
-  test("an empty ledger reads as nothing to settle", async () => {
+  test("an empty ledger shows no money callout at all", async () => {
     renderDashboard({ role: "client" });
+    // The hero renders immediately; the callout only appears once a non-empty
+    // ledger loads, so give the fetch a tick and assert it stays absent.
+    await screen.findByTestId("dashboard-hero");
     await waitFor(() =>
-      expect(screen.getByTestId("dashboard-money-empty")).toBeInTheDocument(),
+      expect(screen.queryByTestId("hero-money")).not.toBeInTheDocument(),
     );
   });
 });
 
-describe("DashboardView · next best action", () => {
-  test("a traveler with a balance is pointed to pay it", async () => {
-    listInvoicesMock.mockResolvedValue({
+describe("DashboardView · travel party", () => {
+  test("an advisor's party popover hosts the attach/detach panel", async () => {
+    listItineraryPartyMock.mockResolvedValue({
       ok: true,
-      invoices: [invoice({ id: "inv-7", status: "issued", total: "250.00" })],
+      party: { itinerary_id: "it-1", members: [{ traveler_id: "t1", party_id: "p1", name: "Ada" }] },
     });
-    renderDashboard({ role: "client" });
-    await waitFor(() =>
-      expect(screen.getByTestId("dashboard-next-cta")).toHaveAttribute("href", "/invoices/inv-7"),
-    );
-    expect(screen.getByTestId("dashboard-next-action")).toHaveTextContent(/settle your balance/i);
-  });
-
-  test("an empty-timeline traveler is nudged to the concierge", async () => {
-    const openConcierge = vi.fn();
-    renderDashboard({ role: "client" }, [], openConcierge);
-    // The concierge action is a button, not a link.
-    const cta = await screen.findByTestId("dashboard-next-cta");
-    fireEvent.click(cta);
-    expect(openConcierge).toHaveBeenCalledOnce();
-  });
-});
-
-describe("DashboardView · role split", () => {
-  test("an advisor sees the management panels", async () => {
     renderDashboard({ role: "advisor" });
-    expect(screen.getByTestId("dashboard-manage")).toBeInTheDocument();
-    // Party is its own section (the advisor attach/detach panel).
+
+    // The footer management strip is gone — Vault/Invoices/Booking are their own
+    // Rail destinations now.
+    expect(screen.queryByTestId("dashboard-manage")).not.toBeInTheDocument();
+
+    const chip = await screen.findByTestId("hero-party");
+    await waitFor(() => expect(chip).toHaveTextContent(/Travel party \(1\)/));
+    // Closed by default; the advisor panel only mounts once the popover opens.
+    expect(screen.queryByTestId("stub-party-panel")).not.toBeInTheDocument();
+    fireEvent.click(chip);
     expect(screen.getByTestId("stub-party-panel")).toBeInTheDocument();
-    // Invoices tab is default-selected in the management strip.
-    expect(screen.getByTestId("stub-invoice-panel")).toBeInTheDocument();
   });
 
-  test("a traveler never sees the management panels, gets a read-only party glance", async () => {
+  test("a traveler's party popover lists who's coming, no advisor panel", async () => {
     listItineraryPartyMock.mockResolvedValue({
       ok: true,
       party: { itinerary_id: "it-1", members: [{ traveler_id: "t1", party_id: "p1", name: "Ada" }] },
     });
     renderDashboard({ role: "client" });
-    expect(screen.queryByTestId("dashboard-manage")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("stub-party-panel")).not.toBeInTheDocument();
-    const party = screen.getByTestId("dashboard-party");
-    await waitFor(() => expect(party).toHaveTextContent("Ada"));
+
+    const chip = await screen.findByTestId("hero-party");
+    fireEvent.click(chip);
+    const popover = screen.getByTestId("hero-party-popover");
+    expect(popover).toHaveTextContent("Ada");
+    expect(within(popover).queryByTestId("stub-party-panel")).not.toBeInTheDocument();
   });
 });

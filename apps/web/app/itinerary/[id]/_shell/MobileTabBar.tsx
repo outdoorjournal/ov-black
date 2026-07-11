@@ -12,7 +12,13 @@ import type { ReactNode } from "react";
 
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 
-import { CollectionIcon, ConciergeIcon, DashboardIcon, TimelineIcon } from "./icons";
+import {
+  CollectionIcon,
+  ConciergeIcon,
+  DashboardIcon,
+  PartyIcon,
+  TimelineIcon,
+} from "./icons";
 
 export function MobileTabBar({
   onOpenConcierge,
@@ -46,6 +52,12 @@ export function MobileTabBar({
         label="Collection"
         active={seg === "collection"}
         icon={<CollectionIcon />}
+      />
+      <TabLink
+        href={`/itinerary/${id}/party`}
+        label="Party"
+        active={seg === "party"}
+        icon={<PartyIcon />}
       />
       <button
         type="button"

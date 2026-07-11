@@ -133,3 +133,54 @@ describe("experience zoom sheet", () => {
     expect(screen.queryByRole("link", { name: /Google Maps/i })).not.toBeInTheDocument();
   });
 });
+
+describe("experience moments gallery", () => {
+  // Mirrors an OV-sourced experience: the snapshot fallback plus a captioned
+  // `gallery` (card_mapping emits it from ExperienceItem.gallery).
+  function ovExperienceNode(): NodeResponse {
+    return {
+      id: "n-ov",
+      itinerary_id: "it-1",
+      parent_subgraph_id: null,
+      type: "experience",
+      status: "approved",
+      title: "Simien Mountains Traverse",
+      source: "ov",
+      source_id: "ov-simien",
+      metadata: {
+        kind: "experience",
+        snapshot: { title: "Simien Mountains Traverse", cover_image: "https://cdn.ov/hero.jpg" },
+        gallery: [
+          { url: "https://cdn.ov/ridge.jpg", caption: "Ras Dashen ridge at dawn", credit: "B. Habibi" },
+          { url: "https://cdn.ov/gelada.jpg" },
+        ],
+      },
+    } as NodeResponse;
+  }
+
+  test("renders the moments section with a thumbnail per gallery image", () => {
+    const { container } = render(<NodeZoomCard node={ovExperienceNode()} tzOffsetHours={0} />);
+    expect(screen.getByText(/Moments that define this adventure/i)).toBeInTheDocument();
+    const galleryImgs = Array.from(container.querySelectorAll("img")).filter((img) =>
+      img.getAttribute("src")?.startsWith("https://cdn.ov/"),
+    );
+    // Two gallery shots (the hero lives in the ImageHero, a separate URL).
+    const srcs = galleryImgs.map((i) => i.getAttribute("src"));
+    expect(srcs).toContain("https://cdn.ov/ridge.jpg");
+    expect(srcs).toContain("https://cdn.ov/gelada.jpg");
+  });
+
+  test("carries the caption as alt text and links each moment to the full image", () => {
+    render(<NodeZoomCard node={ovExperienceNode()} tzOffsetHours={0} />);
+    const link = screen.getByRole("link", { name: /Ras Dashen ridge at dawn/i });
+    expect(link).toHaveAttribute("href", "https://cdn.ov/ridge.jpg");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  test("renders no moments section when the experience has no gallery", () => {
+    const node = ovExperienceNode();
+    node.metadata = { kind: "experience", snapshot: { title: "Bare" } };
+    render(<NodeZoomCard node={node} tzOffsetHours={0} />);
+    expect(screen.queryByText(/Moments that define/i)).not.toBeInTheDocument();
+  });
+});

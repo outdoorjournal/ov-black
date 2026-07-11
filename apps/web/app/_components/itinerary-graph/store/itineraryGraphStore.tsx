@@ -57,6 +57,7 @@ import {
 } from "@ov-black/api-client";
 
 import { createStoreContext } from "@/lib/store/createStoreContext";
+import { createBrowserSupabase } from "@/lib/supabase/client";
 import {
   billingChipsByNode,
   type BillingChip,
@@ -741,12 +742,45 @@ export const itineraryGraphStore = createStoreContext<
       // fact, this is just the capability it implies.
       const canEdit = role === "advisor";
 
+      // The SSR `accessToken` seeds the store, but a page held open past the
+      // token's ~1h TTL would 401 on every browser write (the note POST, card
+      // edits, approvals — all of them). So resolve the token per-request from
+      // the browser Supabase client, which auto-refreshes in the background.
+      // The client is built lazily on first mutation (never at construction —
+      // that would touch browser-only APIs during SSR and in jsdom tests) and
+      // memoized; any failure falls back to the SSR token.
+      let browserSupabase: ReturnType<typeof createBrowserSupabase> | null = null;
+      let browserSupabaseTried = false;
+      const resolveAccessToken = async (): Promise<string | null> => {
+        if (typeof window !== "undefined") {
+          if (!browserSupabaseTried) {
+            browserSupabaseTried = true;
+            try {
+              browserSupabase = createBrowserSupabase();
+            } catch {
+              browserSupabase = null;
+            }
+          }
+          try {
+            const session = (await browserSupabase?.auth.getSession())?.data.session;
+            if (session?.access_token) return session.access_token;
+          } catch {
+            // Fall through to the SSR-seeded token below.
+          }
+        }
+        return accessToken;
+      };
+
       // Lazily build an authenticated client for a mutation. Returns null when
       // no credentials were provided (e.g. the API-less sandbox) so callers
-      // degrade to a no-op.
+      // degrade to a no-op. `accessToken` (the SSR seed) is the "credentialed
+      // viewer" signal; `resolveAccessToken` supplies the live value per call.
       const client = () => {
         if (!apiBaseUrl || !accessToken) return null;
-        return createApiClient({ baseUrl: apiBaseUrl, accessToken });
+        return createApiClient({
+          baseUrl: apiBaseUrl,
+          accessToken: resolveAccessToken,
+        });
       };
 
       // Pick a visually rich first focus so the map / image starts populated.

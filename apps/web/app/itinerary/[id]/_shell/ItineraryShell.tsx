@@ -23,6 +23,8 @@ import { ItineraryIntake } from "@/app/_components/itinerary-graph/intake/Itiner
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/horizontalTypes";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { TimelineDataProvider } from "@/app/_components/itinerary-graph/TimelineDataContext";
+import { DockResizeHandle } from "@/app/_components/DockResizeHandle";
+import { useResizableDock } from "@/lib/useResizableDock";
 import type { UserRole } from "@/lib/role";
 
 import { CardComposer } from "./CardComposer";
@@ -75,6 +77,14 @@ export function ItineraryShell({
   // Q5 (PS6): ≥1100px the concierge is open by default but collapsible to a slim
   // edge tab, so the planning space can take the full width when wanted.
   const [conciergeCollapsed, setConciergeCollapsed] = useState(false);
+  // Drag-to-resize the ≥1100px in-flow concierge; persisted + viewport-clamped.
+  const dock = useResizableDock({
+    storageKey: "ovb.dock.itinerary",
+    defaultWidth: 380,
+    minWidth: 300,
+    minContentWidth: 440,
+    maxWidth: 680,
+  });
   // The card composer (ADV-4) is summoned from the Studio button, the Collection
   // add affordance, or an empty timeline slot; a null prefill = compose into the
   // Collection, a {dayKey, minute} prefill = schedule at that slot.
@@ -133,11 +143,12 @@ export function ItineraryShell({
             <aside
               data-testid="concierge-column"
               data-collapsed={conciergeCollapsed ? "true" : "false"}
+              style={{ "--dock-w": `${dock.width}px` } as React.CSSProperties}
               className={[
                 "flex-col bg-paper",
                 conciergeCollapsed
                   ? "min-[1100px]:hidden"
-                  : "min-[1100px]:flex min-[1100px]:w-[380px] min-[1100px]:shrink-0 min-[1100px]:border-r min-[1100px]:border-ink/10",
+                  : "min-[1100px]:flex min-[1100px]:w-[var(--dock-w,380px)] min-[1100px]:shrink-0 min-[1100px]:border-r min-[1100px]:border-ink/10",
                 conciergeOpen
                   ? "fixed inset-0 z-40 flex min-[1100px]:static min-[1100px]:inset-auto min-[1100px]:z-auto"
                   : "hidden",
@@ -148,6 +159,15 @@ export function ItineraryShell({
                 onCollapse={() => setConciergeCollapsed(true)}
               />
             </aside>
+
+            {/* Drag handle on the concierge's right edge (≥1100px, expanded only). */}
+            {!conciergeCollapsed ? (
+              <DockResizeHandle
+                onPointerDown={dock.onPointerDown}
+                active={dock.isResizing}
+                className="hidden min-[1100px]:flex"
+              />
+            ) : null}
 
             {/* Reopen tab — only when the ≥1100px column is collapsed. A slim
                 left-edge affordance so the concierge is one click from back. */}

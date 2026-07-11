@@ -24,6 +24,7 @@ class Mode(str, enum.Enum):
     """
 
     onboarding = "onboarding"
+    intake = "intake"
     planning = "planning"
     qa = "qa"
 

@@ -19,6 +19,7 @@ from agent.tools.collection import (
 )
 from agent.tools.fill import fill_gap
 from agent.tools.fork import fork_itinerary
+from agent.tools.intake import complete_intake
 from agent.tools.inventory import get_inventory_detail, search_inventory
 from agent.tools.itinerary import get_itinerary, list_alternatives, list_itineraries
 from agent.tools.money import get_billing_state, get_booking_state
@@ -26,6 +27,7 @@ from agent.tools.mutations import (
     move_node,
     update_node_details,
     update_node_status,
+    update_trip_details,
     update_trip_timing,
 )
 from agent.tools.notes import add_note
@@ -66,6 +68,22 @@ _TOOLS_ONBOARDING = [
     set_mood,
 ]
 
+# Intake (the immersive first conversation on a brand-new trip) is gathering,
+# never building: trip identity + timing + party + private facts + ambience,
+# plus the hand-off signal. Deliberately NO search/propose/collection tools —
+# the rubric promises "we'll shape the trip together right after this".
+_TOOLS_INTAKE = [
+    get_traveler_context,
+    record_profile_fact,
+    record_dossier_inference,
+    record_party_member,
+    update_party_member,
+    update_trip_details,
+    update_trip_timing,
+    set_mood,
+    complete_intake,
+]
+
 _TOOLS_PLANNING = [
     get_traveler_context,
     record_profile_fact,
@@ -94,6 +112,7 @@ _TOOLS_PLANNING = [
     assemble_draft,
     update_node_status,
     update_node_details,
+    update_trip_details,
     update_trip_timing,
     move_node,
     add_note,
@@ -138,6 +157,8 @@ _TOOLS_QA = [
 def tools_for(mode: Mode) -> list:
     if mode is Mode.onboarding:
         return list(_TOOLS_ONBOARDING)
+    if mode is Mode.intake:
+        return list(_TOOLS_INTAKE)
     if mode is Mode.planning:
         return list(_TOOLS_PLANNING)
     return list(_TOOLS_QA)

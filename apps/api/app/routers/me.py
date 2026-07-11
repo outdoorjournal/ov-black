@@ -210,19 +210,43 @@ async def list_my_itineraries_endpoint(
     # Only OFFICIAL itineraries (trunks) list here. A fork is the traveler's
     # private "My version" of a trip — reached via the two-version toggle on the
     # itinerary page, never shown as a standalone trip card on basecamp.
+    #
+    # BUT for a solo traveler the trip's title/dates and all its nodes live in
+    # that private fork (their working copy) — the trunk stays empty until an
+    # advisor publishes, and reconcile only folds *node* changes, never the
+    # trip-level title. So we LEFT JOIN the caller's own open fork and surface
+    # its title / freshness as a fallback: the card shows "Patagonia on Foot"
+    # (from the fork) instead of the empty-trunk "Your itinerary" placeholder,
+    # while still keying and linking off the trunk id.
+    # One row per trunk: DISTINCT ON collapses a caller's several open forks of
+    # the same trunk to just the newest, so the LEFT JOIN can't fan a trunk out
+    # into duplicate cards.
     fork = aliased(Itinerary)
-    has_open_fork_expr = (
-        select(fork.id)
+    open_fork = (
+        select(
+            fork.forked_from_id.label("trunk_id"),
+            fork.id.label("fork_id"),
+            fork.title.label("fork_title"),
+            fork.updated_at.label("fork_updated_at"),
+        )
         .where(
-            fork.forked_from_id == Itinerary.id,
             fork.fork_status == ForkStatus.open,
             fork.created_by == user_id,
         )
-        .exists()
+        .distinct(fork.forked_from_id)
+        .order_by(fork.forked_from_id, fork.updated_at.desc())
+        .subquery()
     )
     rows = (
         await session.execute(
-            select(Itinerary, display_status_expr(), has_open_fork_expr)
+            select(
+                Itinerary,
+                display_status_expr(),
+                open_fork.c.fork_id,
+                open_fork.c.fork_title,
+                open_fork.c.fork_updated_at,
+            )
+            .outerjoin(open_fork, open_fork.c.trunk_id == Itinerary.id)
             .where(
                 Itinerary.client_id == client.id,
                 Itinerary.forked_from_id.is_(None),
@@ -234,13 +258,19 @@ async def list_my_itineraries_endpoint(
         itineraries=[
             MyItinerarySummary(
                 id=row.id,
-                title=row.title,
+                # Prefer the trunk's own title once it has one (published), else
+                # fall back to the caller's open-fork working copy.
+                title=row.title or (fork_title or ""),
                 status=DisplayStatus(bucket),
                 created_at=row.created_at,
-                updated_at=row.updated_at,
-                has_open_fork=bool(has_fork),
+                # A solo traveler edits the fork, not the trunk — so the fork's
+                # timestamp is the meaningful "last touched" when it's newer.
+                updated_at=max(row.updated_at, fork_updated_at)
+                if fork_updated_at is not None
+                else row.updated_at,
+                has_open_fork=fork_id is not None,
             )
-            for row, bucket, has_fork in rows
+            for row, bucket, fork_id, fork_title, fork_updated_at in rows
         ]
     )
 

@@ -48,6 +48,7 @@ from app.config import Settings, get_settings
 from app.inventory.registry import InventoryCtx, InventoryProvider
 from app.inventory.schemas import (
     ExperienceItem,
+    GalleryImage,
     InventoryItem,
     ItineraryDay,
     Location,
@@ -135,6 +136,46 @@ def _extract_photos(entry: dict[str, Any]) -> list[str]:
             if isinstance(url, str) and url and url not in photos:
                 photos.append(url)
     return photos
+
+
+def _extract_gallery(entry: dict[str, Any]) -> list[GalleryImage]:
+    """Return the captioned "moments" gallery from an OV entry's ``images[]``.
+
+    Same ordering as ``_extract_photos`` (by ``index``) but keeps each image's
+    ``caption`` (falling back to ``name``) and ``credit`` so the card can
+    attribute and describe each moment. The ``coverImage`` is the card's hero
+    (first ``photos`` slot) and is intentionally left out here so the gallery
+    reads as the supporting moments rather than repeating the hero.
+    """
+    images = entry.get("images")
+    if not isinstance(images, list):
+        return []
+
+    def _index_key(img: dict[str, Any]) -> int:
+        idx = img.get("index")
+        return idx if isinstance(idx, int) else 0
+
+    ordered = sorted(
+        (img for img in images if isinstance(img, dict)),
+        key=_index_key,
+    )
+    gallery: list[GalleryImage] = []
+    seen: set[str] = set()
+    for img in ordered:
+        url = img.get("accessUrl")
+        if not isinstance(url, str) or not url or url in seen:
+            continue
+        seen.add(url)
+        caption = img.get("caption") or img.get("name")
+        credit = img.get("credit")
+        gallery.append(
+            GalleryImage(
+                url=url,
+                caption=caption if isinstance(caption, str) and caption else None,
+                credit=credit if isinstance(credit, str) and credit else None,
+            )
+        )
+    return gallery
 
 
 def _extract_price(entry: dict[str, Any]) -> Price | None:
@@ -280,6 +321,7 @@ def normalize_ov_entry(entry: dict[str, Any]) -> ExperienceItem:
         title=title,
         description=entry.get("description") if isinstance(entry.get("description"), str) else None,
         photos=_extract_photos(entry),
+        gallery=_extract_gallery(entry),
         location=_extract_location(entry),
         price=_extract_price(entry),
         editorial_links=[],

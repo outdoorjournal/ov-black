@@ -18,12 +18,15 @@ import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/iti
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
 
 import {
+  BookingIcon,
   CollectionIcon,
   ConciergeIcon,
   DashboardIcon,
   InvoiceIcon,
+  PartyIcon,
   StudioIcon,
   TimelineIcon,
+  VaultIcon,
 } from "./icons";
 
 export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
@@ -62,8 +65,15 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
       active: activeSeg === "collection",
       icon: <CollectionIcon />,
     },
-    // Invoicing is advisor-only (same role gate as Studio) — the billing CRUD
-    // for this trip, pinned as its own destination rather than a summoned modal.
+    {
+      href: `/itinerary/${id}/party` as Route,
+      label: "Party",
+      active: activeSeg === "party",
+      icon: <PartyIcon />,
+    },
+    // Advisor management surfaces (same role gate as Studio) — the billing CRUD,
+    // the travel-document vault, and the book/confirm cockpit, each pinned as its
+    // own destination rather than a summoned modal or a dashboard footer strip.
     ...(role === "advisor"
       ? [
           {
@@ -71,6 +81,18 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
             label: "Invoices",
             active: activeSeg === "invoices",
             icon: <InvoiceIcon />,
+          },
+          {
+            href: `/itinerary/${id}/vault` as Route,
+            label: "Vault",
+            active: activeSeg === "vault",
+            icon: <VaultIcon />,
+          },
+          {
+            href: `/itinerary/${id}/booking` as Route,
+            label: "Booking",
+            active: activeSeg === "booking",
+            icon: <BookingIcon />,
           },
         ]
       : []),

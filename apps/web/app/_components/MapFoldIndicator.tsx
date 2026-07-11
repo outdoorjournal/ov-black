@@ -18,7 +18,7 @@ const ROUTE_TEXTURE =
   "repeating-linear-gradient(90deg, rgba(20,18,14,0.35) 0 2px, transparent 2px 5px)";
 
 export function MapFoldIndicator({
-  label = "Consulting the maps…",
+  label = "Checking my maps…",
 }: {
   label?: string;
 }) {

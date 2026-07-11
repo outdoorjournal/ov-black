@@ -150,26 +150,35 @@ export function SessionThread({
     // divs with a definite height, so flex-1 would be inert here and the thread
     // would size to its content and overflow the column instead of filling it.
     <div className="flex h-full min-h-0 flex-col">
-      {/* Session bar: the active title (tap to browse) + start-new. */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-ink/10 bg-paper/85 px-3 py-2 backdrop-blur-xs">
+      {/* Session bar doubles as the concierge masthead (the old static
+          "Concierge / Conversation" header is dropped — ConciergeChat gets
+          hideHeader below): the eyebrow + the active conversation name in the
+          serif title slot (tap to browse), with New reclaiming the right-side
+          space that header used to waste. */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-xs">
         <button
           type="button"
           onClick={() => setListOpen((v) => !v)}
           data-testid="session-bar"
           aria-expanded={listOpen}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          className="flex min-w-0 flex-1 flex-col items-start text-left"
         >
-          <span className="truncate font-serif text-sm text-ink">
-            {activeTitle ?? "New conversation"}
+          <span className="text-[10px] uppercase tracking-[0.24em] text-ink/55">
+            Concierge
           </span>
-          <span
-            aria-hidden
-            className={
-              "shrink-0 text-ink/40 transition-transform " +
-              (listOpen ? "rotate-180" : "")
-            }
-          >
-            ⌄
+          <span className="flex w-full min-w-0 items-center gap-1.5">
+            <span className="truncate font-serif text-lg text-ink">
+              {activeTitle ?? "New conversation"}
+            </span>
+            <span
+              aria-hidden
+              className={
+                "shrink-0 text-ink/40 transition-transform " +
+                (listOpen ? "rotate-180" : "")
+              }
+            >
+              ⌄
+            </span>
           </span>
         </button>
         <button
@@ -215,6 +224,7 @@ export function SessionThread({
           accessToken={accessToken}
           clientId={clientId}
           itineraryId={itineraryId}
+          hideHeader
           hydrateHistory={Boolean(boundId)}
           {...(boundId ? { sessionId: boundId } : {})}
           {...(intro ? { intro } : {})}

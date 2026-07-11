@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -81,11 +81,19 @@ class TurnRequest(BaseModel):
 
     ``content`` is bounded to 8000 chars to cap payload amplification into
     the Bedrock model context (threat surface). Empty strings are 422.
+
+    ``surface`` is an optional hint naming the UI surface sending the turn.
+    ``"intake"`` (the immersive first conversation on a brand-new trip) keeps
+    the agent in intake mode for the whole immersive screen — mode detection
+    would otherwise flip to planning the moment the brief lands mid-
+    conversation. It only ever *narrows* the toolset (intake is the least
+    capable mode), so a forged value grants nothing.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     content: Annotated[str, Field(min_length=1, max_length=8000)]
+    surface: Literal["intake"] | None = None
 
 
 class AgentTurnSummary(BaseModel):

@@ -331,7 +331,55 @@ def _snapshot_fallback(item: InventoryItem) -> dict[str, Any]:
             snapshot["price"] = f"{currency} {amount:,.0f}"
     if item.location is not None and item.location.label:
         snapshot["location"] = item.location.label
-    return {"snapshot": snapshot}
+    metadata: dict[str, Any] = {"snapshot": snapshot}
+    # The captioned "moments" gallery is an experience-card facet only
+    # (ExperienceCardAttrs.gallery); destination fallbacks share this path but
+    # have no such field, so gate on the item kind to keep the read-side
+    # ``parse_card_attrs`` (extra="forbid") happy.
+    if isinstance(item, ExperienceItem) and item.gallery:
+        metadata["gallery"] = [
+            img.model_dump(mode="json", exclude_none=True) for img in item.gallery
+        ]
+    return metadata
+
+
+def _leg_minutes(depart_iso: str, arrive_iso: str) -> int | None:
+    """Real-time minutes between two offset-aware ISO instants, or ``None``.
+
+    ``depart_at`` / ``arrive_at`` carry their own UTC offsets (origin vs.
+    destination timezone), so :func:`datetime.fromisoformat` subtraction gives
+    the true leg length regardless of the timezone hop.
+    """
+    try:
+        depart = datetime.fromisoformat(depart_iso)
+        arrive = datetime.fromisoformat(arrive_iso)
+    except ValueError:
+        return None
+    minutes = int((arrive - depart).total_seconds() // 60)
+    return minutes if minutes > 0 else None
+
+
+def scheduled_start_for_item(
+    item: InventoryItem, metadata: dict[str, Any]
+) -> tuple[str | None, int | None]:
+    """The ``(start_iso, duration_minutes)`` for inventory that carries a clock.
+
+    Timed inventory belongs ON the timeline, not in the Collection: a flight has
+    a concrete ``depart_at`` instant (and a leg length from ``depart_at`` →
+    ``arrive_at``), so it should schedule itself the moment it's added. Untimed
+    inventory — hotels anchored by check-in *date*, Places meals/experiences with
+    no seating time — returns ``(None, None)`` and stays unscheduled, the
+    wish-list default. Reads the already-mapped ``metadata`` so the scheduled
+    ``start_time`` matches the card's own ``depart_at`` to the second.
+    """
+    if not isinstance(item, FlightItem):
+        return (None, None)
+    depart = metadata.get("depart_at")
+    if not isinstance(depart, str) or not depart:
+        return (None, None)
+    arrive = metadata.get("arrive_at")
+    duration = _leg_minutes(depart, arrive) if isinstance(arrive, str) and arrive else None
+    return (depart, duration)
 
 
 def inventory_item_to_card_metadata(item: InventoryItem) -> dict[str, Any]:

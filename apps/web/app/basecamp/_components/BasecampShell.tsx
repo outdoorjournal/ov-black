@@ -12,7 +12,7 @@
 // internal state — the server never resolves to "active conversation"
 // because it's a transient client state, not a load shape.
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import type {
   AgentTurnSummary,
@@ -21,7 +21,9 @@ import type {
 } from "@ov-black/api-client";
 
 import { Eyebrow } from "@/components/ui/eyebrow";
+import { DockResizeHandle } from "@/app/_components/DockResizeHandle";
 import type { AppHeaderUser } from "@/lib/appHeader";
+import { useResizableDock } from "@/lib/useResizableDock";
 
 import { BasecampChrome } from "./BasecampChrome";
 import { ItineraryGrid } from "./ItineraryGrid";
@@ -79,7 +81,7 @@ export function BasecampShell({
 
       {variant === "post_first_touch" ? (
         <ConciergeSplit
-          concierge={
+          concierge={(onCollapse) => (
             <RightRailChat
               clientId={clientId}
               accessToken={accessToken}
@@ -87,8 +89,9 @@ export function BasecampShell({
               initialTurns={priorTurns}
               existingSessionId={sessionId}
               onboardingComplete={onboardingComplete}
+              onCollapse={onCollapse}
             />
-          }
+          )}
         >
           {onboardingComplete ? <EmptyItinerariesHint /> : <OnboardingReminder />}
         </ConciergeSplit>
@@ -96,7 +99,7 @@ export function BasecampShell({
 
       {variant === "with_itineraries" ? (
         <ConciergeSplit
-          concierge={
+          concierge={(onCollapse) => (
             <RightRailChat
               clientId={clientId}
               accessToken={accessToken}
@@ -104,8 +107,9 @@ export function BasecampShell({
               initialTurns={priorTurns}
               existingSessionId={sessionId}
               onboardingComplete={onboardingComplete}
+              onCollapse={onCollapse}
             />
-          }
+          )}
         >
           <ItineraryGrid itineraries={itineraries} />
         </ConciergeSplit>
@@ -125,17 +129,65 @@ function ConciergeSplit({
   concierge,
   children,
 }: {
-  concierge: ReactNode;
+  /** Render-prop so the chat can receive the collapse callback (mirrors the
+   *  itinerary ConciergeColumn's `onCollapse`). */
+  concierge: (onCollapse: () => void) => ReactNode;
   children: ReactNode;
 }) {
+  // ≥lg the concierge is an in-flow sidebar, collapsible to a slim edge tab so
+  // the itinerary grid can take the full width (mirrors the itinerary shell's
+  // Q5 collapse). Below lg it's a bounded block, where collapse doesn't apply.
+  const [collapsed, setCollapsed] = useState(false);
+  // Drag-to-resize the ≥lg sidebar; persisted + viewport-clamped (mirrors the
+  // itinerary shell's dock).
+  const dock = useResizableDock({
+    storageKey: "ovb.dock.basecamp",
+    defaultWidth: 400,
+    minWidth: 300,
+    minContentWidth: 440,
+    maxWidth: 680,
+  });
+
   return (
     <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col lg:flex-row">
       <div className="order-1 min-w-0 flex-1 px-6 pb-12 pt-6 sm:px-10 lg:order-2">
         {children}
       </div>
-      <aside className="order-2 h-[75vh] shrink-0 border-t border-ink/10 bg-paper lg:order-1 lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-[400px] lg:border-r lg:border-t-0">
-        {concierge}
+
+      {/* Reopen tab — only when the ≥lg sidebar is collapsed. A slim left-edge
+          affordance so the concierge is one click from back. */}
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          data-testid="basecamp-concierge-reopen"
+          aria-label="Reopen the concierge"
+          className="order-2 hidden shrink-0 items-center border-r border-ink/10 bg-paper/85 px-1.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink lg:order-1 lg:sticky lg:top-14 lg:flex lg:h-[calc(100dvh-3.5rem)]"
+        >
+          <span className="[writing-mode:vertical-rl] rotate-180">Concierge ›</span>
+        </button>
+      ) : null}
+
+      <aside
+        data-collapsed={collapsed ? "true" : "false"}
+        style={{ "--dock-w": `${dock.width}px` } as React.CSSProperties}
+        className={[
+          "order-2 h-[75vh] shrink-0 border-t border-ink/10 bg-paper lg:order-1 lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-[var(--dock-w,400px)] lg:border-r lg:border-t-0",
+          collapsed ? "lg:hidden" : "",
+        ].join(" ")}
+      >
+        {concierge(() => setCollapsed(true))}
       </aside>
+
+      {/* Drag handle on the sidebar's right edge (≥lg, expanded only). It sits
+          in the order-1 group after the aside so it renders just right of it. */}
+      {!collapsed ? (
+        <DockResizeHandle
+          onPointerDown={dock.onPointerDown}
+          active={dock.isResizing}
+          className="order-2 hidden lg:order-1 lg:flex lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)]"
+        />
+      ) : null}
     </div>
   );
 }

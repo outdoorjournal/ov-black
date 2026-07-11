@@ -96,6 +96,24 @@ def test_normalize_ov_entry_happy_path(ov_fixture: dict[str, Any]) -> None:
     assert item.raw == entry
 
 
+def test_normalize_ov_entry_gallery_carries_captions(ov_fixture: dict[str, Any]) -> None:
+    entry = ov_fixture["trips"][0]
+    item = normalize_ov_entry(entry)
+
+    # The "moments" gallery mirrors images[] (not the cover) and preserves each
+    # image's caption (or name fallback) + credit.
+    assert isinstance(item, ExperienceItem)
+    assert len(item.gallery) == len(entry["images"])
+    gallery_urls = {g.url for g in item.gallery}
+    assert gallery_urls == {img["accessUrl"] for img in entry["images"]}
+    # The cover is the hero (photos[0]), not repeated in the moments gallery.
+    assert entry["coverImage"]["accessUrl"] not in gallery_urls
+    # caption is empty in the fixture, so name is the fallback; credit passes through.
+    first = item.gallery[0]
+    assert first.caption == entry["images"][0]["name"]
+    assert first.credit == entry["images"][0]["credit"]
+
+
 def test_normalize_ov_entry_missing_id_raises(ov_fixture_copy: dict[str, Any]) -> None:
     entry = ov_fixture_copy["trips"][0]
     entry.pop("id")

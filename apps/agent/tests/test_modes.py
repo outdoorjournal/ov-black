@@ -220,3 +220,49 @@ def test_turn_payload_accepts_empty_auth_bearer_for_summoned_turn() -> None:
     # the agent_token path, so an empty auth_bearer must validate.
     payload = _payload(auth_bearer="")
     assert payload.auth_bearer == ""
+
+
+def test_intake_bundle_gathers_but_never_builds() -> None:
+    """Intake = trip identity + timing + party + facts + mood + hand-off; no
+    search/propose/collection/node tools — the rubric promises building
+    happens after."""
+    from agent.tools import tools_for
+
+    names = {t.tool_name for t in tools_for(Mode.intake)}
+    assert {
+        "get_traveler_context",
+        "record_profile_fact",
+        "record_dossier_inference",
+        "record_party_member",
+        "update_party_member",
+        "update_trip_details",
+        "update_trip_timing",
+        "set_mood",
+        "complete_intake",
+    } <= names
+    assert not names & {
+        "search_inventory",
+        "propose_card",
+        "propose_flight",
+        "save_to_collection",
+        "assemble_draft",
+        "update_node_status",
+        "move_node",
+    }
+
+
+def test_intake_prompt_teaches_gathering_and_handoff() -> None:
+    from agent.prompts import build_prompt
+
+    prompt = build_prompt(
+        mode=Mode.intake,
+        api_system="",
+        actor_kind="user",
+        itinerary_id_present=True,
+    )
+    assert "Mode: intake" in prompt
+    assert "update_trip_details" in prompt
+    assert "complete_intake" in prompt
+    assert "set_mood" in prompt
+    # The one-job framing: gather, don't build.
+    assert "gathering, not building" in prompt

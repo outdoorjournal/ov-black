@@ -474,6 +474,13 @@ export function toJournal(input: ToJournalInput): Journal {
     return { kind: "day", date: d.date, label: d.label, index, entries, night };
   });
 
+  // A journal with no cards at all is a fresh canvas, not a story with holes:
+  // every scaffold day renders as an open day (with its insert affordance)
+  // rather than collapsing into one big elision the traveler can't act on.
+  if (nodeCount === 0) {
+    return { sections: daySections, nodeCount };
+  }
+
   // Collapse runs of ≥ ELISION_MIN_DAYS truly-empty days (no cards, no night
   // node) into elision markers so a 2-month trip doesn't scroll through a wall
   // of open days.

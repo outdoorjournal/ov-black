@@ -95,6 +95,11 @@ interface Place {
   maps_url?: string;
   photo_token?: string;
 }
+interface GalleryImage {
+  url?: string;
+  caption?: string;
+  credit?: string;
+}
 
 interface ZoomMeta {
   description?: string;
@@ -178,6 +183,7 @@ interface ZoomMeta {
   allergens?: string[];
   language_support?: string;
   group_size?: string;
+  gallery?: GalleryImage[];
   // meal
   cuisine_class?: string;
   seating_at?: string;
@@ -644,6 +650,8 @@ function ExperienceZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
         <p className="mt-3 text-[12px] leading-relaxed text-ink/85">{m.description}</p>
       ) : null}
 
+      <MomentsGallery images={m.gallery} />
+
       <PlaceInfo place={m.place} tint={t.tint} />
 
       <DetailGrid
@@ -1018,6 +1026,57 @@ function PlaceInfo({ place, tint }: { place: Place | undefined; tint: string }) 
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// The "moments that define this adventure" gallery — the OV trip's supporting
+// images beyond the hero. A captioned thumbnail strip: hover reveals the
+// caption + credit, clicking opens the full image. Renders nothing when the
+// item carries no gallery (Places experiences, sparse cards).
+function MomentsGallery({ images }: { images?: GalleryImage[] | undefined }) {
+  const shots = (images ?? []).filter((g): g is GalleryImage & { url: string } =>
+    Boolean(g.url),
+  );
+  if (shots.length === 0) return null;
+  return (
+    <div className="mt-5">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-ink/50">
+        Moments that define this adventure
+      </p>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {shots.map((img, i) => (
+          <a
+            key={`${img.url}-${i}`}
+            href={img.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group relative block aspect-[4/3] overflow-hidden rounded-md border border-ink/10 bg-ink/5"
+            title={img.caption ?? undefined}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- public OV CDN URL; next/image loaders unneeded, degrades to the tint on error. */}
+            <img
+              src={img.url}
+              alt={img.caption ?? ""}
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+            {img.caption ? (
+              <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 to-transparent px-2 pb-1.5 pt-4 text-[10px] leading-tight text-paper opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                {img.caption}
+                {img.credit ? (
+                  <span className="mt-0.5 block text-[8px] uppercase tracking-[0.14em] text-paper/70">
+                    {img.credit}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+          </a>
+        ))}
+      </div>
     </div>
   );
 }

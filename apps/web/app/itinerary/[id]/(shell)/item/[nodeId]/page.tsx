@@ -3,7 +3,7 @@
 // view, which reads the shared store. Deep-linkable + role-agnostic: an advisor
 // can send a traveler "look at this card" and it resolves for either.
 
-import { CardDetailView } from "../../_shell/CardDetailView";
+import { CardDetailView } from "../../../_shell/CardDetailView";
 
 export const dynamic = "force-dynamic";
 

@@ -22,6 +22,7 @@ from app.inventory.schemas import (
     DestinationItem,
     ExperienceItem,
     FlightItem,
+    GalleryImage,
     HotelItem,
     MealItem,
 )
@@ -39,6 +40,7 @@ from app.services.card_mapping import (
     hotel_item_to_card_attrs,
     inventory_item_to_card_metadata,
     meal_item_to_card_attrs,
+    scheduled_start_for_item,
 )
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "duffel_offers.json"
@@ -111,6 +113,40 @@ def test_metadata_shape_matches_frontend_contract(flight_item: FlightItem) -> No
     assert "seat" not in meta
     # depart_at/arrive_at serialized as ISO strings the adapter parses.
     assert meta["depart_at"].startswith("2026-07-10T11:05:00")
+
+
+def test_flight_schedules_itself_from_depart_at(flight_item: FlightItem) -> None:
+    # Timed inventory lands ON the timeline: a flight schedules at its depart_at
+    # with a leg duration from depart_at → arrive_at (spanning the tz hop), so
+    # the journal renders it instead of it going to the silent wish-list.
+    meta = inventory_item_to_card_metadata(flight_item)
+    start_iso, duration = scheduled_start_for_item(flight_item, meta)
+    assert start_iso == meta["depart_at"]
+    assert start_iso is not None and start_iso.startswith("2026-07-10T11:05:00")
+    # LAX 11:05 -07:00 (18:05Z) → HND 15:40 +09:00 next day (06:40Z) = 12h35m.
+    assert duration == 755
+
+
+def test_sparse_flight_without_times_stays_unscheduled() -> None:
+    # No depart_at → no clock → stays in the Collection (start is None).
+    item = normalize_duffel_offer(
+        {"id": "off_sparse", "total_amount": "100.00", "total_currency": "USD"}
+    )
+    meta = inventory_item_to_card_metadata(item)
+    assert scheduled_start_for_item(item, meta) == (None, None)
+
+
+def test_hotel_and_meal_stay_unscheduled(
+    hotel_item: HotelItem, meal_item: MealItem
+) -> None:
+    # Untimed inventory (hotel by check-in date, meal with no seating time) is
+    # the wish-list default — neither carries a concrete clock to schedule by.
+    assert scheduled_start_for_item(
+        hotel_item, inventory_item_to_card_metadata(hotel_item)
+    ) == (None, None)
+    assert scheduled_start_for_item(
+        meal_item, inventory_item_to_card_metadata(meal_item)
+    ) == (None, None)
 
 
 def test_sparse_offer_maps_without_error() -> None:
@@ -327,3 +363,42 @@ def test_non_places_experience_stays_on_snapshot_fallback() -> None:
     meta = inventory_item_to_card_metadata(item)
     assert "place" not in meta
     assert meta["snapshot"]["title"] == "Guided Ridge Hike"
+
+
+def test_ov_experience_gallery_survives_into_metadata() -> None:
+    # The captioned "moments" gallery reaches node.metadata via the snapshot
+    # fallback and re-validates through the extra="forbid" read model.
+    item = ExperienceItem(
+        source="ov",
+        source_id="ov-456",
+        title="Simien Traverse",
+        gallery=[
+            GalleryImage(url="https://cdn.ov/a.jpg", caption="Ras Dashen ridge", credit="Babak"),
+            GalleryImage(url="https://cdn.ov/b.jpg"),
+        ],
+    )
+    meta = inventory_item_to_card_metadata(item)
+    assert meta["gallery"][0] == {
+        "url": "https://cdn.ov/a.jpg",
+        "caption": "Ras Dashen ridge",
+        "credit": "Babak",
+    }
+    # exclude_none drops the absent caption/credit on the second image.
+    assert meta["gallery"][1] == {"url": "https://cdn.ov/b.jpg"}
+    reparsed = parse_card_attrs("experience", meta)
+    assert isinstance(reparsed, ExperienceCardAttrs)
+    assert len(reparsed.gallery) == 2
+    assert reparsed.gallery[0].caption == "Ras Dashen ridge"
+
+
+def test_gallery_gated_to_experience_kind() -> None:
+    # The gallery is an ExperienceCardAttrs facet only. A non-experience item on
+    # the same snapshot fallback must not emit a stray ``gallery`` key.
+    item = DestinationItem(
+        source="ov",
+        source_id="ov-789",
+        title="Ethiopian Highlands",
+        gallery=[GalleryImage(url="https://cdn.ov/x.jpg")],
+    )
+    meta = inventory_item_to_card_metadata(item)
+    assert "gallery" not in meta

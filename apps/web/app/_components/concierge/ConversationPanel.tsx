@@ -40,11 +40,14 @@ export type ConversationMessage = {
 
 // A proposed graph node awaiting accept/dismiss. A structural subset of the
 // itinerary NodeResponse, so the itinerary surface passes its rows straight in;
-// surfaces without proposals omit the prop.
+// surfaces without proposals omit the prop. `metadata` is the node's card-attrs
+// dict (present on real graph proposals) — it lets a typed proposal (a flight)
+// render as its own card instead of a bare title.
 export type ConversationProposal = {
   id: string;
   type: string;
   title: string;
+  metadata?: { [key: string]: unknown };
 };
 
 export interface ConversationPanelProps {
@@ -54,7 +57,14 @@ export interface ConversationPanelProps {
   onAccept?: (id: string) => void;
   onDismiss?: (id: string) => void;
   onScrollToNode?: (id: string) => void;
+  // Fully inert: no chat context (missing token/client). The input is disabled
+  // and nothing can be sent.
   disabled?: boolean;
+  // A turn is streaming. Blocks a new submit and dims Send, but keeps the input
+  // ENABLED so it never loses focus. A `disabled` input is blurred by the
+  // browser the instant a turn starts and never regains focus on re-enable —
+  // which is why the composer used to drop focus after every message.
+  sending?: boolean;
   // Hide the panel's own "Concierge" header — used when a host already provides
   // one (the mobile bottom sheet's drag handle, or basecamp's people-circles).
   hideHeader?: boolean;
@@ -74,6 +84,7 @@ export function ConversationPanel({
   onDismiss,
   onScrollToNode,
   disabled = false,
+  sending = false,
   hideHeader = false,
   placeholder = "Ask me to propose, assemble, or swap…",
   working = false,
@@ -90,7 +101,7 @@ export function ConversationPanel({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || disabled || sending) return;
     onSubmit(trimmed);
     setText("");
   };
@@ -123,11 +134,10 @@ export function ConversationPanel({
               exit={{ opacity: 0, y: -6 }}
               className="rounded-md border border-dashed border-ink/25 bg-paper p-2.5 text-[12px]"
             >
-              <div className="text-[10px] uppercase tracking-[0.18em] text-ink/55">
-                Proposed · {p.type}
-              </div>
-              <div className="mt-0.5 flex items-start justify-between gap-2">
-                <div className="font-serif text-[15px] text-ink">{p.title}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-ink/55">
+                  Proposed · {p.type}
+                </div>
                 {onScrollToNode ? (
                   <button
                     type="button"
@@ -140,6 +150,13 @@ export function ConversationPanel({
                   </button>
                 ) : null}
               </div>
+              {/* A typed proposal renders as its own card; everything else keeps
+                  the bare title. Flights read their FlightCardAttrs metadata. */}
+              {p.type === "flight" && p.metadata ? (
+                <FlightProposalBody meta={p.metadata} />
+              ) : (
+                <div className="mt-0.5 font-serif text-[15px] text-ink">{p.title}</div>
+              )}
               <div className="mt-2 flex gap-1.5">
                 <button
                   type="button"
@@ -173,12 +190,91 @@ export function ConversationPanel({
         />
         <button
           type="submit"
-          disabled={disabled || text.trim().length === 0}
+          disabled={disabled || sending || text.trim().length === 0}
           className="rounded-md bg-ink px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-paper disabled:opacity-40"
         >
           Send
         </button>
       </form>
+    </div>
+  );
+}
+
+// ── Flight proposal card ──────────────────────────────────────────────────────
+// A compact boarding-pass read of a proposed flight so the concierge's flight
+// proposals render as a real flight card (route + wall-clock + cabin) instead of
+// a bare title. Reads the node's FlightCardAttrs metadata directly; each end
+// shows its OWN airport-local wall clock straight off the ISO string's embedded
+// offset (a leg crosses zones), with no viewer-tz round-trip. Price isn't in the
+// card frame, so it's intentionally omitted here.
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function asStr(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+// Strip a trailing " (IATA)" parenthetical so the city reads cleanly under its
+// code, then return it (or null when there's nothing worth showing).
+function cityLabel(v: unknown): string | null {
+  if (!v || typeof v !== "object" || !("label" in v)) return null;
+  const s = asStr((v as { label?: unknown }).label);
+  return s ? s.replace(/\s*\([^)]*\)\s*$/, "").trim() || null : null;
+}
+
+function wallClock(iso: unknown): { day: string; time: string } | null {
+  const s = asStr(iso);
+  const m = s ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s) : null;
+  if (!m) return null;
+  return { day: `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`, time: `${m[4]}:${m[5]}` };
+}
+
+function cabinLabel(v: unknown): string | null {
+  const s = asStr(v);
+  if (!s) return null;
+  const words = s.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
+}
+
+function FlightProposalBody({ meta }: { meta: { [key: string]: unknown } }) {
+  const from = asStr(meta["iata_from"]) ?? "—";
+  const to = asStr(meta["iata_to"]) ?? "—";
+  const fromCity = cityLabel(meta["from_location"]);
+  const toCity = cityLabel(meta["to_location"]);
+  const depart = wallClock(meta["depart_at"]);
+  const arrive = wallClock(meta["arrive_at"]);
+  const cabin = cabinLabel(meta["cabin"]);
+
+  return (
+    <div className="mt-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-serif text-[17px] leading-none text-ink">{from}</div>
+          {fromCity ? (
+            <div className="mt-0.5 truncate text-[10px] text-ink/55">{fromCity}</div>
+          ) : null}
+        </div>
+        <div className="shrink-0 translate-y-px text-[12px] text-ink/40">✈</div>
+        <div className="min-w-0 text-right">
+          <div className="font-serif text-[17px] leading-none text-ink">{to}</div>
+          {toCity ? (
+            <div className="mt-0.5 truncate text-[10px] text-ink/55">{toCity}</div>
+          ) : null}
+        </div>
+      </div>
+      {depart || arrive ? (
+        <div className="mt-1.5 flex items-baseline justify-between gap-3 text-[11px] text-ink/70">
+          <span>{depart ? `${depart.day} · ${depart.time}` : "—"}</span>
+          <span>{arrive ? `${arrive.day} · ${arrive.time}` : ""}</span>
+        </div>
+      ) : null}
+      {cabin ? (
+        <div className="mt-1.5 inline-block rounded-full border border-ink/15 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-ink/60">
+          {cabin}
+        </div>
+      ) : null}
     </div>
   );
 }

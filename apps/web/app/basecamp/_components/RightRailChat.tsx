@@ -87,6 +87,10 @@ export type RightRailChatProps = {
   // The server's onboarding_complete verdict at last render. We watch it for a
   // false→true flip (after a post-turn refresh) to fire the milestone card.
   onboardingComplete: boolean;
+  // Collapse the ≥lg in-flow column to the edge tab (mirrors the itinerary
+  // ConciergeColumn's Q5 collapse). Absent below lg, where the chat is a
+  // bounded block rather than a sidebar.
+  onCollapse?: () => void;
 };
 
 export function RightRailChat(props: RightRailChatProps) {
@@ -103,6 +107,7 @@ function RightRailChatInner({
   apiBaseUrl,
   existingSessionId,
   onboardingComplete,
+  onCollapse,
 }: RightRailChatProps) {
   const turns = basecampChatStore.useStore((s) => s.turns);
   const streaming = basecampChatStore.useStore((s) => s.streaming);
@@ -117,8 +122,10 @@ function RightRailChatInner({
   const router = useRouter();
   const sessionIdRef = useRef<string | null>(existingSessionId);
   const abortRef = useRef<AbortController | null>(null);
-  // The rail sits on the right of the screen, so the drawer flyout anchors
-  // here and slides out to the LEFT — over the basecamp content beside it.
+  // The rail sits on the LEFT of the screen (ConciergeSplit's aside is
+  // lg:order-1) — the same placement as the itinerary shell's ConciergeColumn —
+  // so the drawer flyout anchors here and slides out to the RIGHT, over the
+  // basecamp content beside it.
   const railRef = useRef<HTMLDivElement | null>(null);
   // Prior onboarding_complete value, for false→true flip detection.
   const prevOnboardingCompleteRef = useRef(onboardingComplete);
@@ -280,6 +287,19 @@ function RightRailChatInner({
         channel={channel}
         onSelect={setChannel}
         advisorTitle="Message your advisor"
+        trailing={
+          onCollapse ? (
+            <button
+              type="button"
+              onClick={onCollapse}
+              data-testid="basecamp-concierge-collapse"
+              aria-label="Collapse the concierge"
+              className="ml-auto hidden h-7 items-center rounded-md px-2 font-sans text-base text-ink/45 transition-colors hover:bg-ink/5 hover:text-ink lg:flex"
+            >
+              ‹
+            </button>
+          ) : null
+        }
       />
       {/* Both channels share the space below the top nav. The Artemis stream
           body stays mounted (the useAgentStream hook lives at the top of this
@@ -295,7 +315,7 @@ function RightRailChatInner({
             <ConversationPanel
               messages={messages}
               onSubmit={onSend}
-              disabled={streaming !== null}
+              sending={streaming !== null}
               hideHeader
               placeholder="Write to your concierge"
             />
@@ -318,7 +338,7 @@ function RightRailChatInner({
         onClose={close}
         onChooseOption={onChooseOption}
         anchorRef={railRef}
-        side="left"
+        side="right"
       />
     </div>
   );

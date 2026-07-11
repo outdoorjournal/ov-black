@@ -123,8 +123,34 @@ function metaOf(node: NodeResponse): NodeMetaTiming {
   return (node.metadata ?? {}) as NodeMetaTiming;
 }
 
+// A flight's schedule is INTRINSIC: its own `depart_at` / `arrive_at` are
+// authoritative — a departure time isn't a free placement — so they override a
+// synthesized layout time and a stale drag-written start/duration (e.g. the
+// generic noon + 2h slot a card picks up when placed from the Collection).
+// These two readers are the single source of that rule; `explicitStart` and
+// `resolveDuration` defer to them so every view (and the metadata written back
+// below) sees the real leg.
+function flightDepartAt(node: TimedNode): string | null {
+  if (node.type !== "flight") return null;
+  const d = metaOf(node)["depart_at"];
+  return typeof d === "string" && ISO_DATETIME_RE.test(d) ? d : null;
+}
+
+function flightLegMinutes(node: TimedNode): number | null {
+  const depart = flightDepartAt(node);
+  if (depart === null) return null;
+  const arrive = metaOf(node)["arrive_at"];
+  if (typeof arrive !== "string" || !ISO_DATETIME_RE.test(arrive)) return null;
+  const mins = Math.round(
+    (new Date(arrive).getTime() - new Date(depart).getTime()) / 60_000,
+  );
+  return mins > 0 ? mins : null;
+}
+
 /** Resolve the explicit (non-synthesized) start, if any. */
 function explicitStart(node: TimedNode): string | null {
+  const flightStart = flightDepartAt(node);
+  if (flightStart !== null) return flightStart;
   const m = metaOf(node);
   if (typeof m.start_time === "string" && m.start_time) return m.start_time;
   if (typeof node.starts_at === "string" && node.starts_at) return node.starts_at;
@@ -132,6 +158,8 @@ function explicitStart(node: TimedNode): string | null {
 }
 
 function resolveDuration(node: TimedNode): number {
+  const leg = flightLegMinutes(node);
+  if (leg !== null) return leg;
   const m = metaOf(node);
   if (typeof m.duration_minutes === "number" && m.duration_minutes > 0)
     return m.duration_minutes;
@@ -340,7 +368,17 @@ export function toItineraryTimeline(
       ...(daysAnchor ? [daysAnchor] : []),
     ].sort()[0] ?? synthAnchor;
   const lastCandidates = [...nodeDayKeys, ...(exactEnd ? [exactEnd] : [])].sort();
-  const lastDay = lastCandidates[lastCandidates.length - 1] ?? firstDay;
+  let lastDay = lastCandidates[lastCandidates.length - 1] ?? firstDay;
+  // A brand-new (zero-node) adventure without pinned dates still deserves a
+  // canvas: scaffold Day 1..N so the Journal renders open days the traveler
+  // can start filling. N follows a captured duration (~nights + arrival day)
+  // when known, else defaults to a week. Exact-dated trips already span their
+  // window above; any first real card re-derives the span node-first.
+  if (nodes.length === 0 && !exactStart) {
+    const nights = itinerary.duration_nights ?? null;
+    const dayCount = Math.min(30, nights && nights > 0 ? nights + 1 : 7);
+    lastDay = addDaysToKey(firstDay, dayCount - 1);
+  }
   const span = Math.max(0, diffDays(firstDay, lastDay));
   const days = Array.from({ length: span + 1 }, (_, i) => {
     const date = addDaysToKey(firstDay, i);

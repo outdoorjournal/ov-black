@@ -75,6 +75,8 @@ import {
   SLOT_EMPTY_DAY_MIN,
 } from "./journalEditing";
 import { JournalAltGroup, JournalGhostNode, JournalNode } from "./JournalNode";
+import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
+
 import { AddNoteOnLine } from "./JournalNotes";
 import { MoreBelowCue } from "./MoreBelow";
 import { journalProblems, type JournalProblem } from "./problems";
@@ -299,12 +301,27 @@ export function JournalView({
         data-testid="journal"
         className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:flex-row lg:gap-10"
       >
+        {/* The floating day minimap — an in-flow sticky column immediately left
+            of the Journal spine on desktop (its mobile bottom pill is fixed).
+            Rendered here rather than as a viewport-fixed sibling so it hugs the
+            timeline and never overlaps the left nav / concierge column. */}
+        <DayRail
+          journal={journal}
+          totalDays={timeline.days.length}
+          divergedDays={diffView?.divergedDays ?? null}
+          scrollRootRef={scrollRootRef}
+        />
+
         {/* The Journal column */}
-        <div className="min-w-0 flex-1 lg:order-1">
-          {journal.nodeCount === 0 ? (
+        <div className="min-w-0 flex-1 lg:order-2">
+          {journal.nodeCount === 0 && awaitingProposal ? (
             <EmptyJournal awaitingProposal={awaitingProposal} />
           ) : (
             <div className="flex flex-col gap-2">
+              {/* Fresh canvas: no cards yet, but the days are real (dated, or
+                  the Day 1..N scaffold) — point the traveler at Artemis
+                  instead of a dead-end placeholder. */}
+              {journal.nodeCount === 0 ? <EmptyJournalInvite /> : null}
               {journal.sections.map((section, idx) => {
                 if (section.kind === "elision") {
                   // The skip affordance points past the span — at the day
@@ -346,9 +363,11 @@ export function JournalView({
                   />
                 );
               })}
-              <p className="mt-6 pl-[var(--spine-col)] font-serif text-[12px] italic text-ink/35" style={spineColStyle}>
-                — the end of the journey —
-              </p>
+              {journal.nodeCount > 0 ? (
+                <p className="mt-6 pl-[var(--spine-col)] font-serif text-[12px] italic text-ink/35" style={spineColStyle}>
+                  — the end of the journey —
+                </p>
+              ) : null}
             </div>
           )}
         </div>
@@ -360,7 +379,7 @@ export function JournalView({
         <aside
           data-testid="journal-rail"
           className={[
-            "w-full transition-opacity duration-500 lg:order-2 lg:w-[340px] lg:shrink-0",
+            "w-full transition-opacity duration-500 lg:order-3 lg:w-[340px] lg:shrink-0",
             cinemaMode ? "pointer-events-none opacity-0" : "opacity-100",
           ].join(" ")}
         >
@@ -370,15 +389,9 @@ export function JournalView({
         </aside>
       </div>
 
-      {/* Phase-5 furniture — the floating day minimap, the more-below tail
-          cue, and cinema's scroll driver (all chrome-aware: cinema fades or
-          hides them). */}
-      <DayRail
-        journal={journal}
-        totalDays={timeline.days.length}
-        divergedDays={diffView?.divergedDays ?? null}
-        scrollRootRef={scrollRootRef}
-      />
+      {/* Phase-5 furniture — the more-below tail cue and cinema's scroll
+          driver (chrome-aware: cinema fades or hides them). The day minimap
+          now lives in-flow inside the Journal container above. */}
       <MoreBelowCue journal={journal} scrollRootRef={scrollRootRef} />
       <CinemaDriver scrollRootRef={scrollRootRef} />
 
@@ -702,6 +715,37 @@ function DropSlot({
           {isOver ? `Move here · ${minuteLabel(minute)}` : ""}
         </span>
       </div>
+    </div>
+  );
+}
+
+// The fresh-canvas invitation (traveler/self-serve empty journal): the days
+// below are real and each carries its (+), but the story starts with the
+// conversation — so this points at Artemis rather than at the empty spine.
+// `openConcierge` opens the summoned overlay below 1100px and is a harmless
+// no-op where the column is already in-flow.
+function EmptyJournalInvite() {
+  const { openConcierge } = useConciergeControl();
+  return (
+    <div
+      data-testid="journal-empty-invite"
+      className="mb-6 rounded-lg border border-ink/10 bg-ink/[0.03] px-6 py-8 text-center"
+    >
+      <p className="font-serif text-xl leading-snug text-ink/80">
+        The pages are open — tell Artemis what you&rsquo;re dreaming of.
+      </p>
+      <p className="mx-auto mt-2 max-w-md font-sans text-sm leading-relaxed text-ink/55">
+        Keep the conversation going and the journal fills itself — or press a
+        day&rsquo;s <span className="font-medium text-ink/70">+</span> to write
+        the first line yourself.
+      </p>
+      <button
+        type="button"
+        onClick={openConcierge}
+        className="mt-5 rounded-sm border border-ink/20 px-4 py-2 font-sans text-[11px] uppercase tracking-[0.22em] text-ink/70 transition hover:border-brand hover:text-brand"
+      >
+        Talk to Artemis
+      </button>
     </div>
   );
 }

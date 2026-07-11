@@ -1565,3 +1565,57 @@ async def test_card_frame_persist_failure_is_non_fatal(
     record_blob = json.dumps(record.__dict__, default=str)
     assert "snapshot" not in record_blob
     assert card_event["snapshot"]["title"] not in record_blob
+
+
+# ── Intake surface hint (immersive first conversation) ──────────────────────
+
+
+async def test_intake_surface_pins_mode_for_pinned_traveler_turn(
+    factory: FakeFactory,
+    user_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """`surface="intake"` on a pinned traveler turn pins the runtime mode.
+
+    Without the hint, mode detection flips to planning the moment the brief
+    lands mid-conversation; the immersive screen sends the hint on every turn
+    so the gathering rubric holds until the traveler leaves.
+    """
+    agent_session.itinerary_id = uuid.uuid4()
+    runtime = MockAgentRuntimeClient([{"type": "delta", "text": "hi"}, {"type": "done"}])
+    await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=user_actor,
+            session_id=agent_session.id,
+            content="I want to climb in the Dolomites.",
+            settings=settings,
+            surface="intake",
+        )
+    )
+    assert runtime.calls[0]["payload"]["mode"] == "intake"
+
+
+async def test_intake_surface_ignored_for_unpinned_or_advisor(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """The hint is a no-op off the traveler+pinned path (never an escalation)."""
+    agent_session.itinerary_id = None
+    runtime = MockAgentRuntimeClient([{"type": "delta", "text": "hi"}, {"type": "done"}])
+    await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="hello",
+            settings=settings,
+            surface="intake",
+        )
+    )
+    assert runtime.calls[0]["payload"]["mode"] != "intake"

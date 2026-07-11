@@ -48,7 +48,10 @@ from app.models import (
 )
 from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
-from app.services.card_mapping import inventory_item_to_card_metadata
+from app.services.card_mapping import (
+    inventory_item_to_card_metadata,
+    scheduled_start_for_item,
+)
 from app.services.changes import load_itinerary_changes, next_changes_cursor
 from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.fork import (
@@ -1181,6 +1184,11 @@ async def create_node_from_inventory_endpoint(
         raise HTTPException(status_code=422, detail="unmappable_inventory_kind") from exc
 
     metadata = inventory_item_to_card_metadata(item)
+    # Timed inventory (a flight's ``depart_at``) lands ON the timeline rather
+    # than the Collection, so a booked-time item is immediately visible in the
+    # journal instead of a silent wish-list add. Untimed kinds return
+    # ``(None, None)`` and stay unscheduled — the wish-list default.
+    start_iso, duration_minutes = scheduled_start_for_item(item, metadata)
     # Promote the provider's price to first-class cost columns (B4 / D-COST):
     # a Duffel flight or Ratehawk hotel lands with a queryable numeric cost,
     # not just a snapshot string. ``None`` for a price-less item (e.g. a
@@ -1197,6 +1205,8 @@ async def create_node_from_inventory_endpoint(
         source=item.source,
         source_id=item.source_id,
         metadata=metadata,
+        starts_at=start_iso,
+        duration_minutes=duration_minutes,
         cost_amount=cost.amount if cost else None,
         cost_currency=cost.currency if cost else None,
         cost_kind=cost.kind if cost else None,

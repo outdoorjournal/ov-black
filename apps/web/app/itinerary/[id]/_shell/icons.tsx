@@ -71,3 +71,36 @@ export function InvoiceIcon() {
     </svg>
   );
 }
+
+export function VaultIcon() {
+  return (
+    <svg {...BASE} aria-hidden>
+      {/* A safe: a bordered box with a combination dial. */}
+      <rect x="3" y="4" width="14" height="12" rx="1.5" />
+      <circle cx="10" cy="10" r="2.6" />
+      <path d="M10 10v-1.4M12.6 10H14" />
+    </svg>
+  );
+}
+
+export function BookingIcon() {
+  return (
+    <svg {...BASE} aria-hidden>
+      {/* A ticket with a confirming check. */}
+      <path d="M4 6h12v3a1.5 1.5 0 0 0 0 2v3H4v-3a1.5 1.5 0 0 0 0-2V6Z" />
+      <path d="M8 9.8l1.4 1.4L12 8.5" />
+    </svg>
+  );
+}
+
+export function PartyIcon() {
+  return (
+    <svg {...BASE} aria-hidden>
+      {/* Two travelers — a near figure and a companion behind. */}
+      <circle cx="7.5" cy="7" r="2.6" />
+      <path d="M3 16.5a4.5 4.5 0 0 1 9 0" />
+      <path d="M13.2 5.2a2.6 2.6 0 0 1 0 5.1" />
+      <path d="M14 11.6a4.5 4.5 0 0 1 3 4.9" />
+    </svg>
+  );
+}

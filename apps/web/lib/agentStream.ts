@@ -30,9 +30,11 @@ import type {
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  IntakeCompleteFrame,
   ItineraryUpdatedFrame,
   MoodFrame,
   NodeUpdatedFrame,
+  PartyUpdatedFrame,
   SseFrame,
   SurfaceFrame,
 } from "./agentStream.types";
@@ -48,9 +50,11 @@ export type {
   ErrorFrame,
   ExperienceSnapshot,
   FirstTokenFrame,
+  IntakeCompleteFrame,
   ItineraryUpdatedFrame,
   MoodFrame,
   NodeUpdatedFrame,
+  PartyUpdatedFrame,
   SseFrame,
   SurfaceFrame,
 } from "./agentStream.types";
@@ -72,6 +76,8 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "draft_assembled",
   "node_updated",
   "itinerary_updated",
+  "party_updated",
+  "intake_complete",
   "mood",
   "activity",
   "surface",
@@ -116,6 +122,11 @@ function isSseFrame(value: unknown): value is SseFrame {
   if (type === "mood") {
     const v = value as { mood_id?: unknown };
     if (typeof v.mood_id !== "string") return false;
+  }
+  if (type === "party_updated") {
+    const member = (value as { member?: unknown }).member;
+    if (!member || typeof member !== "object") return false;
+    if (typeof (member as { id?: unknown }).id !== "string") return false;
   }
   if (type === "activity") {
     const v = value as { phase?: unknown };
@@ -208,6 +219,24 @@ export type UseAgentStreamOptions = {
    * while keeping in-session graph state.
    */
   onItineraryUpdated?: (frame: ItineraryUpdatedFrame) => void;
+  /**
+   * Fires when the agent records/updates a party member (whitelisted subset —
+   * name + relationship only). The intake details card renders "who's coming"
+   * from it; other surfaces can ignore.
+   */
+  onPartyUpdated?: (frame: PartyUpdatedFrame) => void;
+  /**
+   * Fires when the agent calls ``complete_intake`` — the immersive first
+   * conversation is done. The intake surface docks the chat and navigates to
+   * the trip dashboard.
+   */
+  onIntakeComplete?: (frame: IntakeCompleteFrame) => void;
+  /**
+   * Extra fields merged into the turn POST body alongside ``content``. The
+   * immersive intake surface sends ``{surface: "intake"}`` so the backend
+   * keeps the agent in intake mode for the whole screen.
+   */
+  extraBody?: Record<string, unknown>;
   /**
    * Fires when the agent calls ``set_mood`` to shift basecamp ambience.
    * The basecamp shell wires this to its current-mood state which
@@ -309,7 +338,7 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
             "Content-Type": "application/json",
             Accept: "text/event-stream",
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ ...current.extraBody, content }),
           signal: controller.signal,
         });
       } catch (err) {
@@ -379,6 +408,12 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "itinerary_updated":
                 current.onItineraryUpdated?.(frame);
                 break;
+              case "party_updated":
+                current.onPartyUpdated?.(frame);
+                break;
+              case "intake_complete":
+                current.onIntakeComplete?.(frame);
+                break;
               case "mood":
                 current.onMood?.(frame);
                 break;
@@ -445,6 +480,12 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "itinerary_updated":
         current.onItineraryUpdated?.(frame);
+        break;
+      case "party_updated":
+        current.onPartyUpdated?.(frame);
+        break;
+      case "intake_complete":
+        current.onIntakeComplete?.(frame);
         break;
       case "mood":
         current.onMood?.(frame);

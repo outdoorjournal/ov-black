@@ -323,7 +323,8 @@ export function ConciergeChat({
           onDismiss={(id) => storeApi.getState().dismissProposal(id)}
           onSubmit={handleSubmit}
           {...(onScrollToNode ? { onScrollToNode } : {})}
-          disabled={!canChat || streaming}
+          disabled={!canChat}
+          sending={streaming}
           hideHeader={hideHeader}
           working={working}
         />
