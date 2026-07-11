@@ -23,6 +23,9 @@ export interface VerticalNodeMeta extends NodeMeta {
   from_location?: { lat: number; lng: number; label?: string };
   to_location?: { lat: number; lng: number; label?: string };
   ambient_image?: string;
+  /** The editorial "moments" gallery (OV adventures) — journey beats borrow
+   *  a shot from here when the vendor gives their day no image of its own. */
+  gallery?: Array<{ url?: string; caption?: string; credit?: string }>;
   lane?: number;
   weather_emoji?: string;
   night_bar?: boolean;

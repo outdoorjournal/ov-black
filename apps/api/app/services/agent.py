@@ -1364,6 +1364,7 @@ async def stream_turn(
     # ── B. Retry envelope + streaming ──────────────────────────────────────
     max_retries = settings.agent_max_retries
     first_token_deadline = settings.agent_first_token_timeout_seconds
+    tool_liveness_deadline = settings.agent_tool_liveness_timeout_seconds
     started = time.monotonic()
 
     # Payload contract — new-runtime fields + the legacy ``input`` field so
@@ -1416,6 +1417,13 @@ async def stream_turn(
 
     while True:
         got_first_byte = False
+        # Whether a tool is mid-execution (an activity 'call' seen without its
+        # matching 'result'). While True the wait for the next upstream event
+        # is bounded by the wider tool-liveness deadline, not the first-token
+        # one: a running tool is provably alive but silent on the wire for up
+        # to its own HTTP timeout, so the tight first-token window would cut a
+        # legitimately-working tool-first turn. Reset per attempt.
+        tool_in_flight = False
         try:
             stream = runtime.invoke_stream(
                 agentcore_session_id=agentcore_session_id,
@@ -1435,7 +1443,10 @@ async def stream_turn(
                     # wall-clock check doomed every retry on arrival).
                     try:
                         if first_token_ms is None:
-                            with anyio.fail_after(first_token_deadline):
+                            deadline = (
+                                tool_liveness_deadline if tool_in_flight else first_token_deadline
+                            )
+                            with anyio.fail_after(deadline):
                                 event = await anext(events_iter)
                         else:
                             event = await anext(events_iter)
@@ -1635,6 +1646,20 @@ async def stream_turn(
                         }
                         got_first_byte = True
                         yield _sse_encode(forwarded)
+                    elif kind == "activity":
+                        # Anonymous work pulse. Beyond re-arming the liveness
+                        # window (it proves the runtime is alive), a 'call'
+                        # phase marks a tool as executing so the next silent
+                        # gap gets the wider tool-liveness deadline, and its
+                        # 'result' phase clears it. Forwarded verbatim — the
+                        # browser animates "working" on it.
+                        phase = event.get("phase")
+                        if phase == "call":
+                            tool_in_flight = True
+                        elif phase == "result":
+                            tool_in_flight = False
+                        got_first_byte = True
+                        yield _sse_encode(event)
                     else:
                         # Unknown event type — forward unchanged.
                         got_first_byte = True

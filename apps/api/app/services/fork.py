@@ -814,6 +814,38 @@ async def _apply_moved(
     return _ok(change)
 
 
+def _fold_trip_metadata(baseline: Itinerary, fork: Itinerary) -> None:
+    """Fill unset trunk trip-level fields from the fork on publish.
+
+    The reconcile diff only ever covers NODES; the trip's own title / brief /
+    timing live on the itinerary row and would otherwise never reach the trunk.
+    For a solo traveler — who builds entirely in their private fork — that
+    leaves the published trunk blank ("Your itinerary" with no dates). So on
+    every reconcile we copy each trip-level field from the fork into the trunk,
+    but ONLY where the trunk's own value is still unset: an advisor who has
+    curated the trunk's title/brief/window keeps it, and we never overwrite it
+    with the fork's (which may still be the auto-generated ``"… (fork)"``
+    placeholder). Timing is a coupled block (kind + window + anchor), so it
+    copies whole-or-not-at-all keyed off the trunk having no timing_kind.
+    """
+    auto_title = f"{baseline.title} (fork)"
+    if (
+        not (baseline.title or "").strip()
+        and (fork.title or "").strip()
+        and fork.title != auto_title
+    ):
+        baseline.title = fork.title
+    if baseline.brief is None and fork.brief is not None:
+        baseline.brief = fork.brief
+    if baseline.timing_kind is None and fork.timing_kind is not None:
+        baseline.timing_kind = fork.timing_kind
+        baseline.date_start = fork.date_start
+        baseline.date_end = fork.date_end
+        baseline.duration_nights = fork.duration_nights
+        baseline.timing_note = fork.timing_note
+        baseline.days_anchor = fork.days_anchor
+
+
 async def reconcile_fork(
     session: AsyncSession,
     actor: ActorContext,
@@ -951,15 +983,20 @@ async def reconcile_fork(
     fork_row = (
         await session.execute(select(Itinerary).where(Itinerary.id == fork_id))
     ).scalar_one()
+    baseline_row = (
+        await session.execute(select(Itinerary).where(Itinerary.id == baseline_id))
+    ).scalar_one()
     if all_covered and not unresolved:
         fork_row.fork_status = ForkStatus.reconciled
     fork_row.reconcile_requested_at = None
     fork_row.reconcile_request_note = None
+    # Publish the fork's trip-level title/brief/timing onto the trunk (the diff
+    # only carries node changes), filling any trunk field the traveler's working
+    # copy owns but the trunk never had.
+    _fold_trip_metadata(baseline_row, fork_row)
     await session.commit()
     await session.refresh(fork_row)
-    baseline_row = (
-        await session.execute(select(Itinerary).where(Itinerary.id == baseline_id))
-    ).scalar_one()
+    await session.refresh(baseline_row)
 
     logger.info(
         "fork.reconcile",

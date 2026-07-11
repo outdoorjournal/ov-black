@@ -213,6 +213,36 @@ def test_summarize_offer_arrival_from_last_segment() -> None:
     assert summary["arrive_at"] == "2026-08-02T13:45:00-07:00"
 
 
+def test_summarize_offer_round_trip_endpoints_are_outbound() -> None:
+    """A round-trip offer reports the OUTBOUND endpoints, not origin→origin.
+
+    Regression: a DTW→NRT search with a return date yields a two-slice offer
+    (DTW→NRT, NRT→DTW). Reading the last slice's destination collapsed the card
+    to DTW→DTW. Both endpoints must come off the first (outbound) slice.
+    """
+    offer = {
+        "slices": [
+            {
+                "origin": {"iata_code": "DTW"},
+                "destination": {"iata_code": "NRT"},
+                "segments": [
+                    _seg("DTW", "2026-08-01T11:00:00", "NRT", "2026-08-02T14:00:00", None, None),
+                ],
+            },
+            {
+                "origin": {"iata_code": "NRT"},
+                "destination": {"iata_code": "DTW"},
+                "segments": [
+                    _seg("NRT", "2026-08-10T17:00:00", "DTW", "2026-08-10T15:00:00", None, None),
+                ],
+            },
+        ]
+    }
+    summary = summarize_offer(offer)
+    assert summary["iata_from"] == "DTW"
+    assert summary["iata_to"] == "NRT"
+
+
 def test_summarize_offer_localize_falls_back_without_time_zone() -> None:
     """No airport ``time_zone`` → keep the raw offset-less string (best effort)."""
     offer = {

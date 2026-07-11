@@ -223,6 +223,108 @@ def test_unknown_source_returns_400(
     assert resp.json()["detail"] == "unknown_source"
 
 
+# ── round-trip flight → one node per leg ───────────────────────────────────
+
+
+def _round_trip_flight_item() -> FlightItem:
+    def _place(code: str, tz: str) -> dict[str, Any]:
+        return {"iata_code": code, "city_name": code, "time_zone": tz}
+
+    dtw, nrt = _place("DTW", "America/Detroit"), _place("NRT", "Asia/Tokyo")
+    item = normalize_duffel_offer(
+        {
+            "id": "off_roundtrip",
+            "total_amount": "4200.00",
+            "total_currency": "USD",
+            "slices": [
+                {
+                    "origin": dtw,
+                    "destination": nrt,
+                    "segments": [
+                        {
+                            "origin": dtw,
+                            "destination": nrt,
+                            "departing_at": "2026-09-01T11:00:00",
+                            "arriving_at": "2026-09-02T14:30:00",
+                        }
+                    ],
+                },
+                {
+                    "origin": nrt,
+                    "destination": dtw,
+                    "segments": [
+                        {
+                            "origin": nrt,
+                            "destination": dtw,
+                            "departing_at": "2026-09-10T17:00:00",
+                            "arriving_at": "2026-09-10T15:30:00",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    assert isinstance(item, FlightItem)
+    return item
+
+
+@pytest.fixture()
+def override_round_trip_registry():
+    provider = FakeDuffelProvider(_round_trip_flight_item())
+    registry = InventoryProviderRegistry()
+    registry.register(provider)
+    fastapi_app.dependency_overrides[get_inventory_registry] = lambda: registry
+    try:
+        yield provider
+    finally:
+        fastapi_app.dependency_overrides.pop(get_inventory_registry, None)
+
+
+def test_round_trip_flight_creates_two_nodes(
+    client: TestClient,
+    captured_graph_writes: dict[str, list[dict[str, Any]]],
+    override_round_trip_registry: FakeDuffelProvider,
+    auth_headers: dict[str, str],
+) -> None:
+    """A round-trip Duffel offer lands as outbound + return nodes.
+
+    Both share the offer's source_id (booking is atomic); the whole-ticket fare
+    rides only the outbound so trip totals don't double-count. The response is
+    the outbound with the return under ``additional_nodes``.
+    """
+    from decimal import Decimal
+
+    resp = client.post(
+        f"/itinerary/{_IID}/nodes/from-inventory",
+        json={"source": "duffel", "source_id": "off_roundtrip"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    nodes = captured_graph_writes["nodes"]
+    assert len(nodes) == 2
+    outbound, ret = nodes
+    assert outbound["metadata"]["iata_from"] == "DTW"
+    assert outbound["metadata"]["iata_to"] == "NRT"
+    assert ret["metadata"]["iata_from"] == "NRT"
+    assert ret["metadata"]["iata_to"] == "DTW"
+    # Same bookable offer.
+    assert outbound["source_id"] == ret["source_id"] == "off_roundtrip"
+    # Fare on the outbound only.
+    assert outbound["cost_amount"] == Decimal("4200.00")
+    assert ret["cost_amount"] is None
+    # Each leg scheduled at its own departure.
+    assert outbound["starts_at"].startswith("2026-09-01T11:00:00")
+    assert ret["starts_at"].startswith("2026-09-10T17:00:00")
+
+    body = resp.json()
+    assert body["metadata"]["iata_to"] == "NRT"
+    assert len(body["additional_nodes"]) == 1
+    assert body["additional_nodes"][0]["metadata"]["iata_to"] == "DTW"
+    # The nested leg carries no siblings of its own.
+    assert body["additional_nodes"][0]["additional_nodes"] == []
+
+
 # ── multi-day subgraph materialization (OV adventures) ─────────────────────
 
 OV_TRIP_FIXTURE = Path(__file__).parent / "fixtures" / "ov_trip_simien.json"

@@ -21,10 +21,15 @@ record_party_member → update_trip_details → update_trip_timing → set_mood`
 then `complete_intake` on "let's move on"; trunk untouched, fork carried
 title/brief/timing). QA-4 covered by the gate condition (`isOwnBuild`) +
 unit suites; QA-15 = 542 web / 117 agent / 1061 api tests, ruff + mypy +
-tsc + eslint all green. Known follow-up: `record_party_member` writes the
-durable household member (the intake details card shows them), but nothing
-yet attaches them to the trip's own travelers edge — the dashboard party
-chip still reads "Just you" after intake names a companion.
+tsc + eslint all green. Party-attach (resolved 2026-07-11): `record_party_member`
+used to write only the durable household member, leaving the trip's travelers
+edge empty so the dashboard chip read "Just you". Now (1) `record_party_member`
+also seats each new companion on the session's pinned itinerary (skipping the
+account holder); (2) `add_trip_traveler` / `remove_trip_traveler` seat or unseat
+an EXISTING household member on the current trip, closing the returning-traveller
+case; and (3) `resolve_party_size` is companions + 1 (the account holder is the
+implicit floor), so per-person costs expand for the whole group. The chip still
+shows companions and reads "Just you" solo — no UI change.
 
 ---
 

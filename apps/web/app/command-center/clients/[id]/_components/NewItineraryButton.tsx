@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 
+import { Button } from "@/components/ui/button";
+
 import { startItineraryForClientAction } from "../actions";
 
 /**
@@ -27,14 +29,15 @@ export function NewItineraryButton({ clientId }: { clientId: string }) {
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <button
+      <Button
         type="button"
+        variant="brand"
+        size="sm"
         onClick={onClick}
         disabled={isPending}
-        className="rounded-full border border-paper/25 px-3 py-1 font-sans text-[10px] uppercase tracking-label text-paper/70 transition-colors hover:border-paper hover:text-paper disabled:opacity-50"
       >
         {isPending ? "Creating…" : "New itinerary"}
-      </button>
+      </Button>
       {error ? (
         <p
           role="alert"

@@ -42,6 +42,14 @@ export function formatClock(iso: string, tzOffsetHours: number): string {
 
 export function formatDuration(minutes: number): string {
   if (minutes < 60) return `${Math.round(minutes)}m`;
+  // Day-scale durations (multi-day safaris, expeditions) read as days, not
+  // a wall of hours — "4d" / "2d 6h", with sub-hour remainders dropped.
+  if (minutes >= 24 * 60) {
+    const d = Math.floor(minutes / (24 * 60));
+    const h = Math.round((minutes - d * 24 * 60) / 60);
+    if (h === 24) return `${d + 1}d`;
+    return h === 0 ? `${d}d` : `${d}d ${h}h`;
+  }
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes - h * 60);
   if (m === 0) return `${h}h`;

@@ -13,7 +13,9 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useRef, useState } from "react";
 
+import { sunColorAtHour } from "../../model/sun";
 import { formatDuration } from "../../model/time";
+import { itineraryGraphStore } from "../../store/itineraryGraphStore";
 import { elisionExpandSeconds, prefersReducedMotion, scrollBehaviorFor } from "./motion";
 import type { JournalElision } from "./toJournal";
 import { QuietCircle, SPINE_COL_PX } from "./Spine";
@@ -22,40 +24,169 @@ const spineColStyle = {
   "--spine-col": `${SPINE_COL_PX}px`,
 } as React.CSSProperties;
 
-/** A long gap: small circle on the line, a whispered caption, no card. */
-export function VirtualNode({
-  caption,
+// The gap's lane grows with the journal zoom so "time passing" reads, but stays
+// clamped: a short gap never collapses to nothing and an open day never runs
+// off the page.
+const GAP_LANE_MIN_PX = 14;
+const GAP_LANE_MAX_PX = 240;
+
+function gapLaneHeight(minutes: number, pxPerMinute: number): number {
+  return Math.min(
+    GAP_LANE_MAX_PX,
+    Math.max(GAP_LANE_MIN_PX, minutes * pxPerMinute),
+  );
+}
+
+/** Compact 12-hour clock label for an hour tick ("9a", "12p", "10p"). */
+function formatHourTick(hour: number): string {
+  const h = ((Math.round(hour) % 24) + 24) % 24;
+  const ampm = h < 12 ? "a" : "p";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}${ampm}`;
+}
+
+interface HourTick {
+  hour: number;
+  frac: number;
+}
+
+/** Integer-hour ticks that fall inside a gap span, positioned by fraction of
+ *  the lane. Thinned to ~6 max so a long span shows "occasional" ticks, never a
+ *  crowded ruler. */
+function hourTicks(startHour: number, minutes: number): HourTick[] {
+  const durH = minutes / 60;
+  if (durH <= 0) return [];
+  const end = startHour + durH;
+  const step = durH <= 6 ? 1 : Math.ceil(durH / 6);
+  const ticks: HourTick[] = [];
+  for (let h = Math.ceil(startHour + 1e-6); h < end - 1e-6; h += step) {
+    ticks.push({ hour: h, frac: (h - startHour) / durH });
+  }
+  return ticks;
+}
+
+/** True when a gap spans into evening / night (≥18:00 or before 06:00) —
+ *  drives the dusk wash so "evening" reads without a bar. */
+function crossesDusk(startHour: number, minutes: number): boolean {
+  const end = startHour + minutes / 60;
+  for (let h = Math.floor(startHour); h <= Math.ceil(end); h += 1) {
+    const wrapped = ((h % 24) + 24) % 24;
+    if (wrapped >= 18 || wrapped < 6) return true;
+  }
+  return false;
+}
+
+/**
+ * The shared gap lane: the spine's gutter over an empty stretch, sized to the
+ * time it covers, wearing occasional hour ticks and — through evening/night —
+ * the dusk wash. `children` is the caption beside it (quiet moments carry one;
+ * a plain short gap doesn't).
+ */
+function GapLane({
   minutes,
+  startHour,
+  testid,
+  children,
 }: {
-  caption: string;
   minutes: number;
+  startHour: number;
+  testid: string;
+  children?: React.ReactNode;
 }) {
-  const isFullDay = minutes >= 24 * 60;
+  const pxPerMinute = itineraryGraphStore.useStore((s) => s.journalPxPerMinute);
+  const height = gapLaneHeight(minutes, pxPerMinute);
+  const ticks = hourTicks(startHour, minutes);
+  const dusk = crossesDusk(startHour, minutes);
+  const end = startHour + minutes / 60;
+  const wash = dusk
+    ? `linear-gradient(180deg, ${sunColorAtHour(startHour)} 0%, ${sunColorAtHour((startHour + end) / 2)} 50%, ${sunColorAtHour(end)} 100%)`
+    : undefined;
   return (
     <div
-      data-testid="journal-quiet"
-      className="grid grid-cols-[var(--spine-col)_minmax(0,1fr)] items-center gap-x-4 py-2"
+      data-testid={testid}
+      data-minutes={minutes}
+      className="grid grid-cols-[var(--spine-col)_minmax(0,1fr)] gap-x-4"
       style={spineColStyle}
     >
-      <div className="flex justify-center">
-        <QuietCircle />
+      <div className="relative flex justify-center" style={{ height }}>
+        {/* Dusk wash — a fading sky behind the gutter through evening/night. */}
+        {wash ? (
+          <span
+            aria-hidden
+            data-testid="journal-dusk-wash"
+            className="absolute inset-y-0 w-6 rounded-md"
+            style={{
+              background: wash,
+              opacity: 0.28,
+              maskImage:
+                "radial-gradient(120% 100% at 50% 50%, #000 40%, transparent 100%)",
+              WebkitMaskImage:
+                "radial-gradient(120% 100% at 50% 50%, #000 40%, transparent 100%)",
+            }}
+          />
+        ) : null}
+        {/* Occasional hour ticks — a faint mark + tiny label right of the
+            spine, so a measure of time reads without a full ruler. */}
+        {ticks.map((t) => (
+          <span
+            key={t.hour}
+            aria-hidden
+            data-testid="journal-hour-tick"
+            className="pointer-events-none absolute flex items-center gap-1"
+            style={{
+              top: `${t.frac * 100}%`,
+              left: SPINE_COL_PX / 2 + 3,
+            }}
+          >
+            <span className="h-px w-2 bg-ink/25" />
+            <span className="font-mono text-[8px] leading-none text-ink/35">
+              {formatHourTick(t.hour)}
+            </span>
+          </span>
+        ))}
       </div>
-      <p className="font-serif text-[13px] italic text-ink/45">
-        ~ {caption.toLowerCase()}
-        {isFullDay ? "" : ` · ${formatDuration(minutes)}`} ~
-      </p>
+      {children ? (
+        <div className="flex items-center">{children}</div>
+      ) : (
+        <span />
+      )}
     </div>
   );
 }
 
-/** A short gap: the spine simply continues, a touch longer. */
-export function GapSegment({ minutes }: { minutes: number }) {
+/** A long gap: a whispered caption beside a time-scaled lane with hour ticks. */
+export function VirtualNode({
+  caption,
+  minutes,
+  startHour = 0,
+}: {
+  caption: string;
+  minutes: number;
+  /** Local clock hour the span opens on — places its hour ticks + dusk wash. */
+  startHour?: number;
+}) {
+  const isFullDay = minutes >= 24 * 60;
   return (
-    <div
-      aria-hidden
-      data-testid="journal-gap"
-      className={minutes >= 60 ? "h-8" : "h-4"}
-    />
+    <GapLane minutes={minutes} startHour={startHour} testid="journal-quiet">
+      <p className="flex items-center gap-2 font-serif text-[13px] italic text-ink/45">
+        <QuietCircle />~ {caption.toLowerCase()}
+        {isFullDay ? "" : ` · ${formatDuration(minutes)}`} ~
+      </p>
+    </GapLane>
+  );
+}
+
+/** A short gap: the spine continues, its lane sized to the minutes it covers,
+ *  wearing an hour tick when one falls inside. */
+export function GapSegment({
+  minutes,
+  startHour = 0,
+}: {
+  minutes: number;
+  startHour?: number;
+}) {
+  return (
+    <GapLane minutes={minutes} startHour={startHour} testid="journal-gap" />
   );
 }
 

@@ -11,7 +11,13 @@
 
 import { createContext, useContext } from "react";
 
-type ConciergeControl = { openConcierge: () => void };
+type ConciergeControl = {
+  openConcierge: () => void;
+  /** Bumped every time `openConcierge` fires. Descendants watch it to flash an
+   *  attention cue on Artemis even when the panel is already open — so a click
+   *  that changes no layout still reads as "I heard you". */
+  nudge: number;
+};
 
 const ConciergeControlContext = createContext<ConciergeControl | null>(null);
 
@@ -20,5 +26,5 @@ export const ConciergeControlProvider = ConciergeControlContext.Provider;
 /** Summon the persistent concierge. A no-op outside the shell (e.g. a facet
  *  rendered in isolation under test) so callers never have to null-check. */
 export function useConciergeControl(): ConciergeControl {
-  return useContext(ConciergeControlContext) ?? { openConcierge: () => {} };
+  return useContext(ConciergeControlContext) ?? { openConcierge: () => {}, nudge: 0 };
 }

@@ -160,6 +160,8 @@ async def test_add_line_item_from_node_expands_per_person_by_party_size(
             text("insert into public.parties (id, itinerary_id, label) values (:p, :i, 'all')"),
             {"p": party_id, "i": itin.id},
         )
+        # Two named companions → a party of three (the account holder is the
+        # implicit floor resolve_party_size adds).
         for name in ("a", "b"):
             await db_session.execute(
                 text("insert into public.travelers (party_id, name) values (:p, :n)"),
@@ -187,7 +189,7 @@ async def test_add_line_item_from_node_expands_per_person_by_party_size(
             db_session, _actor(), invoice_id=invoice.id, node_id=node.id
         )
         assert not isinstance(charge, ItineraryError)
-        assert charge.amount == Decimal("1500.00")  # 750 × 2 travelers
+        assert charge.amount == Decimal("2250.00")  # 750 × 3 (2 companions + account holder)
     finally:
         await _cleanup(itin.id)
 

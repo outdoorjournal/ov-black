@@ -773,6 +773,118 @@ async def test_stream_turn_tool_activity_rearms_first_token_deadline(
     assert assistant.content == "Here is the plan."
 
 
+async def test_stream_turn_in_flight_tool_gets_wider_liveness_deadline(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """A single tool call slower than the first-token deadline still survives.
+
+    Regression for tool-first turns dying mid-tool: once an activity 'call'
+    frame proves a tool is executing, the silent gap until its 'result' is
+    bounded by the wider tool-liveness deadline (a tool's own HTTP ceiling),
+    not the tight first-token one. Here the tool runs 0.3 s — over the 0.15 s
+    first-token window but under the 0.5 s tool window — so the turn lives.
+    """
+    tight = Settings(
+        bedrock_agentcore_runtime_arn=settings.bedrock_agentcore_runtime_arn,
+        agent_first_token_timeout_seconds=0.15,
+        agent_tool_liveness_timeout_seconds=0.5,
+        agent_max_retries=0,
+    )
+
+    async def slow_tool_stream() -> AsyncIterator[dict]:
+        import anyio as _anyio
+
+        yield {"type": "activity", "phase": "call"}
+        await _anyio.sleep(0.3)  # > 0.15 s first-token, < 0.5 s tool leash
+        yield {"type": "activity", "phase": "result"}
+        yield {"type": "delta", "text": "Here is the plan."}
+        yield {"type": "done"}
+
+    class SlowToolRuntime:
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
+            return slow_tool_stream()
+
+        async def create_event(self, **_: Any) -> None:
+            return None
+
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            SlowToolRuntime(),
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="find me a flight",
+            settings=tight,
+        )
+    )
+    joined = b"".join(frames)
+    assert b'"type":"error"' not in joined
+    assert b'"type":"delta","text":"Here is the plan."' in joined
+
+    turns = [r for r in factory.turns if isinstance(r, AgentTurn)]
+    assistant = next(t for t in turns if t.role is TurnRole.assistant)
+    assert assistant.error_reason is None
+    assert assistant.content == "Here is the plan."
+
+
+async def test_stream_turn_tool_slower_than_liveness_deadline_fires_fallback(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """A tool that outruns even the wider tool-liveness deadline still cuts.
+
+    The leash is generous but bounded: an activity 'call' with no 'result'
+    within the tool window is a hung runtime, so the stream is cut. Because a
+    byte (the activity pulse) already went out, this is a mid-stream failure
+    with no retry — straight to the fallback.
+    """
+    tight = Settings(
+        bedrock_agentcore_runtime_arn=settings.bedrock_agentcore_runtime_arn,
+        agent_first_token_timeout_seconds=0.1,
+        agent_tool_liveness_timeout_seconds=0.2,
+        agent_max_retries=1,
+    )
+
+    async def hung_tool_stream() -> AsyncIterator[dict]:
+        import anyio as _anyio
+
+        yield {"type": "activity", "phase": "call"}
+        await _anyio.sleep(0.5)  # > 0.2 s tool leash — never returns in time
+        yield {"type": "activity", "phase": "result"}
+        yield {"type": "delta", "text": "too late"}
+        yield {"type": "done"}
+
+    class HungToolRuntime:
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
+            return hung_tool_stream()
+
+        async def create_event(self, **_: Any) -> None:
+            return None
+
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            HungToolRuntime(),
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="find me a flight",
+            settings=tight,
+        )
+    )
+    joined = b"".join(frames)
+    assert b'"type":"error","reason":"upstream_unavailable"' in joined
+    turns = [r for r in factory.turns if isinstance(r, AgentTurn)]
+    error_row = next(t for t in turns if t.role is TurnRole.error)
+    assert error_row.error_reason == "upstream_unavailable"
+    # Mid-stream failure (a byte went out) — no retry attempted.
+    assert error_row.retried == 0
+
+
 async def test_stream_turn_retry_gets_fresh_first_token_window(
     factory: FakeFactory,
     advisor_actor: ActorContext,

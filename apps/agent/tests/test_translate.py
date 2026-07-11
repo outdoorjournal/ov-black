@@ -89,6 +89,49 @@ def test_tool_result_propose_card_maps_to_card_proposed() -> None:
     }
 
 
+def test_propose_flight_round_trip_fans_out_to_two_cards() -> None:
+    # A round-trip from-inventory write returns the outbound node with the return
+    # leg under ``additional_nodes``; the translator fans it into one
+    # card_proposed frame per leg (and strips the envelope from the primary).
+    event = {
+        "tool_result": {
+            "name": "propose_flight",
+            "output": {
+                "id": "n-out",
+                "itinerary_id": "it-1",
+                "metadata": {"iata_from": "DTW", "iata_to": "NRT"},
+                "additional_nodes": [
+                    {
+                        "id": "n-ret",
+                        "itinerary_id": "it-1",
+                        "metadata": {"iata_from": "NRT", "iata_to": "DTW"},
+                        "additional_nodes": [],
+                    }
+                ],
+            },
+        }
+    }
+    frames = _ui(translate_event(event))
+    assert frames == [
+        {
+            "type": "card_proposed",
+            "node": {
+                "id": "n-out",
+                "itinerary_id": "it-1",
+                "metadata": {"iata_from": "DTW", "iata_to": "NRT"},
+            },
+        },
+        {
+            "type": "card_proposed",
+            "node": {
+                "id": "n-ret",
+                "itinerary_id": "it-1",
+                "metadata": {"iata_from": "NRT", "iata_to": "DTW"},
+            },
+        },
+    ]
+
+
 def test_tool_result_assemble_draft_counts_edges_via_list() -> None:
     event = {
         "tool_result": {
@@ -554,6 +597,37 @@ def test_party_member_result_becomes_whitelisted_party_updated() -> None:
     }
     blob = json.dumps(frame)
     assert "shellfish" not in blob and "asthma" not in blob and "secret" not in blob
+
+
+def test_record_profile_fact_result_becomes_kind_only_profile_updated() -> None:
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("t1", "record_profile_fact")))
+    frames = _ui(
+        t.translate(
+            _tool_result_message_event(
+                "t1",
+                {
+                    "id": "pf-1",
+                    "kind": "dream_signal",
+                    # The traveler-told text must NEVER ride the frame — the
+                    # onboarding ledger only needs the kind to light a checkmark.
+                    "text": "a lodge under the northern lights",
+                    "source_kind": "traveler_told",
+                },
+            )
+        )
+    )
+    assert frames == [{"type": "profile_updated", "kind": "dream_signal"}]
+    assert "northern lights" not in json.dumps(frames)
+
+
+def test_record_profile_fact_error_result_emits_nothing() -> None:
+    t = EventTranslator()
+    list(t.translate(_assistant_tool_use_event("t1", "record_profile_fact")))
+    frames = _ui(
+        t.translate(_tool_result_message_event("t1", {"error": "bad_request"}))
+    )
+    assert frames == []
 
 
 def test_complete_intake_result_becomes_intake_complete() -> None:

@@ -33,6 +33,12 @@ export type AgentSurfaceProps = {
   onChooseOption: (option: OptionView) => void;
   /** The chat window the panel slides out from (measured, not re-parented). */
   anchorRef: RefObject<HTMLElement | null>;
+  /**
+   * Optional taller element the panel's vertical extent matches. The slide
+   * edge stays at anchorRef; top/height come from here — for hosts whose chat
+   * window starts partway down a full-height column (basecamp first touch).
+   */
+  verticalAnchorRef?: RefObject<HTMLElement | null>;
   /** Which side of the chat window the panel emerges toward. */
   side: "left" | "right";
 };
@@ -54,20 +60,25 @@ function surfaceKey(surface: ActiveSurface): string {
   return `${surface.kind}:${surface.surfaceId}`;
 }
 
-function measureFlyout(anchor: HTMLElement, side: "left" | "right"): FlyoutBox {
+function measureFlyout(
+  anchor: HTMLElement,
+  side: "left" | "right",
+  verticalAnchor?: HTMLElement | null,
+): FlyoutBox {
   const rect = anchor.getBoundingClientRect();
+  const vRect = verticalAnchor ? verticalAnchor.getBoundingClientRect() : rect;
   if (side === "right") {
     const available = window.innerWidth - rect.right - VIEWPORT_MARGIN;
     const width = Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, available));
     // When the viewport is too tight, pull the box left so it stays on
     // screen — the panel then overlaps the chat's edge rather than clipping.
     const left = Math.min(rect.right, window.innerWidth - VIEWPORT_MARGIN - width);
-    return { top: rect.top, left, width, height: rect.height };
+    return { top: vRect.top, left, width, height: vRect.height };
   }
   const available = rect.left - VIEWPORT_MARGIN;
   const width = Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, available));
   const left = Math.max(rect.left - width, VIEWPORT_MARGIN);
-  return { top: rect.top, left, width, height: rect.height };
+  return { top: vRect.top, left, width, height: vRect.height };
 }
 
 export function AgentSurface({
@@ -76,6 +87,7 @@ export function AgentSurface({
   onClose,
   onChooseOption,
   anchorRef,
+  verticalAnchorRef,
   side,
 }: AgentSurfaceProps) {
   // Portals need a browser; render nothing during SSR/hydration.
@@ -90,7 +102,7 @@ export function AgentSurface({
     if (!surface) return;
     const measure = () => {
       const anchor = anchorRef.current;
-      if (anchor) setBox(measureFlyout(anchor, side));
+      if (anchor) setBox(measureFlyout(anchor, side, verticalAnchorRef?.current));
     };
     measure();
     window.addEventListener("resize", measure);
@@ -99,7 +111,7 @@ export function AgentSurface({
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, [surface, side, anchorRef]);
+  }, [surface, side, anchorRef, verticalAnchorRef]);
 
   useEffect(() => {
     if (!surface) return;

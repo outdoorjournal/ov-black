@@ -475,3 +475,50 @@ describe("editable rail detail", () => {
     );
   });
 });
+
+// ── A flight's schedule is pinned to its booking (read-only + nudge) ───────────
+describe("pinned flight — time is the airline's, not the traveler's", () => {
+  const FLIGHT = mkNode("flt", {
+    type: "flight",
+    title: "Flight to Santiago",
+    metadata: {
+      start_time: "2024-06-20T16:10:00+09:00",
+      duration_minutes: 700,
+      depart_at: "2024-06-20T16:10:00+09:00",
+      arrive_at: "2024-06-21T03:50:00+09:00",
+    },
+  });
+
+  test("on the fork it offers a pinned nudge, not a drag handle", () => {
+    renderJournal({ itinerary: FORK, nodes: [FLIGHT] });
+    // No drag handle — the flight can't be re-timed by dragging.
+    expect(screen.queryByTestId("journal-drag-handle")).not.toBeInTheDocument();
+    // The nudge explains why, and reveals the concierge route on tap.
+    const nudge = screen.getByTestId("journal-flight-pinned");
+    expect(nudge).toHaveTextContent("Pinned to your flight booking");
+    fireEvent.click(within(nudge).getByText("Pinned to your flight booking"));
+    expect(within(nudge).getByText("Ask your concierge")).toBeInTheDocument();
+  });
+
+  test("the rail shows the time read-only (no editable input)", () => {
+    renderJournal({ itinerary: FORK, nodes: [FLIGHT] });
+    fireEvent.click(screen.getByText("Flight to Santiago"));
+    expect(screen.getByTestId("journal-rail-time-pinned")).toHaveTextContent(
+      "Set by the airline",
+    );
+    // The editable time affordance is absent for a pinned flight.
+    expect(screen.queryByTestId("journal-rail-edit-time")).not.toBeInTheDocument();
+  });
+
+  test("moveNode is a no-op on a pinned flight (no re-time, no network write)", () => {
+    renderJournal({ itinerary: FORK, nodes: [FLIGHT] });
+    storeApi!.getState().moveNode("flt", "2024-06-21", 720);
+    const moved = storeApi!
+      .getState()
+      .nodes.find((n) => n.id === "flt");
+    expect((moved!.metadata as { start_time?: string }).start_time).toBe(
+      "2024-06-20T16:10:00+09:00",
+    );
+    expect(updateNodeMock).not.toHaveBeenCalled();
+  });
+});

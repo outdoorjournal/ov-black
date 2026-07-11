@@ -22,13 +22,13 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import aliased
 
 from app.auth import AuthenticatedUser, require_user
@@ -39,6 +39,10 @@ from app.models import (
     ForkStatus,
     InvoiceStatus,
     Itinerary,
+    ItineraryTimingKind,
+    Node,
+    NodeStatus,
+    NodeType,
     ProfileFact,
     SessionAudience,
     TurnRole,
@@ -77,6 +81,23 @@ class MyItinerarySummary(BaseModel):
     # traveler's working copy. Basecamp uses it to label an empty trunk "your
     # working version" instead of the advisor-is-crafting teaser.
     has_open_fork: bool = False
+    # Trip timeframe for the basecamp tile subtitle. Sourced from the trunk,
+    # falling back to the caller's open fork — a solo traveler sets the dates in
+    # their working copy while the trunk is still empty. ``timing_kind`` tells the
+    # tile whether a real range exists (``exact``/``window``) or the trip is still
+    # ``flexible`` (show the target ``duration_nights`` instead).
+    date_start: date | None = None
+    date_end: date | None = None
+    timing_kind: ItineraryTimingKind | None = None
+    duration_nights: int | None = None
+    # A representative hero image for the tile, pulled from the trip's most
+    # evocative node (destination → hotel → experience → meal). ``cover_image``
+    # is a ready-to-use URL (inventory snapshot / ambient); ``cover_photo_token``
+    # is a signed Google Places token the browser turns into a proxied URL via
+    # ``placePhotoUrl`` (the same path the node cards use). At most one is set;
+    # both null → the tile falls back to its gradient placeholder.
+    cover_image: str | None = None
+    cover_photo_token: str | None = None
 
 
 class MyItinerariesResponse(BaseModel):
@@ -85,6 +106,76 @@ class MyItinerariesResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     itineraries: list[MyItinerarySummary]
+
+
+# Node kinds that carry evocative imagery, in the order we'd rather hero on a
+# basecamp tile: a destination shot beats a hotel, which beats an experience,
+# which beats a meal. Transit / notes / free-time never carry a cover.
+_COVER_NODE_TYPES = (
+    NodeType.destination,
+    NodeType.hotel,
+    NodeType.experience,
+    NodeType.meal,
+)
+
+
+def _extract_cover(metadata: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Pull ``(cover_image, photo_token)`` from a node's metadata blob.
+
+    Mirrors the priority the node cards render with: a signed Places
+    ``photo_token`` (proxied client-side) or a ready ``snapshot.cover_image`` /
+    ``ambient_image`` URL. Returns ``(None, None)`` when the node has neither.
+    """
+    snapshot = metadata.get("snapshot")
+    cover_image = snapshot.get("cover_image") if isinstance(snapshot, dict) else None
+    if not cover_image:
+        cover_image = metadata.get("ambient_image")
+    place = metadata.get("place")
+    photo_token = place.get("photo_token") if isinstance(place, dict) else None
+    cover_image = cover_image if isinstance(cover_image, str) and cover_image else None
+    photo_token = photo_token if isinstance(photo_token, str) and photo_token else None
+    return cover_image, photo_token
+
+
+async def _cover_images_by_trunk(
+    session: AsyncSession,
+    id_to_trunk: dict[uuid.UUID, uuid.UUID],
+) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+    """Choose one hero image per trunk from its (and its fork's) content nodes.
+
+    ``id_to_trunk`` maps every content-bearing itinerary id — each trunk plus
+    the caller's open fork of it — back to the trunk the tile keys off, so a
+    solo traveler whose nodes live only in their fork still gets a cover. Nodes
+    are scanned in cover-preference order (see ``_COVER_NODE_TYPES``) and the
+    first image-bearing node wins per trunk.
+    """
+    if not id_to_trunk:
+        return {}
+    type_pref = case(
+        *((Node.type == kind, i) for i, kind in enumerate(_COVER_NODE_TYPES)),
+        else_=len(_COVER_NODE_TYPES),
+    )
+    rows = (
+        await session.execute(
+            select(Node.itinerary_id, Node.metadata_)
+            .where(
+                Node.itinerary_id.in_(list(id_to_trunk.keys())),
+                Node.deleted_at.is_(None),
+                Node.status != NodeStatus.discarded,
+                Node.type.in_(_COVER_NODE_TYPES),
+            )
+            .order_by(type_pref, Node.created_at)
+        )
+    ).all()
+    covers: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+    for itin_id, metadata in rows:
+        trunk_id = id_to_trunk.get(itin_id)
+        if trunk_id is None or trunk_id in covers:
+            continue
+        cover_image, photo_token = _extract_cover(metadata or {})
+        if cover_image or photo_token:
+            covers[trunk_id] = (cover_image, photo_token)
+    return covers
 
 
 class MyInvoiceSummary(BaseModel):
@@ -228,6 +319,10 @@ async def list_my_itineraries_endpoint(
             fork.id.label("fork_id"),
             fork.title.label("fork_title"),
             fork.updated_at.label("fork_updated_at"),
+            fork.date_start.label("fork_date_start"),
+            fork.date_end.label("fork_date_end"),
+            fork.timing_kind.label("fork_timing_kind"),
+            fork.duration_nights.label("fork_duration_nights"),
         )
         .where(
             fork.fork_status == ForkStatus.open,
@@ -245,6 +340,10 @@ async def list_my_itineraries_endpoint(
                 open_fork.c.fork_id,
                 open_fork.c.fork_title,
                 open_fork.c.fork_updated_at,
+                open_fork.c.fork_date_start,
+                open_fork.c.fork_date_end,
+                open_fork.c.fork_timing_kind,
+                open_fork.c.fork_duration_nights,
             )
             .outerjoin(open_fork, open_fork.c.trunk_id == Itinerary.id)
             .where(
@@ -254,6 +353,16 @@ async def list_my_itineraries_endpoint(
             .order_by(Itinerary.updated_at.desc())
         )
     ).all()
+
+    # Map every content-bearing itinerary (each trunk + the caller's fork of it)
+    # back to its trunk, then pick one hero image per trunk in a single query.
+    id_to_trunk: dict[uuid.UUID, uuid.UUID] = {}
+    for row in rows:
+        id_to_trunk[row[0].id] = row[0].id
+        if row.fork_id is not None:
+            id_to_trunk[row.fork_id] = row[0].id
+    covers = await _cover_images_by_trunk(session, id_to_trunk)
+
     return MyItinerariesResponse(
         itineraries=[
             MyItinerarySummary(
@@ -269,8 +378,25 @@ async def list_my_itineraries_endpoint(
                 if fork_updated_at is not None
                 else row.updated_at,
                 has_open_fork=fork_id is not None,
+                # Timing: trunk wins once set, else the fork's working copy.
+                date_start=row.date_start or fork_date_start,
+                date_end=row.date_end or fork_date_end,
+                timing_kind=row.timing_kind or fork_timing_kind,
+                duration_nights=row.duration_nights or fork_duration_nights,
+                cover_image=covers.get(row.id, (None, None))[0],
+                cover_photo_token=covers.get(row.id, (None, None))[1],
             )
-            for row, bucket, fork_id, fork_title, fork_updated_at in rows
+            for (
+                row,
+                bucket,
+                fork_id,
+                fork_title,
+                fork_updated_at,
+                fork_date_start,
+                fork_date_end,
+                fork_timing_kind,
+                fork_duration_nights,
+            ) in rows
         ]
     )
 

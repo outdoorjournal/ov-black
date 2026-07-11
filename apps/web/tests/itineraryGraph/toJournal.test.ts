@@ -458,3 +458,45 @@ describe("toJournal · grouped_with brackets", () => {
     expect(kinds(entries)).toContain("alt");
   });
 });
+
+// ── Time-shape fields (traveler-journal) ──────────────────────────────────────
+// The fields that let the spine read time: each card's duration (its bar) and
+// each gap's opening clock hour (its ticks + dusk wash).
+describe("toJournal · time-shape fields", () => {
+  test("a node entry carries its duration (metadata value, else 60m default)", () => {
+    const result = journal([
+      node("timed", "2024-06-20T09:00:00+09:00", { duration_minutes: 150 }),
+      // No duration in metadata → the 60m fallback.
+      node("bare", "2024-06-20T14:00:00+09:00", {
+        metadata: { start_time: "2024-06-20T14:00:00+09:00" },
+      }),
+    ]);
+    const entries = daySection(result, 0).entries;
+    const timed = entries.find((e) => e.kind === "node" && e.node.id === "timed");
+    const bare = entries.find((e) => e.kind === "node" && e.node.id === "bare");
+    expect(timed?.kind === "node" && timed.durationMinutes).toBe(150);
+    expect(bare?.kind === "node" && bare.durationMinutes).toBe(60);
+  });
+
+  test("a gap opens on the previous card's end hour (local clock)", () => {
+    // 09:00 for 60m ends 10:00; the next card at 11:00 → a 60m gap opening at 10.
+    const result = journal([
+      node("a", "2024-06-20T09:00:00+09:00", { duration_minutes: 60 }),
+      node("b", "2024-06-20T11:00:00+09:00"),
+    ]);
+    const gap = daySection(result, 0).entries.find((e) => e.kind === "gap");
+    if (gap?.kind !== "gap") throw new Error("expected a gap entry");
+    expect(gap.startHour).toBeCloseTo(10, 5);
+  });
+
+  test("a quiet span carries the clock hour it opens on (its ticks + wash)", () => {
+    // 10:00 for 60m ends 11:00; next card at 16:00 → a 300m quiet opening at 11.
+    const result = journal([
+      node("a", "2024-06-20T10:00:00+09:00", { duration_minutes: 60 }),
+      node("b", "2024-06-20T16:00:00+09:00"),
+    ]);
+    const quiet = daySection(result, 0).entries.find((e) => e.kind === "quiet");
+    if (quiet?.kind !== "quiet") throw new Error("expected a quiet entry");
+    expect(quiet.startHour).toBeCloseTo(11, 5);
+  });
+});

@@ -28,6 +28,7 @@ import {
 } from "./layout";
 import {
   formatDayTile,
+  formatMinuteOfDay,
   localMinuteOfDay,
   offsetHoursOr,
 } from "../../model/horizontalTime";
@@ -414,6 +415,67 @@ export function HorizontalCanvas({
                     </svg>
                   </button>
                 ) : null}
+              </div>
+            );
+          })}
+
+        {/* Multi-day continuations — an item that runs past midnight paints
+            each covered later day: the same gutter bar dropping from the top
+            of the column to where the item ends that day, plus a small chip
+            ("continues" / "lands 07:30") so the day never reads as empty.
+            The chip is clickable and opens the same card detail. */}
+        {layout.continuations
+          .filter((c) => c.node.id !== ghostId)
+          .map((c) => {
+            const left = c.x - axisWidth;
+            const chipLabel = c.isFinal
+              ? `${c.node.type === "flight" ? "lands" : "until"} ${formatMinuteOfDay(c.endMin)}`
+              : "continues";
+            const spanLabel =
+              c.spanDays > 2 ? ` · day ${c.dayOfSpan} of ${c.spanDays}` : "";
+            // Final day: chip sits just above the end line (the night above
+            // is the item itself, so nothing else lives there). Covered
+            // middle days: chip at the top of the column.
+            const chipTop = c.isFinal ? Math.max(c.y + 4, c.y + c.barH - 30) : c.y + 6;
+            return (
+              <div key={`cont-${c.node.id}-${c.dayKey}`}>
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute rounded-full"
+                  style={{
+                    top: c.y,
+                    left: left - DURATION_BAR_WIDTH - 4,
+                    width: DURATION_BAR_WIDTH,
+                    height: c.barH,
+                    backgroundImage: `linear-gradient(180deg, transparent, ${durationBarColor(c.node.type)} 22px)`,
+                    opacity: 0.55,
+                  }}
+                />
+                <button
+                  type="button"
+                  data-testid="continuation-chip"
+                  data-node-id={c.node.id}
+                  data-day={c.dayKey}
+                  onClick={() => onCardClick(c.node.id)}
+                  onMouseEnter={() => onCardHover(c.node.id)}
+                  onMouseLeave={() => onCardHover(null)}
+                  title={c.node.title}
+                  className="absolute z-10 flex max-w-full items-center gap-1.5 truncate rounded-md border border-ink/15 bg-paper/90 px-2 py-1 text-left shadow-xs backdrop-blur-xs transition-colors hover:border-ink/35"
+                  style={{ top: chipTop, left, maxWidth: c.w }}
+                >
+                  <span
+                    aria-hidden
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: durationBarColor(c.node.type) }}
+                  />
+                  <span className="truncate font-serif text-[11px] leading-tight text-ink/80">
+                    {c.node.title}
+                  </span>
+                  <span className="shrink-0 font-sans text-[9px] uppercase tracking-[0.14em] text-ink/50">
+                    {chipLabel}
+                    {spanLabel}
+                  </span>
+                </button>
               </div>
             );
           })}

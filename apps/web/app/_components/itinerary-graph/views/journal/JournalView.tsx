@@ -78,10 +78,11 @@ import { JournalAltGroup, JournalGhostNode, JournalNode } from "./JournalNode";
 import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
 
 import { AddNoteOnLine } from "./JournalNotes";
+import { JournalZoomControls } from "./JournalZoomControls";
 import { MoreBelowCue } from "./MoreBelow";
 import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
-import { NightSegment, SPINE_COL_PX } from "./Spine";
+import { JOURNEY_INDENT_PX, NightSegment, SPINE_COL_PX } from "./Spine";
 import { toJournal, type JournalDaySection } from "./toJournal";
 import {
   isGhostId,
@@ -181,6 +182,25 @@ export function JournalView({
   const problems = useMemo(
     () => journalProblems(nodes, findings),
     [nodes, findings],
+  );
+  // Which sections carry a packaged journey (the parent card's day or a day
+  // holding one of its derived beats). Adjacency decides where the journey
+  // thread BRIDGES a day boundary, so the marker runs unbroken from the parent
+  // card to the last beat — through night treatments, day rules, and the gaps
+  // between sections — instead of restarting each day.
+  const journeyDays = useMemo(
+    () =>
+      journal.sections.map(
+        (s) =>
+          s.kind === "day" &&
+          s.entries.some(
+            (e) =>
+              e.kind === "node" &&
+              (e.journey !== undefined ||
+                (subgraphChildren.get(e.node.id)?.length ?? 0) > 0),
+          ),
+      ),
+    [journal, subgraphChildren],
   );
   const pinned = datesPinned(timeline.itinerary);
 
@@ -318,6 +338,14 @@ export function JournalView({
             <EmptyJournal awaitingProposal={awaitingProposal} />
           ) : (
             <div className="flex flex-col gap-2">
+              {/* The timeline-scale dial — breathe the duration bars + gaps in
+                  and out. Only meaningful once there's a story to scale; sits
+                  out of diff mode (a reading/deciding pass). */}
+              {journal.nodeCount > 0 && !diffActive ? (
+                <div className="mb-1 flex justify-end pl-[var(--spine-col)]" style={spineColStyle}>
+                  <JournalZoomControls />
+                </div>
+              ) : null}
               {/* Fresh canvas: no cards yet, but the days are real (dated, or
                   the Day 1..N scaffold) — point the traveler at Artemis
                   instead of a dead-end placeholder. */}
@@ -347,6 +375,14 @@ export function JournalView({
                     focusedNodeId={focusedNodeId}
                     attachedNotes={attachedNotes}
                     subgraphChildren={subgraphChildren}
+                    journeyThread={
+                      journeyDays[idx]
+                        ? {
+                            fromPrev: journeyDays[idx - 1] === true,
+                            toNext: journeyDays[idx + 1] === true,
+                          }
+                        : null
+                    }
                     problems={problems}
                     onActivate={onActivate}
                     observe={observe}
@@ -455,6 +491,7 @@ function DaySection({
   focusedNodeId,
   attachedNotes,
   subgraphChildren,
+  journeyThread = null,
   problems,
   onActivate,
   observe,
@@ -472,6 +509,12 @@ function DaySection({
   attachedNotes: Map<string, NodeResponse[]>;
   /** Embedded subgraphs — a multi-day card's day children, by parent id. */
   subgraphChildren: Map<string, NodeResponse[]>;
+  /** This day carries a packaged journey — wears the journey thread. The
+   *  flags say whether the thread continues from the previous day section /
+   *  into the next one, so it bridges headers, nights, and section gaps
+   *  (computed over the WHOLE journal in JournalView — adjacency is not a
+   *  per-day fact). Null = no journey through this day. */
+  journeyThread?: { fromPrev: boolean; toNext: boolean } | null;
   problems: Map<string, JournalProblem>;
   onActivate: (nodeId: string) => void;
   observe: ReturnType<typeof useScrollActive>;
@@ -522,6 +565,7 @@ function DaySection({
             node={entry.node}
             tzOffsetHours={tz}
             active={focusedNodeId === entry.node.id}
+            durationMinutes={entry.durationMinutes}
             attachedNotes={attachedNotes.get(entry.node.id) ?? []}
             subgraphChildren={subgraphChildren.get(entry.node.id) ?? []}
             onActivate={onActivate}
@@ -565,7 +609,11 @@ function DaySection({
         break;
       case "gap":
         rows.push(
-          <GapSegment key={`gap-${section.date}-${i}`} minutes={entry.minutes} />,
+          <GapSegment
+            key={`gap-${section.date}-${i}`}
+            minutes={entry.minutes}
+            startHour={entry.startHour}
+          />,
         );
         break;
       case "quiet":
@@ -574,6 +622,7 @@ function DaySection({
             key={entry.id}
             caption={entry.caption}
             minutes={entry.minutes}
+            startHour={entry.startHour}
           />,
         );
         break;
@@ -596,15 +645,26 @@ function DaySection({
   // rail's divergence dots read the exact same derivation.
   const hasDivergence = diverged;
 
-  // A day carried by a packaged journey — the parent card's day or any day
-  // holding one of its derived beats — wears the JOURNEY THREAD: a solid
-  // second line right of the spine tying the run together across days.
-  const hasJourney = section.entries.some(
-    (e) =>
-      e.kind === "node" &&
-      (e.journey !== undefined ||
-        (subgraphChildren.get(e.node.id)?.length ?? 0) > 0),
-  );
+  // The JOURNEY THREAD — a packaged multi-day experience runs through this
+  // day: a solid second line right of the spine, the rail the beat rows sit
+  // on (they indent onto it). ONE unbroken line across the whole run: on a
+  // continuing day it spans the full section (behind the day rule, like the
+  // spine), and while the journey goes on it reaches through the section gap
+  // to meet the next day's thread — through the night, never restarting.
+  const journeyThreadEl = journeyThread ? (
+    <span
+      aria-hidden
+      data-testid="journal-journey-thread"
+      data-from-prev={journeyThread.fromPrev ? "true" : undefined}
+      data-to-next={journeyThread.toNext ? "true" : undefined}
+      title="Part of a packaged journey"
+      className={[
+        "absolute top-0 w-0 border-l-2 border-ink/15",
+        journeyThread.toNext ? "-bottom-2" : "bottom-0",
+      ].join(" ")}
+      style={{ left: SPINE_COL_PX / 2 + JOURNEY_INDENT_PX }}
+    />
+  ) : null;
 
   return (
     <section data-testid="journal-day" data-date={section.date} className="relative">
@@ -626,6 +686,10 @@ function DaySection({
         className="absolute -bottom-2 top-0 w-px bg-ink/15"
         style={{ left: SPINE_COL_PX / 2 }}
       />
+      {/* A journey arriving from the previous day: its thread spans the whole
+          section (behind the day rule, exactly like the spine) so it meets the
+          previous section's overhang without a break. */}
+      {journeyThread?.fromPrev ? journeyThreadEl : null}
       <DayHeader label={section.label} date={section.date} datesPinned={pinned} />
       <div className="relative flex flex-col gap-2 py-3" style={spineColStyle}>
         {/* Diff mode's diverged-region cue: a second, dashed thread running
@@ -638,17 +702,9 @@ function DaySection({
             style={{ left: SPINE_COL_PX / 2 - 6 }}
           />
         ) : null}
-        {/* The journey thread — a packaged multi-day experience runs through
-            this day (the diff thread sits left of the spine; this one right). */}
-        {hasJourney ? (
-          <span
-            aria-hidden
-            data-testid="journal-journey-thread"
-            title="Part of a packaged journey"
-            className="absolute bottom-0 top-0 w-0 border-l-2 border-ink/15"
-            style={{ left: SPINE_COL_PX / 2 + 6 }}
-          />
-        ) : null}
+        {/* The journey STARTING on this day: the thread opens below the day
+            rule (the diff thread sits left of the spine; this one right). */}
+        {journeyThread && !journeyThread.fromPrev ? journeyThreadEl : null}
         {rows}
         {/* The `+`-on-the-line: each day closes with the quiet insert
             affordance — Note only on the trunk; the Collection-first picker
@@ -722,8 +778,8 @@ function DropSlot({
 // The fresh-canvas invitation (traveler/self-serve empty journal): the days
 // below are real and each carries its (+), but the story starts with the
 // conversation — so this points at Artemis rather than at the empty spine.
-// `openConcierge` opens the summoned overlay below 1100px and is a harmless
-// no-op where the column is already in-flow.
+// `openConcierge` reveals the summoned overlay below 1100px and un-collapses
+// the in-flow column above it, so the CTA always lands the traveler in the chat.
 function EmptyJournalInvite() {
   const { openConcierge } = useConciergeControl();
   return (
@@ -732,18 +788,19 @@ function EmptyJournalInvite() {
       className="mb-6 rounded-lg border border-ink/10 bg-ink/[0.03] px-6 py-8 text-center"
     >
       <p className="font-serif text-xl leading-snug text-ink/80">
-        The pages are open — tell Artemis what you&rsquo;re dreaming of.
+        Wide open possibilities. Let&rsquo;s dream together!
       </p>
       <p className="mx-auto mt-2 max-w-md font-sans text-sm leading-relaxed text-ink/55">
-        Keep the conversation going and the journal fills itself — or press a
+        Keep the conversation going and the journal fills itself, or press a
         day&rsquo;s <span className="font-medium text-ink/70">+</span> to write
         the first line yourself.
       </p>
       <button
         type="button"
         onClick={openConcierge}
-        className="mt-5 rounded-sm border border-ink/20 px-4 py-2 font-sans text-[11px] uppercase tracking-[0.22em] text-ink/70 transition hover:border-brand hover:text-brand"
+        className="mt-5 inline-flex items-center gap-2 rounded-sm bg-brand px-5 py-2.5 font-sans text-[11px] uppercase tracking-[0.22em] text-paper shadow-sm transition hover:brightness-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
       >
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-paper/90" />
         Talk to Artemis
       </button>
     </div>

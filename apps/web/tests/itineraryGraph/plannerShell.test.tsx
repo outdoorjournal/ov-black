@@ -38,14 +38,6 @@ vi.mock("@/app/itinerary/[id]/_shell/SessionThread", () => ({
   ),
 }));
 
-// The intake is exercised elsewhere; here it only needs to prove the gate flips.
-vi.mock("@/app/_components/itinerary-graph/intake/ItineraryIntake", () => ({
-  ItineraryIntake: ({ onSaved }: { onSaved: () => void }) => (
-    <button type="button" data-testid="intake-save" onClick={onSaved}>
-      save
-    </button>
-  ),
-}));
 
 import type {
   ItineraryResponse,
@@ -129,8 +121,6 @@ function renderShell(
       apiBaseUrl="http://api.test"
       accessToken="tok"
       viewerOpenForkId={null}
-      needsBrief={false}
-      audience={role === "advisor" ? "advisor" : "traveler"}
       {...overrides}
     >
       <div data-testid="planning-child">the view</div>
@@ -165,26 +155,11 @@ describe("ItineraryShell · three regions", () => {
         apiBaseUrl="http://api.test"
         accessToken="tok"
         viewerOpenForkId={null}
-        needsBrief={false}
-        audience="traveler"
       >
         <Probe />
       </ItineraryShell>,
     );
     expect(screen.getByTestId("probe").textContent).toBe("it-1");
-  });
-});
-
-describe("ItineraryShell · first-run intake gate", () => {
-  test("needsBrief shows the intake and withholds the shell until saved", () => {
-    renderShell("advisor", { needsBrief: true });
-    // Gated: intake up, no shell chrome yet.
-    expect(screen.getByTestId("intake-save")).toBeTruthy();
-    expect(screen.queryByTestId("planner-rail")).toBeNull();
-    // Saving the brief drops the gate and mounts the shell.
-    fireEvent.click(screen.getByTestId("intake-save"));
-    expect(screen.getByTestId("planner-rail")).toBeTruthy();
-    expect(screen.queryByTestId("intake-save")).toBeNull();
   });
 });
 

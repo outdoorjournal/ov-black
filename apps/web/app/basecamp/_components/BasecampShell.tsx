@@ -68,17 +68,23 @@ export function BasecampShell({
   priorTurns,
   onboardingComplete,
 }: BasecampShellProps) {
+  // The first-touch onboarding is a full-bleed immersive room (its own
+  // cinematic backdrop + wordmark header), so it owns the whole viewport
+  // outside the standard masthead/rail chrome — exactly like the immersive
+  // intake screen. The returning variants keep the light BasecampChrome.
+  if (variant === "first_prompt" && opener !== null) {
+    return (
+      <SinglePromptCard
+        opener={opener}
+        clientId={clientId}
+        accessToken={accessToken}
+        apiBaseUrl={apiBaseUrl}
+      />
+    );
+  }
+
   return (
     <BasecampChrome user={user}>
-      {variant === "first_prompt" && opener !== null ? (
-        <SinglePromptCard
-          opener={opener}
-          clientId={clientId}
-          accessToken={accessToken}
-          apiBaseUrl={apiBaseUrl}
-        />
-      ) : null}
-
       {variant === "post_first_touch" ? (
         <ConciergeSplit
           concierge={(onCollapse) => (
@@ -162,7 +168,7 @@ function ConciergeSplit({
           onClick={() => setCollapsed(false)}
           data-testid="basecamp-concierge-reopen"
           aria-label="Reopen the concierge"
-          className="order-2 hidden shrink-0 items-center border-r border-ink/10 bg-paper/85 px-1.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink lg:order-1 lg:sticky lg:top-14 lg:flex lg:h-[calc(100dvh-3.5rem)]"
+          className="order-2 hidden shrink-0 items-center border-r border-brand/20 bg-brand/10 px-1.5 font-sans text-[9px] uppercase tracking-[0.16em] text-brand transition-colors hover:bg-brand/20 lg:order-1 lg:sticky lg:top-14 lg:flex lg:h-[calc(100dvh-3.5rem)]"
         >
           <span className="[writing-mode:vertical-rl] rotate-180">Concierge ›</span>
         </button>

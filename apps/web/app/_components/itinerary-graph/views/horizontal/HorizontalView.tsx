@@ -63,7 +63,6 @@ import {
   collectionItemsOf,
   itineraryGraphStore,
   nodeIdFromDragId,
-  scheduledCountOf,
   selectCanApprove,
   selectCanLeaveNote,
   selectEditable,
@@ -246,18 +245,15 @@ export function HorizontalView({
     [nodes, pendingProposals],
   );
 
-  // Collection (wish list) = unscheduled, non-discarded nodes. When nothing is
-  // scheduled yet it's the dominant surface (an empty dated grid is meaningless
-  // this early); once items land on the timeline it condenses to a side rail.
+  // Collection (wish list) = unscheduled, non-discarded nodes. It always rides
+  // as a side rail beside the timeline (xl+) or a summonable overlay (md–xl) —
+  // never taking the whole surface. The timeline is always drawn when there's
+  // anything to date against (see `showTimeline`), even before a single card is
+  // scheduled, so there's a real surface to place that first card onto.
   const collectionItems = useMemo(
     () => collectionItemsOf(nodes, pendingProposals),
     [nodes, pendingProposals],
   );
-  const scheduledCount = useMemo(
-    () => scheduledCountOf(nodes, pendingProposals),
-    [nodes, pendingProposals],
-  );
-  const collectionDominant = scheduledCount === 0 && collectionItems.length > 0;
 
   const activeNode = useMemo(
     () => (drag.activeId ? allNodes.find((n) => n.id === drag.activeId) : null) ?? null,
@@ -791,7 +787,7 @@ export function HorizontalView({
               DAY_HEADER_HEIGHT is a spacer that lines up with the canvas's
               sticky-top day-headers strip, so 09:00 in the axis sits at the
               same y as 09:00 in the cards. */}
-          {showTimeline && !collectionDominant ? (
+          {showTimeline ? (
             <div
               ref={axisScrollRef}
               className="shrink-0 overflow-hidden border-r border-ink/10 bg-paper/85 backdrop-blur-xs"
@@ -821,7 +817,7 @@ export function HorizontalView({
               cards. When the timeline is gated off (vague brief, empty board),
               only the empty-state lives here — no dated grid behind it. */}
           <div className="relative flex min-w-0 flex-1">
-            {showTimeline && !collectionDominant ? (
+            {showTimeline ? (
               <>
                 <div
                   ref={canvasScrollRef}
@@ -872,12 +868,6 @@ export function HorizontalView({
                   onClick={() => scrollHintBy(SCROLL_HINT_STEP_PX)}
                 />
               </>
-            ) : null}
-            {collectionDominant ? (
-              <CollectionRail
-                variant="board"
-                {...(onOpenNode ? { onOpenNode } : {})}
-              />
             ) : nodes.length === 0 && pendingProposals.length === 0 ? (
               awaitingProposal ? (
                 <AwaitingProposalState />
@@ -887,10 +877,11 @@ export function HorizontalView({
             ) : null}
           </div>
 
-          {/* Collection rail beside a populated timeline (xl+). When nothing is
-              scheduled yet the Collection is dominant above instead, so this is
-              gated on !collectionDominant. */}
-          {!collectionDominant && collectionItems.length > 0 ? (
+          {/* Collection rail beside the timeline (xl+). Always present when the
+              wish list has anything in it — even before a card is scheduled, so
+              the first placement has both a source (rail) and a target (timeline)
+              on screen at once. Below xl the CollectionOverlay summon covers it. */}
+          {collectionItems.length > 0 ? (
             <aside
               data-testid="collection-rail-aside"
               className="hidden w-[320px] shrink-0 xl:flex"

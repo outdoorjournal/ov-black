@@ -489,7 +489,8 @@ async def test_per_person_node_books_and_reconciles_expanded_by_party_size(
     as a re-price."""
     itin = await _pinned_itinerary(db_session, title="per-person gate")
     try:
-        # A party of two travelers.
+        # Two named companions → a party of three (resolve_party_size adds the
+        # account holder, the party's implicit floor).
         party_id = uuid.uuid4()
         await db_session.execute(
             text("insert into public.parties (id, itinerary_id, label) values (:p, :i, 'all')"),
@@ -502,7 +503,7 @@ async def test_per_person_node_books_and_reconciles_expanded_by_party_size(
             )
         await db_session.commit()
 
-        # A per_person node at 1000 → 2000 for two travelers.
+        # A per_person node at 1000 → 3000 for a party of three.
         node = await add_node(
             db_session,
             _actor(),
@@ -520,7 +521,7 @@ async def test_per_person_node_books_and_reconciles_expanded_by_party_size(
         await _pay_node(db_session, itin.id, node.id, paid=True)
         view = await book_node(db_session, _actor(), itinerary_id=itin.id, node_id=node.id)
         assert isinstance(view, BookingView)
-        assert view.booking.amount == Decimal("2000.00")
+        assert view.booking.amount == Decimal("3000.00")
         assert view.reprice_delta is None  # the expansion must not read as a re-price
 
         report = await reconcile_itinerary(db_session, itin.id)

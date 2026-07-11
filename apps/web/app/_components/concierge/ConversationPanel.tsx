@@ -14,7 +14,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-import { MapFoldIndicator } from "@/app/_components/MapFoldIndicator";
+import { MapCompassIndicator } from "@/app/_components/MapCompassIndicator";
 import { CRAFTED_FALLBACK_COPY } from "@/app/chat/[client_id]/_components/ConversationStream";
 import { OnboardingMilestoneCard } from "@/app/chat/[client_id]/_components/OnboardingMilestoneCard";
 import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
@@ -326,6 +326,7 @@ function MessageBubble({
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       data-role={message.role}
+      data-streaming={message.streaming ? "true" : undefined}
       className={[
         "max-w-[86%] rounded-lg px-3 py-2 text-[13px] leading-relaxed",
         isUser ? "ml-auto bg-ink text-paper" : "bg-ink/5 text-ink",
@@ -337,7 +338,7 @@ function MessageBubble({
       {message.streaming ? (
         working ? (
           <span className={message.text ? "mt-1 block" : "block"}>
-            <MapFoldIndicator />
+            <MapCompassIndicator />
           </span>
         ) : (
           <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-px bg-current align-middle opacity-70" />

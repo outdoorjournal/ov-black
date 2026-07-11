@@ -25,3 +25,42 @@ export function sunGradientCss(): string {
     .join(", ");
   return `linear-gradient(180deg, ${stops})`;
 }
+
+/** The sky color at a given clock hour (0–24, wraps), interpolated between the
+ *  daylight STOPS. Lets non-axis surfaces (e.g. the Journal's dusk wash) sample
+ *  the same palette as the horizontal timeline's sun gradient. */
+export function sunColorAtHour(hour: number): string {
+  let h = hour % 24;
+  if (h < 0) h += 24;
+  let lo = STOPS[0]!;
+  let hi = STOPS[STOPS.length - 1]!;
+  for (let i = 0; i < STOPS.length - 1; i++) {
+    const a = STOPS[i]!;
+    const b = STOPS[i + 1]!;
+    if (h >= a.hour && h <= b.hour) {
+      lo = a;
+      hi = b;
+      break;
+    }
+  }
+  const t = (h - lo.hour) / Math.max(1e-6, hi.hour - lo.hour);
+  return mixHex(lo.color, hi.color, t);
+}
+
+function mixHex(a: string, b: string, t: number): string {
+  const ah = parseHex(a);
+  const bh = parseHex(b);
+  const r = Math.round(ah[0] + (bh[0] - ah[0]) * t);
+  const g = Math.round(ah[1] + (bh[1] - ah[1]) * t);
+  const bl = Math.round(ah[2] + (bh[2] - ah[2]) * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+
+function parseHex(hex: string): [number, number, number] {
+  const v = hex.replace("#", "");
+  return [
+    parseInt(v.slice(0, 2), 16),
+    parseInt(v.slice(2, 4), 16),
+    parseInt(v.slice(4, 6), 16),
+  ];
+}

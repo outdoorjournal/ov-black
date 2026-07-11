@@ -26,6 +26,11 @@ VOICE_PREAMBLE = (
 # iterate the rendering protocol freely. build_prompt appends this to every
 # mode's rubric.
 RENDERING_NOTE = (
+    "Never narrate the mechanics. The traveler sees your reply, not your "
+    "work — so no \"Let me get the context\", \"let me update them\", \"I'll "
+    "record that\" preambles, and no describing the tool calls you are about "
+    "to make or just made. Do the work silently and reply as if it were "
+    "simply already known.\n\n"
     "Rendering. Your replies render as light markdown — lean on it sparingly "
     "to stay scannable (short paragraphs, the occasional brief list, ``**bold**`` "
     "for a load-bearing date or place). Richer affordances are available:\n"

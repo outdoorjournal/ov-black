@@ -12,12 +12,13 @@
 // body mounts on demand (it has no stream, so a re-load on entry is correct).
 // The context-chip strip belongs to Artemis (PS4's "ask about this").
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
 import { PeopleCircles } from "@/app/_components/concierge/PeopleCircles";
 
+import { useConciergeControl } from "./ConciergeControl";
 import { HumanThread } from "./HumanThread";
 import { SessionThread } from "./SessionThread";
 
@@ -39,6 +40,22 @@ export function ConciergeColumn({
 
   // Which people-circle is open: the AI session list, or the human channel (PS7).
   const [channel, setChannel] = useState<"artemis" | "human">("artemis");
+
+  // A summon (openConcierge) bumps `nudge`. When it changes we snap to the
+  // Artemis channel and wave an orange flag on its circle — the one-shot cue
+  // that lands even when the panel was already open. The ref seeds from the
+  // current value so a fresh mount (e.g. the <1100px overlay) doesn't self-fire.
+  const { nudge } = useConciergeControl();
+  const [artemisPulse, setArtemisPulse] = useState(false);
+  const seenNudge = useRef(nudge);
+  useEffect(() => {
+    if (nudge === seenNudge.current) return;
+    seenNudge.current = nudge;
+    setChannel("artemis");
+    setArtemisPulse(true);
+    const t = setTimeout(() => setArtemisPulse(false), 1400);
+    return () => clearTimeout(t);
+  }, [nudge]);
 
   // PS4 "ask about this" scopes the concierge to a card; the next turn is
   // prefixed with it (see ConciergeChat) and then it clears.
@@ -66,6 +83,7 @@ export function ConciergeColumn({
       <PeopleCircles
         channel={channel}
         onSelect={setChannel}
+        artemisPulse={artemisPulse}
         humanLabel={canEdit ? "Client" : "Advisor"}
         advisorTitle={canEdit ? "The client conversation" : "Message your advisor & party"}
         trailing={

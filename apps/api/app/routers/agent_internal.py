@@ -63,7 +63,14 @@ from app.services.facts import (
 )
 from app.services.graph_digest import graph_digest_for_itinerary
 from app.services.messaging import MessagingOutcome, post_agent_thread_message
-from app.services.party_members import create_party_member, update_party_member
+from app.services.party_members import (
+    attach_member_to_itinerary,
+    create_party_member,
+    detach_member_from_itinerary,
+    get_party_member,
+    list_itinerary_party,
+    update_party_member,
+)
 from app.services.route_plan import RoutePlan, RoutePlanError, compute_route
 
 logger = logging.getLogger("ov_black.routers.agent_internal")
@@ -342,6 +349,16 @@ async def record_party_member_endpoint(
         actor=PartyMemberActor.agent,
         recorded_by=_agent_recorded_by(claims.agentcore_session_id),
     )
+    # Household identity is only half the story: a named companion must also be
+    # seated on THIS trip's travelers edge, or the dashboard party chip stays
+    # "Just you" even after the agent confirms who's coming. The session's pin is
+    # the itinerary the traveler is on (intake/planning both pin the fork). The
+    # account holder (``is_primary``) is the implicit floor of the party, never a
+    # companion row, so they are left off the edge. Attach is idempotent.
+    if not member.is_primary:
+        itinerary_id = await _resolve_session_pinned_itinerary(session, claims.session_id)
+        if itinerary_id is not None:
+            await attach_member_to_itinerary(session, itinerary_id=itinerary_id, member=member)
     return PartyMemberDetail.model_validate(member, from_attributes=True)
 
 
@@ -374,6 +391,101 @@ async def update_party_member_endpoint(
     if member is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="party_member_not_found")
     return PartyMemberDetail.model_validate(member, from_attributes=True)
+
+
+# ── /agent/trip-travelers — seat/unseat a household member on THIS trip ──
+#
+# record_party_member writes durable household identity; these two routes put an
+# EXISTING member on (or off) the session's pinned itinerary — the per-trip
+# ``travelers`` edge the dashboard party chip and per-person cost expansion both
+# read. Backend-only (agent token), so they stay out of the public OpenAPI.
+
+
+class AgentTripTravelerRequest(BaseModel):
+    """Body for ``POST /agent/trip-travelers`` — the member to seat."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    member_id: uuid.UUID
+
+
+class TripTravelerSummary(BaseModel):
+    """One seated traveler: the durable member (if linked) and display name."""
+
+    member_id: uuid.UUID | None
+    name: str
+
+
+class TripPartyResponse(BaseModel):
+    """The session trip's full travelers edge after a seat/unseat."""
+
+    itinerary_id: uuid.UUID
+    travelers: list[TripTravelerSummary]
+
+
+async def _trip_party_response(session: AsyncSession, itinerary_id: uuid.UUID) -> TripPartyResponse:
+    rows = await list_itinerary_party(session, itinerary_id=itinerary_id)
+    return TripPartyResponse(
+        itinerary_id=itinerary_id,
+        travelers=[
+            TripTravelerSummary(member_id=traveler.party_member_id, name=traveler.name)
+            for traveler, _member in rows
+        ],
+    )
+
+
+@router.post(
+    "/trip-travelers",
+    response_model=TripPartyResponse,
+    include_in_schema=False,
+    summary="Seat an existing household member on the session's trip (travelers edge).",
+)
+async def add_trip_traveler_endpoint(
+    payload: AgentTripTravelerRequest,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> TripPartyResponse:
+    """Attach a member the traveler already has on file to THIS trip.
+
+    Idempotent per member (re-seating is a no-op). 409 if the session is not
+    pinned to a trip; 404 if the member is not one of this client's — a leaked
+    id cannot seat someone from another household. Returns the trip's full
+    roster so the agent can confirm who is now coming.
+    """
+    itinerary_id = await _resolve_session_pinned_itinerary(session, claims.session_id)
+    if itinerary_id is None:
+        raise HTTPException(status_code=409, detail="no_pinned_itinerary")
+    member = await get_party_member(
+        session, client_id=claims.client_id, member_id=payload.member_id
+    )
+    if member is None:
+        raise HTTPException(status_code=404, detail="party_member_not_found")
+    await attach_member_to_itinerary(session, itinerary_id=itinerary_id, member=member)
+    return await _trip_party_response(session, itinerary_id)
+
+
+@router.delete(
+    "/trip-travelers/{member_id}",
+    response_model=TripPartyResponse,
+    include_in_schema=False,
+    summary="Remove a member from the session's trip (their household row stays).",
+)
+async def remove_trip_traveler_endpoint(
+    member_id: uuid.UUID,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> TripPartyResponse:
+    """Take a member off THIS trip without touching the durable household roster.
+
+    409 if the session is not pinned. A member who was never on the trip (or a
+    cross-household id) is simply a no-op — the detach is scoped to the pinned
+    itinerary. Returns the trip's remaining roster.
+    """
+    itinerary_id = await _resolve_session_pinned_itinerary(session, claims.session_id)
+    if itinerary_id is None:
+        raise HTTPException(status_code=409, detail="no_pinned_itinerary")
+    await detach_member_from_itinerary(session, itinerary_id=itinerary_id, member_id=member_id)
+    return await _trip_party_response(session, itinerary_id)
 
 
 # ── POST /agent/route — route brochure geometry (Google Routes) ─────────

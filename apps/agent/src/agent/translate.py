@@ -9,6 +9,7 @@ The entrypoint feeds every dict that ``stream_async`` yields into
 - ``{"type": "node_updated", "node": {...}}`` — advisor adjustment applied
 - ``{"type": "itinerary_updated", "itinerary": {...}}`` — trip-level edit (dates)
 - ``{"type": "mood", "mood_id": "..."}`` — basecamp ambience shift
+- ``{"type": "profile_updated", "kind": "..."}`` — onboarding fact captured (kind only)
 
 Not every tool maps to a bespoke frame: ``propose_timeline`` is materialised
 into the reply text as a fenced ``ov-timeline`` markdown block emitted as a
@@ -61,6 +62,10 @@ _TOOL_FRAME_TYPES = {
     # live. The frame carries a whitelisted subset — never dietary/medical.
     "record_party_member": "party_updated",
     "update_party_member": "party_updated",
+    # Onboarding: the basecamp first-touch ledger lights a goal checkmark when
+    # the agent captures a profile fact. The frame carries ONLY the fact kind
+    # (never the text) — the ledger just needs to know *which* goal landed.
+    "record_profile_fact": "profile_updated",
     # The intake hand-off: the immersive surface docks the chat and lands the
     # traveler on the trip dashboard when this frame arrives.
     "complete_intake": "intake_complete",
@@ -163,7 +168,11 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
     if frame_type is None:
         return None
     if frame_type == "card_proposed":
-        return {"type": "card_proposed", "node": output}
+        # ``additional_nodes`` is a sibling-node envelope (a round-trip flight
+        # splits into outbound + return); it rides the write response, not the
+        # card itself, and is fanned out into extra frames by the caller.
+        node = {k: v for k, v in output.items() if k != "additional_nodes"}
+        return {"type": "card_proposed", "node": node}
     if frame_type == "draft_assembled":
         return {
             "type": "draft_assembled",
@@ -190,6 +199,13 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
         if isinstance(output.get("is_primary"), bool):
             member["is_primary"] = output["is_primary"]
         return {"type": "party_updated", "member": member}
+    if frame_type == "profile_updated":
+        # Kind only — the traveler-told text never rides this frame (the ledger
+        # shows a checkmark, not the fact). Drop an error result on the floor.
+        kind = output.get("kind")
+        if "error" in output or not isinstance(kind, str):
+            return None
+        return {"type": "profile_updated", "kind": kind}
     if frame_type == "intake_complete":
         if "error" in output:
             return None
@@ -408,6 +424,18 @@ class EventTranslator:
             yield from self._emit_delta(str(frame.get("text", "")))
         else:
             yield frame
+            # A from-inventory write can create sibling nodes alongside the
+            # primary (a round-trip flight → outbound + return). Each rides
+            # ``additional_nodes`` on the response; fan every one out into its
+            # own card_proposed frame so the graph renders all legs, not just
+            # the first.
+            if frame.get("type") == "card_proposed":
+                extras = output.get("additional_nodes")
+                if isinstance(extras, list):
+                    for extra in extras:
+                        if isinstance(extra, dict):
+                            node = {k: v for k, v in extra.items() if k != "additional_nodes"}
+                            yield {"type": "card_proposed", "node": node}
 
 
 def translate_event(event: Any) -> Iterator[dict]:

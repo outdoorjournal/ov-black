@@ -486,6 +486,35 @@ def _check_cost(cost_amount: Decimal | None, cost_currency: str | None) -> Itine
     return None
 
 
+_COST_FIELDS: tuple[str, ...] = ("cost_amount", "cost_currency", "cost_kind")
+
+
+def _check_cost_authority(
+    updates: dict[str, Any], node: Node, actor: ActorContext
+) -> ItineraryError | None:
+    """Price is advisor-authored — a traveler/agent can't (re-)quote it.
+
+    A traveler may reshape and annotate their own fork (title, schedule, notes,
+    description), but the *price* is the advisor's authority alone, even on that
+    fork: the itinerary graph is the billing spine, so a self-set cost must never
+    slip in. SYSTEM passes so fork reconcile (publish, advisor-executed) can
+    carry an advisor's price onto the trunk. Mirrors the trunk guard's actor
+    split (see ``_check_write_gates``).
+
+    Only a mutation that actually CHANGES a cost field is refused; echoing the
+    current value alongside a legitimate non-price edit stays allowed.
+    """
+    if actor.kind in (ActorKind.ADVISOR, ActorKind.SYSTEM):
+        return None
+    for field in _COST_FIELDS:
+        if field in updates and updates[field] != getattr(node, field):
+            return ItineraryError(
+                outcome=ItineraryOutcome.FORBIDDEN,
+                detail="advisor_only_price",
+            )
+    return None
+
+
 # ── Write gates (editor lock + trunk guard) ─────────────────────────────────
 
 
@@ -742,6 +771,20 @@ async def update_itinerary_details(
         if getattr(itinerary, key) != value:
             setattr(itinerary, key, value)
             changed.append(key)
+
+    # On a pinned (exact) trip `date_start` IS Day 1, so the stamped anchor must
+    # follow it — otherwise a `days_anchor` stamped earlier (e.g. against a
+    # scratch note added before dates were set) leaves Day-N numbering counting
+    # from a phantom start and mis-shifts a later retime. `retime_itinerary`
+    # re-stamps on its own path; this is the raw window-edit path's equivalent.
+    if (
+        itinerary.timing_kind is ItineraryTimingKind.exact
+        and itinerary.date_start is not None
+        and itinerary.days_anchor != itinerary.date_start
+    ):
+        itinerary.days_anchor = itinerary.date_start
+        if "days_anchor" not in changed:
+            changed.append("days_anchor")
 
     if changed:
         await session.commit()
@@ -1338,6 +1381,12 @@ async def update_node(
     prov_err = _check_provenance(new_source, new_source_id)
     if prov_err is not None:
         return prov_err
+
+    # Price is advisor-authored (M005) — refuse a non-advisor cost mutation even
+    # on their own fork, before the together-ness check below.
+    cost_auth_err = _check_cost_authority(updates, node, actor)
+    if cost_auth_err is not None:
+        return cost_auth_err
 
     new_cost_amount = updates.get("cost_amount", node.cost_amount)
     new_cost_currency = updates.get("cost_currency", node.cost_currency)

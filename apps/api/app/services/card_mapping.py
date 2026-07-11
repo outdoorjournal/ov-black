@@ -65,40 +65,80 @@ def _geo_from_location(loc: Location | None) -> GeoPoint | None:
     return _geo(loc.lat, loc.lng, loc.label)
 
 
-def _dest_geo_from_offer(raw: dict[str, Any]) -> GeoPoint | None:
-    """Pull the arrival airport GeoPoint from a raw Duffel offer.
+def _airport_geo(place: Any) -> GeoPoint | None:
+    """A GeoPoint for a Duffel origin/destination airport place (or None).
 
     ``summarize_offer`` carries iata/cabin/times but not coordinates; the
-    destination coords live on the last slice's ``destination`` place.
+    airport coords + names live on each slice's ``origin`` / ``destination``.
     """
-    slices = raw.get("slices")
-    if not isinstance(slices, list) or not slices:
+    if not isinstance(place, dict):
         return None
-    last = slices[-1]
-    dest = last.get("destination") if isinstance(last, dict) else None
-    if not isinstance(dest, dict):
-        return None
-    city = dest.get("city_name")
-    code = dest.get("iata_code")
+    city = place.get("city_name")
+    code = place.get("iata_code")
     label: str | None = None
     if isinstance(city, str) and city:
         label = f"{city} ({code})" if isinstance(code, str) and code else city
     elif isinstance(code, str) and code:
         label = code
-    return _geo(dest.get("latitude"), dest.get("longitude"), label)
+    return _geo(place.get("latitude"), place.get("longitude"), label)
 
 
-def flight_item_to_card_attrs(item: FlightItem) -> FlightCardAttrs:
-    """Map a Duffel-sourced :class:`FlightItem` to :class:`FlightCardAttrs`.
+def _offer_slice_view(raw: Any, slice_index: int) -> dict[str, Any]:
+    """A shallow offer copy narrowed to a single slice.
+
+    ``summarize_offer`` (and the geo helpers) always read ``slices[0]`` as the
+    outbound leg, so handing them a one-slice view is how we summarize any
+    individual leg of a multi-slice (round-trip) offer with the same code path.
+    Top-level fields (total_amount, expires_at, owner) are preserved.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    slices = raw.get("slices")
+    if not isinstance(slices, list) or not (0 <= slice_index < len(slices)):
+        return raw
+    return {**raw, "slices": [slices[slice_index]]}
+
+
+def _dest_geo_from_offer(raw: dict[str, Any]) -> GeoPoint | None:
+    """Arrival airport GeoPoint of a (one-slice-view) offer's outbound leg.
+
+    Scoped to the first slice like ``_slice_endpoints`` — a round-trip's last
+    slice is the return leg, whose destination is the original origin.
+    """
+    slices = raw.get("slices")
+    if not isinstance(slices, list) or not slices:
+        return None
+    first = slices[0]
+    return _airport_geo(first.get("destination") if isinstance(first, dict) else None)
+
+
+def _origin_geo_from_offer(raw: dict[str, Any]) -> GeoPoint | None:
+    """Departure airport GeoPoint of a (one-slice-view) offer's first slice."""
+    slices = raw.get("slices")
+    if not isinstance(slices, list) or not slices:
+        return None
+    first = slices[0]
+    return _airport_geo(first.get("origin") if isinstance(first, dict) else None)
+
+
+def flight_item_to_card_attrs(item: FlightItem, slice_index: int = 0) -> FlightCardAttrs:
+    """Map one slice of a Duffel-sourced :class:`FlightItem` to :class:`FlightCardAttrs`.
 
     Reads the headline facts via :func:`summarize_offer` (iata, flight_code,
-    cabin, depart/arrive) and the airport geometry from the item's normalized
-    origin ``location`` + the offer's destination. ``depart_at`` / ``arrive_at``
-    are Duffel-local ISO strings; Pydantic coerces them to ``datetime``.
+    cabin, depart/arrive) and the airport geometry from the offer's slice.
+    ``slice_index`` selects the leg: ``0`` is the outbound (the whole item for a
+    one-way), higher indices are the return / onward legs of a round-trip offer,
+    each of which becomes its own graph node. ``depart_at`` / ``arrive_at`` are
+    Duffel-local ISO strings; Pydantic coerces them to ``datetime``.
     """
-    s = summarize_offer(item.raw)
-    from_geo = _geo_from_location(item.location)
-    to_geo = _dest_geo_from_offer(item.raw)
+    raw = _offer_slice_view(item.raw, slice_index)
+    s = summarize_offer(raw)
+    # Outbound origin equals the item's normalized ``location`` (a nicer label);
+    # for later legs derive the origin airport straight off the slice.
+    from_geo = (
+        _geo_from_location(item.location) if slice_index == 0 else _origin_geo_from_offer(raw)
+    )
+    to_geo = _dest_geo_from_offer(raw)
     return FlightCardAttrs(
         iata_from=s["iata_from"],
         iata_to=s["iata_to"],
@@ -113,6 +153,12 @@ def flight_item_to_card_attrs(item: FlightItem) -> FlightCardAttrs:
         arrive_at=s["arrive_at"],
         description=item.description,
     )
+
+
+def flight_slice_count(item: FlightItem) -> int:
+    """How many slices (legs) the offer carries — >1 means a round-trip."""
+    slices = item.raw.get("slices") if isinstance(item.raw, dict) else None
+    return len(slices) if isinstance(slices, list) else 0
 
 
 def _as_date(value: Any) -> date | None:

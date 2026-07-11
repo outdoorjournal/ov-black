@@ -1,11 +1,13 @@
 "use client";
 
-// The immersive intake's full-bleed backdrop — the landing page's dark
-// cinematic imagery treatment, made conversation-aware. Before the agent
-// commits to a direction it slowly rotates the front-door hero set; the
-// moment a `mood` frame arrives (the agent's set_mood), it locks to that
-// mood's curated Unsplash frame and crossfades between subsequent moods.
-// A layered dark veil keeps the floating chat legible over any frame.
+// The shared full-bleed, conversation-aware backdrop for the immersive agent
+// surfaces (the trip intake and the basecamp onboarding first-touch). It is the
+// landing page's dark cinematic imagery treatment, made mood-reactive: before
+// the agent commits to a direction it slowly rotates the front-door hero set;
+// the moment a `mood` frame arrives (the agent's set_mood) it locks to that
+// mood's curated Unsplash frame and crossfades between subsequent moods. A
+// layered dark veil keeps the floating chat card and serif headline legible
+// over any frame.
 
 import Image from "next/image";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -21,7 +23,7 @@ const ROTATION_IMAGES = ATMOSPHERIC_BACKDROPS;
 
 const ROTATE_MS = 11_000;
 
-export function IntakeBackdrop({ mood }: { mood: MoodId | null }) {
+export function CinematicBackdrop({ mood }: { mood: MoodId | null }) {
   const reduced = useReducedMotion() ?? false;
   // Deterministic first frame for SSR/hydration parity; the reel jumps to a
   // random frame right after mount (a crossfade, so it reads as intentional)
@@ -41,7 +43,9 @@ export function IntakeBackdrop({ mood }: { mood: MoodId | null }) {
     return () => clearInterval(t);
   }, [mood]);
 
-  const src = mood ? MOODS[mood].imageUrl : ROTATION_IMAGES[rotationIndex % ROTATION_IMAGES.length];
+  const src = mood
+    ? MOODS[mood].imageUrl
+    : ROTATION_IMAGES[rotationIndex % ROTATION_IMAGES.length];
 
   return (
     <div aria-hidden className="absolute inset-0 overflow-hidden bg-ink">

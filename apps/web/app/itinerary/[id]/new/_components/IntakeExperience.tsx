@@ -37,7 +37,7 @@ import { useAgentStream } from "@/lib/agentStream";
 import { MOODS, type MoodId } from "@/lib/atmos/moods";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 
-import { IntakeBackdrop } from "./IntakeBackdrop";
+import { CinematicBackdrop } from "@/app/_components/atmos/CinematicBackdrop";
 import {
   IntakeDetailsCard,
   type IntakeDetails,
@@ -304,7 +304,7 @@ export function IntakeExperience({
         transition={{ duration: reduced ? 0 : 0.9, ease: "easeInOut" }}
         className="absolute inset-0"
       >
-        <IntakeBackdrop mood={mood} />
+        <CinematicBackdrop mood={mood} />
       </motion.div>
 
       {/* Minimal chrome: the wordmark. The way out lives with the details
@@ -404,7 +404,7 @@ export function IntakeExperience({
         onClose={close}
         onChooseOption={onChooseOption}
         anchorRef={chatCardRef}
-        side="left"
+        side="right"
       />
     </div>
   );

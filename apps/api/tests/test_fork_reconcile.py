@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import socket
 import uuid
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -31,6 +32,7 @@ from app.models import (
     FindingSeverity,
     ForkStatus,
     Itinerary,
+    ItineraryTimingKind,
     Node,
     NodeStatus,
     NodeType,
@@ -58,6 +60,7 @@ from app.services.itineraries import (
     create_itinerary,
     delete_node,
     get_itinerary_graph,
+    update_itinerary_details,
     update_node,
 )
 from sqlalchemy import text
@@ -474,6 +477,87 @@ async def test_reconcile_accept_all_applies_every_change(db_session: AsyncSessio
 
         # …and every change was covered, so the fork flips to reconciled.
         assert result.fork.fork_status is ForkStatus.reconciled
+    finally:
+        await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
+
+
+@integration
+@pytest.mark.asyncio
+async def test_reconcile_folds_fork_trip_metadata_onto_empty_trunk(
+    db_session: AsyncSession,
+) -> None:
+    """A solo traveler's title/brief/timing live only on their fork; publish must
+    fold them onto the (empty) trunk — the diff carries nodes, never these."""
+    baseline = await create_itinerary(db_session, _actor(), title="")
+    fork_id: uuid.UUID | None = None
+    try:
+        fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
+        assert isinstance(fork, Itinerary)
+        fork_id = fork.id
+        # The traveler names + dates the trip inside their working copy.
+        updated = await update_itinerary_details(
+            db_session,
+            _actor(ActorKind.USER),
+            fork,
+            fields={
+                "title": "Patagonia on Foot",
+                "brief": "Days on foot between Torres del Paine and Fitz Roy.",
+                "timing_kind": ItineraryTimingKind.exact,
+                "date_start": date(2026, 11, 10),
+                "date_end": date(2026, 11, 17),
+            },
+        )
+        assert isinstance(updated, Itinerary)
+        await _node(db_session, fork.id, status=NodeStatus.pending, title="trek day")
+
+        result = await reconcile_fork(
+            db_session, _actor(ActorKind.ADVISOR), fork_id=fork.id, decisions=[], accept_all=True
+        )
+        assert isinstance(result, ReconcileResult)
+
+        # The trunk now carries the fork's trip-level identity + window.
+        assert result.itinerary.title == "Patagonia on Foot"
+        assert result.itinerary.brief == "Days on foot between Torres del Paine and Fitz Roy."
+        assert result.itinerary.timing_kind is ItineraryTimingKind.exact
+        assert result.itinerary.date_start == date(2026, 11, 10)
+        assert result.itinerary.date_end == date(2026, 11, 17)
+    finally:
+        await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
+
+
+@integration
+@pytest.mark.asyncio
+async def test_reconcile_does_not_clobber_curated_trunk_metadata(
+    db_session: AsyncSession,
+) -> None:
+    """Fill-only: an advisor-curated trunk title/brief/window survives publish —
+    the fork's auto ``"… (fork)"`` title and empty metadata must not overwrite it."""
+    baseline = await create_itinerary(
+        db_session,
+        _actor(),
+        title="Kyoto Spring",
+        brief="Cherry blossoms, slow.",
+        timing_kind=ItineraryTimingKind.exact,
+        date_start=date(2027, 4, 1),
+        date_end=date(2027, 4, 8),
+    )
+    fork_id: uuid.UUID | None = None
+    try:
+        # Fork inherits the auto "Kyoto Spring (fork)" title and no brief/timing.
+        fork = await fork_itinerary(db_session, _actor(), itinerary_id=baseline.id)
+        assert isinstance(fork, Itinerary)
+        fork_id = fork.id
+        await _node(db_session, fork.id, status=NodeStatus.pending, title="tea house")
+
+        result = await reconcile_fork(
+            db_session, _actor(ActorKind.ADVISOR), fork_id=fork.id, decisions=[], accept_all=True
+        )
+        assert isinstance(result, ReconcileResult)
+
+        assert result.itinerary.title == "Kyoto Spring"
+        assert result.itinerary.brief == "Cherry blossoms, slow."
+        assert result.itinerary.date_start == date(2027, 4, 1)
+        assert result.itinerary.date_end == date(2027, 4, 8)
     finally:
         await _cleanup(*(i for i in (fork_id, baseline.id) if i is not None))
 

@@ -16,7 +16,7 @@ export function Eyebrow({ children, rule = false, className }: EyebrowProps) {
   return (
     <span className={cn("flex items-center gap-3", className)}>
       {rule ? <span aria-hidden className="h-px w-8 shrink-0 bg-brand" /> : null}
-      <span className="font-sans text-[10px] uppercase tracking-eyebrow opacity-60">
+      <span className="font-sans text-[10px] uppercase tracking-eyebrow">
         {children}
       </span>
     </span>

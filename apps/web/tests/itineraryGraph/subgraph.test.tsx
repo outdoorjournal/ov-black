@@ -275,8 +275,25 @@ describe("journey beats", () => {
       </itineraryGraphStore.Provider>,
     );
 
-    // The journey thread runs through every covered day (parent day + 3 more).
-    expect(screen.getAllByTestId("journal-journey-thread")).toHaveLength(4);
+    // The journey thread runs through every covered day (parent day + 3 more)
+    // as ONE unbroken line: every day but the first spans its whole section
+    // (from-prev, behind the day rule), and every day but the last reaches
+    // into the section gap (to-next) to meet the next day's thread — so the
+    // marker never breaks at a night or a day boundary.
+    const threads = screen.getAllByTestId("journal-journey-thread");
+    expect(threads).toHaveLength(4);
+    expect(threads.map((t) => t.getAttribute("data-from-prev"))).toEqual([
+      null,
+      "true",
+      "true",
+      "true",
+    ]);
+    expect(threads.map((t) => t.getAttribute("data-to-next"))).toEqual([
+      "true",
+      "true",
+      "true",
+      null,
+    ]);
     // The parent card wears the span caption; each beat wears its chip.
     expect(screen.getByTestId("journal-journey-span").textContent).toContain(
       "a 4-day journey",
@@ -285,17 +302,97 @@ describe("journey beats", () => {
     expect(chips).toHaveLength(4);
     expect(chips[1]?.textContent).toContain("day 2 of 4");
 
+    // Beat rows indent right onto the journey thread; the parent stays on
+    // the main spine.
+    const parentRow = screen
+      .getAllByTestId("journal-node")
+      .find((el) => el.getAttribute("data-node-id") === "p1");
+    expect(parentRow?.getAttribute("data-journey-beat")).toBeNull();
+
     // Focusing a beat puts the PARENT card above its detail in the rail.
     const beatRow = screen
       .getAllByTestId("journal-node")
       .find((el) => el.getAttribute("data-node-id") === "d3");
     expect(beatRow).toBeDefined();
-    fireEvent.click(beatRow!.querySelector("button")!);
+    expect(beatRow?.getAttribute("data-journey-beat")).toBe("true");
+    expect(beatRow?.style.marginLeft).toBe("12px");
+    // The card button — not the duration bar's scroll-back button, which can
+    // precede it in the gutter on a long (multi-hour) beat.
+    const cardButton = Array.from(
+      beatRow!.querySelectorAll("button"),
+    ).find((b) => b.getAttribute("data-testid") !== "journal-bar-scrollback");
+    fireEvent.click(cardButton!);
     const context = screen.getByTestId("journey-parent-context");
     expect(context.textContent).toContain("part of · day 3 of 4");
     expect(context.textContent).toContain(
       "4 Days Simien Mountain Wildlife Safari",
     );
+  });
+
+  test("beats share the parent's cover when it has no gallery", () => {
+    const { parent, children } = simienFixture();
+    const withCover = {
+      ...parent,
+      metadata: {
+        ...parent.metadata,
+        snapshot: { title: parent.title, cover_image: "https://img.test/cover.jpg" },
+      },
+    } as NodeResponse;
+    const journal = toJournal({
+      nodes: [withCover, ...children],
+      edges: [],
+      days: DAYS,
+      timezoneOffsetHours: 3,
+    });
+    const beats = journal.sections
+      .flatMap((s) => (s.kind === "day" ? s.entries : []))
+      .filter((e) => e.kind === "node" && e.journey !== undefined);
+    expect(beats).toHaveLength(4);
+    for (const b of beats) {
+      expect(
+        b.kind === "node" &&
+          (b.node.metadata as { ambient_image?: string }).ambient_image,
+      ).toBe("https://img.test/cover.jpg");
+    }
+  });
+
+  test("a gallery gives each beat its own shot — rotating, never the cover", () => {
+    const { parent, children } = simienFixture();
+    const cover = "https://img.test/cover.jpg";
+    const withGallery = {
+      ...parent,
+      metadata: {
+        ...parent.metadata,
+        snapshot: { title: parent.title, cover_image: cover },
+        gallery: [
+          { url: cover, caption: "the cover rides the parent card" },
+          { url: "https://img.test/g1.jpg" },
+          { url: "https://img.test/g2.jpg" },
+        ],
+      },
+    } as NodeResponse;
+    const journal = toJournal({
+      nodes: [withGallery, ...children],
+      edges: [],
+      days: DAYS,
+      timezoneOffsetHours: 3,
+    });
+    const ambientOf = new Map<string, string | undefined>();
+    for (const s of journal.sections) {
+      if (s.kind !== "day") continue;
+      for (const e of s.entries) {
+        if (e.kind === "node" && e.journey) {
+          ambientOf.set(
+            e.node.id,
+            (e.node.metadata as { ambient_image?: string }).ambient_image,
+          );
+        }
+      }
+    }
+    expect(ambientOf.get("d1")).toBe("https://img.test/g1.jpg");
+    expect(ambientOf.get("d2")).toBe("https://img.test/g2.jpg");
+    expect(ambientOf.get("d3")).toBe("https://img.test/g1.jpg");
+    expect(ambientOf.get("d4")).toBe("https://img.test/g2.jpg");
   });
 
   test("a raw child never lands on the spine at its own claimed time", () => {

@@ -16,6 +16,7 @@ export function PeopleCircles({
   onSelect,
   humanLabel = "Advisor",
   advisorTitle,
+  artemisPulse = false,
   trailing,
 }: {
   channel: ConciergeChannel;
@@ -26,6 +27,9 @@ export function PeopleCircles({
   humanLabel?: string;
   /** Tooltip on the human circle (differs advisor-side vs traveler-side). */
   advisorTitle?: string;
+  /** One-shot attention flag on the Artemis circle — a summon that changed no
+   *  layout still needs to be felt. */
+  artemisPulse?: boolean;
   /** Right-aligned extra (e.g. the itinerary column's collapse chevron). */
   trailing?: ReactNode;
 }) {
@@ -38,6 +42,7 @@ export function PeopleCircles({
         label="Artemis"
         active={channel === "artemis"}
         onSelect={() => onSelect("artemis")}
+        pulse={artemisPulse}
       />
       <PersonCircle
         label={humanLabel}
@@ -55,11 +60,15 @@ export function PersonCircle({
   active = false,
   onSelect,
   title,
+  pulse = false,
 }: {
   label: string;
   active?: boolean;
   onSelect?: () => void;
   title?: string;
+  /** One-shot orange "flag wave" — an expanding brand ring + a brand-tinted
+   *  face — to pull the eye to this circle when it's summoned. */
+  pulse?: boolean;
 }) {
   return (
     <button
@@ -69,18 +78,27 @@ export function PersonCircle({
       className="flex flex-col items-center gap-1"
       data-testid={`person-${label.toLowerCase()}`}
       data-active={active ? "true" : undefined}
+      data-pulse={pulse ? "true" : undefined}
       aria-pressed={active}
       {...(title ? { title } : {})}
     >
       <span
         aria-hidden
         className={
-          "flex h-8 w-8 items-center justify-center rounded-full border font-serif text-sm transition-colors " +
-          (active
-            ? "border-ink/30 bg-ink/10 text-ink"
-            : "border-ink/15 text-ink/40 hover:border-ink/25 hover:text-ink/60")
+          "relative flex h-8 w-8 items-center justify-center rounded-full border font-serif text-sm transition-colors " +
+          (pulse
+            ? "border-brand bg-[rgba(245,112,31,0.16)] text-brand"
+            : active
+              ? "border-ink/30 bg-ink/10 text-ink"
+              : "border-ink/15 text-ink/40 hover:border-ink/25 hover:text-ink/60")
         }
       >
+        {pulse ? (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -inset-0.5 animate-ping rounded-full ring-2 ring-brand/70"
+          />
+        ) : null}
         {label.charAt(0)}
       </span>
       <span

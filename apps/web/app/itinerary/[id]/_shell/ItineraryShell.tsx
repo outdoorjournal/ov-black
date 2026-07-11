@@ -11,15 +11,16 @@
 // unmounting with the page. The `key={itineraryId}` in the layout gives each
 // trip its own fresh store; sibling-route nav keeps the same instance.
 //
-// First-run intake still gates ahead of everything: a trip with no brief shows
-// the intake and mounts neither the store nor the concierge until a goal exists
-// (mirrors the retired ItineraryBuilderScreen).
+// There is no first-run intake gate anymore: a brief-less trip lands straight on
+// the dashboard, where the goal + timing are captured edit-in-place over the hero
+// (DashboardHero). The old full-page "What are we planning?" ItineraryIntake is
+// retired for every viewer — travelers get the immersive /new experience, advisors
+// edit in place.
 
 import { useState } from "react";
 
 import type { DisplayStatus } from "@ov-black/api-client";
 
-import { ItineraryIntake } from "@/app/_components/itinerary-graph/intake/ItineraryIntake";
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/horizontalTypes";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { TimelineDataProvider } from "@/app/_components/itinerary-graph/TimelineDataContext";
@@ -48,9 +49,6 @@ export type ItineraryShellProps = {
   awaitingProposal?: boolean;
   /** Per-currency plan price from the graph read (ADV-10) — `{}` when unpriced. */
   totals?: Record<string, string>;
-  /** True when the trip has no brief yet — gate on the first-run intake. */
-  needsBrief: boolean;
-  audience: "advisor" | "traveler";
   /** The active routed destination (timeline / collection / studio / …). */
   children: React.ReactNode;
 };
@@ -66,17 +64,17 @@ export function ItineraryShell({
   viewerOpenForkId,
   awaitingProposal = false,
   totals = {},
-  needsBrief,
-  audience,
   children,
 }: ItineraryShellProps) {
-  const [showIntake, setShowIntake] = useState(needsBrief);
   // <1100px the concierge is a summonable overlay (opened from the Rail on a
   // tablet, or the Chat tab on a phone); ≥1100px it is an in-flow column.
   const [conciergeOpen, setConciergeOpen] = useState(false);
   // Q5 (PS6): ≥1100px the concierge is open by default but collapsible to a slim
   // edge tab, so the planning space can take the full width when wanted.
   const [conciergeCollapsed, setConciergeCollapsed] = useState(false);
+  // Bumped on every openConcierge() so the column can flash Artemis even when the
+  // panel was already open (a summon that changes no layout still needs a cue).
+  const [conciergeNudge, setConciergeNudge] = useState(0);
   // Drag-to-resize the ≥1100px in-flow concierge; persisted + viewport-clamped.
   const dock = useResizableDock({
     storageKey: "ovb.dock.itinerary",
@@ -90,19 +88,6 @@ export function ItineraryShell({
   // Collection, a {dayKey, minute} prefill = schedule at that slot.
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerPrefill, setComposerPrefill] = useState<ComposerPrefill>(null);
-
-  if (showIntake && apiBaseUrl && accessToken) {
-    return (
-      <ItineraryIntake
-        itineraryId={itineraryId}
-        apiBaseUrl={apiBaseUrl}
-        accessToken={accessToken}
-        audience={audience}
-        onSaved={() => setShowIntake(false)}
-        onSkip={() => setShowIntake(false)}
-      />
-    );
-  }
 
   return (
     <itineraryGraphStore.Provider
@@ -120,7 +105,19 @@ export function ItineraryShell({
     >
       <TimelineDataProvider value={{ timeline, baselineTitle }}>
         <ConciergeControlProvider
-          value={{ openConcierge: () => setConciergeOpen(true) }}
+          value={{
+            openConcierge: () => {
+              // <1100px: reveal the summoned overlay. ≥1100px: the overlay flag
+              // is inert, but if the in-flow column was collapsed to its edge
+              // tab, un-collapse it — otherwise "open" would be a silent no-op.
+              setConciergeOpen(true);
+              setConciergeCollapsed(false);
+              // Always flash Artemis, so a summon into an already-open panel
+              // still registers visually.
+              setConciergeNudge((n) => n + 1);
+            },
+            nudge: conciergeNudge,
+          }}
         >
          <ComposerControlProvider
           value={{
@@ -177,7 +174,7 @@ export function ItineraryShell({
                 onClick={() => setConciergeCollapsed(false)}
                 data-testid="concierge-reopen"
                 aria-label="Reopen the concierge"
-                className="hidden shrink-0 items-center border-r border-ink/10 bg-paper/85 px-1.5 font-sans text-[9px] uppercase tracking-[0.16em] text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink min-[1100px]:flex"
+                className="hidden shrink-0 items-center border-r border-brand/20 bg-brand/10 px-1.5 font-sans text-[9px] uppercase tracking-[0.16em] text-brand transition-colors hover:bg-brand/20 min-[1100px]:flex"
               >
                 <span className="[writing-mode:vertical-rl] rotate-180">Concierge ›</span>
               </button>

@@ -36,11 +36,14 @@
 import { useDraggable } from "@dnd-kit/core";
 import { Fragment, useCallback, useState, type RefCallback } from "react";
 
+import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
+
 import { inferCardKind, statusToKind } from "../../shared/cards/CardBody";
 import { TYPE_TOKENS } from "../../shared/cards/tokens";
 import type { NodeResponse } from "../../model/types";
 import { NodeCard } from "../horizontal/NodeCard";
 import {
+  isSchedulePinned,
   itineraryGraphStore,
   selectCanApprove,
 } from "../../store/itineraryGraphStore";
@@ -48,8 +51,8 @@ import {
 import { journalDragId } from "./journalEditing";
 import { MarginNotes, SpineNoteCard } from "./JournalNotes";
 import type { JournalProblem } from "./problems";
-import { SPINE_COL_PX, SpineCircle } from "./Spine";
-import type { GroupedRole, JourneyBeat } from "./toJournal";
+import { DurationBar, JOURNEY_INDENT_PX, SPINE_COL_PX, SpineCircle } from "./Spine";
+import { durationMinOf, type GroupedRole, type JourneyBeat } from "./toJournal";
 import type { JournalNodeDiff } from "./toJournalDiff";
 
 const spineColStyle = {
@@ -74,6 +77,7 @@ export function JournalNode({
   node,
   tzOffsetHours,
   active,
+  durationMinutes = 60,
   attachedNotes = [],
   subgraphChildren = [],
   onActivate,
@@ -88,6 +92,8 @@ export function JournalNode({
   node: NodeResponse;
   tzOffsetHours: number;
   active: boolean;
+  /** Event length (minutes) — sizes the spine duration bar. */
+  durationMinutes?: number;
   /** The `note` nodes annotating this one — rendered in the margin channel. */
   attachedNotes?: NodeResponse[];
   /** The node's embedded subgraph (a multi-day item's day-by-day journey) —
@@ -117,14 +123,30 @@ export function JournalNode({
 }) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
+  const journalPxPerMinute = itineraryGraphStore.useStore(
+    (s) => s.journalPxPerMinute,
+  );
   // A free-standing day note is a node ON the spine, but it reads as a margin
   // artifact, not an itinerary card — small, yellow, editable in place.
   const isNote = node.type === "note";
+  // A flight's time is pinned to its booking (offer depart_at), so it's never
+  // re-timable by anyone — the timeline slot is derived, not placed.
+  const pinned = isSchedulePinned(node);
   // Approval locks the card (existing semantics) — a firmed card offers no
   // drag; notes keep their editors free of drag listeners; a journey beat's
-  // placement is derived from its parent, so it offers no drag either.
+  // placement is derived from its parent, so it offers no drag either; a pinned
+  // flight refuses its own drag (its schedule is the airline's, not a placement).
   const canDrag =
-    dragEnabled && !isNote && !node.lock_reason && !node.parent_subgraph_id;
+    dragEnabled &&
+    !isNote &&
+    !pinned &&
+    !node.lock_reason &&
+    !node.parent_subgraph_id;
+  // The nudge replaces the (absent) drag handle for a pinned card on an editable
+  // surface: tell the traveler why it can't move, and where to go instead.
+  const showPinnedNudge = dragEnabled && pinned && !isNote;
+  const [pinnedHintOpen, setPinnedHintOpen] = useState(false);
+  const { openConcierge } = useConciergeControl();
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: journalDragId(node.id),
@@ -150,18 +172,23 @@ export function JournalNode({
       data-active={active ? "true" : undefined}
       data-dragging={isDragging ? "true" : undefined}
       data-diff={diff?.kind}
+      data-journey-beat={journey ? "true" : undefined}
       className={[
         "group/jnode grid grid-cols-[var(--spine-col)_minmax(0,1fr)] items-start gap-x-4",
         isDragging ? "opacity-40" : "",
       ].join(" ")}
       style={{
         ...spineColStyle,
+        // A journey beat's whole row shifts right onto the journey thread —
+        // circle and duration bar ride the thread (the sub-journey's own
+        // rail), and the card indents under its parent.
+        ...(journey ? { marginLeft: JOURNEY_INDENT_PX } : {}),
         // Windowed rendering — except where the absolute margin channel could
         // overflow the row's box (paint containment would clip the notes).
         ...(attachedNotes.length === 0 || marginInline ? WINDOWED_STYLE : {}),
       }}
     >
-      <div className="relative flex justify-center pt-3">
+      <div className="relative flex flex-col items-center pt-3">
         {/* "New in this version" — a dashed brand STITCH over the spine
             segment (never a split; version divergence keeps one spine). */}
         {diff?.kind === "added" ? (
@@ -178,6 +205,17 @@ export function JournalNode({
           active={active}
           problem={problem !== null}
         />
+        {/* The duration bar — the card's color extending down the timeline,
+            length = how long it runs. Notes carry no duration. */}
+        {!isNote ? (
+          <DurationBar
+            kind={kind}
+            minutes={durationMinutes}
+            pxPerMinute={journalPxPerMinute}
+            nodeId={node.id}
+            discarded={status === "discarded"}
+          />
+        ) : null}
         {/* The change DOT on the circle — a quiet "this differs" marker; the
             rail carries the field-level before/after. */}
         {diff?.kind === "changed" ? (
@@ -243,6 +281,36 @@ export function JournalNode({
             />
           </div>
         )}
+        {/* Pinned-flight nudge: a flight leaves when the airline says, so it has
+            no drag handle — this caption says why, and points to the concierge
+            (the only way to a different time is a different flight). */}
+        {showPinnedNudge ? (
+          <div className="mt-1 pl-1" data-testid="journal-flight-pinned">
+            <button
+              type="button"
+              onClick={() => setPinnedHintOpen((v) => !v)}
+              aria-expanded={pinnedHintOpen}
+              title="A flight's time is set by the airline"
+              className="font-serif text-[11px] italic text-ink/45 hover:text-ink/70"
+            >
+              Pinned to your flight booking
+            </button>
+            {pinnedHintOpen ? (
+              <p className="mt-1 max-w-[380px] text-[11px] not-italic leading-relaxed text-ink/55">
+                A flight&rsquo;s departure time is set by the airline, so it
+                stays put on your timeline.{" "}
+                <button
+                  type="button"
+                  onClick={openConcierge}
+                  className="text-brand underline underline-offset-2 hover:text-brand/80"
+                >
+                  Ask your concierge
+                </button>{" "}
+                to find a different flight.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {/* A multi-day card's span caption — the embedded journey is laid out
             on the days it covers (the beats below carry the chips). */}
         {!isNote && subgraphChildren.length > 0 ? (
@@ -374,6 +442,7 @@ export function JournalAltGroup({
           node={chosen}
           tzOffsetHours={tzOffsetHours}
           active={focusedNodeId === chosen.id}
+          durationMinutes={durationMinOf(chosen)}
           attachedNotes={attachedNotes?.get(chosen.id) ?? []}
           subgraphChildren={subgraphChildren?.get(chosen.id) ?? []}
           onActivate={onActivate}
@@ -451,6 +520,7 @@ export function JournalAltGroup({
                 node={node}
                 tzOffsetHours={tzOffsetHours}
                 active={focusedNodeId === node.id}
+                durationMinutes={durationMinOf(node)}
                 attachedNotes={attachedNotes?.get(node.id) ?? []}
                 subgraphChildren={subgraphChildren?.get(node.id) ?? []}
                 onActivate={onActivate}

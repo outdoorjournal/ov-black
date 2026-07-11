@@ -47,6 +47,9 @@ export type JournalEntry =
   | {
       kind: "node";
       node: NodeResponse;
+      /** Event length in minutes (metadata `duration_minutes`, default 60) —
+       *  sizes the card's colored duration bar in the spine gutter. */
+      durationMinutes: number;
       groupedWith?: GroupedRole;
       journey?: JourneyBeat;
     }
@@ -59,8 +62,9 @@ export type JournalEntry =
    *  time; rendered as the spine splitting (fork-in-the-spine, phase 3). */
   | { kind: "alt"; groupKey: string; nodes: NodeResponse[] }
   /** A short-but-visible gap: rendered as a plain, slightly longer spine
-   *  segment (no marker, no card). */
-  | { kind: "gap"; minutes: number }
+   *  segment (no marker, no card). `startHour` is the local clock hour the gap
+   *  opens on (decimal) — places the hour ticks + the dusk wash. */
+  | { kind: "gap"; minutes: number; startHour: number }
   /** A long gap: a virtual quiet-moment node (small circle, caption, no card). */
   | {
       kind: "quiet";
@@ -68,6 +72,8 @@ export type JournalEntry =
       minutes: number;
       period: QuietPeriod;
       caption: string;
+      /** Local clock hour the quiet span opens on (decimal). */
+      startHour: number;
     };
 
 export type JournalNight = {
@@ -188,13 +194,15 @@ function startMsOf(node: NodeResponse): number {
   return parseIso(getVerticalMeta(node).start_time ?? "");
 }
 
+/** Event length in minutes — the metadata value when present and positive,
+ *  else a sensible 60m default (same fallback `endMsOf` bakes in). */
+export function durationMinOf(node: NodeResponse): number {
+  const dur = getVerticalMeta(node).duration_minutes;
+  return typeof dur === "number" && dur > 0 ? dur : 60;
+}
+
 function endMsOf(node: NodeResponse): number {
-  const meta = getVerticalMeta(node);
-  const dur =
-    typeof meta.duration_minutes === "number" && meta.duration_minutes > 0
-      ? meta.duration_minutes
-      : 60;
-  return parseIso(meta.start_time ?? "") + dur * 60_000;
+  return parseIso(getVerticalMeta(node).start_time ?? "") + durationMinOf(node) * 60_000;
 }
 
 /** Local hour-of-day for an epoch ms, using the reference node's own offset. */
@@ -265,11 +273,25 @@ function deriveJourneyBeats(
   for (const parent of visibleCards) {
     const children = childrenByParent.get(parent.id) ?? [];
     if (children.length === 0) continue;
-    const parentStart = getVerticalMeta(parent).start_time;
+    const parentMeta = getVerticalMeta(parent);
+    const parentStart = parentMeta.start_time;
     if (!parentStart) continue;
     const parentDay = dayKeyForNode(parent, tz);
     if (!parentDay) continue;
     const suffix = offsetSuffixOf(parentStart, tz);
+    // Beat imagery: the materializer gives day children no image of their own,
+    // so each beat wears its PARENT's — a rotating pull from the parent's
+    // editorial gallery when one exists (a different shot per day, never the
+    // cover itself), else the parent's cover — so the whole run visibly shares
+    // the parent card's identity.
+    const parentCover =
+      parentMeta.snapshot?.cover_image ?? parentMeta.ambient_image;
+    const galleryPool = (parentMeta.gallery ?? [])
+      .map((g) => g.url)
+      .filter(
+        (u): u is string =>
+          typeof u === "string" && u.length > 0 && u !== parentCover,
+      );
     children.forEach((child, i) => {
       const dayIndex = subgraphDayMeta(child).index ?? i + 1;
       const hours = subgraphDayMeta(child).hours;
@@ -279,6 +301,12 @@ function deriveJourneyBeats(
         dayIndex <= 1
           ? parentStart
           : `${addDaysToKey(parentDay, dayIndex - 1)}T${BEAT_START_TIME}:00${suffix}`;
+      const childMeta = getVerticalMeta(child);
+      const image =
+        childMeta.snapshot?.cover_image ??
+        childMeta.ambient_image ??
+        galleryPool[Math.max(0, dayIndex - 1) % Math.max(1, galleryPool.length)] ??
+        parentCover;
       beats.push({
         ...child,
         metadata: {
@@ -288,6 +316,7 @@ function deriveJourneyBeats(
             typeof hours === "number" && hours > 0
               ? Math.round(hours * 60)
               : BEAT_DEFAULT_MIN,
+          ...(image ? { ambient_image: image } : {}),
         },
       } as NodeResponse);
       info.set(child.id, {
@@ -413,12 +442,15 @@ export function toJournal(input: ToJournalInput): Journal {
     for (const [foldIdx, entry] of folded.entries()) {
       if (prev) {
         const gapMin = Math.round((entry.startMs - prev.endMs) / 60_000);
+        const prevNode = prev.kind === "node" ? prev.node : prev.nodes[0];
+        const refIso = prevNode
+          ? (getVerticalMeta(prevNode).start_time ?? "")
+          : "";
+        // The clock hour the gap opens on (the previous entry's end) — anchors
+        // the hour ticks and the dusk wash inside the gap.
+        const startHour = localHour(prev.endMs, refIso, tz);
         if (gapMin >= LONG_GAP_MIN) {
           const midMs = prev.endMs + (entry.startMs - prev.endMs) / 2;
-          const prevNode = prev.kind === "node" ? prev.node : prev.nodes[0];
-          const refIso = prevNode
-            ? (getVerticalMeta(prevNode).start_time ?? "")
-            : "";
           const period = quietPeriodForHour(localHour(midMs, refIso, tz));
           entries.push({
             kind: "quiet",
@@ -426,9 +458,10 @@ export function toJournal(input: ToJournalInput): Journal {
             minutes: gapMin,
             period,
             caption: quietCaption(period),
+            startHour,
           });
         } else if (gapMin >= SHORT_GAP_MIN) {
-          entries.push({ kind: "gap", minutes: gapMin });
+          entries.push({ kind: "gap", minutes: gapMin, startHour });
         }
       }
       if (entry.kind === "node") {
@@ -437,6 +470,7 @@ export function toJournal(input: ToJournalInput): Journal {
         entries.push({
           kind: "node",
           node: entry.node,
+          durationMinutes: durationMinOf(entry.node),
           ...(role ? { groupedWith: role } : {}),
           ...(journey ? { journey } : {}),
         });
@@ -461,6 +495,7 @@ export function toJournal(input: ToJournalInput): Journal {
         minutes: 24 * 60,
         period: "day",
         caption: quietCaption("day"),
+        startHour: 0,
       });
     }
 

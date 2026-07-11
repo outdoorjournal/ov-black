@@ -384,4 +384,25 @@ describe("toItineraryTimeline — Day-1 anchor (0041, Wave E / ADV-16)", () => {
     expect(tl.days[0]!.date).toBe("2026-07-10");
     expect(tl.days[0]!.label).toBe("Day 1");
   });
+
+  test("a pinned trip ignores a stale pre-pin anchor — date_start is Day 1", () => {
+    // Regression: a note added before dates were set stamped days_anchor at
+    // "today" (Jul 11); the trip was later pinned to start Jul 18. The stale
+    // anchor must NOT inject phantom leading days that push the first real card
+    // to "Day 8" — on an exact trip date_start is Day 1.
+    const pinnedStaleAnchor: ItineraryResponse = {
+      ...ITINERARY,
+      timing_kind: "exact",
+      date_start: "2026-07-18",
+      date_end: "2026-07-27",
+      days_anchor: "2026-07-11",
+    };
+    const tl = toItineraryTimeline(
+      pinnedStaleAnchor,
+      [makeNode("flight", { starts_at: "2026-07-18T13:09:00-04:00" })],
+      [],
+    );
+    expect(tl.days[0]!.date).toBe("2026-07-18");
+    expect(tl.days[0]!.label).toBe("Day 1");
+  });
 });

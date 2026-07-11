@@ -9,7 +9,7 @@ never leaking in — plus the ``GET /me/invoices`` JWT guard.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -324,6 +324,83 @@ async def test_list_my_itineraries_falls_back_to_open_fork_title(
         assert card.has_open_fork is True
     finally:
         await _cleanup(baseline, fork, client_ids=(client_id,), owner=owner)
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
+        finally:
+            await engine.dispose()
+
+
+@integration
+@pytest.mark.asyncio
+async def test_list_my_itineraries_surfaces_cover_and_timing(
+    db_session: AsyncSession,
+) -> None:
+    """The basecamp tile carries a hero image + trip timeframe.
+
+    Cover selection prefers a destination shot over an experience one, and reads
+    either a ``place.photo_token`` (proxied client-side) or a ready
+    ``snapshot.cover_image`` URL. Timing comes straight off the trunk.
+    """
+    from app.auth import AuthenticatedUser
+    from app.routers.me import list_my_itineraries_endpoint
+
+    from tests._graph_seed import insert_node
+
+    owner = uuid.uuid4()
+    traveler = uuid.uuid4()
+    for uid in (owner, traveler):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.commit()
+
+    client_id = await _insert_linked_client(db_session, owner, traveler, "cover-traveler")
+    trip = await insert_itinerary(db_session, title="Kyoto", client_id=client_id)
+    try:
+        # Timeframe on the trunk.
+        await db_session.execute(
+            text(
+                "update public.itineraries set date_start = :ds, date_end = :de, "
+                "timing_kind = cast('exact' as public.itinerary_timing_kind) where id = :i"
+            ),
+            {"ds": date(2026, 9, 1), "de": date(2026, 9, 8), "i": trip},
+        )
+        # An experience with a ready cover URL and a destination with a Places
+        # token — the destination must win the cover-preference order.
+        exp = await insert_node(db_session, itinerary_id=trip, type="experience", title="Tea")
+        dest = await insert_node(db_session, itinerary_id=trip, type="destination", title="Kyoto")
+        await db_session.execute(
+            text("update public.nodes set metadata = cast(:m as jsonb) where id = :i"),
+            {"m": '{"snapshot": {"cover_image": "https://img/tea.jpg"}}', "i": exp},
+        )
+        await db_session.execute(
+            text("update public.nodes set metadata = cast(:m as jsonb) where id = :i"),
+            {"m": '{"place": {"photo_token": "tok-abc"}}', "i": dest},
+        )
+        await db_session.commit()
+
+        user = AuthenticatedUser(
+            sub=str(traveler), email=f"{traveler}@x.com", role="authenticated", claims={}
+        )
+        resp = await list_my_itineraries_endpoint(user=user, session=db_session)
+        card = {it.id: it for it in resp.itineraries}[trip]
+        assert card.date_start == date(2026, 9, 1)
+        assert card.date_end == date(2026, 9, 8)
+        assert card.timing_kind is not None and card.timing_kind.value == "exact"
+        # Destination beat the experience → its token, not the experience URL.
+        assert card.cover_photo_token == "tok-abc"
+        assert card.cover_image is None
+    finally:
+        await _cleanup(trip, client_ids=(client_id,), owner=owner)
         engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
         try:
             async with engine.begin() as conn:

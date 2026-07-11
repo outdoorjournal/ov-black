@@ -35,6 +35,7 @@ import type {
   MoodFrame,
   NodeUpdatedFrame,
   PartyUpdatedFrame,
+  ProfileUpdatedFrame,
   SseFrame,
   SurfaceFrame,
 } from "./agentStream.types";
@@ -55,6 +56,7 @@ export type {
   MoodFrame,
   NodeUpdatedFrame,
   PartyUpdatedFrame,
+  ProfileUpdatedFrame,
   SseFrame,
   SurfaceFrame,
 } from "./agentStream.types";
@@ -77,6 +79,7 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "node_updated",
   "itinerary_updated",
   "party_updated",
+  "profile_updated",
   "intake_complete",
   "mood",
   "activity",
@@ -127,6 +130,10 @@ function isSseFrame(value: unknown): value is SseFrame {
     const member = (value as { member?: unknown }).member;
     if (!member || typeof member !== "object") return false;
     if (typeof (member as { id?: unknown }).id !== "string") return false;
+  }
+  if (type === "profile_updated") {
+    const v = value as { kind?: unknown };
+    if (typeof v.kind !== "string" || v.kind.length === 0) return false;
   }
   if (type === "activity") {
     const v = value as { phase?: unknown };
@@ -225,6 +232,12 @@ export type UseAgentStreamOptions = {
    * from it; other surfaces can ignore.
    */
   onPartyUpdated?: (frame: PartyUpdatedFrame) => void;
+  /**
+   * Fires when the agent records a profile fact during onboarding (carries the
+   * fact ``kind`` only, never the text). The basecamp first-touch ledger lights
+   * its "dream destination" / "something about you" checkmarks off the kind.
+   */
+  onProfileUpdated?: (frame: ProfileUpdatedFrame) => void;
   /**
    * Fires when the agent calls ``complete_intake`` — the immersive first
    * conversation is done. The intake surface docks the chat and navigates to
@@ -411,6 +424,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "party_updated":
                 current.onPartyUpdated?.(frame);
                 break;
+              case "profile_updated":
+                current.onProfileUpdated?.(frame);
+                break;
               case "intake_complete":
                 current.onIntakeComplete?.(frame);
                 break;
@@ -483,6 +499,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "party_updated":
         current.onPartyUpdated?.(frame);
+        break;
+      case "profile_updated":
+        current.onProfileUpdated?.(frame);
         break;
       case "intake_complete":
         current.onIntakeComplete?.(frame);

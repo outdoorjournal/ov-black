@@ -55,6 +55,7 @@ import {
 import type { NodeResponse } from "../../model/types";
 import { getVerticalMeta } from "../../model/types";
 import {
+  isSchedulePinned,
   itineraryGraphStore,
   selectCanApprove,
   selectCanLeaveNote,
@@ -581,15 +582,31 @@ function RailEditPanel({ node, tz }: { node: NodeResponse; tz: number }) {
         }
       />
       {start ? (
-        <InlineTime
-          iso={start}
-          tz={tz}
-          testid="journal-rail-edit-time"
-          onSave={(minute) => {
-            const off = offsetHoursOr(start, tz);
-            storeApi.getState().moveNode(node.id, tzDayKey(start, off), minute);
-          }}
-        />
+        isSchedulePinned(node) ? (
+          // A flight's time is the airline's, not the traveler's — show it
+          // read-only (no editable input that would silently no-op) and say why.
+          <div className="flex flex-col gap-0.5" data-testid="journal-rail-time-pinned">
+            <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-ink/40">
+              Time
+            </span>
+            <span className="self-start font-serif text-[13px] text-ink/85">
+              {formatClock(start, offsetHoursOr(start, tz))}
+            </span>
+            <span className="font-sans text-[10px] italic text-ink/45">
+              Set by the airline
+            </span>
+          </div>
+        ) : (
+          <InlineTime
+            iso={start}
+            tz={tz}
+            testid="journal-rail-edit-time"
+            onSave={(minute) => {
+              const off = offsetHoursOr(start, tz);
+              storeApi.getState().moveNode(node.id, tzDayKey(start, off), minute);
+            }}
+          />
+        )
       ) : null}
       <button
         type="button"

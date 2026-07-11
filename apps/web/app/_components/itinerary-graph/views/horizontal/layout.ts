@@ -115,6 +115,28 @@ export interface DayLayout {
   weather_emoji?: string | undefined;
 }
 
+// A multi-day item's presence on a day AFTER its start day. The card itself
+// stays on the start day; each covered day gets a gutter bar from midnight
+// down to where the item ends that day (or the column bottom when it runs
+// through), plus a small clickable chip so the day doesn't read as empty.
+export interface ContinuationSpan {
+  node: NodeResponse;
+  dayKey: string;
+  dayIndex: number;
+  // Lane-0 x of the day column (same coordinate space as PositionedHNode.x).
+  x: number;
+  w: number;
+  y: number;
+  barH: number;
+  // Minute-of-day the span ends on this day (1440 when it runs past midnight
+  // again into the next day).
+  endMin: number;
+  // True when the item actually ends on this day (chip shows the end time).
+  isFinal: boolean;
+  dayOfSpan: number; // 1-based: start day is 1, first continuation is 2, …
+  spanDays: number;
+}
+
 export interface TimeMarker {
   y: number;
   label: string;
@@ -122,6 +144,7 @@ export interface TimeMarker {
 
 export interface HLayoutResult {
   positions: Map<string, PositionedHNode>;
+  continuations: ContinuationSpan[];
   segments: TimelineSegment[];
   days: DayLayout[];
   totalWidth: number;
@@ -383,13 +406,38 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     const intervals: Array<[number, number]> = [];
     for (const item of items) {
       if (item.isNightBar) continue;
+      const endAbs = item.startMin + item.durationMin;
+      // A multi-day item "occupies" its nights, but the y axis is SHARED
+      // across every day column — letting it keep the whole night live would
+      // stretch every day in the trip. So a spanning item only claims live
+      // time up to the day-end shoulder; its bar compresses through the
+      // elided night, which is exactly the "continues overnight" read.
+      const intervalEnd =
+        endAbs > MINUTES_PER_DAY
+          ? Math.min(
+              MINUTES_PER_DAY,
+              Math.max(item.startMin + NODE_BUFFER_MIN, DAY_END_MIN),
+            )
+          : Math.min(MINUTES_PER_DAY, endAbs + NODE_BUFFER_MIN);
       intervals.push([
         Math.max(0, item.startMin - NODE_BUFFER_MIN),
-        Math.min(
-          MINUTES_PER_DAY,
-          item.startMin + item.durationMin + NODE_BUFFER_MIN,
-        ),
+        intervalEnd,
       ]);
+      // The day the item finally ends, its end minute gets a small live
+      // window (if that day is in the trip window) so an early arrival —
+      // an overnight flight landing 06:10, say — sits on real, labelable
+      // time instead of inside a collapsed night band.
+      if (endAbs > MINUTES_PER_DAY) {
+        const spanDays = Math.ceil(endAbs / MINUTES_PER_DAY);
+        const finalDayIndex = item.dayIndex + spanDays - 1;
+        if (finalDayIndex < daysMeta.length) {
+          const remainder = endAbs - (spanDays - 1) * MINUTES_PER_DAY;
+          intervals.push([
+            Math.max(0, remainder - NODE_BUFFER_MIN),
+            Math.min(MINUTES_PER_DAY, remainder + NODE_BUFFER_MIN),
+          ]);
+        }
+      }
     }
     intervals.sort((a, b) => a[0] - b[0]);
     const merged: Array<[number, number]> = [];
@@ -525,6 +573,38 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     positions.set(item.node.id, positioned);
   }
 
+  // Continuation spans: a multi-day item paints a presence onto every later
+  // day it covers (that exists in the trip window). These don't take a lane —
+  // they render as a gutter bar plus a small chip — so a card scheduled on a
+  // covered day still gets lane 0.
+  const continuations: ContinuationSpan[] = [];
+  for (const item of items) {
+    if (item.isNightBar) continue;
+    const endAbs = item.startMin + item.durationMin;
+    if (endAbs <= MINUTES_PER_DAY) continue;
+    const spanDays = Math.ceil(endAbs / MINUTES_PER_DAY);
+    for (let k = 1; k * MINUTES_PER_DAY < endAbs; k++) {
+      const dayLayout = days[item.dayIndex + k];
+      if (!dayLayout) break; // runs past the trip window — nothing to paint
+      const endMin = Math.min(MINUTES_PER_DAY, endAbs - k * MINUTES_PER_DAY);
+      const y = mapMinuteToY(0, segments);
+      const yEnd = mapMinuteToY(endMin, segments);
+      continuations.push({
+        node: item.node,
+        dayKey: dayLayout.date,
+        dayIndex: dayLayout.dayIndex,
+        x: dayLayout.columnX,
+        w: laneWidth,
+        y,
+        barH: Math.max(0, yEnd - y),
+        endMin,
+        isFinal: k === spanDays - 1,
+        dayOfSpan: k + 1,
+        spanDays,
+      });
+    }
+  }
+
   // Total height: max bottom across segments and cards.
   let segHeight = segments.reduce((m, s) => Math.max(m, s.yEnd), 0);
   for (const p of positions.values()) {
@@ -551,12 +631,23 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       label: formatMinuteOfDay(item.startMin),
     });
   }
+  // A multi-day item's end minute is a real moment (a landing, a return from
+  // an expedition) — label it like a start.
+  for (const c of continuations) {
+    if (!c.isFinal || c.endMin >= MINUTES_PER_DAY) continue;
+    if (labelByMinute.has(c.endMin)) continue;
+    labelByMinute.set(c.endMin, {
+      y: mapMinuteToY(c.endMin, segments),
+      label: formatMinuteOfDay(c.endMin),
+    });
+  }
   const timeMarkers: TimeMarker[] = Array.from(labelByMinute.values()).sort(
     (a, b) => a.y - b.y,
   );
 
   return {
     positions,
+    continuations,
     segments,
     days,
     totalWidth,

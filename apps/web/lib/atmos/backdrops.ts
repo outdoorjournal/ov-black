@@ -25,10 +25,14 @@ export const ATMOSPHERIC_BACKDROPS: readonly string[] = [
   UNSPLASH("1519681393784-d120267933ba"), // milky way over a snowbound peak
   UNSPLASH("1483728642387-6c3bdd6c93e5"), // teal twilight mountain wall
   UNSPLASH("1469474968028-56623f02e42e"), // sunbeams raking green ridgelines
-  UNSPLASH("1508739773434-c26b3d09e071"), // dolomites pass at golden hour
-  UNSPLASH("1454496522488-7a8e488e8606"), // himalayan massif in snow
+  UNSPLASH("1764611161203-5a5d80917256"), // dolomite wall in full alpenglow
+  UNSPLASH("1662047919337-d1c9d2794047"), // Tre Cime towers at sundown
   UNSPLASH("1486870591958-9b9d0d1dda99"), // lone snow peak over golden steppe
   UNSPLASH("1544735716-392fe2489ffa"), // stupa beneath the Everest wall
+  UNSPLASH("1541362254971-29e9b6af8d05"), // dusk range over a valley of lights
+  UNSPLASH("1778710909894-8adedaea8aa1"), // Zermatt glowing under the Matterhorn
+  UNSPLASH("1729935431972-7c6ec3f5c2c5"), // ridge silhouette over a fiery cloud sea
+  UNSPLASH("1495781856580-b3c4e8d21bf9"), // last ember of light on a black peak
   // ── water: lakes, fjords, falls ──────────────────────────────────────────
   UNSPLASH("1476514525535-07fb3b4ae5f1"), // wooden prow gliding Lago di Braies
   UNSPLASH("1493246507139-91e8fad9978e"), // Moraine Lake at alpenglow

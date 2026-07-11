@@ -26,7 +26,12 @@ from typing import Literal
 
 from strands import tool
 
-from agent.backend import agent_get_json, agent_patch_json, agent_post_json
+from agent.backend import (
+    agent_delete_json,
+    agent_get_json,
+    agent_patch_json,
+    agent_post_json,
+)
 
 
 _DOSSIER_FACT_KINDS = Literal[
@@ -199,6 +204,44 @@ async def update_party_member(
     if notes is not None:
         body["notes"] = notes
     return await agent_patch_json(f"/agent/party-members/{member_id}", json=body)
+
+
+@tool
+async def add_trip_traveler(*, member_id: str) -> dict:
+    """Seat an EXISTING party member on the trip you're planning right now.
+
+    Party membership is durable (household identity); being on a *specific* trip
+    is separate. Call this when the traveller confirms that someone already in
+    their ``party_members`` (from :func:`get_traveler_context`) is coming on THIS
+    trip — a returning traveller's spouse or child you already have on file. This
+    is what makes the itinerary's travel party read correctly (and expands
+    per-person costs for the whole group); without it, a companion stays in the
+    household but the trip still shows "just you".
+
+    You do NOT need this for a brand-new person — :func:`record_party_member`
+    already both saves them AND seats them on this trip in one step. Reach for
+    this only to add someone who is already on file. Seating the same member
+    twice is harmless. Returns the trip's full roster so you can confirm who is
+    coming.
+
+    * ``member_id`` — the ``id`` of the party member from your context.
+    """
+    return await agent_post_json("/agent/trip-travelers", json={"member_id": member_id})
+
+
+@tool
+async def remove_trip_traveler(*, member_id: str) -> dict:
+    """Take a member off the CURRENT trip (they stay in the household roster).
+
+    Use when someone already on this trip is not coming this time ("leave Quinn
+    out of this one"). It removes them from this trip's party only; they remain
+    in ``party_members`` for future trips, so you are not deleting anyone. Match
+    on WHO they mean and pass that member's ``id``. Returns the trip's remaining
+    roster.
+
+    * ``member_id`` — the ``id`` of the party member from your context.
+    """
+    return await agent_delete_json(f"/agent/trip-travelers/{member_id}")
 
 
 @tool

@@ -131,7 +131,7 @@ function renderDashboard(
   return render(
     <itineraryGraphStore.Provider initial={init}>
       <TimelineDataProvider value={{ timeline: timeline(nodes), baselineTitle: null }}>
-        <ConciergeControlProvider value={{ openConcierge }}>
+        <ConciergeControlProvider value={{ openConcierge, nudge: 0 }}>
           <DashboardView />
         </ConciergeControlProvider>
       </TimelineDataProvider>

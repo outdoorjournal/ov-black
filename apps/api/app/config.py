@@ -357,14 +357,33 @@ class Settings(BaseSettings):
         ),
     )
     agent_first_token_timeout_seconds: float = Field(
-        default=8.0,
+        default=15.0,
         ge=0.1,
         description=(
             "Hard ceiling on a silent upstream gap before the first text "
             "token: any runtime event (tool activity, cards) re-arms the "
             "window, so tool-first turns aren't cut while visibly working. "
             "On expiry we cut the stream and fall into the retry envelope. "
-            "Belt for the 2 s R015 target."
+            "Sized for this concierge's cold-start reasoning (observed "
+            "first tokens land at 7-10 s, and reasoning frames don't reach "
+            "the wire), NOT the 2 s R015 aspiration — this is a liveness "
+            "belt for a dead runtime, not an SLO. While a tool is actively "
+            "in flight the wider agent_tool_liveness_timeout_seconds applies "
+            "instead."
+        ),
+    )
+    agent_tool_liveness_timeout_seconds: float = Field(
+        default=20.0,
+        ge=0.1,
+        description=(
+            "Silent-gap ceiling that replaces the first-token deadline once "
+            "an activity 'call' frame proves a tool is executing (until its "
+            "matching 'result'). A tool-first turn is provably alive while a "
+            "tool runs, and a single tool call is bounded by the agent's own "
+            "per-call HTTP timeout (backend_timeout_seconds, default 15 s), "
+            "so this must sit comfortably above it — else an 8-15 s tool call "
+            "(flight search, hydrate) trips the cut and drops the turn to the "
+            "fallback with no retry."
         ),
     )
     agent_max_retries: int = Field(

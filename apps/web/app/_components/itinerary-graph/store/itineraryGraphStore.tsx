@@ -119,6 +119,26 @@ export function clampZoom(value: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
 }
 
+// ── Journal zoom (traveler-journal) ───────────────────────────────────
+// The Journal is event-proportional, not a clock: this scale only sizes the
+// duration bars hanging off each card and the height of the gaps between them
+// (plus the hour ticks that fall inside those gaps), so "time passing" reads
+// without turning the story into a ruler. Much coarser than the horizontal
+// planner's px-per-minute — a two-hour dinner is a bar of tens of pixels, not
+// hundreds. See Spine.DurationBar / VirtualNode.
+export const JOURNAL_ZOOM_MIN = 0.12;
+export const JOURNAL_ZOOM_MAX = 1.2;
+export const JOURNAL_ZOOM_PRESETS = {
+  cozy: 0.22,
+  hour: 0.45,
+  detail: 0.9,
+} as const;
+export type JournalZoomPreset = keyof typeof JOURNAL_ZOOM_PRESETS;
+
+export function clampJournalZoom(value: number): number {
+  return Math.min(JOURNAL_ZOOM_MAX, Math.max(JOURNAL_ZOOM_MIN, value));
+}
+
 /**
  * The card the persistent concierge is currently scoped to (M006/PS4). Set by a
  * card's "Ask Artemis about this" — the ConciergeColumn renders it as a "Re: …"
@@ -244,6 +264,10 @@ export type ItineraryGraphState = {
 
   // ── horizontal-view UI state ──
   pxPerMinute: number;
+
+  // ── journal-view UI state ──
+  /** Scale for the Journal's duration bars + gap heights (see JOURNAL_ZOOM_*). */
+  journalPxPerMinute: number;
 
   // ── place mode (PS5): pick-then-place ──
   /** The card lifted off the Collection, floating until it lands on a slot. */
@@ -444,6 +468,13 @@ export type ItineraryGraphState = {
   zoomOut: () => void;
   resetZoom: () => void;
   setZoomPreset: (preset: ZoomPreset) => void;
+
+  // ── zoom (journal view) ──
+  setJournalPxPerMinute: (value: number) => void;
+  journalZoomIn: () => void;
+  journalZoomOut: () => void;
+  resetJournalZoom: () => void;
+  setJournalZoomPreset: (preset: JournalZoomPreset) => void;
 };
 
 export type ItineraryGraphInit = {
@@ -494,16 +525,14 @@ function hasCredentials(s: ItineraryGraphState): boolean {
 /**
  * Whether the viewer may approve — the all-at-once "Approve all" and the
  * per-node approve. The traveler approves cards the advisor has published to
- * them (`with_traveler`); an advisor may also approve-all (on behalf of a
- * client who hasn't signed in yet) before that. Never on a fork (approval is
- * on the official trunk) or an already-approved plan.
+ * them (`with_traveler`). Never on a fork (approval is on the official trunk),
+ * an already-approved plan, or as an advisor — approval is a traveler action.
  */
 export function selectCanApprove(s: ItineraryGraphState): boolean {
   if (!hasCredentials(s) || s.status === "approved") return false;
   if (s.sample.itinerary?.forked_from_id) return false;
-  // Advisor: approve-all any time before approval. Traveler: only once the
-  // plan is with them for review.
-  return s.canEdit || s.status === "with_traveler";
+  if (s.canEdit) return false; // advisors don't approve; that's the traveler's job
+  return s.status === "with_traveler";
 }
 
 /**
@@ -574,6 +603,20 @@ export function isNodeScheduled(node: NodeResponse): boolean {
   const meta = node.metadata as { start_time?: string; start_synthesized?: boolean };
   if (meta.start_synthesized === true) return false;
   return typeof meta.start_time === "string" && meta.start_time.length > 0;
+}
+
+/**
+ * A node whose schedule is PINNED to an external booking/offer. A flight's
+ * `depart_at` / `arrive_at` come from the Duffel offer, so its time is a FACT,
+ * not a placement: the adapter derives its timeline slot from `depart_at`, and
+ * "re-timing" it isn't a drag — it's a rebooking (a different offer). Such a
+ * node is not drag-re-timable by anyone (traveler or advisor), so the move
+ * entry points no-op on it and the Journal offers a nudge instead of a handle.
+ */
+export function isSchedulePinned(node: NodeResponse): boolean {
+  if (node.type !== "flight") return false;
+  const depart = (node.metadata as { depart_at?: unknown }).depart_at;
+  return typeof depart === "string" && depart.length > 0;
 }
 
 /**
@@ -838,6 +881,7 @@ export const itineraryGraphStore = createStoreContext<
         awaitingProposal,
 
         pxPerMinute: ZOOM_PRESETS.day,
+        journalPxPerMinute: JOURNAL_ZOOM_PRESETS.hour,
 
         setAskContext: (ctx) => set({ askContext: ctx }),
 
@@ -1209,6 +1253,11 @@ export const itineraryGraphStore = createStoreContext<
         },
         moveNode: (id, dayKey, minuteOfDay) => {
           const s = get();
+          // A schedule-pinned node (a flight) can't be re-timed — its slot is
+          // derived from the offer's depart_at. Silently ignore the move so no
+          // junk placement is written (and the adapter would override it anyway).
+          const moving = s.nodes.find((n) => n.id === id);
+          if (moving && isSchedulePinned(moving)) return;
           const apply = (n: NodeResponse): NodeResponse => {
             if (n.id !== id) return n;
             const meta = rebasedMetadata(
@@ -1461,6 +1510,9 @@ export const itineraryGraphStore = createStoreContext<
           if (!c) return;
           // Optimistic local move so the card visibly shifts before we navigate.
           const target = s.nodes.find((n) => n.id === id);
+          // Pinned (a flight): its time is the offer's, not a placement — never
+          // fork just to re-time it (see isSchedulePinned / moveNode).
+          if (target && isSchedulePinned(target)) return;
           const newMeta = target
             ? rebasedMetadata(target, dayKey, minuteOfDay, s.sample.timezoneOffsetHours)
             : null;
@@ -1880,8 +1932,11 @@ export const itineraryGraphStore = createStoreContext<
           })
             .then((result) => {
               if (result.ok) {
+                // A round-trip flight lands as the outbound node plus one
+                // `additional_nodes` leg per return — surface every leg.
+                const added = [result.node, ...(result.node.additional_nodes ?? [])];
                 set((cur) => ({
-                  nodes: [...cur.nodes, result.node],
+                  nodes: [...cur.nodes, ...added],
                   flashNodeId: result.node.id,
                 }));
               }
@@ -1964,8 +2019,11 @@ export const itineraryGraphStore = createStoreContext<
           })
             .then((result) => {
               if (result.ok) {
+                // A round-trip flight lands as the outbound node plus one
+                // `additional_nodes` leg per return — surface every leg.
+                const added = [result.node, ...(result.node.additional_nodes ?? [])];
                 set((cur) => ({
-                  nodes: [...cur.nodes, result.node],
+                  nodes: [...cur.nodes, ...added],
                   flashNodeId: result.node.id,
                   fillProposals: cur.fillProposals.filter(
                     (p) => p.inventory_id !== proposal.inventory_id,
@@ -1990,6 +2048,21 @@ export const itineraryGraphStore = createStoreContext<
           set((s) => ({ pxPerMinute: clampZoom(s.pxPerMinute / 1.35) })),
         resetZoom: () => set({ pxPerMinute: ZOOM_PRESETS.day }),
         setZoomPreset: (preset) => set({ pxPerMinute: ZOOM_PRESETS[preset] }),
+
+        setJournalPxPerMinute: (v) =>
+          set({ journalPxPerMinute: clampJournalZoom(v) }),
+        journalZoomIn: () =>
+          set((s) => ({
+            journalPxPerMinute: clampJournalZoom(s.journalPxPerMinute * 1.35),
+          })),
+        journalZoomOut: () =>
+          set((s) => ({
+            journalPxPerMinute: clampJournalZoom(s.journalPxPerMinute / 1.35),
+          })),
+        resetJournalZoom: () =>
+          set({ journalPxPerMinute: JOURNAL_ZOOM_PRESETS.hour }),
+        setJournalZoomPreset: (preset) =>
+          set({ journalPxPerMinute: JOURNAL_ZOOM_PRESETS[preset] }),
       };
     },
   "ItineraryGraph",

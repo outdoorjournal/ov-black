@@ -266,6 +266,31 @@ describe("CardDetailView · facets", () => {
     );
   });
 
+  test("a priced item with no invoice still shows its price to a traveler", async () => {
+    // The item is quoted (node.cost_amount) but nothing has been billed yet:
+    // the charges read comes back empty. A traveler must still see what it costs.
+    getNodeChargesMock.mockResolvedValue({
+      ok: true,
+      charges: charges({
+        currency: null,
+        line_item_id: null,
+        invoice_id: null,
+        invoice_status: null,
+        billed_amount: "0.00",
+        owed_amount: "0.00",
+      }),
+    });
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], {
+      role: "client",
+      timeline: trunkTimeline([HOTEL]),
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("card-detail-money-price")).toHaveTextContent("USD 1000.00"),
+    );
+    // …and can't edit it — the edit affordance is advisor-only.
+    expect(screen.queryByTestId("card-detail-edit")).not.toBeInTheDocument();
+  });
+
   test("the money facet surfaces this item's booking status", async () => {
     getNodeChargesMock.mockResolvedValue({
       ok: true,
@@ -404,5 +429,20 @@ describe("CardDetailView \u00b7 edit facet (ADV-13)", () => {
       timeline: trunkTimeline([HOTEL]),
     });
     expect(screen.queryByTestId("card-detail-edit")).not.toBeInTheDocument();
+  });
+
+  test("a traveler on their own fork can edit details but NOT the price", () => {
+    // Default fixture is a fork (forked_from_id set), so a client here is a
+    // traveler on their own working copy: the edit facet renders for the
+    // description/confirmation, but price is advisor-only and stays hidden.
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], { role: "client" });
+    const facet = screen.getByTestId("card-detail-edit");
+    expect(within(facet).getByTestId("card-edit-description")).toBeInTheDocument();
+    expect(within(facet).getByTestId("card-edit-confirmation")).toBeInTheDocument();
+    expect(within(facet).queryByTestId("card-edit-amount")).not.toBeInTheDocument();
+    expect(within(facet).queryByTestId("card-edit-currency")).not.toBeInTheDocument();
+    expect(within(facet).queryByTestId("card-edit-kind")).not.toBeInTheDocument();
+    // They still SEE the price (read-only) in the money facet.
+    expect(screen.getByTestId("card-detail-money-price")).toHaveTextContent("USD 1000.00");
   });
 });

@@ -26,13 +26,14 @@ from app.inventory.schemas import (
     MealItem,
     Price,
 )
-from app.models import CostKind, NodeStatus, NodeType
+from app.models import CostKind, Node, NodeStatus, NodeType
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
     ItineraryError,
     ItineraryOutcome,
     _check_cost,
+    _check_cost_authority,
     add_node,
     create_itinerary,
     get_itinerary_graph,
@@ -190,6 +191,77 @@ def test_check_cost_rejects_currency_without_amount() -> None:
     err = _check_cost(None, "USD")
     assert err is not None
     assert err.outcome is ItineraryOutcome.VALIDATION_ERROR
+
+
+# ── Pure unit tests: _check_cost_authority (price is advisor-authored) ──────
+# A traveler may reshape/annotate their own fork, but re-quoting the price is
+# the advisor's authority alone; SYSTEM passes so reconcile (publish) carries an
+# advisor's price onto the trunk.
+
+
+def _priced_node() -> Node:
+    return Node(
+        type=NodeType.hotel,
+        title="Stay",
+        cost_amount=Decimal("500.00"),
+        cost_currency="USD",
+        cost_kind=CostKind.total,
+    )
+
+
+def _ctx(kind: ActorKind) -> ActorContext:
+    return ActorContext(user_id=None, kind=kind, actor_id="test")
+
+
+def test_cost_authority_blocks_traveler_reprice() -> None:
+    err = _check_cost_authority(
+        {"cost_amount": Decimal("999.00")}, _priced_node(), _ctx(ActorKind.USER)
+    )
+    assert err is not None
+    assert err.outcome is ItineraryOutcome.FORBIDDEN
+    assert err.detail == "advisor_only_price"
+
+
+def test_cost_authority_blocks_agent_reprice() -> None:
+    err = _check_cost_authority({"cost_currency": "EUR"}, _priced_node(), _ctx(ActorKind.AGENT))
+    assert err is not None
+    assert err.outcome is ItineraryOutcome.FORBIDDEN
+
+
+def test_cost_authority_allows_advisor_reprice() -> None:
+    assert (
+        _check_cost_authority(
+            {"cost_amount": Decimal("999.00")}, _priced_node(), _ctx(ActorKind.ADVISOR)
+        )
+        is None
+    )
+
+
+def test_cost_authority_allows_system_for_reconcile() -> None:
+    assert (
+        _check_cost_authority(
+            {"cost_amount": Decimal("999.00")}, _priced_node(), _ctx(ActorKind.SYSTEM)
+        )
+        is None
+    )
+
+
+def test_cost_authority_allows_traveler_noncost_edit() -> None:
+    # Editing the title on a priced node — no cost field present, so no gate.
+    assert _check_cost_authority({"title": "New"}, _priced_node(), _ctx(ActorKind.USER)) is None
+
+
+def test_cost_authority_tolerates_traveler_echoing_current_price() -> None:
+    # Re-sending the SAME price alongside a legitimate non-price edit is not a
+    # re-quote — only a value CHANGE is refused.
+    assert (
+        _check_cost_authority(
+            {"cost_amount": Decimal("500.00"), "title": "New"},
+            _priced_node(),
+            _ctx(ActorKind.USER),
+        )
+        is None
+    )
 
 
 # ── Integration tests (against local Supabase Postgres) ────────────────────
@@ -449,14 +521,15 @@ async def test_resolve_party_size_resolution_order(
 ) -> None:
     itinerary = await create_itinerary(db_session, _actor(), title="party size")
     try:
-        # 1. No parties → 1 (per_person bills at face value, nothing regresses).
+        # 1. No parties → 1 (just the account holder; per_person bills face value).
         assert await resolve_party_size(db_session, itinerary.id) == 1
 
-        # 2. Travelers, no member_count → the de-facto live count.
+        # 2. Three companion rows, no member_count → companions + the account
+        #    holder (the implicit floor) = 4.
         party_id = await _seed_party(db_session, itinerary.id, ("a", "b", "c"))
-        assert await resolve_party_size(db_session, itinerary.id) == 3
+        assert await resolve_party_size(db_session, itinerary.id) == 4
 
-        # 3. An explicit advisor-set member_count wins over the traveler count.
+        # 3. An explicit advisor-set member_count (a total head-count) wins.
         await db_session.execute(
             text("update public.parties set member_count = 5 where id = :p"),
             {"p": party_id},
@@ -474,7 +547,9 @@ async def test_sum_node_costs_expands_per_person_by_party_size(
 ) -> None:
     itinerary = await create_itinerary(db_session, _actor(), title="cost sum pp")
     try:
-        await _seed_party(db_session, itinerary.id, ("a", "b", "c"))  # party of 3
+        # Three named companions → party of 4 (the account holder is the
+        # implicit floor added by resolve_party_size, never a companion row).
+        await _seed_party(db_session, itinerary.id, ("a", "b", "c"))
 
         async def _node(amount, kind):
             node = await add_node(
@@ -490,10 +565,10 @@ async def test_sum_node_costs_expands_per_person_by_party_size(
             )
             assert not isinstance(node, ItineraryError)
 
-        await _node("1200.00", CostKind.per_person)  # × 3 = 3600.00
+        await _node("1200.00", CostKind.per_person)  # × 4 = 4800.00
         await _node("999.00", CostKind.total)  # unchanged
 
         totals = await sum_node_costs(db_session, itinerary.id)
-        assert totals == {"USD": Decimal("4599.00")}
+        assert totals == {"USD": Decimal("5799.00")}
     finally:
         await _cleanup(itinerary.id)

@@ -39,10 +39,12 @@ from agent.tools.surfaces import present_options, present_route
 from agent.tools.thread import post_thread_message
 from agent.tools.timeline import propose_timeline
 from agent.tools.traveler import (
+    add_trip_traveler,
     get_traveler_context,
     record_dossier_inference,
     record_party_member,
     record_profile_fact,
+    remove_trip_traveler,
     update_party_member,
 )
 
@@ -53,6 +55,8 @@ _TOOLS_ONBOARDING = [
     record_dossier_inference,
     record_party_member,
     update_party_member,
+    add_trip_traveler,
+    remove_trip_traveler,
     search_inventory,
     get_inventory_detail,
     propose_card,
@@ -78,6 +82,8 @@ _TOOLS_INTAKE = [
     record_dossier_inference,
     record_party_member,
     update_party_member,
+    add_trip_traveler,
+    remove_trip_traveler,
     update_trip_details,
     update_trip_timing,
     set_mood,
@@ -90,6 +96,8 @@ _TOOLS_PLANNING = [
     record_dossier_inference,
     record_party_member,
     update_party_member,
+    add_trip_traveler,
+    remove_trip_traveler,
     get_itinerary,
     list_alternatives,
     search_inventory,

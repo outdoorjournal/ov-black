@@ -83,13 +83,20 @@ def _iata(node: Any) -> str | None:
 
 
 def _slice_endpoints(offer: dict[str, Any]) -> tuple[str | None, str | None]:
-    """(origin_iata of first slice, destination_iata of last slice)."""
+    """(origin_iata, destination_iata) of the OUTBOUND leg (first slice).
+
+    Scoped entirely to the first slice, mirroring ``_last_outbound_segment``.
+    A round-trip offer's LAST slice is the return leg, whose destination is the
+    original origin — reading ``slices[-1]`` would collapse an outbound like
+    DTW→NRT (return NRT→DTW) into DTW→DTW. The card represents the outbound
+    journey (its depart/arrive already come off the first slice), so both
+    endpoints must too.
+    """
     slices = offer.get("slices")
     if not isinstance(slices, list) or not slices:
         return (None, None)
     first = _as_dict(slices[0])
-    last = _as_dict(slices[-1])
-    return (_iata(first.get("origin")), _iata(last.get("destination")))
+    return (_iata(first.get("origin")), _iata(first.get("destination")))
 
 
 def _first_segment(offer: dict[str, Any]) -> dict[str, Any]:

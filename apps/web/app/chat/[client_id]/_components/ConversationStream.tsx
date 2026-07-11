@@ -11,7 +11,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { MapFoldIndicator } from "@/app/_components/MapFoldIndicator";
+import { MapCompassIndicator } from "@/app/_components/MapCompassIndicator";
 
 import { OnboardingMilestoneCard } from "./OnboardingMilestoneCard";
 import { ProseMessage } from "./ProseMessage";
@@ -80,12 +80,12 @@ export function ConversationStream({
                 <ProseMessage content={streaming.buffer} />
                 {working ? (
                   <div className="mt-2">
-                    <MapFoldIndicator />
+                    <MapCompassIndicator />
                   </div>
                 ) : null}
               </>
             ) : working ? (
-              <MapFoldIndicator />
+              <MapCompassIndicator />
             ) : (
               "\u00a0"
             )}
@@ -106,7 +106,7 @@ function TurnRow({ turn }: { turn: AgentTurnView }) {
       <div
         data-turn-id={turn.id}
         data-role="error"
-        className="font-sans text-sm leading-relaxed text-ink/70"
+        className="font-sans text-base leading-relaxed text-ink/70"
       >
         {CRAFTED_FALLBACK_COPY}
       </div>
@@ -130,7 +130,7 @@ function TurnRow({ turn }: { turn: AgentTurnView }) {
       <div
         data-turn-id={turn.id}
         data-role="user"
-        className="self-end rounded-md bg-ink/5 px-4 py-3 font-sans text-base leading-relaxed text-ink"
+        className="self-end rounded-md bg-ink/5 px-4 py-3 font-sans text-lg leading-relaxed text-ink"
       >
         {turn.content}
       </div>

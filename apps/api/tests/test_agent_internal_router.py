@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC
+from types import SimpleNamespace
 from typing import Any
 
 import jwt
@@ -446,6 +447,61 @@ def test_post_party_member_without_token_returns_401(client: TestClient) -> None
     assert resp.status_code == 401
 
 
+def test_post_party_member_seats_companion_on_session_itinerary(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recorded companion is attached to the session's trip travelers edge.
+
+    Recording household identity alone left the dashboard chip on "Just you";
+    the endpoint now also seats the new member on the pinned itinerary's party.
+    """
+    itinerary_id = uuid.uuid4()
+    attached: list[tuple[uuid.UUID, str]] = []
+
+    async def _pinned(_session: Any, _session_id: Any) -> Any:
+        return itinerary_id
+
+    async def _attach(_session: Any, **kwargs: Any) -> Any:
+        attached.append((kwargs["itinerary_id"], kwargs["member"].full_name))
+        return object()
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_pinned_itinerary", _pinned)
+    monkeypatch.setattr(agent_internal_module, "attach_member_to_itinerary", _attach)
+
+    resp = client.post(
+        "/agent/party-members",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"full_name": "Emma", "relationship_to_primary": "daughter"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert attached == [(itinerary_id, "Emma")]
+
+
+def test_post_primary_party_member_not_seated_on_itinerary(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The account holder is the party's implicit floor — never a companion row."""
+    attached: list[Any] = []
+
+    async def _pinned(_session: Any, _session_id: Any) -> Any:
+        return uuid.uuid4()
+
+    async def _attach(_session: Any, **kwargs: Any) -> Any:
+        attached.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_pinned_itinerary", _pinned)
+    monkeypatch.setattr(agent_internal_module, "attach_member_to_itinerary", _attach)
+
+    resp = client.post(
+        "/agent/party-members",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"full_name": "The account holder", "is_primary": True},
+    )
+    assert resp.status_code == 201, resp.text
+    assert attached == []
+
+
 # ── PATCH /agent/party-members/{member_id} ────────────────────────────────
 
 
@@ -485,6 +541,139 @@ def test_patch_party_member_unknown_id_returns_404(
 
 def test_patch_party_member_without_token_returns_401(client: TestClient) -> None:
     resp = client.patch(f"/agent/party-members/{uuid.uuid4()}", json={"full_name": "Quinn"})
+    assert resp.status_code == 401
+
+
+# ── /agent/trip-travelers (seat/unseat an existing member on THIS trip) ────
+
+# A non-None sentinel standing in for "the member exists"; the 404 test passes
+# member=None instead. Module-level so it isn't a call in an argument default.
+_A_MEMBER = object()
+
+
+def _stub_trip_traveler_deps(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    itinerary_id: uuid.UUID | None,
+    member: Any = _A_MEMBER,
+    roster: list[tuple[Any, Any]] | None = None,
+    seated: list[Any] | None = None,
+    detached: list[Any] | None = None,
+) -> None:
+    async def _pinned(_session: Any, _session_id: Any) -> Any:
+        return itinerary_id
+
+    async def _get_member(_session: Any, **_kwargs: Any) -> Any:
+        return member
+
+    async def _attach(_session: Any, **kwargs: Any) -> Any:
+        if seated is not None:
+            seated.append(kwargs)
+        return object()
+
+    async def _detach(_session: Any, **kwargs: Any) -> bool:
+        if detached is not None:
+            detached.append(kwargs)
+        return True
+
+    async def _list(_session: Any, **_kwargs: Any) -> Any:
+        return roster if roster is not None else []
+
+    monkeypatch.setattr(agent_internal_module, "_resolve_session_pinned_itinerary", _pinned)
+    monkeypatch.setattr(agent_internal_module, "get_party_member", _get_member)
+    monkeypatch.setattr(agent_internal_module, "attach_member_to_itinerary", _attach)
+    monkeypatch.setattr(agent_internal_module, "detach_member_from_itinerary", _detach)
+    monkeypatch.setattr(agent_internal_module, "list_itinerary_party", _list)
+
+
+def test_post_trip_traveler_seats_member_and_returns_roster(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    itinerary_id = uuid.uuid4()
+    member_id = uuid.uuid4()
+    seated: list[Any] = []
+    _stub_trip_traveler_deps(
+        monkeypatch,
+        itinerary_id=itinerary_id,
+        seated=seated,
+        roster=[(SimpleNamespace(party_member_id=member_id, name="Emma"), None)],
+    )
+
+    resp = client.post(
+        "/agent/trip-travelers",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"member_id": str(member_id)},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["itinerary_id"] == str(itinerary_id)
+    assert body["travelers"] == [{"member_id": str(member_id), "name": "Emma"}]
+    # the attach actually ran, scoped to the session's pinned itinerary
+    assert seated and seated[0]["itinerary_id"] == itinerary_id
+
+
+def test_post_trip_traveler_without_pin_returns_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_trip_traveler_deps(monkeypatch, itinerary_id=None)
+    resp = client.post(
+        "/agent/trip-travelers",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"member_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "no_pinned_itinerary"}
+
+
+def test_post_trip_traveler_unknown_member_returns_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_trip_traveler_deps(monkeypatch, itinerary_id=uuid.uuid4(), member=None)
+    resp = client.post(
+        "/agent/trip-travelers",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"member_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "party_member_not_found"}
+
+
+def test_post_trip_traveler_without_token_returns_401(client: TestClient) -> None:
+    resp = client.post("/agent/trip-travelers", json={"member_id": str(uuid.uuid4())})
+    assert resp.status_code == 401
+
+
+def test_delete_trip_traveler_unseats_and_returns_roster(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    itinerary_id = uuid.uuid4()
+    member_id = uuid.uuid4()
+    detached: list[Any] = []
+    # After removal the roster is empty → the chip falls back to "Just you".
+    _stub_trip_traveler_deps(monkeypatch, itinerary_id=itinerary_id, detached=detached, roster=[])
+
+    resp = client.delete(
+        f"/agent/trip-travelers/{member_id}",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"itinerary_id": str(itinerary_id), "travelers": []}
+    assert detached and detached[0]["member_id"] == member_id
+
+
+def test_delete_trip_traveler_without_pin_returns_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_trip_traveler_deps(monkeypatch, itinerary_id=None)
+    resp = client.delete(
+        f"/agent/trip-travelers/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+    )
+    assert resp.status_code == 409
+
+
+def test_delete_trip_traveler_without_token_returns_401(client: TestClient) -> None:
+    resp = client.delete(f"/agent/trip-travelers/{uuid.uuid4()}")
     assert resp.status_code == 401
 
 

@@ -53,5 +53,6 @@ export async function resendWelcomeAction(
   }
   revalidatePath("/command-center");
   revalidatePath("/command-center/clients");
+  revalidatePath(`/command-center/clients/${clientId}`);
   return { ok: true };
 }

@@ -200,6 +200,7 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
             {editable && node.type !== "note" ? (
               <EditFacet
                 node={node}
+                canEditPrice={canEdit}
                 onSave={(input) =>
                   storeApi.getState().updateCardDetails(node.id, input)
                 }
@@ -210,7 +211,15 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
               itineraryId={itineraryId}
               apiBaseUrl={apiBaseUrl}
               accessToken={accessToken}
-              nodeHasCost={node.cost_amount != null && node.cost_currency != null}
+              nodeCost={
+                node.cost_amount != null && node.cost_currency != null
+                  ? {
+                      amount: node.cost_amount,
+                      currency: node.cost_currency,
+                      kind: node.cost_kind ?? "total",
+                    }
+                  : null
+              }
             />
             {/* Remove (soft delete). A note is feedback and always removable; any
                 other card only while pre-firmed (a firmed booking must be demoted
@@ -443,9 +452,14 @@ const COST_KIND_OPTIONS: ReadonlyArray<{ value: CostKind; label: string }> = [
 
 function EditFacet({
   node,
+  canEditPrice,
   onSave,
 }: {
   node: NodeResponse;
+  // Price is advisor-only, even on a traveler's own fork: a traveler may reshape
+  // and annotate their version but never re-quote it. Description + confirmation
+  // stay editable by whoever holds the fork.
+  canEditPrice: boolean;
   onSave: (input: {
     description?: string;
     confirmationNumber?: string;
@@ -474,9 +488,10 @@ function EditFacet({
   const amountValid =
     amountTrim === "" || Number.isFinite(Number.parseFloat(amountTrim));
   const costChanged =
-    amountTrim !== seedAmount ||
-    (amountTrim !== "" &&
-      (currency.trim().toUpperCase() !== seedCurrency || kind !== seedKind));
+    canEditPrice &&
+    (amountTrim !== seedAmount ||
+      (amountTrim !== "" &&
+        (currency.trim().toUpperCase() !== seedCurrency || kind !== seedKind)));
   const dirty =
     description !== seedDescription ||
     confirmation !== seedConfirmation ||
@@ -519,45 +534,47 @@ function EditFacet({
           />
         </label>
 
-        <label className="flex flex-col gap-1">
-          <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
-            Price
-          </span>
-          <span className="flex items-center gap-1.5">
-            <input
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              inputMode="decimal"
-              placeholder="1200.00"
-              data-testid="card-edit-amount"
-              className={`${fieldClass} w-28 text-right tabular-nums`}
-            />
-            <input
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-              maxLength={3}
-              aria-label="Price currency"
-              data-testid="card-edit-currency"
-              className={`${fieldClass} w-16 uppercase`}
-            />
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as CostKind)}
-              aria-label="Price kind"
-              data-testid="card-edit-kind"
-              className={fieldClass}
-            >
-              {COST_KIND_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </span>
-          <span className="font-serif text-[12px] italic text-ink/45">
-            Clear the amount to remove the price.
-          </span>
-        </label>
+        {canEditPrice ? (
+          <label className="flex flex-col gap-1">
+            <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+              Price
+            </span>
+            <span className="flex items-center gap-1.5">
+              <input
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                inputMode="decimal"
+                placeholder="1200.00"
+                data-testid="card-edit-amount"
+                className={`${fieldClass} w-28 text-right tabular-nums`}
+              />
+              <input
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                maxLength={3}
+                aria-label="Price currency"
+                data-testid="card-edit-currency"
+                className={`${fieldClass} w-16 uppercase`}
+              />
+              <select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as CostKind)}
+                aria-label="Price kind"
+                data-testid="card-edit-kind"
+                className={fieldClass}
+              >
+                {COST_KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <span className="font-serif text-[12px] italic text-ink/45">
+              Clear the amount to remove the price.
+            </span>
+          </label>
+        ) : null}
 
         <label className="flex flex-col gap-1">
           <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
@@ -595,13 +612,13 @@ function MoneyFacet({
   itineraryId,
   apiBaseUrl,
   accessToken,
-  nodeHasCost,
+  nodeCost,
 }: {
   nodeId: string;
   itineraryId: string;
   apiBaseUrl: string | null;
   accessToken: string | null;
-  nodeHasCost: boolean;
+  nodeCost: { amount: string; currency: string; kind: CostKind } | null;
 }) {
   const [state, setState] = useState<
     | { kind: "loading" }
@@ -628,17 +645,35 @@ function MoneyFacet({
 
   return (
     <FacetCard label="This item · money" testid="card-detail-money">
-      {state.kind === "loading" ? (
-        <p className="font-serif text-[13px] italic text-ink/45">Checking the ledger…</p>
-      ) : state.kind === "error" ? (
-        <p className="font-serif text-[13px] italic text-ink/45">
-          Costs aren&rsquo;t available right now.
-        </p>
-      ) : (
-        <MoneyBody charges={state.charges} nodeHasCost={nodeHasCost} />
-      )}
+      <div className="flex flex-col gap-1.5">
+        {/* The item's own quoted price — read-only, shown to everyone (a traveler
+            sees what a thing costs even before it's ever invoiced). Editing it is
+            advisor-only, gated in the separate Edit facet. */}
+        {nodeCost ? (
+          <MoneyRow
+            label="Price"
+            value={priceLabel(nodeCost)}
+            testid="card-detail-money-price"
+          />
+        ) : null}
+        {state.kind === "loading" ? (
+          <p className="font-serif text-[13px] italic text-ink/45">Checking the ledger…</p>
+        ) : state.kind === "error" ? (
+          <p className="font-serif text-[13px] italic text-ink/45">
+            Costs aren&rsquo;t available right now.
+          </p>
+        ) : (
+          <MoneyBody charges={state.charges} hasNodePrice={nodeCost !== null} />
+        )}
+      </div>
     </FacetCard>
   );
+}
+
+// A node's own quoted price ("USD 1000.00", or "… / person" when per-traveler).
+function priceLabel(cost: { amount: string; currency: string; kind: CostKind }): string {
+  const base = `${cost.currency} ${cost.amount}`;
+  return cost.kind === "per_person" ? `${base} / person` : base;
 }
 
 const NODE_STATUS_LABEL: Record<string, string> = {
@@ -649,10 +684,10 @@ const NODE_STATUS_LABEL: Record<string, string> = {
 
 function MoneyBody({
   charges,
-  nodeHasCost,
+  hasNodePrice,
 }: {
   charges: NodeChargesResponse;
-  nodeHasCost: boolean;
+  hasNodePrice: boolean;
 }) {
   const cur = charges.currency;
   const money = (v: string): string => (cur ? `${cur} ${v}` : v);
@@ -660,14 +695,15 @@ function MoneyBody({
   const nothingBilled = !cur && charges.booking === null;
 
   if (nothingBilled) {
-    // Coverage signal: a priced item that isn't on any invoice yet is an advisor
-    // to-do ("bill it"); a truly costless item is just informational.
-    return nodeHasCost ? (
+    // The price (if any) is already shown above as its own row. What's left here
+    // is billing state: a priced-but-unbilled item is an advisor to-do ("bill
+    // it"); a truly costless item is just informational.
+    return hasNodePrice ? (
       <p
         data-testid="card-detail-money-uninvoiced"
         className="font-serif text-[13px] italic text-[#8a5a1d]"
       >
-        Priced, but not yet on an invoice.
+        Not yet on an invoice.
       </p>
     ) : (
       <p data-testid="card-detail-money-empty" className="font-serif text-[13px] italic text-ink/45">
@@ -721,13 +757,15 @@ function MoneyRow({
   label,
   value,
   emphasize = false,
+  testid,
 }: {
   label: string;
   value: string;
   emphasize?: boolean;
+  testid?: string;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
+    <div className="flex items-baseline justify-between gap-3" data-testid={testid}>
       <span className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/45">{label}</span>
       <span
         className={

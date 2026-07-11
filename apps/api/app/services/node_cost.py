@@ -31,11 +31,11 @@ from collections.abc import Collection
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import NamedTuple
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.inventory.schemas import FlightItem, HotelItem, InventoryItem
-from app.models import CostKind, Node, NodeStatus, Party, Traveler
+from app.models import CostKind, Node, NodeStatus, Party, PartyMember, Traveler
 
 # Whole-booking providers quote one total for the node (a Duffel offer covers
 # every passenger on the request; a Ratehawk rate is the whole stay). Anything
@@ -112,14 +112,18 @@ def effective_node_cost(amount: Decimal, kind: CostKind | None, party_size: int)
 
 
 async def resolve_party_size(session: AsyncSession, itinerary_id: uuid.UUID) -> int:
-    """The itinerary's effective traveler count (floored at 1).
+    """The itinerary's effective head-count for per-person cost expansion.
 
-    Resolution order: (1) the sum of any advisor-set ``parties.member_count`` for
-    the itinerary; (2) else the de-facto count of ``travelers`` rows across the
-    itinerary's parties (``member_count`` is not yet populated anywhere, so this is
-    the live source today); (3) else 1, so a ``per_person`` cost on a party-less
-    itinerary bills at face value and nothing regresses. Per-node ``node_parties``
-    precision is deliberately deferred — a node bills for the whole trip party.
+    Resolution order: (1) the sum of any advisor-set ``parties.member_count`` —
+    an explicit total head-count; (2) else the count of named *companion*
+    ``travelers`` rows **plus one** for the account holder, who is the party's
+    implicit floor and never a companion row. This is why a solo trip with an
+    empty edge still bills at ``1``, and why the dashboard can read "Just you"
+    off zero travelers while a per-person cost still counts the traveller
+    themselves. A companion is any ``travelers`` row not linked to the primary
+    ``party_member`` — so an account holder ever explicitly seated on the edge
+    is counted once (via the +1), not twice. Per-node ``node_parties`` precision
+    is deliberately deferred — a node bills for the whole trip party.
     """
     explicit_total, explicit_count = (
         await session.execute(
@@ -131,17 +135,18 @@ async def resolve_party_size(session: AsyncSession, itinerary_id: uuid.UUID) -> 
     if explicit_count and explicit_total:
         return max(int(explicit_total), 1)
 
-    traveler_count = (
+    companion_count = (
         await session.execute(
             select(func.count(Traveler.id))
             .join(Party, Party.id == Traveler.party_id)
-            .where(Party.itinerary_id == itinerary_id)
+            .outerjoin(PartyMember, PartyMember.id == Traveler.party_member_id)
+            .where(
+                Party.itinerary_id == itinerary_id,
+                or_(PartyMember.id.is_(None), PartyMember.is_primary.is_(False)),
+            )
         )
     ).scalar_one()
-    if traveler_count:
-        return max(int(traveler_count), 1)
-
-    return 1
+    return int(companion_count) + 1
 
 
 async def sum_node_costs(

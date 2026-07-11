@@ -40,9 +40,10 @@ export function ClientPartySection({
       ) : (
         <Button
           type="button"
+          variant="brand"
           size="sm"
           onClick={() => setAdding(true)}
-          className="self-start bg-paper text-ink hover:bg-paper/90"
+          className="self-start"
         >
           Add traveler
         </Button>

@@ -33,7 +33,7 @@ from app.auth import AuthenticatedUser, require_user
 from app.auth_guards import require_advisor
 from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
-from app.inventory.schemas import ExperienceItem
+from app.inventory.schemas import ExperienceItem, FlightItem
 from app.models import (
     Client,
     CostKind,
@@ -49,6 +49,8 @@ from app.models import (
 from app.routers.inventory import get_inventory_registry
 from app.services.agent import drain_queue
 from app.services.card_mapping import (
+    flight_item_to_card_attrs,
+    flight_slice_count,
     inventory_item_to_card_metadata,
     scheduled_start_for_item,
 )
@@ -92,6 +94,7 @@ from app.services.itineraries import (
 )
 from app.services.link_preview import fetch_link_preview
 from app.services.node_cost import (
+    NodeCost,
     cost_from_inventory_item,
     resolve_party_size,
     sum_node_costs,
@@ -333,6 +336,12 @@ class NodeResponse(BaseModel):
     # Note attachment (0014). For a `note` riding a host node, the host's id;
     # None for a free-standing note (which carries `starts_at`) or any non-note.
     attached_to_node_id: uuid.UUID | None = None
+    # Sibling nodes created by the same write (from-inventory only). A round-trip
+    # flight offer is one bookable item but two legs, so it materializes as this
+    # node (the outbound) plus one ``additional_nodes`` entry per return/onward
+    # leg. Empty for every single-node write; nested entries carry none of their
+    # own. The agent turn loop fans these out into one card_proposed frame each.
+    additional_nodes: list[NodeResponse] = Field(default_factory=list)
 
 
 class CreateEdgeRequest(BaseModel):
@@ -1138,6 +1147,60 @@ async def create_node_endpoint(
     return _node_response_from_node(result)
 
 
+async def _create_flight_leg_nodes(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+    item: FlightItem,
+    node_type: NodeType,
+    status: NodeStatus,
+    parent_subgraph_id: uuid.UUID | None,
+    cost: NodeCost | None,
+) -> list[Any]:
+    """Materialize each slice of a multi-slice flight offer as its own node.
+
+    One node per leg (outbound, return, …), each carrying its own leg-scoped
+    ``FlightCardAttrs`` (route, cabin, depart/arrive) and schedule. All legs
+    share the offer's ``source_id`` — a round-trip is booked as one offer — and
+    the whole-ticket fare is attached only to the outbound so summing node costs
+    doesn't count the ticket twice. Returns the created nodes in slice order
+    (outbound first); the caller promotes the tail into ``additional_nodes``.
+    """
+    created: list[Any] = []
+    for i in range(flight_slice_count(item)):
+        attrs = flight_item_to_card_attrs(item, slice_index=i)
+        leg_metadata = attrs.model_dump(mode="json", exclude_none=True)
+        start_iso, duration_minutes = scheduled_start_for_item(item, leg_metadata)
+        leg_title = (
+            f"{attrs.iata_from} → {attrs.iata_to}"
+            if attrs.iata_from and attrs.iata_to
+            else item.title
+        )
+        leg_cost = cost if i == 0 else None
+        leg = await add_node(
+            session,
+            actor,
+            itinerary_id=itinerary_id,
+            type=node_type,
+            status=status,
+            title=leg_title,
+            parent_subgraph_id=parent_subgraph_id,
+            source=item.source,
+            source_id=item.source_id,
+            metadata=leg_metadata,
+            starts_at=start_iso,
+            duration_minutes=duration_minutes,
+            cost_amount=leg_cost.amount if leg_cost else None,
+            cost_currency=leg_cost.currency if leg_cost else None,
+            cost_kind=leg_cost.kind if leg_cost else None,
+        )
+        if isinstance(leg, ItineraryError):
+            _raise_for_error(leg)
+        created.append(leg)
+    return created
+
+
 @router.post(
     "/{itinerary_id}/nodes/from-inventory",
     status_code=status.HTTP_201_CREATED,
@@ -1194,6 +1257,29 @@ async def create_node_from_inventory_endpoint(
     # not just a snapshot string. ``None`` for a price-less item (e.g. a
     # Google-Places meal) — the node simply carries no cost.
     cost = cost_from_inventory_item(item)
+
+    # Round-trip (multi-slice) flight offer → one node per leg. A single Duffel
+    # offer is atomically bookable but carries an outbound AND a return slice; the
+    # graph must show each as its own node (own route/times/schedule), else the
+    # card collapses to origin→origin. Legs share the offer's source_id (booking
+    # is atomic) and the whole-ticket fare rides only the outbound to avoid
+    # double-counting trip totals.
+    if isinstance(item, FlightItem) and flight_slice_count(item) > 1:
+        legs = await _create_flight_leg_nodes(
+            session,
+            actor,
+            itinerary_id=itinerary_id,
+            item=item,
+            node_type=node_type,
+            status=payload.status,
+            parent_subgraph_id=payload.parent_subgraph_id,
+            cost=cost,
+        )
+        primary, *rest = legs
+        response = _node_response_from_node(primary)
+        response.additional_nodes = [_node_response_from_node(n) for n in rest]
+        return response
+
     result = await add_node(
         session,
         actor,

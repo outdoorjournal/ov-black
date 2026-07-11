@@ -63,14 +63,14 @@ function mkNode(id: string, startIso: string, durationMin = 60): NodeResponse {
 }
 
 function nodeEntry(id: string, startIso: string): JournalEntry {
-  return { kind: "node", node: mkNode(id, startIso) };
+  return { kind: "node", node: mkNode(id, startIso), durationMinutes: 60 };
 }
 
 describe("drop slots along a day", () => {
   test("N cards → N+1 slots: lead, midpoints, trail", () => {
     const entries: JournalEntry[] = [
       nodeEntry("a", "2024-06-20T09:00:00+09:00"), // 540–600
-      { kind: "gap", minutes: 120 },
+      { kind: "gap", minutes: 120, startHour: 10 },
       nodeEntry("b", "2024-06-20T12:00:00+09:00"), // 720–780
     ];
     const bounds = cardBoundsOf(entries, 9);

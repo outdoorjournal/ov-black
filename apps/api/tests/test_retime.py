@@ -330,6 +330,43 @@ async def test_loosen_keeps_anchor_and_cards_then_repin_shifts_again(
 
 @integration
 @pytest.mark.asyncio
+async def test_pinning_via_details_restamps_anchor_to_date_start(
+    db_session: AsyncSession,
+) -> None:
+    """Pinning through the window-edit path re-stamps days_anchor = date_start.
+
+    Regression: a card scheduled before dates were set stamps days_anchor at the
+    then-current window start; later pinning the trip via update_itinerary_details
+    left that stale anchor in place, so Day-N numbering counted from a phantom
+    start (the "real Day 1 is now Day 8" bug) and a subsequent retime mis-shifted.
+    """
+    itin = await _windowed_itinerary(db_session, title="pin-via-details")
+    try:
+        await _scheduled_node(db_session, itin.id, starts_at="2027-06-03T09:00:00+02:00")
+        await db_session.refresh(itin)
+        assert itin.days_anchor == date(2027, 6, 1)  # window start, stamped early
+
+        pinned = await update_itinerary_details(
+            db_session,
+            _actor(),
+            itin,
+            fields={
+                "timing_kind": ItineraryTimingKind.exact,
+                "date_start": date(2027, 6, 10),
+                "date_end": date(2027, 6, 20),
+            },
+        )
+        assert not isinstance(pinned, ItineraryError)
+        await db_session.refresh(itin)
+        # The anchor follows date_start — Day 1 is the pinned start, not the
+        # stale 2027-06-01 that would push the trip nine days out.
+        assert itin.days_anchor == date(2027, 6, 10)
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_loosen_refused_while_booked_cards_exist(db_session: AsyncSession) -> None:
     itin = await _windowed_itinerary(db_session, title="loosen-booked")
     try:

@@ -122,11 +122,6 @@ export default async function ItineraryLayout({
   const homeHref = role === "advisor" ? "/command-center" : "/basecamp";
   const crumbs: Crumb[] = [{ label: tripTitle }];
 
-  // First-run gate (ADVISOR only — travelers get the immersive /new intake
-  // above): no brief yet → capture the goal + timing before the shell. A
-  // fork inherits its baseline's intent, so only baselines gate.
-  const needsBrief = role === "advisor" && isTrunk && briefEmpty;
-
   return (
     <div className="flex h-dvh flex-col bg-paper">
       <AppHeader
@@ -150,8 +145,6 @@ export default async function ItineraryLayout({
         viewerOpenForkId={result.viewer_open_fork_id ?? null}
         awaitingProposal={awaitingProposal}
         totals={result.totals}
-        needsBrief={needsBrief}
-        audience={role === "advisor" ? "advisor" : "traveler"}
       >
         {children}
       </ItineraryShell>

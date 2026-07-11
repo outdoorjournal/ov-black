@@ -38,25 +38,26 @@ test("ONB-2: a traveler converses with the concierge from the opener", async ({
     "I love slow mornings, good coffee, and quiet coastal villages.",
   );
 
-  // The engaged composer is disabled while the reply streams and re-enables once
-  // it settles — the robust "a reply came back" signal (counting turns is
-  // fragile: the seeded opener and the agent's echoed first line can dedupe to
-  // one). Real turns take time — give them room. The turn is held under the
-  // shared agent lock so it never contends with another live turn.
-  const composer = page.getByTestId("chat-composer-textarea");
+  // The shared ConversationPanel keeps its input enabled throughout (so it never
+  // loses focus); the robust "a reply came back" signal is the streaming bubble
+  // clearing (counting turns is fragile: the seeded opener and the agent's echoed
+  // first line can dedupe to one). Real turns take time — give them room. The turn
+  // is held under the shared agent lock so it never contends with another live turn.
   await withAgentTurnLock(async () => {
-    await page.getByRole("button", { name: "Reply" }).click();
+    await opener.press("Enter");
 
     // The conversation view takes over and records the user's turn verbatim.
-    await expect(page.getByTestId("conversation-stream")).toBeVisible();
+    await expect(page.getByTestId("conversation-panel")).toBeVisible();
     await expect(
       page
         .locator('[data-role="user"]', { hasText: "quiet coastal villages" })
         .first(),
     ).toBeVisible();
 
-    await expect(composer).toBeVisible();
-    await expect(composer).toBeEnabled({ timeout: 150_000 });
+    // The streaming bubble carries data-streaming="true" until the turn settles.
+    await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, {
+      timeout: 150_000,
+    });
   });
 
   // The turn must not have fallen back to the D015 error row.

@@ -125,6 +125,16 @@ export type PartyUpdatedFrame = {
   };
 };
 
+// Emitted when the agent records a profile fact during the basecamp
+// onboarding conversation. Carries ONLY the fact `kind` (never the
+// traveler-told text) — the onboarding ledger lights a goal checkmark
+// off the kind: destination goals key off `dream_signal`/`aspiration`,
+// every other kind counts as "something about you".
+export type ProfileUpdatedFrame = {
+  type: "profile_updated";
+  kind: string;
+};
+
 // Emitted when the agent calls `complete_intake` — the immersive first
 // conversation is done. The intake surface docks the chat into its normal
 // column and lands the traveler on the trip dashboard; every other surface
@@ -168,6 +178,7 @@ export type SseFrame =
   | NodeUpdatedFrame
   | ItineraryUpdatedFrame
   | PartyUpdatedFrame
+  | ProfileUpdatedFrame
   | IntakeCompleteFrame
   | MoodFrame
   | ActivityFrame

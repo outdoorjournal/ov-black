@@ -15,7 +15,7 @@ Outdoor Voyage: Black — an invitation-only, AI-native concierge platform for u
 pnpm workspaces + Turbo, pinned to Node ≥24 / pnpm ≥9 / Python 3.13. Workspaces live under `apps/*`, `packages/*`, `infra/*`.
 
 - [apps/api](apps/api/) — FastAPI backend (Python 3.13, uv, SQLAlchemy async + asyncpg, Supabase JWT middleware, Bedrock AgentCore). Runs on ECS Fargate behind an ALB in staging/prod.
-- [apps/web](apps/web/) — Next.js 15 + React 19 + Tailwind 3 advisor/client UI (App Router, typed routes, Vitest + jsdom). Components under [apps/web/app/_components](apps/web/app/_components/) and [apps/web/components/ui](apps/web/components/ui/) (shadcn-style).
+- [apps/web](apps/web/) — Next.js 15 + React 19 + Tailwind 4 advisor/client UI (App Router, typed routes, Vitest + jsdom). Components under [apps/web/app/_components](apps/web/app/_components/) and [apps/web/components/ui](apps/web/components/ui/) (shadcn-style).
 - [packages/api-client](packages/api-client/) — TypeScript client **generated** from the FastAPI OpenAPI schema via `@hey-api/openapi-ts`. `src/index.ts` wraps the generated SDK into discriminated `{ ok: true | false, detail }` results; `src/generated/` is machine-emitted and should never be hand-edited.
 - [infra/cdk](infra/cdk/) — AWS CDK v2 (TypeScript) stacks: `SecretsStack` (Supabase + AgentCore ARN secrets) and `ApiStack` (ECR, ECS Fargate, ALB, CloudWatch). Imports an existing VPC by ID/subnet attributes so `cdk synth` is hermetic — no AWS creds needed in CI.
 - [supabase/](supabase/) — migrations only (no app code). The **remote Supabase project is already provisioned**; `supabase/config.toml` is for local dev. Ask before creating new Supabase projects.

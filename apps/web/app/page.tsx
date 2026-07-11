@@ -58,12 +58,12 @@ export default async function HomePage() {
         <div className="max-w-xl">
           <Eyebrow rule>The concierge for considered travel</Eyebrow>
           <h1 className="mt-6 font-serif text-5xl leading-[1.02] tracking-tight sm:text-6xl lg:text-7xl">
-            A voyage composed in private.
+            A voyage composed thoughtfully.
           </h1>
           <p className="mt-6 max-w-md text-base leading-relaxed text-paper/75 sm:text-lg">
-            An invitation-only atelier for the world&rsquo;s most deliberate
-            travelers. Your itinerary is shaped slowly &mdash; by hand and by
-            intelligence, never on demand.
+            An invitation-only service for the world&rsquo;s most deliberate
+            travelers. Your itinerary is shaped together with the staff at Outdoor Voyage and 
+            travel experts around the world.
           </p>
         </div>
 
@@ -78,16 +78,29 @@ export default async function HomePage() {
             </div>
           </div>
 
-          <p className="text-center text-[11px] uppercase tracking-label text-paper/50">
-            Membership is extended by referral
+          <p className="text-center text-[11px] uppercase tracking-label text-paper">
+            Membership by referral only
           </p>
         </div>
       </section>
 
-      <footer className="relative z-10 border-t border-paper/10 px-6 py-6 text-[10px] uppercase tracking-label text-paper/50 sm:px-10">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <span>© Outdoor Voyage</span>
-          <span className="hidden sm:inline">Est. in the field</span>
+      <footer className="relative z-10 border-t border-paper/10 px-6 py-8 sm:px-10 bg-black/40">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-2">
+            <span className="font-serif text-lg tracking-tight text-paper">
+              Outdoor Voyage
+            </span>
+            <p className="text-[10px] uppercase tracking-label text-paper">
+              Boulder, Colorado
+            </p>
+          </div>
+
+          <p className="text-[10px] uppercase tracking-label text-paper">
+          </p>
+        </div>
+
+        <div className="mx-auto mt-8 max-w-6xl border-t border-paper/5 pt-6 text-[10px] uppercase tracking-label text-paper/90">
+          © 2026 Outdoor Voyage, Inc. All rights reserved.
         </div>
       </footer>
     </main>

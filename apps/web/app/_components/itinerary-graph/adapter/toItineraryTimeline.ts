@@ -361,12 +361,13 @@ export function toItineraryTimeline(
   // The Day-1 anchor joins the span candidates so numbering counts from it
   // (ADV-16): deleting the earliest card must not renumber every other day. A
   // card scheduled BEFORE the anchor still extends the span (render everything).
+  // On a PINNED (exact) trip `date_start` IS Day 1 — a stale pre-pin
+  // `days_anchor` (e.g. stamped against a scratch note added before dates were
+  // set) must NOT inject phantom leading days, so exactStart wins and the
+  // anchor is never both. Mirrors time.ts `dayAnchorKey`.
+  const anchorKey = exactStart ?? daysAnchor;
   const firstDay =
-    [
-      ...nodeDayKeys,
-      ...(exactStart ? [exactStart] : []),
-      ...(daysAnchor ? [daysAnchor] : []),
-    ].sort()[0] ?? synthAnchor;
+    [...nodeDayKeys, ...(anchorKey ? [anchorKey] : [])].sort()[0] ?? synthAnchor;
   const lastCandidates = [...nodeDayKeys, ...(exactEnd ? [exactEnd] : [])].sort();
   let lastDay = lastCandidates[lastCandidates.length - 1] ?? firstDay;
   // A brand-new (zero-node) adventure without pinned dates still deserves a

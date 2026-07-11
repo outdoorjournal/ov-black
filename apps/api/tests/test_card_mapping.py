@@ -37,6 +37,7 @@ from app.services import card_mapping as card_mapping_module
 from app.services.card_mapping import (
     experience_item_to_card_attrs,
     flight_item_to_card_attrs,
+    flight_slice_count,
     hotel_item_to_card_attrs,
     inventory_item_to_card_metadata,
     meal_item_to_card_attrs,
@@ -127,6 +128,98 @@ def test_flight_schedules_itself_from_depart_at(flight_item: FlightItem) -> None
     assert duration == 755
 
 
+def _round_trip_offer() -> dict[str, Any]:
+    """A two-slice DTW⇄NRT offer (outbound + return), airport geo on each end."""
+
+    def _place(code: str, city: str, lat: float, lng: float, tz: str) -> dict[str, Any]:
+        return {
+            "iata_code": code,
+            "city_name": city,
+            "latitude": lat,
+            "longitude": lng,
+            "time_zone": tz,
+        }
+
+    dtw = _place("DTW", "Detroit", 42.2124, -83.3534, "America/Detroit")
+    nrt = _place("NRT", "Tokyo", 35.7647, 140.3863, "Asia/Tokyo")
+    return {
+        "id": "off_roundtrip",
+        "total_amount": "4200.00",
+        "total_currency": "USD",
+        "owner": {"name": "Delta"},
+        "slices": [
+            {
+                "origin": dtw,
+                "destination": nrt,
+                "segments": [
+                    {
+                        "origin": dtw,
+                        "destination": nrt,
+                        "departing_at": "2026-09-01T11:00:00",
+                        "arriving_at": "2026-09-02T14:30:00",
+                        "marketing_carrier": {"iata_code": "DL"},
+                        "marketing_carrier_flight_number": "275",
+                        "passengers": [{"cabin_class": "business"}],
+                    }
+                ],
+            },
+            {
+                "origin": nrt,
+                "destination": dtw,
+                "segments": [
+                    {
+                        "origin": nrt,
+                        "destination": dtw,
+                        "departing_at": "2026-09-10T17:00:00",
+                        "arriving_at": "2026-09-10T15:30:00",
+                        "marketing_carrier": {"iata_code": "DL"},
+                        "marketing_carrier_flight_number": "276",
+                        "passengers": [{"cabin_class": "business"}],
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def test_round_trip_maps_each_leg_to_its_own_endpoints() -> None:
+    """Regression: a round-trip offer must not collapse to origin→origin.
+
+    Slice 0 is the outbound (DTW→NRT); slice 1 is the return (NRT→DTW). Each
+    leg maps to its own card with its own route, times, and airport geometry —
+    the return is NOT a mirror of the outbound.
+    """
+    item = normalize_duffel_offer(_round_trip_offer())
+    assert isinstance(item, FlightItem)
+    assert flight_slice_count(item) == 2
+
+    outbound = flight_item_to_card_attrs(item, slice_index=0)
+    assert (outbound.iata_from, outbound.iata_to) == ("DTW", "NRT")
+    assert outbound.from_location is not None and outbound.from_location.label == "Detroit (DTW)"
+    assert outbound.to_location is not None and outbound.to_location.label == "Tokyo (NRT)"
+    assert outbound.depart_at == datetime.fromisoformat("2026-09-01T11:00:00-04:00")
+
+    ret = flight_item_to_card_attrs(item, slice_index=1)
+    assert (ret.iata_from, ret.iata_to) == ("NRT", "DTW")
+    assert ret.from_location is not None and ret.from_location.label == "Tokyo (NRT)"
+    assert ret.to_location is not None and ret.to_location.label == "Detroit (DTW)"
+    assert ret.depart_at == datetime.fromisoformat("2026-09-10T17:00:00+09:00")
+
+    # Each leg schedules itself at its own departure.
+    ret_meta = ret.model_dump(mode="json", exclude_none=True)
+    start_iso, _ = scheduled_start_for_item(item, ret_meta)
+    assert start_iso is not None and start_iso.startswith("2026-09-10T17:00:00")
+
+
+def test_one_way_offer_is_single_slice() -> None:
+    item = normalize_duffel_offer(
+        {"id": "off_sparse", "total_amount": "100.00", "total_currency": "USD"}
+    )
+    # No slices at all → count 0; the endpoint's ``> 1`` guard treats it as a
+    # single node (the existing path), never a split.
+    assert flight_slice_count(item) == 0
+
+
 def test_sparse_flight_without_times_stays_unscheduled() -> None:
     # No depart_at → no clock → stays in the Collection (start is None).
     item = normalize_duffel_offer(
@@ -136,17 +229,17 @@ def test_sparse_flight_without_times_stays_unscheduled() -> None:
     assert scheduled_start_for_item(item, meta) == (None, None)
 
 
-def test_hotel_and_meal_stay_unscheduled(
-    hotel_item: HotelItem, meal_item: MealItem
-) -> None:
+def test_hotel_and_meal_stay_unscheduled(hotel_item: HotelItem, meal_item: MealItem) -> None:
     # Untimed inventory (hotel by check-in date, meal with no seating time) is
     # the wish-list default — neither carries a concrete clock to schedule by.
-    assert scheduled_start_for_item(
-        hotel_item, inventory_item_to_card_metadata(hotel_item)
-    ) == (None, None)
-    assert scheduled_start_for_item(
-        meal_item, inventory_item_to_card_metadata(meal_item)
-    ) == (None, None)
+    assert scheduled_start_for_item(hotel_item, inventory_item_to_card_metadata(hotel_item)) == (
+        None,
+        None,
+    )
+    assert scheduled_start_for_item(meal_item, inventory_item_to_card_metadata(meal_item)) == (
+        None,
+        None,
+    )
 
 
 def test_sparse_offer_maps_without_error() -> None:

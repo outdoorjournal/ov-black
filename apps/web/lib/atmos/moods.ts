@@ -129,7 +129,8 @@ export const MOODS: Record<MoodId, MoodEntry> = {
   },
   alpine: {
     palette: { bg: "#1a1e22", fg: "#d0d4d8", accent: "#7a8890" },
-    imageUrl: UNSPLASH("1753006989853-f313a250ae5f"),
+    // Matterhorn at blue hour — deep slate dusk, matches the alpine palette.
+    imageUrl: UNSPLASH("1775735018294-9774004551ef"),
     keywords: [
       "mountain",
       "alps",

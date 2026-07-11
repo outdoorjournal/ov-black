@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 
 import type { AccessStatus } from "@ov-black/api-client";
 
+import { Button } from "@/components/ui/button";
+
 import { resendWelcomeAction } from "../actions";
 
 type Status =
@@ -15,6 +17,9 @@ type Status =
 interface InviteActionsProps {
   clientId: string;
   accessStatus: AccessStatus;
+  /** "brand" renders the orange CTA button (detail view); "inline" renders the
+   *  small text affordance used in roster rows. Defaults to "inline". */
+  buttonStyle?: "brand" | "inline";
 }
 
 /**
@@ -31,7 +36,11 @@ interface InviteActionsProps {
  * row stays interactive while the request is in flight; the parent page is
  * revalidated by the action on success.
  */
-export function InviteActions({ clientId, accessStatus }: InviteActionsProps) {
+export function InviteActions({
+  clientId,
+  accessStatus,
+  buttonStyle = "inline",
+}: InviteActionsProps) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [isPending, startTransition] = useTransition();
 
@@ -54,6 +63,35 @@ export function InviteActions({ clientId, accessStatus }: InviteActionsProps) {
       );
     });
   };
+
+  if (buttonStyle === "brand") {
+    return (
+      <div className="flex flex-col gap-2">
+        <Button
+          type="button"
+          variant="brand"
+          size="sm"
+          onClick={onResend}
+          disabled={isPending}
+        >
+          {status.kind === "working" ? "Sending…" : idleLabel}
+        </Button>
+        {status.kind === "success" && (
+          <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-paper/60">
+            {status.message}
+          </p>
+        )}
+        {status.kind === "error" && (
+          <p
+            role="alert"
+            className="font-sans text-[10px] uppercase tracking-[0.2em] text-destructive"
+          >
+            {status.message}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-end gap-2">

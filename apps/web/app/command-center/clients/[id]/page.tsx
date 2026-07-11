@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 
 import { AttentionStrip } from "@/app/command-center/_components/attention";
 import { SetClientCrumb } from "@/app/command-center/_components/CommandCenterCrumb";
+import { InviteActions } from "@/app/command-center/_components/invite-actions";
 import {
   EmptyNote,
   Panel,
@@ -137,6 +138,13 @@ export default async function ClientDetailPage({
             ) : (
               <Pill tone="quiet">No dossier</Pill>
             )}
+            {client.access_status !== "active" ? (
+              <InviteActions
+                clientId={client.id}
+                accessStatus={client.access_status}
+                buttonStyle="brand"
+              />
+            ) : null}
           </div>
         </div>
         <dl className="flex shrink-0 gap-8">

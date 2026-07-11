@@ -100,9 +100,9 @@ export function AddOsintFactForm({ clientId }: { clientId: string }) {
         )}
         <Button
           type="submit"
+          variant="brand"
           disabled={isPending || !text.trim()}
           size="sm"
-          className="bg-paper text-ink hover:bg-paper/90"
         >
           {isPending ? "saving…" : "Add"}
         </Button>
