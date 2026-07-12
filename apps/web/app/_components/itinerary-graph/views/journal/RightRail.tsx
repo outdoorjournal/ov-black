@@ -45,15 +45,15 @@ import { useRouter } from "next/navigation";
 
 import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeControl";
 
-import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { PartOfJourney } from "../../shared/PartOfJourney";
+import { resolveNodeAffordances, type NodeAffordances } from "./affordances";
 import {
   formatClock,
   offsetHoursOr,
   tzDayKey,
 } from "../../model/time";
 import type { NodeResponse } from "../../model/types";
-import { getVerticalMeta } from "../../model/types";
+import { getVerticalMeta, MOOD_ACCENTS, type MoodId } from "../../model/types";
 import {
   isSchedulePinned,
   itineraryGraphStore,
@@ -95,6 +95,7 @@ export function RightRail({
     (s) => selectEditable(s) || selectTravelerEditable(s),
   );
   const onTrunk = !timeline.itinerary.forked_from_id;
+  const storeApi = itineraryGraphStore.useStoreApi();
 
   // Only a real Journal interaction (scroll or click) flips the rail to the
   // node detail — the store's seeded default focus keeps the idle glance.
@@ -130,86 +131,227 @@ export function RightRail({
   );
   const activeProblem = active ? (problems.get(active.id) ?? null) : null;
 
+  // The single resolved intent set the zones read (rail redesign, phase 2a).
+  // Computed from live store state; the component already re-renders on the
+  // fields the resolver depends on (role/status/creds/fork/node.status).
+  const affordances = active
+    ? resolveNodeAffordances(storeApi.getState(), active, {
+        hasProblem: Boolean(activeProblem),
+      })
+    : null;
+
   return (
     <>
       <div
         data-testid="journal-rail-idle"
         className={[
-          "flex-col gap-4",
+          "relative flex-col gap-4",
           active ? "flex lg:hidden" : "flex",
         ].join(" ")}
       >
+        {/* Atmosphere: a faint editorial wash behind the resting glance so the
+            idle rail reads as alive, not empty. An image-backed treatment is a
+            follow-up (plan open items); this restrained gradient is the base. */}
+        {!active ? (
+          <span
+            aria-hidden
+            data-testid="journal-rail-atmosphere"
+            className="pointer-events-none absolute -inset-2 -z-10 rounded-xl bg-gradient-to-b from-ink/[0.02] to-transparent"
+          />
+        ) : null}
         {diffView ? <RailDiffSummary diffView={diffView} /> : idle}
       </div>
-      {active ? (
+      {active && affordances ? (
         <div
           data-testid="journal-rail-detail"
-          className="hidden flex-col gap-3 lg:flex"
+          className="hidden flex-col gap-5 lg:flex"
         >
-          {activeParent && active ? (
-            <PartOfJourney
-              parent={activeParent}
-              child={active}
-              siblingCount={activeSiblingCount}
-              tzOffsetHours={timeline.timezoneOffsetHours}
-              onOpenParent={() => focusNode(activeParent.id, "click")}
-            />
-          ) : null}
-          <NodeZoomCard
-            node={active}
-            tzOffsetHours={timeline.timezoneOffsetHours}
-          />
-          {activeDiff ? (
-            <RailDiffChange
-              nodeDiff={activeDiff}
-              isAdvisor={role === "advisor"}
+          {/* ── Zone 1 — identity + the ask (stable top) ─────────────────────
+              Compact identity (accent · type · time · title) replaces the old
+              NodeZoomCard duplicate; the primary action rides here. */}
+          <div data-testid="journal-rail-zone1" className="flex flex-col gap-3">
+            <RailIdentity
+              node={active}
               tz={timeline.timezoneOffsetHours}
+              affordances={affordances}
             />
-          ) : null}
-          {activeProblem ? (
-            <RailProblem node={active} problem={activeProblem} />
-          ) : null}
-          <RailApprove node={active} />
-          {!activeIsGhost ? (
-            <div className="flex items-center gap-5">
+            <RailApprove node={active} />
+            {!activeIsGhost ? (
               <Link
                 href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
                 data-testid="journal-rail-open-detail"
-                className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
+                className="self-start font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
               >
                 Open full detail →
               </Link>
+            ) : null}
+          </div>
+
+          {/* ── Zone 2 — detail + actions (edit · price · notes) ─────────────
+              Stable-ordered; each section renders or collapses. */}
+          <div data-testid="journal-rail-zone2" className="flex flex-col gap-3">
+            {activeDiff ? (
+              <RailDiffChange
+                nodeDiff={activeDiff}
+                isAdvisor={role === "advisor"}
+                tz={timeline.timezoneOffsetHours}
+              />
+            ) : null}
+            {/* Diff mode is a reading/deciding mode — the in-place editors sit
+                out; notes stay open (below). */}
+            {editableFork && !diffView && active.type !== "note" ? (
+              <RailEditPanel
+                key={active.id}
+                node={active}
+                tz={timeline.timezoneOffsetHours}
+              />
+            ) : null}
+            {/* Legibility, not disabled buttons: a traveler reading the OFFICIAL
+                trunk is told where reshaping lives (notes stay open everywhere). */}
+            {!editableFork &&
+            role !== "advisor" &&
+            onTrunk &&
+            hasCreds &&
+            status !== "approved" &&
+            active.type !== "note" ? (
+              <p
+                data-testid="journal-rail-readonly"
+                className="font-serif text-[12px] italic leading-snug text-ink/45"
+              >
+                This is the official trip — notes are yours everywhere; moving
+                and reshaping happens in your version.
+              </p>
+            ) : null}
+            <RailPrice node={active} />
+            {!activeIsGhost ? <RailNoteAction nodeId={active.id} /> : null}
+          </div>
+
+          {/* ── Zone 3 — enrichment (blooms below; may be empty) ─────────────
+              Second-class: part-of-journey, problem detail, (map slot, TODO). */}
+          {activeParent || activeProblem ? (
+            <div
+              data-testid="journal-rail-zone3"
+              className="flex flex-col gap-3"
+            >
+              {activeParent && active ? (
+                <PartOfJourney
+                  parent={activeParent}
+                  child={active}
+                  siblingCount={activeSiblingCount}
+                  tzOffsetHours={timeline.timezoneOffsetHours}
+                  onOpenParent={() => focusNode(activeParent.id, "click")}
+                />
+              ) : null}
+              {activeProblem ? (
+                <RailProblem node={active} problem={activeProblem} />
+              ) : null}
+              {/* Map slot (coords-gated) — deferred; see plan open items. */}
             </div>
           ) : null}
-          {/* Diff mode is a reading/deciding mode — the in-place editors sit
-              out; notes stay open (below). */}
-          {editableFork && !diffView && active.type !== "note" ? (
-            <RailEditPanel
-              key={active.id}
-              node={active}
-              tz={timeline.timezoneOffsetHours}
-            />
-          ) : null}
-          {/* Legibility, not disabled buttons: a traveler reading the OFFICIAL
-              trunk is told where reshaping lives (notes stay open everywhere). */}
-          {!editableFork &&
-          role !== "advisor" &&
-          onTrunk &&
-          hasCreds &&
-          status !== "approved" &&
-          active.type !== "note" ? (
-            <p
-              data-testid="journal-rail-readonly"
-              className="font-serif text-[12px] italic leading-snug text-ink/45"
-            >
-              This is the official trip — notes are yours everywhere; moving
-              and reshaping happens in your version.
-            </p>
-          ) : null}
-          {!activeIsGhost ? <RailNoteAction nodeId={active.id} /> : null}
         </div>
       ) : null}
     </>
+  );
+}
+
+// ── Zone 1: the compact identity + the ask ───────────────────────────────────
+// Replaces the old NodeZoomCard duplicate. Leans on the established per-vertical
+// accent (MOOD_ACCENTS, keyed by the node's mood) so the stable top reads rich,
+// not boring — accent · type · time on one line, the title below, then the ask.
+const RAIL_ACCENT_FALLBACK = "#3a3a3a";
+
+function RailIdentity({
+  node,
+  tz,
+  affordances,
+}: {
+  node: NodeResponse;
+  tz: number;
+  affordances: NodeAffordances;
+}) {
+  const meta = getVerticalMeta(node);
+  const mood = (node.metadata as { mood?: MoodId }).mood;
+  const accent =
+    (mood && MOOD_ACCENTS[mood]?.accent) || RAIL_ACCENT_FALLBACK;
+  const start = meta.start_time
+    ? formatClock(meta.start_time, offsetHoursOr(meta.start_time, tz))
+    : null;
+  const typeLabel = node.type.replace(/_/g, " ");
+  return (
+    <div data-testid="journal-rail-identity" className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: accent }}
+        />
+        <span className="font-sans text-[10px] uppercase tracking-[0.2em] text-ink/45">
+          {typeLabel}
+        </span>
+        {start ? (
+          <span className="ml-auto font-sans text-[11px] tabular-nums text-ink/55">
+            {start}
+          </span>
+        ) : null}
+      </div>
+      <h2 className="font-serif text-lg leading-snug text-ink">{node.title}</h2>
+      <RailAsk affordances={affordances} />
+    </div>
+  );
+}
+
+// The Zone-1 "ask" — only the settled/locked status registers here; the live
+// actions (approve, problem→get-help) render as their own components so this
+// never duplicates a button.
+function RailAsk({ affordances }: { affordances: NodeAffordances }) {
+  const chip =
+    "self-start rounded-full bg-ink/5 px-2.5 py-0.5 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/55";
+  if (affordances.locked === "booked") {
+    return (
+      <span data-testid="journal-rail-ask" data-ask="booked" className={chip}>
+        ⚿ Booked
+      </span>
+    );
+  }
+  if (affordances.ask === "approved") {
+    return (
+      <span data-testid="journal-rail-ask" data-ask="approved" className={chip}>
+        Approved ✓
+      </span>
+    );
+  }
+  if (affordances.ask === "reapproval-warning") {
+    return (
+      <p
+        data-testid="journal-rail-ask"
+        data-ask="reapproval-warning"
+        className="font-serif text-[12px] italic leading-snug text-ink/50"
+      >
+        Editing will ask the traveler to re-approve.
+      </p>
+    );
+  }
+  return null;
+}
+
+// ── Zone 2: price ────────────────────────────────────────────────────────────
+// The card's headline price when it carries one. A collapsible breakdown awaits
+// the billing wiring (plan open items) — a single figure is shown honestly for
+// now rather than a fake expando.
+function RailPrice({ node }: { node: NodeResponse }) {
+  const raw = (node.metadata as { price?: unknown }).price;
+  const price = typeof raw === "string" && raw.trim() ? raw : null;
+  if (!price) return null;
+  return (
+    <div
+      data-testid="journal-rail-price"
+      className="flex items-baseline justify-between border-t border-ink/10 pt-2.5"
+    >
+      <span className="font-sans text-[9px] uppercase tracking-[0.22em] text-ink/40">
+        Price
+      </span>
+      <span className="font-serif text-[15px] text-ink/85">{price}</span>
+    </div>
   );
 }
 

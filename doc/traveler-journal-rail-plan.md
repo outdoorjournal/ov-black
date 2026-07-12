@@ -24,8 +24,34 @@ separate re-examination and intentionally not folded into the affordance model.
     fork (`selectCanSchedule`), not "any advisor on the trunk" — the UI routes
     advisor authoring through forks, so advisor-on-trunk resolves to `none`
     (edit in your workspace), matching the existing `RailEditPanel` gate.
-- **⚠ 2b question raised (see below).**
-- **Phase 2c–4 — not started.**
+- **2b — dropped (see decision below).**
+- **Phase 2c — done.** Rewrote `RightRail`'s active state into the three zones,
+  driven by the 2a resolver (`resolveNodeAffordances` computed from live store
+  state, `hasProblem` fed from the active finding):
+  - **Zone 1** `RailIdentity` — the NodeZoomCard duplicate is GONE; replaced by a
+    compact accent(mood)·type·time·title header + `RailAsk` (settled/booked chip
+    or the advisor re-approval hint) + Approve + "Open full →".
+  - **Zone 2** — `RailEditPanel` / readonly-legibility / new `RailPrice` (headline
+    figure; breakdown expando deferred) / Notes (`RailNoteAction`, already an
+    expando). Diff-change stays here.
+  - **Zone 3** — enrichment: part-of-journey + problem; map slot left as a
+    documented TODO (coords-gated, second-class).
+  - Idle gains a restrained atmosphere wash (`journal-rail-atmosphere`);
+    image-backed treatment deferred.
+  - All existing rail sub-components + testids preserved. Web typecheck clean;
+    all rail test files green (journalNotes/Diff/Phase3/Phase5 + affordances).
+  - **Follow-ups noted:** notes→real advisor↔traveler thread (needs the data
+    check), Price breakdown expando (billing wiring), the Zone-3 map, atmosphere
+    image source, and fuller convergence (route every gate through the resolver;
+    2c drives the ask via the resolver but keeps the proven action-component
+    gates). Advisor·approved "edit in your workspace" hint not yet added.
+- **Phase 3–4 — not started.**
+
+> ⚠ **Pre-existing, unrelated test failure** (not from this work): the full web
+> suite has one red — `store.test.tsx > selectCanApprove > advisor may
+> approve-all …` expects `true` but the selector returns `false`
+> (`if (s.canEdit) return false`). Both files are untouched by every commit in
+> this branch's rail work. Left as-is; flag for whoever owns `selectCanApprove`.
 
 ### Phase 2b — DROPPED (decided)
 
