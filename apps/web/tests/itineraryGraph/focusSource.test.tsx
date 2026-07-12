@@ -86,4 +86,19 @@ describe("focusSource", () => {
     expect(result.current.getState().focusedNodeId).toBeNull();
     expect(result.current.getState().focusSource).toBeNull();
   });
+
+  test("a hard lock survives re-focusing the same node but clears on another", () => {
+    const { result } = renderStore();
+    act(() => result.current.getState().focusNode("n1", "click"));
+    act(() => result.current.getState().setFocusLocked(true));
+    expect(result.current.getState().focusLocked).toBe(true);
+
+    // Re-focusing the SAME node (e.g. a scroll re-assert) keeps the lock.
+    act(() => result.current.getState().focusNode("n1", "scroll"));
+    expect(result.current.getState().focusLocked).toBe(true);
+
+    // Moving to ANOTHER node is a deliberate switch — the lock releases.
+    act(() => result.current.getState().focusNode("n2", "click"));
+    expect(result.current.getState().focusLocked).toBe(false);
+  });
 });

@@ -2,16 +2,14 @@
 
 // A node entry on the Journal spine: the shared glance card (CardShell +
 // CardBody via NodeCard — cards are NOT reinvented here) beside its spine
-// circle, with the MARGIN CHANNEL hanging off the card wrapper (phase 2):
-// attached notes render as annotations beside the card, never as spine nodes.
-// A free-standing `note` node renders as the small SpineNoteCard instead of a
-// full glance card.
+// circle. Attached notes annotate the card from the right rail's notes thread
+// (RightRail → NotesPanel), not beside the card. A free-standing `note` node
+// renders as the small SpineNoteCard instead of a full glance card.
 //
 // Phase 3 adds:
 //   · drag-to-move — the card is a dnd-kit drag source (DragOverlay carries
-//     the clone; the source only dims, so the absolutely-positioned margin
-//     never breaks). Listeners live on the CARD wrapper, not the article, so
-//     margin-note editors stay plain text surfaces.
+//     the clone; the source only dims). Listeners live on the CARD wrapper,
+//     not the article, so in-card text surfaces stay plain.
 //   · problem state — red ring on the circle + a non-color ⚠ glyph OUTSIDE it
 //     + a one-line caption under the card (the rail carries the explanation).
 //   · grouped_with bracket — a thin bracket spanning consecutive grouped cards.
@@ -49,7 +47,7 @@ import {
 } from "../../store/itineraryGraphStore";
 
 import { journalDragId } from "./journalEditing";
-import { MarginNotes, SpineNoteCard } from "./JournalNotes";
+import { SpineNoteCard } from "./JournalNotes";
 import type { JournalProblem } from "./problems";
 import { DurationBar, JOURNEY_INDENT_PX, SPINE_COL_PX, SpineCircle } from "./Spine";
 import { durationMinOf, type GroupedRole, type JourneyBeat } from "./toJournal";
@@ -62,12 +60,8 @@ const spineColStyle = {
 // Windowed rendering (phase 5): a long journal skips layout/paint for
 // offscreen rows via `content-visibility: auto` + an intrinsic-size estimate
 // (scrollbar stays honest; IntersectionObserver keeps seeing the box, so the
-// scroll-active system is unaffected). CAVEAT: the style induces PAINT
-// containment, which clips anything drawn outside the row's box — and the
-// margin channel is absolutely positioned off the card wrapper and can
-// overflow it (a tall note stack on a short card). Rows carrying margin notes
-// therefore opt out; everything else windows. (In-flow `marginInline` notes
-// contribute height and are safe.)
+// scroll-active system is unaffected). Every row's content lives inside its
+// box now (attached notes moved to the rail), so nothing opts out.
 const WINDOWED_STYLE = {
   contentVisibility: "auto",
   containIntrinsicSize: "auto 140px",
@@ -78,7 +72,6 @@ export function JournalNode({
   tzOffsetHours,
   active,
   durationMinutes = 60,
-  attachedNotes = [],
   subgraphChildren = [],
   onActivate,
   observeRef,
@@ -87,15 +80,12 @@ export function JournalNode({
   bracket = null,
   diff = null,
   journey = null,
-  marginInline = false,
 }: {
   node: NodeResponse;
   tzOffsetHours: number;
   active: boolean;
   /** Event length (minutes) — sizes the spine duration bar. */
   durationMinutes?: number;
-  /** The `note` nodes annotating this one — rendered in the margin channel. */
-  attachedNotes?: NodeResponse[];
   /** The node's embedded subgraph (a multi-day item's day-by-day journey) —
    *  its children render as derived journey beats on the days they cover;
    *  the parent card wears the span caption. */
@@ -117,9 +107,6 @@ export function JournalNode({
   /** Diff-mode annotation (added / changed / moved) — stitches and dots only;
    *  removed rows render as JournalGhostNode instead. Null = versions agree. */
   diff?: JournalNodeDiff | null;
-  /** Render margin notes in-flow (used inside alt branches, where the
-   *  absolute margin would overlay the neighbouring branch). */
-  marginInline?: boolean;
 }) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
@@ -183,9 +170,7 @@ export function JournalNode({
         // circle and duration bar ride the thread (the sub-journey's own
         // rail), and the card indents under its parent.
         ...(journey ? { marginLeft: JOURNEY_INDENT_PX } : {}),
-        // Windowed rendering — except where the absolute margin channel could
-        // overflow the row's box (paint containment would clip the notes).
-        ...(attachedNotes.length === 0 || marginInline ? WINDOWED_STYLE : {}),
+        ...WINDOWED_STYLE,
       }}
     >
       <div className="relative flex flex-col items-center pt-3">
@@ -370,15 +355,6 @@ export function JournalNode({
             <span className="min-w-0 truncate">{problem.message}</span>
           </p>
         ) : null}
-        {/* The margin channel — annotations beside the card on desktop,
-            tucked under it below lg. Notes on a note stay a non-shape. */}
-        {!isNote ? (
-          <MarginNotes
-            hostId={node.id}
-            notes={attachedNotes}
-            inline={marginInline}
-          />
-        ) : null}
       </div>
     </article>
   );
@@ -396,7 +372,6 @@ export function JournalAltGroup({
   nodes,
   tzOffsetHours,
   focusedNodeId,
-  attachedNotes,
   subgraphChildren,
   onActivate,
   observeRef,
@@ -406,7 +381,6 @@ export function JournalAltGroup({
   nodes: NodeResponse[];
   tzOffsetHours: number;
   focusedNodeId: string | null;
-  attachedNotes?: Map<string, NodeResponse[]> | undefined;
   /** Embedded subgraphs by parent id — a member can be a multi-day package. */
   subgraphChildren?: Map<string, NodeResponse[]> | undefined;
   onActivate: (nodeId: string) => void;
@@ -443,7 +417,6 @@ export function JournalAltGroup({
           tzOffsetHours={tzOffsetHours}
           active={focusedNodeId === chosen.id}
           durationMinutes={durationMinOf(chosen)}
-          attachedNotes={attachedNotes?.get(chosen.id) ?? []}
           subgraphChildren={subgraphChildren?.get(chosen.id) ?? []}
           onActivate={onActivate}
           observeRef={observeRef(chosen.id)}
@@ -521,13 +494,11 @@ export function JournalAltGroup({
                 tzOffsetHours={tzOffsetHours}
                 active={focusedNodeId === node.id}
                 durationMinutes={durationMinOf(node)}
-                attachedNotes={attachedNotes?.get(node.id) ?? []}
                 subgraphChildren={subgraphChildren?.get(node.id) ?? []}
                 onActivate={onActivate}
                 observeRef={observeRef(node.id)}
                 problem={problems?.get(node.id) ?? null}
                 diff={diffs?.get(node.id) ?? null}
-                marginInline
               />
               {/* Choosing = the existing approval action. Only before any
                   member is chosen (approving a second alternative would put

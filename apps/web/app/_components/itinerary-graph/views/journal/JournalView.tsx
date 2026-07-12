@@ -47,6 +47,7 @@ import {
 } from "@dnd-kit/core";
 import {
   useCallback,
+  useEffect,
   useId,
   useMemo,
   useState,
@@ -56,7 +57,6 @@ import {
 import { useRouter } from "next/navigation";
 
 import type { NodeResponse } from "../../model/types";
-import { attachedNotesByHost } from "../../shared/attachedNotes";
 import { subgraphChildrenByParent } from "../../shared/subgraph";
 import { itineraryGraphStore } from "../../store/itineraryGraphStore";
 import { useTimelineData } from "../../TimelineDataContext";
@@ -83,6 +83,8 @@ import { JournalZoomControls } from "./JournalZoomControls";
 import { MoreBelowCue } from "./MoreBelow";
 import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
+import { useIs2xl } from "./useIs2xl";
+import { CardDetailView } from "@/app/itinerary/[id]/_shell/CardDetailView";
 import { JOURNEY_INDENT_PX, NightSegment, SPINE_COL_PX } from "./Spine";
 import { toJournal, type JournalDaySection } from "./toJournal";
 import {
@@ -122,6 +124,7 @@ export function JournalView({
   const edges = itineraryGraphStore.useStore((s) => s.edges);
   const findings = itineraryGraphStore.useStore((s) => s.findings);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
+  const focusSource = itineraryGraphStore.useStore((s) => s.focusSource);
   const focusNode = itineraryGraphStore.useStore((s) => s.focusNode);
   const awaitingProposal = itineraryGraphStore.useStore((s) => s.awaitingProposal);
   const viewerOpenForkId = itineraryGraphStore.useStore((s) => s.viewerOpenForkId);
@@ -134,12 +137,51 @@ export function JournalView({
   // fork on the trunk, nothing at all otherwise (no drag affordance).
   const dropMode = itineraryGraphStore.useStore(journalDropMode);
   const storeApi = itineraryGraphStore.useStoreApi();
+  // The very-large tier (≥1536): the right region promotes from the cockpit
+  // rail to the full detail inline — selection IS the open, no modal, no second
+  // click (rail redesign, phase 4). Diff mode stays on the cockpit (its
+  // accept/keep decisions live there), so inline-detail is normal-reading only.
+  const is2xl = useIs2xl();
 
   const tz = timeline.timezoneOffsetHours;
   // Diff mode is only meaningful on a fork (compare is inherently pairwise:
   // this version against its baseline). The gesture gates flip as soon as the
   // toggle is on; the annotated sequence lands when the diff response does.
   const diffActive = diffMode && Boolean(timeline.itinerary.forked_from_id);
+  const inlineDetail = is2xl && !diffActive;
+  // Only a real interaction (scroll/click) drives the inline detail — the
+  // store's seeded default focus keeps the idle glance until the reader moves.
+  // A diff-mode ghost (trunk-only, synthesized) has no detail page, so it never
+  // opens the inline detail.
+  const inlineDetailNodeId =
+    inlineDetail &&
+    focusSource !== null &&
+    focusedNodeId &&
+    !isGhostId(focusedNodeId)
+      ? focusedNodeId
+      : null;
+  // Expand-to-lock (2xl): the region defaults to the cheap cockpit (follows the
+  // scroll-active card); "Open full" EXPANDS the full detail in place and hard-
+  // locks focus so scrolling can't swap it, until dismissed. A change of active
+  // card (clicking another, or the detail clearing) drops the expansion + lock.
+  const [inlineExpanded, setInlineExpanded] = useState(false);
+  useEffect(() => {
+    setInlineExpanded(false);
+    storeApi.getState().setFocusLocked(false);
+  }, [inlineDetailNodeId, storeApi]);
+  const expandInlineDetail = useCallback(() => {
+    setInlineExpanded(true);
+    storeApi.getState().setFocusLocked(true);
+  }, [storeApi]);
+  const collapseInlineDetail = useCallback(() => {
+    setInlineExpanded(false);
+    storeApi.getState().setFocusLocked(false);
+  }, [storeApi]);
+  const showInlineFull = Boolean(inlineDetailNodeId) && inlineExpanded;
+  const toggleInlineDetail = useCallback(() => {
+    if (inlineExpanded) collapseInlineDetail();
+    else expandInlineDetail();
+  }, [inlineExpanded, expandInlineDetail, collapseInlineDetail]);
   const diffView = useMemo<JournalDiffViewOrNull>(() => {
     if (!diffActive) return null;
     const base = {
@@ -172,7 +214,6 @@ export function JournalView({
       }),
     [diffView, nodes, edges, timeline.days, tz],
   );
-  const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
   // Embedded subgraphs (a multi-day card's internal journey), parent → days.
   const subgraphChildren = useMemo(
     () => subgraphChildrenByParent(nodes),
@@ -381,7 +422,6 @@ export function JournalView({
                     tz={tz}
                     pinned={pinned}
                     focusedNodeId={focusedNodeId}
-                    attachedNotes={attachedNotes}
                     subgraphChildren={subgraphChildren}
                     journeyThread={
                       journeyDays[idx]
@@ -416,10 +456,17 @@ export function JournalView({
           )}
         </div>
 
-        {/* The right rail — fixed beside the story on desktop. Below lg it
-            collapses to the idle glance above the Journal (node detail
-            deep-links to /item/[nodeId] instead) — same screen, responsive.
-            Cinema fades it out with the rest of the chrome. */}
+        {/* The right region beside the story on desktop. Below lg it collapses
+            to the idle glance above the Journal (node detail deep-links to
+            /item/[nodeId] instead) — same screen, responsive. Cinema fades it
+            out with the rest of the chrome.
+              · <2xl: the fixed 340px COCKPIT rail (medium tier); its "Open
+                full" handle opens the modal.
+              · 2xl+ : the cockpit still leads (following the scroll-active card
+                cheaply); "Open full" EXPANDS the full CardDetailView BENEATH the
+                cockpit and hard-locks focus until dismissed. The expanded stack
+                flows into the page (not sticky), so it scrolls to the bottom
+                normally — the lock keeps the card from swapping while you do. */}
         <aside
           data-testid="journal-rail"
           className={[
@@ -427,8 +474,27 @@ export function JournalView({
             cinemaMode ? "pointer-events-none opacity-0" : "opacity-100",
           ].join(" ")}
         >
-          <div className="lg:sticky lg:top-4">
-            <RightRail idle={railIdle} diffView={diffView} />
+          <div className={showInlineFull ? "flex flex-col gap-3" : "lg:sticky lg:top-4"}>
+            <RightRail
+              idle={railIdle}
+              diffView={diffView}
+              onToggleFull={inlineDetail ? toggleInlineDetail : null}
+              fullOpen={showInlineFull}
+            />
+            {showInlineFull && inlineDetailNodeId ? (
+              <div data-testid="journal-inline-detail">
+                {/* Key by node so the detail's in-place editors (schedule day/
+                    time, edit fields) reset per card — the panel instance
+                    persists as the active node changes otherwise. Mirrors the
+                    cockpit's `RailEditPanel key={active.id}`. */}
+                <CardDetailView
+                  key={inlineDetailNodeId}
+                  nodeId={inlineDetailNodeId}
+                  embedded
+                  onDismiss={collapseInlineDetail}
+                />
+              </div>
+            ) : null}
           </div>
         </aside>
       </div>
@@ -497,7 +563,6 @@ function DaySection({
   tz,
   pinned,
   focusedNodeId,
-  attachedNotes,
   subgraphChildren,
   journeyThread = null,
   problems,
@@ -514,7 +579,6 @@ function DaySection({
   tz: number;
   pinned: boolean;
   focusedNodeId: string | null;
-  attachedNotes: Map<string, NodeResponse[]>;
   /** Embedded subgraphs — a multi-day card's day children, by parent id. */
   subgraphChildren: Map<string, NodeResponse[]>;
   /** This day carries a packaged journey — wears the journey thread. The
@@ -574,7 +638,6 @@ function DaySection({
             tzOffsetHours={tz}
             active={focusedNodeId === entry.node.id}
             durationMinutes={entry.durationMinutes}
-            attachedNotes={attachedNotes.get(entry.node.id) ?? []}
             subgraphChildren={subgraphChildren.get(entry.node.id) ?? []}
             onActivate={onActivate}
             observeRef={observe(entry.node.id)}
@@ -606,7 +669,6 @@ function DaySection({
             nodes={entry.nodes}
             tzOffsetHours={tz}
             focusedNodeId={focusedNodeId}
-            attachedNotes={attachedNotes}
             subgraphChildren={subgraphChildren}
             onActivate={onActivate}
             observeRef={observe}

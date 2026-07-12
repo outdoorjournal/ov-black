@@ -374,6 +374,7 @@ def test_post_turn_happy_path_streams_sse_frames_in_order(
         content: str,
         auth_bearer: str | None = None,
         surface: str | None = None,
+        viewing_node_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         assert actor.actor_kind == "advisor"
         assert content == "Plan me a trip."
@@ -441,6 +442,7 @@ def test_post_turn_accepts_kickoff_surface_and_threads_it(
         content: str,
         auth_bearer: str | None = None,
         surface: str | None = None,
+        viewing_node_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         seen["surface"] = surface
         yield b'data: {"type":"done","turn_id":"abc","latency_ms":1}\n\n'

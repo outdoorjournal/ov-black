@@ -63,7 +63,7 @@ export function ConversationStream({
       <section
         id="conversation"
         ref={scrollRef}
-        className="relative min-h-0 flex-1 overflow-y-auto bg-paper text-ink"
+        className="relative min-h-0 flex-1 overflow-y-auto bg-paper-white text-ink"
         data-testid="conversation-stream"
       >
         <div className="mx-auto flex max-w-2xl flex-col gap-8 px-8 py-12">

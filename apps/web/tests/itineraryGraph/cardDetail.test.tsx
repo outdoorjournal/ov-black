@@ -1,11 +1,10 @@
-// Card detail as a route (M006/PS4). The full-bleed detail view assembles six
+// Card detail as a route (M006/PS4). The full-bleed detail view assembles its
 // facets over a single node; here we assert the WIRING — that each facet renders
-// from the shared store, that "ask about this" scopes the persistent concierge
-// with a chip, and that the money facet reads the per-node charges endpoint.
-// The heavy leaves (next/link's router, the money read, the session thread) are
-// stubbed so these test the CardDetailView's own composition, not their guts.
+// from the shared store, and that the money facet reads the per-node charges
+// endpoint. The heavy leaves (next/link's router, the money read, the session
+// thread) are stubbed so these test the CardDetailView's own composition.
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -63,7 +62,6 @@ import {
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { TimelineDataProvider } from "@/app/_components/itinerary-graph/TimelineDataContext";
 import { CardDetailView } from "@/app/itinerary/[id]/_shell/CardDetailView";
-import { ConciergeColumn } from "@/app/itinerary/[id]/_shell/ConciergeColumn";
 
 // The advisor authoring surface is a WORKING COPY (a fork of the trunk) —
 // trunk content only arrives via publish, so editable scenarios play out here.
@@ -240,9 +238,8 @@ describe("CardDetailView · facets", () => {
       "href",
       expect.stringContaining("35.6,139.7"),
     );
-    // (c) notes, (d) ask, (e) scheduling (advisor holds the lock).
+    // (c) notes, (e) scheduling (advisor holds the lock).
     expect(screen.getByTestId("notes-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("card-detail-ask")).toBeInTheDocument();
     expect(screen.getByTestId("card-detail-schedule")).toBeInTheDocument();
     expect(screen.getByTestId("card-detail-unschedule")).toBeInTheDocument();
 
@@ -254,13 +251,52 @@ describe("CardDetailView · facets", () => {
     expect(getNodeChargesMock).toHaveBeenCalledWith(expect.anything(), "it-1", "n-1");
   });
 
-  test("a read-only viewer (traveler on the trunk) gets no scheduling facet, still asks + sees money", async () => {
+  test("the scheduling day options carry the real date once the trip is exact-dated", () => {
+    // Day-N-until-pinned: without exact dates the options are honest ordinals…
+    renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL]);
+    const bare = within(screen.getByTestId("card-detail-day"));
+    expect(bare.getByRole("option", { name: "Day 1" })).toBeInTheDocument();
+
+    cleanup();
+
+    // …but an exact-dated trip anchors each option to its calendar date, keeping
+    // the ordinal (matches the DayHeader's "Day 1 · Thu · 20 Jun"). The detail
+    // reads timing off the TimelineDataProvider, so drive that directly here.
+    const exact = {
+      ...timeline([HOTEL]),
+      itinerary: { ...ITINERARY, timing_kind: "exact" as const },
+    };
+    render(
+      <itineraryGraphStore.Provider
+        initial={{
+          timeline: exact,
+          itineraryId: "it-1",
+          status: "in_studio",
+          role: "advisor",
+          apiBaseUrl: "http://api.test",
+          accessToken: "tok",
+        }}
+      >
+        <TimelineDataProvider value={{ timeline: exact, baselineTitle: null }}>
+          <CardDetailView nodeId="n-1" />
+        </TimelineDataProvider>
+      </itineraryGraphStore.Provider>,
+    );
+    const dated = within(screen.getByTestId("card-detail-day"));
+    expect(
+      dated.getByRole("option", { name: "Day 1 · Thu · 20 Jun" }),
+    ).toBeInTheDocument();
+    expect(
+      dated.getByRole("option", { name: "Day 2 · Fri · 21 Jun" }),
+    ).toBeInTheDocument();
+  });
+
+  test("a read-only viewer (traveler on the trunk) gets no scheduling facet, still sees money", async () => {
     renderDetail(<CardDetailView nodeId="n-1" />, [HOTEL], {
       role: "client",
       timeline: trunkTimeline([HOTEL]),
     });
     expect(screen.queryByTestId("card-detail-schedule")).not.toBeInTheDocument();
-    expect(screen.getByTestId("card-detail-ask")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("card-detail-money")).toHaveTextContent("USD 1000.00"),
     );
@@ -335,31 +371,6 @@ describe("CardDetailView · per-card approve", () => {
       status: "in_studio",
     });
     expect(screen.queryByTestId("card-detail-approval")).not.toBeInTheDocument();
-  });
-});
-
-describe("CardDetailView · ask about this", () => {
-  test("scopes the persistent concierge with a Re: chip, clearable", async () => {
-    renderDetail(
-      <>
-        <ConciergeColumn onClose={() => {}} />
-        <CardDetailView nodeId="n-1" />
-      </>,
-      [HOTEL],
-      { startLocked: true },
-    );
-
-    // No chip until a card asks.
-    expect(screen.queryByTestId("concierge-context-chip")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("card-detail-ask"));
-
-    const chip = await screen.findByTestId("concierge-context-chip");
-    expect(chip).toHaveTextContent("Aman Tokyo");
-
-    // The ✕ clears the scope.
-    fireEvent.click(screen.getByTestId("concierge-context-clear"));
-    expect(screen.queryByTestId("concierge-context-chip")).not.toBeInTheDocument();
   });
 });
 

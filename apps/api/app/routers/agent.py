@@ -307,6 +307,7 @@ async def turn_endpoint(
         content=payload.content,
         auth_bearer=auth_bearer,
         surface=payload.surface,
+        viewing_node_id=payload.viewing_node_id,
     )
     return StreamingResponse(
         content=body_stream,

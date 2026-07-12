@@ -300,6 +300,34 @@ def test_assemble_omits_graph_digest_when_none() -> None:
     assert "Live plan state" not in out
 
 
+def test_assemble_includes_viewing_cue_after_digest_before_dossier() -> None:
+    """The on-screen-focus cue rides just behind the live plan state and ahead
+    of the private tiers, so 'and right now, this one' reads in context."""
+    out = assemble_traveler_context(
+        dossier=_dossier(),
+        dossier_facts=[_dossier_fact("loves heli-skiing")],
+        profile_facts=[],
+        osint_facts=[],
+        client_full_name="Alex Stone",
+        graph_digest="Live plan state (...):\n- Status: draft",
+        viewing="On screen right now: the user is looking at 'Aman Kyoto' (hotel, pending) ...",
+    )
+    assert "On screen right now" in out
+    assert out.index("Live plan state") < out.index("On screen right now")
+    assert out.index("On screen right now") < out.index("Dossier (private")
+
+
+def test_assemble_omits_viewing_cue_when_none() -> None:
+    out = assemble_traveler_context(
+        dossier=None,
+        dossier_facts=[],
+        profile_facts=[_profile_fact("x")],
+        osint_facts=[],
+        viewing=None,
+    )
+    assert "On screen right now" not in out
+
+
 def test_assemble_omits_trip_brief_when_none() -> None:
     out = assemble_traveler_context(
         dossier=None,

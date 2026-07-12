@@ -22,7 +22,7 @@
 //     `approveNode` — approval locks the card per existing semantics);
 //   · an EDITABLE detail on an editable fork — the fields a traveler owns
 //     (title, note/body, time slot) edit in place (click → input, save on
-//     blur, Escape cancels); deeper edits route to "ask Artemis";
+//     blur, Escape cancels); deeper edits stay in Studio or the concierge;
 //   · legibility over disabled buttons: on the official trunk the rail says
 //     where content edits live instead of graying anything out.
 //
@@ -80,11 +80,19 @@ import {
 export function RightRail({
   idle,
   diffView = null,
+  onToggleFull = null,
+  fullOpen = false,
 }: {
   idle: React.ReactNode;
   /** Diff mode's derived view (annotations + ghosts) — null when reading
    *  normally. Presence flips the rail into compare register. */
   diffView?: JournalDiffView | null;
+  /** 2xl inline tier: "Open full" TOGGLES the full detail open beneath the
+   *  cockpit (and locks focus), instead of soft-navigating to the modal. When
+   *  null (≤2xl) the handle stays the modal deep link. */
+  onToggleFull?: (() => void) | null;
+  /** Whether the full detail is currently expanded beneath (flips the label). */
+  fullOpen?: boolean;
 }) {
   const { timeline } = useTimelineData();
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
@@ -187,13 +195,28 @@ export function RightRail({
             />
             <RailApprove node={active} />
             {!activeIsGhost ? (
-              <Link
-                href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
-                data-testid="journal-rail-open-detail"
-                className="self-start font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
-              >
-                Open full detail →
-              </Link>
+              onToggleFull ? (
+                // 2xl: a prominent toggle that expands the full detail BENEATH
+                // the cockpit (locks focus) rather than opening the modal.
+                <button
+                  type="button"
+                  onClick={onToggleFull}
+                  data-testid="journal-rail-open-detail"
+                  aria-expanded={fullOpen}
+                  className="inline-flex items-center gap-1.5 self-start rounded-full border border-ink/20 bg-ink/[0.04] px-3.5 py-1.5 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/70 transition-colors hover:border-ink/40 hover:bg-ink/[0.08] hover:text-ink"
+                >
+                  {fullOpen ? "Hide full detail" : "Open full detail"}
+                  <span aria-hidden>{fullOpen ? "▴" : "▾"}</span>
+                </button>
+              ) : (
+                <Link
+                  href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
+                  data-testid="journal-rail-open-detail"
+                  className="self-start font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
+                >
+                  Open full detail →
+                </Link>
+              )
             ) : null}
           </div>
 
@@ -273,7 +296,7 @@ export function RightRail({
                 />
               ) : null}
               {activeProblem ? (
-                <RailProblem node={active} problem={activeProblem} />
+                <RailProblem problem={activeProblem} />
               ) : null}
               {/* Map slot (coords-gated) — deferred; see plan open items. */}
             </div>
@@ -655,15 +678,8 @@ function RailDiffChange({
   );
 }
 
-// ── Problem explanation + "get help" (chat pre-seeded with the node) ─────────
-function RailProblem({
-  node,
-  problem,
-}: {
-  node: NodeResponse;
-  problem: JournalProblem;
-}) {
-  const setAskContext = itineraryGraphStore.useStore((s) => s.setAskContext);
+// ── Problem explanation + "get help" (summons the concierge) ─────────────────
+function RailProblem({ problem }: { problem: JournalProblem }) {
   const { openConcierge } = useConciergeControl();
   return (
     <div
@@ -678,10 +694,9 @@ function RailProblem({
       <button
         type="button"
         data-testid="journal-rail-get-help"
-        onClick={() => {
-          setAskContext({ nodeId: node.id, title: node.title || "this card" });
-          openConcierge();
-        }}
+        // The concierge learns which card this problem is on silently (it's the
+        // focused card), so "Get help" just summons it — no manual scope.
+        onClick={openConcierge}
         className="mt-2 rounded-full border border-[#8b2a1d]/40 px-3 py-1 font-sans text-[10px] uppercase tracking-[0.16em] text-[#8b2a1d] transition-colors hover:bg-[#8b2a1d]/10"
       >
         Get help
@@ -714,12 +729,10 @@ function RailApprove({ node }: { node: NodeResponse }) {
 // ── The editable rail detail (editable fork only) ────────────────────────────
 // The fields a traveler owns — title, note/body (description), time slot —
 // edit in place with the phase-2 idiom: click → input, save on blur, Escape
-// cancels. Everything deeper routes to "ask Artemis" (the existing chat
-// surface); durations/lanes/bulk ops stay in Studio.
+// cancels. Deeper changes (durations/lanes/bulk ops) stay in Studio or go
+// through the concierge, which already knows which card is on screen.
 function RailEditPanel({ node, tz }: { node: NodeResponse; tz: number }) {
   const storeApi = itineraryGraphStore.useStoreApi();
-  const setAskContext = itineraryGraphStore.useStore((s) => s.setAskContext);
-  const { openConcierge } = useConciergeControl();
 
   const meta = getVerticalMeta(node);
   const description =
@@ -780,17 +793,6 @@ function RailEditPanel({ node, tz }: { node: NodeResponse; tz: number }) {
           />
         )
       ) : null}
-      <button
-        type="button"
-        data-testid="journal-rail-ask-artemis"
-        onClick={() => {
-          setAskContext({ nodeId: node.id, title: node.title || "this card" });
-          openConcierge();
-        }}
-        className="self-start font-sans text-[10px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
-      >
-        Deeper changes? Ask Artemis →
-      </button>
     </div>
   );
 }

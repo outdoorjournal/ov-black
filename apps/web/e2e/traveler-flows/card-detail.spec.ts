@@ -9,8 +9,9 @@ import { seedScheduledItemAsAdvisor } from "../support/api";
 // halves of the slice:
 //   - a card is deep-linkable — /itinerary/[id]/item/[nodeId] resolves to the
 //     full-bleed detail with its facets (role-agnostic; a traveler opens it),
-//   - "Ask Artemis about this" scopes the persistent concierge with a Re: chip
-//     and the next turn carries that scope — a real turn against the local agent.
+//   - opening a card scopes the concierge SILENTLY — the next turn carries the
+//     viewed card as a hidden `viewing_node_id` (no chip, no text prefix) — a
+//     real turn against the local agent.
 // The builder mounts a desktop + a mobile layout (one hidden by responsive CSS),
 // so timeline locators are scoped to `:visible`. Local-only (freshTraveler needs
 // the local Supabase; the live turn needs apps/agent on :8080).
@@ -57,9 +58,8 @@ test("CARD-1: a card detail is deep-linkable to its facets", async ({ page, base
   await expect(detail).toHaveAttribute("data-node-id", nodeId);
   await expect(page.getByRole("heading", { level: 1, name: CARD_TITLE })).toBeVisible();
 
-  // The facets a traveler always gets: ask + money (actions/schedule are
-  // conditional on a location / holding the lock).
-  await expect(page.getByTestId("card-detail-ask")).toBeVisible();
+  // The facet a traveler always gets: money (actions/schedule are conditional
+  // on a location / holding the lock).
   await expect(page.getByTestId("card-detail-money")).toBeVisible();
   // The money read resolved (loading state cleared) — nothing billed yet here.
   await expect(page.getByTestId("card-detail-money-empty")).toBeVisible();
@@ -88,10 +88,10 @@ test("CARD-2: clicking a timeline card opens its detail route", async ({ page, b
   await expect(page.getByTestId("card-detail")).toBeVisible();
 });
 
-// CARD-3 — "Ask Artemis about this" scopes the persistent concierge: a Re: chip
-// names the card, and the next turn carries that scope (a real turn end-to-end
-// against the local agent).
-test("CARD-3: ask-about-this scopes the concierge and takes a scoped turn", async ({
+// CARD-3 — opening a card scopes the concierge SILENTLY: no chip, the turn text
+// is sent verbatim (no "Regarding …" prefix), and the POST carries the viewed
+// card as a hidden `viewing_node_id` (a real turn end-to-end against the agent).
+test("CARD-3: opening a card scopes the concierge silently and takes the turn", async ({
   page,
   baseURL,
 }) => {
@@ -101,28 +101,33 @@ test("CARD-3: ask-about-this scopes the concierge and takes a scoped turn", asyn
   await page.goto(`/itinerary/${id}/item/${nodeId}`);
   await expect(page.getByTestId("card-detail")).toBeVisible();
 
-  // No scope until a card asks.
+  // No manual scope UI exists anymore — the card rides along silently.
   await expect(page.getByTestId("concierge-context-chip")).toHaveCount(0);
-  await page.getByTestId("card-detail-ask").click();
 
-  const chip = page.getByTestId("concierge-context-chip");
-  await expect(chip).toBeVisible();
-  await expect(chip).toContainText(CARD_TITLE);
-
-  // Send a question: the turn is prefixed with the card scope, and the chip
-  // clears once consumed.
   const composer = page.locator(
     'input[placeholder="Ask me to propose, assemble, or swap…"]:visible',
   );
   await expect(composer).toBeEnabled();
   await composer.fill("what time should we arrive?");
+
+  // Capture the turn POST: its body must carry the viewed card verbatim, with
+  // no text prefix, so the agent silently knows what's on screen.
+  const turnRequest = page.waitForRequest(
+    (req) => req.method() === "POST" && /\/sessions\/[0-9a-f-]+\/turn$/.test(req.url()),
+  );
   await page.locator("button:visible", { hasText: "Send" }).click();
 
+  const body = (await turnRequest).postDataJSON() as {
+    content: string;
+    viewing_node_id?: string;
+  };
+  expect(body.content).toBe("what time should we arrive?");
+  expect(body.viewing_node_id).toBe(nodeId);
+
+  // The message bubble shows the typed text unchanged — no "Regarding …" scope.
   await expect(composer).toHaveValue("");
-  await expect(
-    page.getByText(new RegExp(`Regarding.*${CARD_TITLE}`)).first(),
-  ).toBeVisible();
-  await expect(chip).toHaveCount(0);
+  await expect(page.getByText("what time should we arrive?").first()).toBeVisible();
+  await expect(page.getByText(/Regarding/)).toHaveCount(0);
 
   // The turn runs end-to-end against the live agent: the composer re-enables once
   // the reply has streamed, and it never hit the "couldn't reach" fallback.

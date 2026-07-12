@@ -7,14 +7,15 @@
 //   (a) actions        — open in Maps / driving directions
 //   (b) type detail    — the data-driven NodeZoomCard (subway stops, flight legs…)
 //   (c) notes          — NotesPanel (graph-node notes, visible to advisor + party)
-//   (d) ask about this — scopes the persistent concierge with a "Re: …" chip
 //   (e) scheduling      — reschedule / unschedule via the store's own actions
 //   (f) money          — this item's charge line, invoice status, paid/owed, booking
 //   (g) edit           — post-creation details (ADV-13): description, price,
 //                        the operator's confirmation number
-// Role-agnostic: a traveler opens + asks too; the edit affordances gate on role.
+// Role-agnostic: a traveler opens too; the edit affordances gate on role. The
+// concierge learns which card is open silently (no "ask about this" button) —
+// the open card rides along as ambient context on the next agent turn.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -29,6 +30,10 @@ import {
   getHMeta,
   type NodeResponse,
 } from "@/app/_components/itinerary-graph/model/horizontalTypes";
+import {
+  datesPinned,
+  formatDayTile,
+} from "@/app/_components/itinerary-graph/model/time";
 import { attachedNotesByHost } from "@/app/_components/itinerary-graph/shared/attachedNotes";
 import { NodeZoomCard } from "@/app/_components/itinerary-graph/shared/cards/NodeZoomCard";
 import { PartOfJourney } from "@/app/_components/itinerary-graph/shared/PartOfJourney";
@@ -41,8 +46,6 @@ import {
   selectTravelerEditable,
 } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
-
-import { useConciergeControl } from "./ConciergeControl";
 
 // ── ISO ↔ day/minute helpers (mirror the store's rebaseStartToDay, in tz) ──────
 const pad = (n: number): string => String(n).padStart(2, "0");
@@ -60,8 +63,24 @@ const hhmmToMinute = (s: string): number => {
   return (Number.isFinite(h) ? (h as number) : 0) * 60 + (Number.isFinite(m) ? (m as number) : 0);
 };
 
-export function CardDetailView({ nodeId }: { nodeId: string }) {
-  const { openConcierge } = useConciergeControl();
+export function CardDetailView({
+  nodeId,
+  // Embedded (rail redesign, phase 4): the same detail rendered inline inside
+  // the Journal's fluid right region at the 2xl tier instead of taking over the
+  // whole planning space. It becomes a self-contained, internally-scrolling
+  // panel (bounded height, its own border) and sheds the full-bleed "‹ Back"
+  // chrome — the Journal is right there beside it, so there is nothing to go
+  // back to.
+  embedded = false,
+  // Expanded 2xl inline detail: a dismiss handle that collapses back to the
+  // following cockpit (and releases the hard focus lock). Only meaningful when
+  // embedded; absent on the full-route / modal detail.
+  onDismiss,
+}: {
+  nodeId: string;
+  embedded?: boolean;
+  onDismiss?: (() => void) | undefined;
+}) {
   const { timeline } = useTimelineData();
   const router = useRouter();
   const tz = timeline.timezoneOffsetHours;
@@ -84,31 +103,40 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
-  const setAskContext = itineraryGraphStore.useStore((s) => s.setAskContext);
   const storeApi = itineraryGraphStore.useStoreApi();
 
   const attachedNotes = useMemo(() => attachedNotesByHost(nodes), [nodes]);
   const backHref = `/itinerary/${itineraryId}/timeline` as const;
 
-  const onAsk = useCallback(() => {
-    if (!node) return;
-    setAskContext({ nodeId: node.id, title: node.title || "this card" });
-    openConcierge(); // ≥1100px the concierge is already in-flow; this is inert there.
-  }, [node, setAskContext, openConcierge]);
+  // On the full-route / modal detail, the card in the URL *is* what the user is
+  // looking at — focus it so the concierge's silent viewing context points here
+  // (the deep-linked page has no Journal scroll-tracking to set it otherwise).
+  // Embedded (2xl inline) the Journal owns focus via scroll, so don't fight it.
+  const focusNodeId = node?.id ?? null;
+  useEffect(() => {
+    if (embedded || !focusNodeId) return;
+    storeApi.getState().focusNode(focusNodeId, "click");
+  }, [embedded, focusNodeId, storeApi]);
 
   if (!node) {
     return (
       <div
         data-testid="card-detail-missing"
-        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
+        className={
+          embedded
+            ? "flex flex-col items-center justify-center gap-3 rounded-xl border border-ink/10 bg-paper p-8 text-center"
+            : "flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
+        }
       >
         <p className="font-serif text-lg text-ink/70">This card is no longer here.</p>
-        <Link
-          href={backHref}
-          className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/55 underline-offset-4 hover:underline"
-        >
-          Back to the timeline
-        </Link>
+        {embedded ? null : (
+          <Link
+            href={backHref}
+            className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/55 underline-offset-4 hover:underline"
+          >
+            Back to the timeline
+          </Link>
+        )}
       </div>
     );
   }
@@ -128,22 +156,62 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
     : 0;
 
   return (
-    <div data-testid="card-detail" data-node-id={node.id} className="flex min-h-0 flex-1 flex-col">
+    <div
+      data-testid="card-detail"
+      data-node-id={node.id}
+      data-embedded={embedded ? "true" : undefined}
+      className={
+        embedded
+          ? // Expanded beneath the cockpit: a plain in-FLOW panel (no bounded
+            // height, no inner scroll). Focus is hard-locked while it's open, so
+            // the page can scroll to its bottom without swapping the card.
+            "flex flex-col rounded-xl border border-ink/10 bg-paper shadow-sm"
+          : "flex min-h-0 flex-1 flex-col"
+      }
+    >
       <header className="flex shrink-0 items-center gap-3 border-b border-ink/10 px-4 py-3">
-        <Link
-          href={backHref}
-          data-testid="card-detail-back"
-          className="flex h-8 items-center gap-1 rounded-md px-2 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/60 transition-colors hover:bg-ink/5 hover:text-ink"
-        >
-          <span aria-hidden>‹</span> Back
-        </Link>
+        {embedded ? null : (
+          <Link
+            href={backHref}
+            data-testid="card-detail-back"
+            className="flex h-8 items-center gap-1 rounded-md px-2 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/60 transition-colors hover:bg-ink/5 hover:text-ink"
+          >
+            <span aria-hidden>‹</span> Back
+          </Link>
+        )}
         <h1 className="min-w-0 flex-1 truncate font-serif text-lg text-ink">{node.title}</h1>
+        {embedded && onDismiss ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            data-testid="card-detail-dismiss"
+            aria-label="Collapse detail"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink"
+          >
+            ✕
+          </button>
+        ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-4 sm:p-6 lg:flex-row">
+      {/* The full-route / modal detail scrolls within the planning space;
+          the embedded (2xl) panel flows into the page instead (focus is locked
+          while it's open, so page scroll is safe). */}
+      <div className={embedded ? "" : "min-h-0 flex-1 overflow-y-auto"}>
+        <div
+          className={
+            embedded
+              ? "flex flex-col gap-5 p-4"
+              : "mx-auto flex max-w-5xl flex-col gap-6 p-4 sm:p-6 lg:flex-row"
+          }
+        >
           {/* (b) The rich, data-driven type detail. */}
-          <div className="flex min-w-0 flex-col gap-4 lg:flex-1">
+          <div
+            className={
+              embedded
+                ? "flex min-w-0 flex-col gap-4"
+                : "flex min-w-0 flex-col gap-4 lg:flex-1"
+            }
+          >
             {journeyParent ? (
               <PartOfJourney
                 parent={journeyParent}
@@ -160,8 +228,16 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
             <NodeZoomCard node={node} tzOffsetHours={tz} />
           </div>
 
-          {/* The facet rail: aside on desktop, stacked below on mobile. */}
-          <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-[320px]">
+          {/* The facet rail: aside on desktop, stacked below on mobile. Embedded
+              (phase 4) it always stacks full-width under the type detail — the
+              inline region isn't wide enough for a comfortable second column. */}
+          <aside
+            className={
+              embedded
+                ? "flex w-full flex-col gap-4"
+                : "flex w-full shrink-0 flex-col gap-4 lg:w-[320px]"
+            }
+          >
             {/* Traveler: firm up this one pending card (pending → approved);
                 clearing the last pending card derives the plan to approved. An
                 advisor never approves per-card here. */}
@@ -172,7 +248,6 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
               />
             ) : null}
             <ActionsFacet node={node} />
-            <AskFacet onAsk={onAsk} />
             {node.type !== "note" ? (
               <NotesPanel
                 notes={notes}
@@ -190,6 +265,7 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
               <ScheduleFacet
                 node={node}
                 days={timeline.days}
+                datesPinned={datesPinned(timeline.itinerary)}
                 tz={tz}
                 onMove={(dayKey, minute) => storeApi.getState().moveNode(node.id, dayKey, minute)}
                 onUnschedule={() => storeApi.getState().unscheduleNode(node.id)}
@@ -231,7 +307,9 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
                 isNote={node.type === "note"}
                 onRemove={() => {
                   storeApi.getState().removeNode(node.id);
-                  router.push(backHref);
+                  // Embedded, the Journal beside us simply drops the card and
+                  // the inline region falls back to idle — no route change.
+                  if (!embedded) router.push(backHref);
                 }}
               />
             ) : null}
@@ -328,26 +406,11 @@ function ActionLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
-// ── (d) Ask Artemis about this ──────────────────────────────────────────────────
-function AskFacet({ onAsk }: { onAsk: () => void }) {
-  return (
-    <FacetCard label="Concierge" testid="card-detail-ask-facet">
-      <button
-        type="button"
-        onClick={onAsk}
-        data-testid="card-detail-ask"
-        className="flex h-9 w-full items-center justify-center rounded-md border border-[#F5701F]/40 bg-[rgba(245,112,31,0.06)] font-sans text-[11px] uppercase tracking-[0.16em] text-[#8a3d12] transition-colors hover:bg-[rgba(245,112,31,0.12)]"
-      >
-        Ask Artemis about this
-      </button>
-    </FacetCard>
-  );
-}
-
 // ── (e) Manual scheduling ───────────────────────────────────────────────────────
 function ScheduleFacet({
   node,
   days,
+  datesPinned,
   tz,
   onMove,
   onUnschedule,
@@ -355,6 +418,9 @@ function ScheduleFacet({
 }: {
   node: NodeResponse;
   days: Array<{ date: string; label: string }>;
+  // Dates are known (exact-dated trip, not the Day-N-until-pinned scaffold) —
+  // the day options carry the real calendar date beside the ordinal.
+  datesPinned: boolean;
   tz: number;
   onMove: (dayKey: string, minute: number) => void;
   onUnschedule: () => void;
@@ -392,13 +458,18 @@ function ScheduleFacet({
               value={dayKey}
               onChange={(e) => setDayKey(e.target.value)}
               data-testid="card-detail-day"
-              className="mt-1 h-9 w-full rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
+              className="mt-1 h-9 w-full rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
             >
-              {days.map((d) => (
-                <option key={d.date} value={d.date}>
-                  {d.label}
-                </option>
-              ))}
+              {days.map((d) => {
+                const tile = datesPinned ? formatDayTile(d.date) : null;
+                return (
+                  <option key={d.date} value={d.date}>
+                    {tile
+                      ? `${d.label} · ${tile.weekday} · ${tile.dayMonth}`
+                      : d.label}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <label>
@@ -408,7 +479,7 @@ function ScheduleFacet({
               value={hhmm}
               onChange={(e) => setHhmm(e.target.value)}
               data-testid="card-detail-time"
-              className="mt-1 h-9 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
+              className="mt-1 h-9 rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
             />
           </label>
         </div>

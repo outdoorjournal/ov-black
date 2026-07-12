@@ -1,11 +1,12 @@
-// The Journal's margin channel (traveler-journal design, phase 2). Notes are
-// the one write that works everywhere — INCLUDING the official trunk (these
-// fixtures are a trunk: no forked_from_id) — because they gate on
-// `selectCanLeaveNote` (credentials), never on role/fork/approve. Pins down:
-// attached notes render in the MARGIN (never as spine cards), free-standing
-// day notes ARE spine cards (the small note card), the ✎/`+`/rail affordances
-// create notes, own notes edit in place (tap → textarea, save on blur), delete
-// is always available, and everything disappears without credentials.
+// The Journal's notes (traveler-journal design). Notes are the one write that
+// works everywhere — INCLUDING the official trunk (these fixtures are a trunk:
+// no forked_from_id) — because they gate on `selectCanLeaveNote` (credentials),
+// never on role/fork/approve. Pins down: attached notes never land on the spine
+// (they live in the right rail's notes thread for the active card), free-
+// standing day notes ARE spine cards (the small note card), the rail/`+`
+// affordances create notes, spine notes edit in place (tap → textarea, save on
+// blur), delete is always available, and everything disappears without
+// credentials.
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -170,21 +171,18 @@ beforeEach(() => {
   deleteNodeMock.mockResolvedValue({ ok: true });
 });
 
-describe("margin channel · placement", () => {
-  test("attached notes annotate the host's margin, never the spine; day notes ARE spine note cards", () => {
+describe("notes · placement", () => {
+  test("attached notes never land on the spine; day notes ARE spine note cards", () => {
     renderJournal();
 
-    // The attached note is not a spine entry…
+    // The attached note is not a spine entry — it lives in the rail thread for
+    // its host, not beside the card.
     const spineIds = screen
       .getAllByTestId("journal-node")
       .map((el) => el.getAttribute("data-node-id"));
     expect(spineIds).not.toContain("note-1");
-    // …it hangs in the host card's margin.
-    const margin = screen.getByTestId("journal-margin");
-    expect(margin).toHaveAttribute("data-host-id", "n1");
-    expect(within(margin).getByTestId("journal-margin-note")).toHaveTextContent(
-      "why are we doing this at 9am?",
-    );
+    // No floating margin channel beside the card anymore.
+    expect(screen.queryByTestId("journal-margin")).not.toBeInTheDocument();
 
     // The free-standing day note is a node on the spine, rendered as the
     // small note card (not a full glance card).
@@ -193,34 +191,16 @@ describe("margin channel · placement", () => {
       "a dinner somewhere quiet?",
     );
   });
+
+  test("activating the host surfaces its attached note in the rail thread", () => {
+    renderJournal();
+    fireEvent.click(screen.getByText("Tea ceremony"));
+    const railNotes = screen.getByTestId("journal-rail-notes");
+    expect(railNotes).toHaveTextContent("why are we doing this at 9am?");
+  });
 });
 
-describe("margin channel · leaving a note on a card (trunk-safe)", () => {
-  test("the quiet ✎ opens a composer; submit persists an attached note", async () => {
-    renderJournal();
-    fireEvent.click(screen.getByTestId("journal-margin-add"));
-    const input = screen.getByTestId("journal-margin-composer-input");
-    fireEvent.change(input, { target: { value: "can we do this later?" } });
-    fireEvent.click(screen.getByTestId("journal-margin-composer-submit"));
-
-    // Optimistic: the annotation appears immediately.
-    expect(
-      screen.getAllByTestId("journal-margin-note").map((el) => el.textContent),
-    ).toEqual(expect.arrayContaining([expect.stringContaining("can we do this later?")]));
-
-    await waitFor(() =>
-      expect(createNodeMock).toHaveBeenCalledWith(expect.anything(), {
-        itineraryId: "it-1",
-        body: {
-          type: "note",
-          title: "can we do this later?",
-          status: "pending",
-          attached_to_node_id: "n1",
-        },
-      }),
-    );
-  });
-
+describe("notes · leaving a note on a card (trunk-safe)", () => {
   test("the rail renders the notes thread + composer for the active node", async () => {
     renderJournal();
     // Activate the host card (a click pin — also what flips the rail).
@@ -249,41 +229,41 @@ describe("margin channel · leaving a note on a card (trunk-safe)", () => {
   });
 });
 
-describe("margin channel · edit in place + delete", () => {
+describe("spine note card · edit in place + delete", () => {
   test("tap → textarea; save on blur rewrites the note text", async () => {
     renderJournal();
-    const note = screen.getByTestId("journal-margin-note");
+    const note = screen.getByTestId("journal-note-card");
     fireEvent.click(within(note).getByTestId("journal-note-text"));
     const editor = within(note).getByTestId("journal-note-editor");
-    expect(editor).toHaveValue("why are we doing this at 9am?");
+    expect(editor).toHaveValue("a dinner somewhere quiet?");
 
-    fireEvent.change(editor, { target: { value: "could this be 11am?" } });
+    fireEvent.change(editor, { target: { value: "a dinner by the river?" } });
     fireEvent.blur(editor);
 
     // Optimistic rewrite…
-    expect(screen.getByTestId("journal-margin-note")).toHaveTextContent(
-      "could this be 11am?",
+    expect(screen.getByTestId("journal-note-card")).toHaveTextContent(
+      "a dinner by the river?",
     );
     // …persisted as a title patch on the note node.
     await waitFor(() =>
       expect(updateNodeMock).toHaveBeenCalledWith(expect.anything(), {
         itineraryId: "it-1",
-        nodeId: "note-1",
-        patch: { title: "could this be 11am?" },
+        nodeId: "note-2",
+        patch: { title: "a dinner by the river?" },
       }),
     );
   });
 
   test("Escape abandons the edit without a network call", () => {
     renderJournal();
-    const note = screen.getByTestId("journal-margin-note");
+    const note = screen.getByTestId("journal-note-card");
     fireEvent.click(within(note).getByTestId("journal-note-text"));
     const editor = within(note).getByTestId("journal-note-editor");
     fireEvent.change(editor, { target: { value: "never mind" } });
     fireEvent.keyDown(editor, { key: "Escape" });
     expect(updateNodeMock).not.toHaveBeenCalled();
-    expect(screen.getByTestId("journal-margin-note")).toHaveTextContent(
-      "why are we doing this at 9am?",
+    expect(screen.getByTestId("journal-note-card")).toHaveTextContent(
+      "a dinner somewhere quiet?",
     );
   });
 
@@ -334,14 +314,12 @@ describe("the `+`-on-the-line", () => {
 describe("gating — selectCanLeaveNote (credentials), not role", () => {
   test("without credentials every note affordance disappears; notes still read", () => {
     renderJournal({ apiBaseUrl: null, accessToken: null });
-    // Reading stays.
-    expect(screen.getByTestId("journal-margin-note")).toHaveTextContent(
-      "why are we doing this at 9am?",
+    // Reading stays — the spine day note still renders.
+    expect(screen.getByTestId("journal-note-card")).toHaveTextContent(
+      "a dinner somewhere quiet?",
     );
-    expect(screen.getByTestId("journal-note-card")).toBeInTheDocument();
     // Writing affordances are gone.
     expect(screen.queryByTestId("journal-add-on-line")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("journal-margin-add")).not.toBeInTheDocument();
     expect(screen.queryByTestId("journal-note-delete")).not.toBeInTheDocument();
     expect(screen.queryByTestId("journal-note-text")).not.toBeInTheDocument();
   });

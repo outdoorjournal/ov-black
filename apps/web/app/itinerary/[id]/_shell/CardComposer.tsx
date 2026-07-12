@@ -56,7 +56,7 @@ const COST_KIND_OPTIONS: ReadonlyArray<{ value: CostKind; label: string }> = [
 ];
 
 const field =
-  "h-9 w-full min-w-0 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
+  "h-9 w-full min-w-0 rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
 const label = "font-sans text-[10px] uppercase tracking-[0.18em] text-ink/50";
 
 // A prefill slot (day + minute-of-day) ⇄ an <input type="datetime-local"> value
@@ -230,7 +230,7 @@ export function CardComposer({
                   value={scheduleLocal}
                   onChange={(e) => setScheduleLocal(e.target.value)}
                   data-testid="composer-schedule-input"
-                  className="h-7 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
+                  className="h-7 rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
                   {...(minDay ? { min: `${minDay}T00:00` } : {})}
                   {...(maxDay ? { max: `${maxDay}T23:59` } : {})}
                 />

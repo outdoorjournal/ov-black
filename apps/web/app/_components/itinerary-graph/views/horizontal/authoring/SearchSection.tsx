@@ -57,7 +57,7 @@ export function SearchSection({ heading = true }: { heading?: boolean }) {
           }}
           placeholder="ramen in Kyoto, a private guide…"
           data-testid="itinerary-graph-search-input"
-          className="h-8 min-w-0 flex-1 rounded-md border border-ink/15 bg-paper px-3 font-sans text-sm text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden"
+          className="h-8 min-w-0 flex-1 rounded-md border border-ink/15 bg-paper-white px-3 font-sans text-sm text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden"
         />
         <button
           type="button"

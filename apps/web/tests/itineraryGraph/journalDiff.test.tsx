@@ -318,7 +318,7 @@ describe("unified diff rendering (one spine)", () => {
 
 // ── Gesture gating ────────────────────────────────────────────────────────────
 describe("diff mode disables the content gestures", () => {
-  test("drag handles and the insert line sit out; margin notes stay", async () => {
+  test("drag handles and the insert line sit out (notes stay — see the rail test below)", async () => {
     renderJournal(); // traveler on their own fork — normally fully editable
     expect(screen.getAllByTestId("journal-drag-handle").length).toBeGreaterThan(0);
     expect(screen.getByTestId("journal-add-plus")).toBeInTheDocument();
@@ -326,8 +326,6 @@ describe("diff mode disables the content gestures", () => {
     await enterDiffMode();
     expect(screen.queryByTestId("journal-drag-handle")).not.toBeInTheDocument();
     expect(screen.queryByTestId("journal-add-plus")).not.toBeInTheDocument();
-    // Notes are feedback, not a graph edit — the margin channel stays open.
-    expect(screen.getAllByTestId("journal-margin-add").length).toBeGreaterThan(0);
   });
 
   test("the rail's in-place editor sits out while comparing", async () => {

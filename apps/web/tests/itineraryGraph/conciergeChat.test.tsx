@@ -191,9 +191,52 @@ test("opens no session on mount, then opens lazily with the audience on first su
     itinerary_id: "it-1",
     audience: "advisor",
   });
-  // The submitted text is handed to the SSE turn loop.
+  // The submitted text is handed to the SSE turn loop verbatim (no prefixing),
+  // with no ambient card context when nothing is focused.
   await waitFor(() =>
-    expect(sendTurnMock).toHaveBeenCalledWith("What do we know, privately?"),
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      "What do we know, privately?",
+      undefined,
+    ),
+  );
+});
+
+test("the focused card rides along as silent viewing context (no text prefix)", async () => {
+  // A probe inside the SAME Provider captures the live store api, so the test
+  // can focus a node exactly as the Journal's scroll tracking would.
+  let storeApi: ReturnType<typeof itineraryGraphStore.useStoreApi> | null = null;
+  function Probe() {
+    storeApi = itineraryGraphStore.useStoreApi();
+    return null;
+  }
+  render(
+    <itineraryGraphStore.Provider initial={storeInit()}>
+      <Probe />
+      <ConciergeChat
+        audience="traveler"
+        apiBaseUrl="http://api.test"
+        accessToken="tok"
+        clientId="c-1"
+        itineraryId="it-1"
+      />
+    </itineraryGraphStore.Provider>,
+  );
+
+  // Simulate the Journal focusing a card as the user scrolls it into view.
+  act(() => {
+    storeApi!.getState().focusNode("n1", "scroll");
+  });
+
+  fireEvent.change(screen.getByPlaceholderText(/Ask me to propose/i), {
+    target: { value: "How much is this?" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+  await waitFor(() =>
+    // The message text is untouched; the card id travels silently alongside it.
+    expect(sendTurnMock).toHaveBeenCalledWith("How much is this?", {
+      viewing_node_id: "n1",
+    }),
   );
 });
 

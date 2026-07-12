@@ -293,7 +293,7 @@ function SessionRow({
             }
           }}
           data-testid="session-rename-input"
-          className="h-6 min-w-0 flex-1 rounded border border-ink/20 bg-paper px-1.5 font-serif text-[13px] text-ink focus:border-ink/40 focus:outline-hidden"
+          className="h-6 min-w-0 flex-1 rounded border border-ink/20 bg-paper-white px-1.5 font-serif text-[13px] text-ink focus:border-ink/40 focus:outline-hidden"
         />
       ) : (
         <button

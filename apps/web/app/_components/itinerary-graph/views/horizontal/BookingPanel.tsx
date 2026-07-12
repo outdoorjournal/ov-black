@@ -374,7 +374,7 @@ function BookingRow({
             value={ref}
             onChange={(e) => setRef(e.target.value)}
             data-testid={`confirm-ref-${node.id}`}
-            className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm text-ink"
+            className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper-white px-2 py-1 font-sans text-sm text-ink"
           />
           <button
             type="button"

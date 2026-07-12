@@ -10,7 +10,8 @@
 // list) and Advisor (the human channel). Both bodies persist — the Artemis body
 // stays mounted (it holds live streams + both audience sub-threads); the human
 // body mounts on demand (it has no stream, so a re-load on entry is correct).
-// The context-chip strip belongs to Artemis (PS4's "ask about this").
+// The concierge learns which card is on screen silently (the Journal's focused
+// card rides along on each turn), so there's no manual "ask about this" scope.
 
 import { useEffect, useRef, useState } from "react";
 
@@ -65,11 +66,6 @@ export function ConciergeColumn({
     return () => clearTimeout(t);
   }, [nudge]);
 
-  // PS4 "ask about this" scopes the concierge to a card; the next turn is
-  // prefixed with it (see ConciergeChat) and then it clears.
-  const askContext = itineraryGraphStore.useStore((s) => s.askContext);
-  const setAskContext = itineraryGraphStore.useStore((s) => s.setAskContext);
-
   return (
     <div data-testid="concierge" className="flex min-h-0 flex-1 flex-col">
       {/* Overlay chrome — only when the column is a summoned overlay (<1100px). */}
@@ -119,31 +115,6 @@ export function ConciergeColumn({
             channel === "artemis" ? "absolute inset-0 flex flex-col" : "hidden"
           }
         >
-          {/* Context chip (PS4) — the card the concierge is scoped to. Sits above
-              the thread so the next question reads as a reply about that card. */}
-          {askContext ? (
-            <div
-              data-testid="concierge-context-chip"
-              className="flex shrink-0 items-center gap-2 border-b border-ink/10 bg-[rgba(245,112,31,0.06)] px-3 py-2"
-            >
-              <span className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45">
-                Re:
-              </span>
-              <span className="min-w-0 flex-1 truncate font-serif text-[13px] text-ink">
-                {askContext.title}
-              </span>
-              <button
-                type="button"
-                onClick={() => setAskContext(null)}
-                data-testid="concierge-context-clear"
-                aria-label="Clear card context"
-                className="shrink-0 rounded px-1 font-sans text-sm text-ink/50 transition-colors hover:bg-ink/5 hover:text-ink"
-              >
-                ✕
-              </button>
-            </div>
-          ) : null}
-
           {/* Artemis is one conversation per viewer: the advisor's PRIVATE
               workspace (the traveler never sees it), or the traveler's own shared
               thread. The client-facing conversation for an advisor is the human

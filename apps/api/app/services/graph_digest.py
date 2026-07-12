@@ -179,6 +179,106 @@ async def _latest_completed_analysis_counts(
     )
 
 
+def _viewing_when(starts_at: object) -> str | None:
+    """Human day/time from a node's TSTZRANGE lower bound, or None.
+
+    asyncpg hands back a ``Range`` with a ``.lower`` datetime; we only need a
+    coarse "when" for the ambient cue, so the day plus HH:MM is plenty.
+    """
+    lower = getattr(starts_at, "lower", None)
+    if lower is None:
+        return None
+    try:
+        return str(lower.strftime("%Y-%m-%d %H:%M"))
+    except (AttributeError, ValueError):
+        return None
+
+
+async def viewing_context_for_node(
+    session: AsyncSession,
+    *,
+    itinerary_id: uuid.UUID | None,
+    node_id: str | None,
+) -> str | None:
+    """One-line ambient cue naming the card the user is looking at right now.
+
+    Scoped hard to ``itinerary_id``: we only describe a node that belongs to
+    this session's pinned itinerary (and isn't deleted), so a spoofed
+    ``viewing_node_id`` can never surface a title from someone else's trip — the
+    caller can already see every card on this itinerary. Returns None when
+    there's nothing to say (no id, unpinned session, an unparseable/optimistic
+    id, or the node doesn't match), in which case the prompt simply omits the
+    cue — a bad hint never breaks the turn.
+    """
+    if itinerary_id is None or not node_id:
+        return None
+    try:
+        parsed_id = uuid.UUID(node_id)
+    except (ValueError, AttributeError):
+        return None
+    row = (
+        await session.execute(
+            select(
+                Node.title,
+                Node.type,
+                Node.status,
+                Node.starts_at,
+                Node.cost_amount,
+                Node.cost_currency,
+            ).where(
+                Node.id == parsed_id,
+                Node.itinerary_id == itinerary_id,
+                Node.deleted_at.is_(None),
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    title, node_type, status, starts_at, cost_amount, cost_currency = row
+
+    cost = (
+        f"{cost_amount} {cost_currency}" if cost_amount is not None and cost_currency else None
+    )
+    return render_viewing_context(
+        title=title,
+        node_type=node_type.value if hasattr(node_type, "value") else str(node_type),
+        status=status.value if hasattr(status, "value") else str(status),
+        when=_viewing_when(starts_at),
+        cost=cost,
+    )
+
+
+def render_viewing_context(
+    *,
+    title: str | None,
+    node_type: str,
+    status: str,
+    when: str | None,
+    cost: str | None,
+) -> str:
+    """Pure renderer for the on-screen-focus cue (unit-testable; loader gathers).
+
+    ``when``/``cost`` are folded in only when present, so a bare card degrades
+    to just its type + status. The trailing instruction is what makes the cue
+    *ambient*: resolve deictic references to this card, but don't announce it.
+    """
+    bits = [node_type, status]
+    if when:
+        bits.append(when)
+    if cost:
+        bits.append(cost)
+
+    label = title.strip() if title and title.strip() else "an untitled card"
+    return (
+        f"On screen right now: the user is looking at '{label}' "
+        f"({', '.join(bits)}) in this itinerary. Treat deictic references in "
+        "their message ('this', 'it', 'that one', 'here') as this card unless "
+        "they clearly mean something else. This is ambient awareness — don't "
+        "announce that you can see their screen; just use it to stay on the same "
+        "page."
+    )
+
+
 async def graph_digest_for_itinerary(
     session: AsyncSession, itinerary_id: uuid.UUID | None
 ) -> str | None:

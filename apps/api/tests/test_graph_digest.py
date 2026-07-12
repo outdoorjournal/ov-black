@@ -21,7 +21,11 @@ from app.services.billing_summary import (
     UnbilledNode,
 )
 from app.services.display_status import DisplayStatus
-from app.services.graph_digest import render_graph_digest
+from app.services.graph_digest import (
+    _viewing_when,
+    render_graph_digest,
+    render_viewing_context,
+)
 
 
 def _digest(**overrides: object) -> str:
@@ -161,3 +165,65 @@ def test_reconcile_and_analysis_lines() -> None:
     clean = _digest(analysis_block_count=0, analysis_warn_count=0)
     assert "Latest analysis" not in clean
     assert "merge this alternative" not in clean
+
+
+# ── On-screen focus cue (ambient "viewing" context) ──────────────────────────
+
+
+def test_viewing_context_full_card() -> None:
+    out = render_viewing_context(
+        title="Aman Kyoto",
+        node_type="hotel",
+        status="pending",
+        when="2026-09-14 15:00",
+        cost="1200.00 USD",
+    )
+    assert "Aman Kyoto" in out
+    assert "hotel" in out and "pending" in out
+    assert "2026-09-14 15:00" in out and "1200.00 USD" in out
+    # The ambient discipline: resolve deixis, but never announce the screen-peek.
+    assert "this" in out and "it" in out
+    assert "don't\nannounce" in out or "don't announce" in out
+
+
+def test_viewing_context_bare_card_omits_when_and_cost() -> None:
+    out = render_viewing_context(
+        title="A mystery experience",
+        node_type="experience",
+        status="approved",
+        when=None,
+        cost=None,
+    )
+    assert "(experience, approved)" in out
+    # No trailing comma / empty slot when when+cost are absent.
+    assert ", ," not in out
+
+
+def test_viewing_context_untitled_card_degrades() -> None:
+    out = render_viewing_context(
+        title="   ",
+        node_type="note",
+        status="pending",
+        when=None,
+        cost=None,
+    )
+    assert "an untitled card" in out
+
+
+class _FakeRange:
+    def __init__(self, lower: object) -> None:
+        self.lower = lower
+
+
+class _FakeDatetime:
+    def strftime(self, fmt: str) -> str:
+        return "2026-09-14 15:00"
+
+
+def test_viewing_when_reads_range_lower() -> None:
+    assert _viewing_when(_FakeRange(_FakeDatetime())) == "2026-09-14 15:00"
+
+
+def test_viewing_when_none_for_missing_or_open_lower() -> None:
+    assert _viewing_when(None) is None
+    assert _viewing_when(_FakeRange(None)) is None

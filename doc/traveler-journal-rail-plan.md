@@ -79,8 +79,37 @@ separate re-examination and intentionally not folded into the affordance model.
   worth a fix — maybe a spine min-width or a narrower/hidden rail when the
   concierge is open); the Zone-3 map; atmosphere image source; CardDetailView's
   own back-chrome inside the modal frame.
-- **Phase 4 — not started** (deferred until after this verification round; ready
-  to pick up).
+- **Phase 4 — done (structure + tests; browser pass pending).** The `2xl`
+  (≥1536px) **inline-detail tier**: at very-large widths the Journal's right
+  region promotes from the cockpit rail to the full `CardDetailView`, permanent —
+  *selection is the open*, no modal, no second click.
+  - New `views/journal/useIs2xl.ts` — a guarded `matchMedia("(min-width:1536px)")`
+    hook (SSR-safe, reactive), mirroring the existing onActivate matchMedia idiom
+    so jsdom (no matchMedia) resolves to `false` and keeps the cockpit tier.
+  - `JournalView`: the right `<aside>` now branches on `inlineDetail =
+    is2xl && !diffActive`. At 2xl it goes fluid (`lg:flex-1`) and renders the
+    embedded `CardDetailView` for the scroll/click-active node (`focusSource`
+    gated; ghosts excluded — they have no detail page), falling back to the same
+    idle glance; below 2xl it stays the 340px cockpit `RightRail` verbatim. The
+    cockpit (which hosts the "Open full →" second-click handle) simply isn't
+    mounted at 2xl, so the second-click path is suppressed by construction.
+    **Diff mode stays on the cockpit at every width** — its accept/keep decisions
+    live there — so inline-detail is a normal-reading affordance only.
+  - `CardDetailView` gained an `embedded` prop: the same six-facet detail becomes
+    a self-contained, internally-scrolling panel (bounded `max-h`, own border,
+    single-column stack) that sheds the full-bleed "‹ Back" chrome and the
+    remove→route-away (the Journal is right beside it). `/item/[nodeId]` full page
+    + the P3 modal are untouched (`embedded` defaults false).
+  - `tests/itineraryGraph/journalPhase4.test.tsx` (4) — a width-driven matchMedia
+    harness pins: ≥2xl idle = glance; ≥2xl activate = inline `card-detail`
+    (`data-embedded`, no back chrome); ≥2xl cockpit + "Open full →" suppressed;
+    <2xl (mdpi 1280) still drives the cockpit with its second-click handle. Full
+    itineraryGraph suite green (449; the one red is the pre-existing
+    `selectCanApprove` flagged below). Web typecheck + lint clean; `next build`
+    registers both item routes and compiles the cross-dir inline import.
+  - **Pending:** a browser pass at ≥1536 (confirm the inline detail fills the
+    freed right region, scrolls internally, and tracks the scroll-active card
+    without disturbing the spine); plus the still-open follow-ups below.
 
 > ⚠ **Pre-existing, unrelated test failure** (not from this work): the full web
 > suite has one red — `store.test.tsx > selectCanApprove > advisor may

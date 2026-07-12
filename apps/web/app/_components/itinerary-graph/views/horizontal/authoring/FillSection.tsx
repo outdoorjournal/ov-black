@@ -60,7 +60,7 @@ export function FillSection({ tzOffsetHours, days, heading = true }: FillSection
             value={gapStart}
             onChange={(e) => setGapStart(e.target.value)}
             data-testid="itinerary-graph-fill-start"
-            className="h-8 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
+            className="h-8 rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
           />
         </label>
         <label className="flex items-center justify-between gap-2">
@@ -72,7 +72,7 @@ export function FillSection({ tzOffsetHours, days, heading = true }: FillSection
             value={gapEnd}
             onChange={(e) => setGapEnd(e.target.value)}
             data-testid="itinerary-graph-fill-end"
-            className="h-8 rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
+            className="h-8 rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[12px] text-ink focus:border-ink/40 focus:outline-hidden"
           />
         </label>
         <button

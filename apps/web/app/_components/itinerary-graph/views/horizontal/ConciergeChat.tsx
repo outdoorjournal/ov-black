@@ -331,18 +331,18 @@ export function ConciergeChat({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || !canChat) return;
-      // PS4: if a card scoped the concierge ("ask about this"), prefix the turn
-      // so the reply is about that card, then clear the chip. Prefixing (not a
-      // hidden field) keeps the scope visible in the transcript on resume.
-      const ask = storeApi.getState().askContext;
-      const turnText = ask ? `Regarding “${ask.title}”: ${trimmed}` : trimmed;
-      if (ask) storeApi.getState().setAskContext(null);
+      // Ambient card context: the agent silently learns which card is on screen
+      // (the Journal's scroll/click-focused card) instead of us mangling the
+      // message text. The turn text itself is exactly what the user typed — the
+      // focused card rides along as a hidden `viewing_node_id`, resolved to a
+      // card server-side.
+      const viewingNodeId = storeApi.getState().focusedNodeId;
       const n = (seqRef.current += 1);
       const userId = `${audience}-u-${n}`;
       const assistantId = `${audience}-a-${n}`;
       setMessages((prev) => [
         ...prev,
-        { id: userId, role: "user", text: turnText },
+        { id: userId, role: "user", text: trimmed },
         { id: assistantId, role: "assistant", text: "", streaming: true },
       ]);
       streamingIdRef.current = assistantId;
@@ -363,7 +363,10 @@ export function ConciergeChat({
           setStreaming(false);
           return;
         }
-        await sendTurn(turnText);
+        await sendTurn(
+          trimmed,
+          viewingNodeId ? { viewing_node_id: viewingNodeId } : undefined,
+        );
       })();
     },
     [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],

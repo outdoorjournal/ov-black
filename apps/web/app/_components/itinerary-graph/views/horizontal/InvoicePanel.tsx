@@ -455,14 +455,14 @@ export function InvoicePanel({
               aria-label="Invoice label"
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm text-ink"
+              className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper-white px-2 py-1 font-sans text-sm text-ink"
             />
             <input
               aria-label="Invoice currency"
               value={newCurrency}
               onChange={(e) => setNewCurrency(e.target.value)}
               maxLength={3}
-              className="w-16 rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm uppercase text-ink"
+              className="w-16 rounded-md border border-ink/20 bg-paper-white px-2 py-1 font-sans text-sm uppercase text-ink"
             />
             <button
               type="button"
@@ -485,7 +485,7 @@ export function InvoicePanel({
               value={depositPct}
               onChange={(e) => setDepositPct(e.target.value)}
               data-testid="invoice-deposit-pct"
-              className="w-16 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right tabular-nums text-ink"
+              className="w-16 rounded-md border border-ink/20 bg-paper-white px-2 py-1 text-right tabular-nums text-ink"
             />
             <span className="text-ink/45">of each item now (blank = full balance)</span>
           </label>
@@ -717,7 +717,7 @@ function InvoiceCard({
                 data-testid="invoice-charge-node"
                 value={chargeNodeId}
                 onChange={(e) => setChargeNodeId(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 text-sm text-ink"
+                className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper-white px-2 py-1 text-sm text-ink"
               >
                 <option value="" disabled>
                   Add a node charge…
@@ -734,7 +734,7 @@ function InvoiceCard({
                 placeholder={chargeTarget ? chargeTarget.remaining.toFixed(2) : "amount"}
                 value={chargeAmount}
                 onChange={(e) => setChargeAmount(e.target.value)}
-                className="w-24 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right tabular-nums text-ink"
+                className="w-24 rounded-md border border-ink/20 bg-paper-white px-2 py-1 text-right tabular-nums text-ink"
               />
               <button
                 type="button"
@@ -756,7 +756,7 @@ function InvoiceCard({
               onChange={(e) =>
                 setAdjKind(e.target.value as (typeof ADJUSTMENT_KINDS)[number])
               }
-              className="rounded-md border border-ink/20 bg-paper px-1.5 py-1 text-xs text-ink"
+              className="rounded-md border border-ink/20 bg-paper-white px-1.5 py-1 text-xs text-ink"
             >
               {ADJUSTMENT_KINDS.map((k) => (
                 <option key={k} value={k}>
@@ -769,14 +769,14 @@ function InvoiceCard({
               placeholder="e.g. Child discount"
               value={adjDesc}
               onChange={(e) => setAdjDesc(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper px-2 py-1 text-xs text-ink"
+              className="min-w-0 flex-1 rounded-md border border-ink/20 bg-paper-white px-2 py-1 text-xs text-ink"
             />
             <input
               aria-label="Adjustment amount"
               placeholder="-250.00"
               value={adjAmount}
               onChange={(e) => setAdjAmount(e.target.value)}
-              className="w-24 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right text-xs tabular-nums text-ink"
+              className="w-24 rounded-md border border-ink/20 bg-paper-white px-2 py-1 text-right text-xs tabular-nums text-ink"
             />
             <button
               type="button"

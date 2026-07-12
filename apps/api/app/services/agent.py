@@ -72,7 +72,7 @@ from app.services import itineraries as itineraries_service
 from app.services.agent_token import AgentTokenError, mint_agent_token
 from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.facts import load_agent_context
-from app.services.graph_digest import graph_digest_for_itinerary
+from app.services.graph_digest import graph_digest_for_itinerary, viewing_context_for_node
 
 logger = logging.getLogger("ov_black.agent.service")
 
@@ -1284,6 +1284,7 @@ async def stream_turn(
     auth_bearer: str | None = None,
     settings: Settings | None = None,
     surface: str | None = None,
+    viewing_node_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     """Orchestrate one turn end-to-end and yield SSE frames as bytes.
 
@@ -1379,6 +1380,15 @@ async def stream_turn(
         # get_itinerary call just to learn where the plan stands.
         graph_digest = await graph_digest_for_itinerary(db, agent_session.itinerary_id)
 
+        # On-screen focus (ambient): the card the user is looking at as they
+        # type. Silent context so "this"/"it" resolve without them spelling it
+        # out. Scoped to the pinned itinerary, so a forged id reveals nothing.
+        viewing = await viewing_context_for_node(
+            db,
+            itinerary_id=agent_session.itinerary_id,
+            node_id=viewing_node_id,
+        )
+
         # Assemble prompt + context OUTSIDE the log-safe zone.
         traveler_ctx = assemble_traveler_context(
             dossier=dossier,
@@ -1393,6 +1403,7 @@ async def stream_turn(
             campaign_directive=campaign_directive,
             trip_brief=trip_brief,
             graph_digest=graph_digest,
+            viewing=viewing,
             today=datetime.now(UTC).date().isoformat(),
         )
         # Campaign dashboard kickoff: the agent speaks first and builds the

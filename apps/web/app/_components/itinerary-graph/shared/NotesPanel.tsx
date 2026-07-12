@@ -133,7 +133,7 @@ export function NotesPanel({
             }}
             rows={2}
             placeholder="Leave a note for your advisor…"
-            className="w-full resize-none rounded border border-amber-900/20 bg-paper/80 px-2 py-1.5 font-sans text-[12px] text-ink placeholder:text-ink/40 focus:outline-hidden focus:ring-1 focus:ring-amber-700/40"
+            className="w-full resize-none rounded border border-amber-900/20 bg-paper-white px-2 py-1.5 font-sans text-[12px] text-ink placeholder:text-ink/40 focus:outline-hidden focus:ring-1 focus:ring-amber-700/40"
           />
           <div className="mt-1.5 flex justify-end">
             <button

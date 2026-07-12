@@ -291,7 +291,7 @@ export function SupplierSlotPickerDialog({
                           setCount(p.category_id, Number.parseInt(e.target.value, 10) || 0)
                         }
                         data-testid={`supplier-count-${p.category_id}`}
-                        className="w-16 rounded-md border border-ink/20 bg-paper px-2 py-1 text-right font-sans text-sm tabular-nums text-ink"
+                        className="w-16 rounded-md border border-ink/20 bg-paper-white px-2 py-1 text-right font-sans text-sm tabular-nums text-ink"
                       />
                     </div>
                   ))

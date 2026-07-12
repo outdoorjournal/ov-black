@@ -92,12 +92,24 @@ class TurnRequest(BaseModel):
     the campaign spine. Unlike intake it *broadens* to planning, but only on the
     viewer's own pinned working copy — every write still passes the server-side
     fork/advisor gates, which are the real authority.
+
+    ``viewing_node_id`` is ambient, silent context: the card the user is looking
+    at on screen right now (the Journal's focused card, or an open detail sheet).
+    It is NOT shown in the transcript — the client no longer prefixes "Regarding
+    X"; instead the agent silently learns what's on screen so deictic references
+    ("this", "it", "that one") resolve to the right card. The backend only honours
+    it if the node belongs to this session's itinerary, so a forged id reveals
+    nothing the caller can't already see.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     content: Annotated[str, Field(min_length=1, max_length=8000)]
     surface: Literal["intake", "kickoff"] | None = None
+    # A bounded string, not a UUID field, on purpose: this is a silent, best-
+    # effort hint. A malformed or optimistic-ghost id must never 422 the turn —
+    # the service parses it defensively and simply omits the cue if it can't.
+    viewing_node_id: Annotated[str, Field(max_length=64)] | None = None
 
 
 class AgentTurnSummary(BaseModel):

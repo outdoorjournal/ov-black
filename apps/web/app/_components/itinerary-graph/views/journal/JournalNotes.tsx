@@ -1,18 +1,17 @@
 "use client";
 
-// The Journal's margin channel (traveler-journal design, phase 2). Notes are
-// the one write that works EVERYWHERE, including the official trunk — a note
-// is feedback for staff, not a graph edit, so every affordance here gates on
+// The Journal's note affordances (traveler-journal design). Notes are the one
+// write that works EVERYWHERE, including the official trunk — a note is
+// feedback for staff, not a graph edit, so every affordance here gates on
 // `selectCanLeaveNote` (credentials), never on role or the fork/approve gates.
 // The backend's write authorization stays the real authority; the store's
 // optimistic adds/edits revert on failure.
 //
-// Three shapes, all wearing the existing note tokens (yellow tint, ✎ glyph,
-// handwritten serif-italic register):
+// Attached notes (annotations on a specific card) live in the right rail's
+// notes thread (RightRail → NotesPanel), not beside the card. What remains
+// here are the two spine shapes, wearing the note tokens (yellow tint, ✎
+// glyph, handwritten serif-italic register):
 //
-//   MarginNotes    attached notes as annotations in the host card's margin
-//                  (beside it on desktop, tucked under it below lg) + the
-//                  quiet ✎ hover affordance to leave a new one
 //   SpineNoteCard  a free-standing day note ON the spine (it IS a node)
 //   AddNoteOnLine  the `+`-on-the-line at a day's end. On the trunk, Note is
 //                  the ONLY thing the line offers (feedback is trunk-safe by
@@ -228,82 +227,6 @@ function NoteDelete({ noteId }: { noteId: string }) {
     >
       ×
     </button>
-  );
-}
-
-// ── Attached notes: the margin beside the host card ──────────────────────────
-export function MarginNotes({
-  hostId,
-  notes,
-  inline = false,
-}: {
-  hostId: string;
-  notes: NodeResponse[];
-  /** Keep the notes in-flow under the card (alt branches — the absolute
-   *  margin would overlay the neighbouring branch's card). */
-  inline?: boolean;
-}) {
-  const canWrite = itineraryGraphStore.useStore(selectCanLeaveNote);
-  const storeApi = itineraryGraphStore.useStoreApi();
-  const [composing, setComposing] = useState(false);
-
-  if (notes.length === 0 && !canWrite) return null;
-
-  return (
-    <div
-      data-testid="journal-margin"
-      data-host-id={hostId}
-      className={
-        "mt-1.5 flex w-full flex-col items-start gap-1.5" +
-        (inline
-          ? ""
-          : " lg:absolute lg:left-full lg:top-2 lg:ml-5 lg:mt-0 lg:w-[220px]")
-      }
-    >
-      {notes.map((n) => (
-        <div
-          key={n.id}
-          data-testid="journal-margin-note"
-          className="flex w-full items-start gap-1.5 rounded-md border border-amber-900/15 bg-[#fbf1c7]/80 px-2.5 py-2 shadow-xs lg:-rotate-[0.4deg]"
-        >
-          <span aria-hidden className="pt-px text-[11px] leading-none text-amber-900/60">
-            ✎
-          </span>
-          <div className="min-w-0 flex-1">
-            <NoteBody note={n} />
-          </div>
-          <NoteDelete noteId={n.id} />
-        </div>
-      ))}
-
-      {canWrite ? (
-        composing ? (
-          <NoteComposer
-            placeholder="Leave a note for your advisor…"
-            submitLabel="Leave a note"
-            testid="journal-margin-composer"
-            onSubmit={(text) => {
-              storeApi.getState().addAttachedNote(hostId, text);
-              setComposing(false);
-            }}
-            onCancel={() => setComposing(false)}
-          />
-        ) : (
-          // The quiet ✎ — invisible until the card row is hovered/focused on
-          // desktop; always (faintly) present below lg where hover doesn't
-          // exist. The rail's "Leave a note" covers the active node too.
-          <button
-            type="button"
-            data-testid="journal-margin-add"
-            aria-label="Leave a note on this card"
-            onClick={() => setComposing(true)}
-            className="rounded-full px-1.5 py-0.5 font-sans text-[10px] uppercase tracking-[0.14em] text-amber-900/60 opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100 lg:opacity-0 lg:group-hover/jnode:opacity-100 lg:group-focus-within/jnode:opacity-100"
-          >
-            ✎ note
-          </button>
-        )
-      ) : null}
-    </div>
   );
 }
 

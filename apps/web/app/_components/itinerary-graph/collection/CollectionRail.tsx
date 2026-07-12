@@ -264,7 +264,7 @@ function AddAffordances() {
   };
 
   const input =
-    "h-8 w-full rounded-md border border-ink/15 bg-paper px-2 font-sans text-[12px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
+    "h-8 w-full rounded-md border border-ink/15 bg-paper-white px-2 font-sans text-[12px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden";
 
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-ink/10 px-4 py-3">

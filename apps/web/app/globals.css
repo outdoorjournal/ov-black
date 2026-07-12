@@ -12,6 +12,12 @@
 
   --color-ink: #0a0a0a;
   --color-paper: #f7f4ee;
+  /* Paper's brighter sibling — the "white sheet" for edit fields and the chat
+     window back. A hair warm (250 blue, not pure #fff) so it reads as clean
+     paper rather than a cold screen white, and lifts off the cream `paper`
+     frame enough that inputs finally stand out. Use for field/composer/chat
+     backgrounds, not broad surfaces. */
+  --color-paper-white: #fffffa;
 
   --color-brand: hsl(var(--brand));
   --color-brand-foreground: hsl(var(--brand-foreground));

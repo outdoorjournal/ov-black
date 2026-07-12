@@ -143,14 +143,6 @@ export function clampJournalZoom(value: number): number {
 }
 
 /**
- * The card the persistent concierge is currently scoped to (M006/PS4). Set by a
- * card's "Ask Artemis about this" — the ConciergeColumn renders it as a "Re: …"
- * chip, and the next agent turn is prefixed with it, then it clears. A shared UI
- * slice (not a URL) because the concierge lives beside every routed destination.
- */
-export type AskContext = { nodeId: string; title: string };
-
-/**
  * How the focused node became focused (the Journal's scroll-active system).
  * `click` is a deliberate pin — scroll observation must not steal it until the
  * pinned card leaves the viewport band; `scroll` is ambient and freely
@@ -189,6 +181,12 @@ export type ItineraryGraphState = {
   focusedNodeId: string | null;
   /** Provenance of `focusedNodeId` — see `FocusSource`. */
   focusSource: FocusSource | null;
+  /** A HARD focus lock: while true nothing but a deliberate focus of ANOTHER
+   *  node moves focus — the Journal's scroll observer stands down entirely.
+   *  Set when the 2xl inline detail is expanded ("Open full"), so scrolling the
+   *  timeline can't swap the card out from under it; cleared on dismiss or when
+   *  a different node is focused. */
+  focusLocked: boolean;
   flashNodeId: string | null;
   assemblePulse: number;
 
@@ -296,12 +294,11 @@ export type ItineraryGraphState = {
   clearLastPlacement: () => void;
 
   // ── focus / chat ──
-  /** The card the concierge is scoped to (PS4 "ask about this"); null = general. */
-  askContext: AskContext | null;
-  setAskContext: (ctx: AskContext | null) => void;
   /** Focus a node. `source` defaults to `click` (a deliberate pin); the
    *  Journal's scroll observer passes `scroll` so a click-pin can outrank it. */
   focusNode: (id: string | null, source?: FocusSource) => void;
+  /** Set/clear the hard focus lock (see `focusLocked`). */
+  setFocusLocked: (locked: boolean) => void;
   appendUserMessage: (id: string, text: string) => void;
   appendAssistantMessage: (id: string, text?: string) => void;
   appendDelta: (id: string, text: string) => void;
@@ -868,12 +865,12 @@ export const itineraryGraphStore = createStoreContext<
           },
         ],
         focusedNodeId: defaultFocus?.id ?? null,
+        focusLocked: false,
         // The default focus is a seed, not an interaction: `focusSource` stays
         // null so idle surfaces (the Journal rail) don't jump straight to it.
         focusSource: null,
         flashNodeId: null,
         assemblePulse: 0,
-        askContext: null,
         heldItem: null,
         lastPlacement: null,
 
@@ -901,8 +898,6 @@ export const itineraryGraphStore = createStoreContext<
 
         pxPerMinute: ZOOM_PRESETS.day,
         journalPxPerMinute: JOURNAL_ZOOM_PRESETS.hour,
-
-        setAskContext: (ctx) => set({ askContext: ctx }),
 
         // ── place mode (PS5) ──
         holdItem: (nodeId) => {
@@ -950,10 +945,15 @@ export const itineraryGraphStore = createStoreContext<
         clearLastPlacement: () => set({ lastPlacement: null }),
 
         focusNode: (id, source) =>
-          set({
+          set((s) => ({
             focusedNodeId: id,
             focusSource: id === null ? null : (source ?? "click"),
-          }),
+            // Focusing a DIFFERENT node cancels any hard lock — a deliberate
+            // move to another card always wins (re-focusing the same node
+            // leaves the lock intact).
+            focusLocked: id === s.focusedNodeId ? s.focusLocked : false,
+          })),
+        setFocusLocked: (locked) => set({ focusLocked: locked }),
         appendUserMessage: (id, text) =>
           set((s) => ({
             messages: [...s.messages, { id, role: "user", text }],

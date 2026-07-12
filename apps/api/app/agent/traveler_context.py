@@ -193,6 +193,7 @@ def assemble_traveler_context(
     campaign_directive: str | None = None,
     trip_brief: str | None = None,
     graph_digest: str | None = None,
+    viewing: str | None = None,
     today: str | None = None,
 ) -> str:
     """Return the three-tier context block for the system prompt.
@@ -262,6 +263,13 @@ def assemble_traveler_context(
     # the prompt is rebuilt per turn, so exactly one snapshot is ever present.
     if graph_digest:
         sections.append(graph_digest)
+
+    # ── On-screen focus (ambient) ─────────────────────────────────────────
+    # The card the user is looking at as they type — silent context so deictic
+    # references resolve to the right node without them spelling it out. Placed
+    # after the plan digest so the agent reads it as "and right now, this one."
+    if viewing:
+        sections.append(viewing)
 
     # ── Dossier ──────────────────────────────────────────────────────────
     dossier_body: list[str] = []

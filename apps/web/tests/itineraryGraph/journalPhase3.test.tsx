@@ -393,17 +393,17 @@ describe("problem states", () => {
     );
   });
 
-  test("activating puts the explanation + get-help (chat pre-seeded) in the rail", () => {
+  test("activating puts the explanation + get-help (summons the concierge) in the rail", () => {
     renderJournal({ nodes: [HOST, troubled] });
     fireEvent.click(screen.getByText("Ryokan check-in"));
     const rail = screen.getByTestId("journal-rail-problem");
     expect(rail).toHaveTextContent("Check-in overlaps the transfer");
-    fireEvent.click(screen.getByTestId("journal-rail-get-help"));
-    // The chat is pre-seeded with the node (the existing ask-context path).
-    expect(storeApi!.getState().askContext).toEqual({
-      nodeId: "n-problem",
-      title: "Ryokan check-in",
-    });
+    // "Get help" summons the concierge, which learns the focused card silently —
+    // no manual scope to assert. It's a no-op outside the shell's provider, so
+    // just confirm the affordance is present and clicking it doesn't throw.
+    const getHelp = screen.getByTestId("journal-rail-get-help");
+    fireEvent.click(getHelp);
+    expect(getHelp).toBeInTheDocument();
   });
 
   test("a healthy card carries no problem treatment", () => {

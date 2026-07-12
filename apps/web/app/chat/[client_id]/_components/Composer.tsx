@@ -47,7 +47,7 @@ export function Composer({ disabled, onSend }: ComposerProps) {
           placeholder={
             disabled ? "The concierge is writing…" : "Write to your concierge"
           }
-          className="flex w-full rounded-md border border-ink/15 bg-paper px-3 py-2 font-sans text-base text-ink ring-offset-background placeholder:text-ink/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex w-full rounded-md border border-ink/15 bg-paper-white px-3 py-2 font-sans text-base text-ink ring-offset-background placeholder:text-ink/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="chat-composer-textarea"
         />
         <Button

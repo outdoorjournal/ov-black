@@ -247,7 +247,7 @@ export function HumanThread({
             }
             disabled={!canApi || status === "error"}
             data-testid="human-composer"
-            className="min-w-0 flex-1 rounded-md border border-ink/15 bg-paper px-2.5 py-1.5 font-serif text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden disabled:opacity-40"
+            className="min-w-0 flex-1 rounded-md border border-ink/15 bg-paper-white px-2.5 py-1.5 font-serif text-[13px] text-ink placeholder:text-ink/35 focus:border-ink/40 focus:outline-hidden disabled:opacity-40"
           />
           <button
             type="button"
