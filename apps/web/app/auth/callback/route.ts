@@ -12,6 +12,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
+import { CAMPAIGN_INTENT_COOKIE } from "@/lib/campaigns";
 import { resolveClientIdForUser, resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -61,6 +62,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const nextParam = searchParams.get("next");
   const nextOverride = nextParam && nextParam.startsWith("/") ? nextParam : null;
 
+  // A campaign the traveler tried to start before signing in (start-campaign
+  // action set this cookie). Same open-redirect guard; consumed once so a later
+  // sign-in doesn't keep re-entering the campaign.
+  const intentCookie = request.cookies.get(CAMPAIGN_INTENT_COOKIE)?.value ?? null;
+  const intentOverride =
+    intentCookie && intentCookie.startsWith("/") ? intentCookie : null;
+  const override = nextOverride ?? intentOverride;
+
+  // Whenever an intent cookie is present, clear it on the successful redirect so
+  // it can't leak into a future login (single-use by construction).
+  const finish = (resp: NextResponse): NextResponse => {
+    if (intentCookie) resp.cookies.delete({ name: CAMPAIGN_INTENT_COOKIE, path: "/" });
+    return resp;
+  };
+
   const supabase = await createServerSupabase();
 
   if (code) {
@@ -68,7 +84,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (error) {
       return errorRedirect(origin, "exchange_failed");
     }
-    return roleAwareRedirect(supabase, origin, nextOverride);
+    return finish(await roleAwareRedirect(supabase, origin, override));
   }
 
   if (tokenHash && otpType) {
@@ -79,7 +95,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (error) {
       return errorRedirect(origin, "verify_failed");
     }
-    return roleAwareRedirect(supabase, origin, nextOverride);
+    return finish(await roleAwareRedirect(supabase, origin, override));
   }
 
   return errorRedirect(origin, "missing_code");

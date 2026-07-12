@@ -698,11 +698,16 @@ def _campaign_kickoff_directive(campaign: Campaign) -> str:
     # campaign that hasn't declared its arrival gateway.
     if campaign.arrival_airport and campaign.arrival_place and campaign.base_place:
         arrival = (
-            "3. GET THEM THERE — find a real flight. Call ``search_inventory`` "
-            "with kinds=['flight'], origin = the traveler's home airport (in your "
-            f"context), destination = '{campaign.arrival_airport}', dated to the "
-            "trip's arrival day, then ``propose_flight`` the best option and say a "
-            "word about why.\n"
+            "3. GET THEM THERE — but FIRST seat the whole party. Check "
+            "``get_traveler_context``: a returning traveler has family on file. "
+            "Anyone coming on this trip who isn't seated yet must be seated "
+            "(``add_trip_traveler`` for someone already on file — the kids, a "
+            "spouse) so the flight passengers, rooms, and transfer are sized for "
+            "the whole group, not just the primary. THEN find a real flight: "
+            "``search_inventory`` with kinds=['flight'], origin = the traveler's "
+            f"home airport (in your context), destination = '{campaign.arrival_airport}', "
+            "dated to the trip's arrival day, passengers = the full party, then "
+            "``propose_flight`` the best option and say a word about why.\n"
             f"4. Airport transfer: ``add_transfer`` origin='{campaign.arrival_place}', "
             f"destination='{campaign.base_place}', service_class='chauffeur_black', "
             "party_size = the trip's party.\n"
@@ -1388,6 +1393,7 @@ async def stream_turn(
             campaign_directive=campaign_directive,
             trip_brief=trip_brief,
             graph_digest=graph_digest,
+            today=datetime.now(UTC).date().isoformat(),
         )
         # Campaign dashboard kickoff: the agent speaks first and builds the
         # skeleton. Append the build directive so this planning turn acts.

@@ -43,6 +43,13 @@ export interface NodeMeta {
   emoji?: string;
   description?: string;
   place?: PlaceFacts;
+  // Reading-list article fields (save_link_to_collection with kind="article").
+  // `note` is a human-friendly label ("Backpacker — Olympus thru-hike");
+  // `publication` is the derived source ("Backpacker"); `url` is the link. The
+  // card prefers these over node.title, which for an article is the raw URL.
+  url?: string;
+  publication?: string;
+  note?: string;
 }
 
 export interface CardSnapshot {

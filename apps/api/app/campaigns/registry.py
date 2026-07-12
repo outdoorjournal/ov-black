@@ -88,11 +88,18 @@ OLYMPUS = Campaign(
         "``duration_nights`` (and a rough date range if they gave one), or "
         "``exact`` if they named firm dates. Do not finish intake without a "
         "duration recorded.\n"
-        "2. PARTY — who is actually coming. If they're travelling solo, seat "
-        "THEM as the party by calling ``record_party_member`` with "
-        "``is_primary=true`` (their own name) so the ledger reads \"just you\" "
-        "instead of hanging on \"still listening\"; don't keep asking who else "
-        "once they've said it's only them. For companions, record each one.\n"
+        "2. PARTY — settle who is coming AND seat them on THIS trip; recording a "
+        "companion in the household is not enough, they must be on the trip or "
+        "the itinerary (flights, rooms, transfers, per-person costs) is sized "
+        "wrong. First check ``party_members`` via ``get_traveler_context`` — a "
+        "returning traveler already has family on file. For each person coming: "
+        "someone ALREADY on file (a spouse, the kids) → ``add_trip_traveler`` "
+        "with their member id; a brand-new person → ``record_party_member`` "
+        "(which both saves and seats them). If someone on file is sitting this "
+        "one out → ``remove_trip_traveler``. If it's genuinely just them, seat "
+        "the primary via ``record_party_member`` (``is_primary=true``, their own "
+        "name) so the ledger reads \"just you\". Don't leave known family "
+        "unseated: if their kids are on file, confirm and seat them.\n"
         "Set the campaign mood, and record at most one genuine profile fact if "
         "it surfaces. Do NOT build the itinerary yet — the skeleton goes down on "
         "the dashboard right after. Once length and party are settled, call "
@@ -105,16 +112,16 @@ OLYMPUS = Campaign(
     base_place="Litochoro, Greece",
     reading_list=(
         ArticleSeed(
-            url="https://www.outsideonline.com/adventure-travel/destinations/europe/mount-olympus-greece/",
-            publication="Outside",
+            url="https://www.backpacker.com/trips/adventure-travel/mt-olympus-hiking-up-the-mountain-of-the-gods/",
+            publication="Backpacker",
         ),
         ArticleSeed(
-            url="https://www.climbing.com/places/climbing-mount-olympus-greece/",
+            url="https://www.climbing.com/places/this-way-to-paradise-andmdash-going-greek-on-the-island-of-kalymnos/",
             publication="Climbing",
         ),
         ArticleSeed(
-            url="https://www.backpacker.com/trips/mount-olympus-greece-thru-hike/",
-            publication="Backpacker",
+            url="https://www.outsideonline.com/adventure-travel/destinations/europe/tiny-church-hidden-high-mountain-samos-greece/",
+            publication="Outside",
         ),
     ),
 )

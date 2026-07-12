@@ -33,9 +33,25 @@ class Settings(BaseSettings):
         description=(
             "Bedrock inference profile id (cross-region routing). Claude 4.x "
             "Sonnet/Opus do not support on-demand throughput against raw model "
-            "ids — must be an inference profile. Sonnet 4.6 runs without "
-            "extended thinking by default (fast, no silent between-tool think), "
+            "ids — must be an inference profile. Sonnet 4.6 has extended "
+            "thinking OFF unless we turn it on (see thinking_budget_tokens), "
             "unlike Sonnet 5 whose adaptive thinking is always on."
+        ),
+    )
+    thinking_budget_tokens: int = Field(
+        default=1024,
+        ge=0,
+        description=(
+            "Extended-thinking budget for the Bedrock model. > 0 enables "
+            "interleaved extended thinking so the model does its planning "
+            "(tool choices, self-corrections, error handling) in a hidden "
+            "reasoning channel — which the translator suppresses to an "
+            "anonymous 'thinking' pulse — instead of narrating raw scratchpad "
+            "(tool names, tool failures) into the traveler-visible reply. "
+            "Interleaved so the hidden reasoning also covers BETWEEN-tool "
+            "steps, not just the turn's opener. 0 disables thinking entirely "
+            "(reverts to fast, no-think, but the scratchpad leaks). Bedrock "
+            "requires a budget of at least 1024 when enabled."
         ),
     )
 

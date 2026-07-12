@@ -11,6 +11,7 @@
 // label, or texture. See A11yPanel for the full checklist.
 
 import {
+  BookOpen,
   Camera,
   Car,
   Coffee,
@@ -40,6 +41,7 @@ export type CardKind =
   | "free_time"
   | "waiting"
   | "note"
+  | "article"
   | "destination";
 
 export interface TypeToken {
@@ -160,6 +162,15 @@ export const TYPE_TOKENS: Record<CardKind, TypeToken> = {
     Icon: StickyNote,
     glyph: "✎",
     blurb: "Author-attached annotation.",
+  },
+  article: {
+    label: "Reading",
+    short: "ART",
+    accent: "#5a4a7a",
+    tint: "#e4dced",
+    Icon: BookOpen,
+    glyph: "❧",
+    blurb: "Reading-list article; background reading.",
   },
   destination: {
     label: "Destination",

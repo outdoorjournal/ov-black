@@ -36,6 +36,7 @@ import {
   type UIEvent,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -239,6 +240,11 @@ export function HorizontalView({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+
+  // Stable id for @dnd-kit's a11y announcements, so its DndDescribedBy counter
+  // matches across SSR and client hydration (else React logs a hydration
+  // mismatch on every draggable's aria-describedby).
+  const dndContextId = useId();
 
   const allNodes = useMemo(
     () => [...nodes, ...pendingProposals],
@@ -652,6 +658,7 @@ export function HorizontalView({
 
   return (
     <DndContext
+      id={dndContextId}
       sensors={sensors}
       collisionDetection={pointerWithin}
       onDragStart={(e) => handleDragStart(nodeIdFromDragId(String(e.active.id)))}

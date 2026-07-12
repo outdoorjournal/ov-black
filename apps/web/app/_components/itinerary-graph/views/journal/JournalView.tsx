@@ -47,6 +47,7 @@ import {
 } from "@dnd-kit/core";
 import {
   useCallback,
+  useId,
   useMemo,
   useState,
   type ReactNode,
@@ -210,6 +211,9 @@ export function JournalView({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+  // Stable id so @dnd-kit's DndDescribedBy counter matches across SSR/hydration
+  // (else React logs an aria-describedby hydration mismatch on every draggable).
+  const dndContextId = useId();
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [forkOffer, setForkOffer] = useState<ForkOffer | null>(null);
   // Diff mode is a reading/deciding mode — the content gestures sit out.
@@ -309,6 +313,7 @@ export function JournalView({
 
   return (
     <DndContext
+      id={dndContextId}
       sensors={sensors}
       collisionDetection={pointerWithin}
       onDragStart={(e) =>

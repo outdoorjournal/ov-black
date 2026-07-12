@@ -6,6 +6,12 @@
 //
 // Keep the slugs in sync with `apps/api/app/campaigns/registry.py`.
 
+// Where the campaign CTA stashes "come back to this campaign after sign-in"
+// when the traveler isn't authenticated yet. The server action sets it; the
+// auth callback consumes it (a same-origin path) and clears it, so an
+// unauthenticated CTA click no longer drops the traveler on a bare /basecamp.
+export const CAMPAIGN_INTENT_COOKIE = "ov_campaign_intent";
+
 export const CAMPAIGN_OPENERS: Record<string, string> = {
   olympus:
     "Mount Olympus has been waiting for you. I've started shaping the ascent — " +

@@ -30,7 +30,7 @@ from ovb.sdk import Ovb
 
 pytestmark = pytest.mark.e2e
 
-_ARTICLE_URL = "https://www.climbing.com/places/climbing-mount-olympus-greece/"
+_ARTICLE_URL = "https://www.backpacker.com/trips/adventure-travel/mt-olympus-hiking-up-the-mountain-of-the-gods/"
 
 
 def _nodes_of_type(graph: Any, node_type: str) -> list[Any]:

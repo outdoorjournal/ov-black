@@ -32,11 +32,37 @@ logger = logging.getLogger("agent.app")
 
 
 _settings = get_settings()
-_model = BedrockModel(
-    model_id=_settings.bedrock_model_id,
-    region_name=_settings.aws_region,
-    streaming=True,
-)
+
+
+def _build_model() -> BedrockModel:
+    """The shared Bedrock model for every turn.
+
+    When ``thinking_budget_tokens > 0`` we enable **interleaved** extended
+    thinking: the model does its planning — which tools to call, how to react
+    to a tool failure, what to do next — in a hidden reasoning channel that the
+    translator suppresses (surfacing only an anonymous "thinking" pulse for
+    liveness). Without it the model has nowhere to put that reasoning and spills
+    raw scratchpad — tool names, "the timing call failed", bulleted plans —
+    straight into the traveler-visible reply. Interleaved (not plain) so the
+    hidden reasoning also covers the steps BETWEEN tool calls, not just the
+    turn's opener.
+    """
+    budget = _settings.thinking_budget_tokens
+    extra: dict[str, object] = {}
+    if budget > 0:
+        extra["additional_request_fields"] = {
+            "thinking": {"type": "enabled", "budget_tokens": budget},
+            "anthropic_beta": ["interleaved-thinking-2025-05-14"],
+        }
+    return BedrockModel(
+        model_id=_settings.bedrock_model_id,
+        region_name=_settings.aws_region,
+        streaming=True,
+        **extra,
+    )
+
+
+_model = _build_model()
 
 app = BedrockAgentCoreApp()
 

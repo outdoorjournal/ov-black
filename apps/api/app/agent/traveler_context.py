@@ -193,6 +193,7 @@ def assemble_traveler_context(
     campaign_directive: str | None = None,
     trip_brief: str | None = None,
     graph_digest: str | None = None,
+    today: str | None = None,
 ) -> str:
     """Return the three-tier context block for the system prompt.
 
@@ -211,6 +212,15 @@ def assemble_traveler_context(
     shown raw to the traveler.
     """
     sections: list[str] = []
+
+    # Anchor "now" first so the model resolves relative dates ("this September",
+    # "next spring", "in a couple of weeks") against the real calendar instead of
+    # guessing a year from its training cutoff (it was landing trips in the past).
+    if today:
+        sections.append(
+            f"Today's date is {today}. Resolve any relative timing the traveler "
+            "gives against it, and never propose dates in the past."
+        )
 
     # Lead with the campaign directive so the agent opens grounded in it.
     if campaign_directive:

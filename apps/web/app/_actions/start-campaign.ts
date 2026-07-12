@@ -1,9 +1,11 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { createApiClient, seedCampaign } from "@ov-black/api-client";
 
+import { CAMPAIGN_INTENT_COOKIE } from "@/lib/campaigns";
 import { publicEnv } from "@/lib/env";
 import { resolveClientIdForUser } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -26,6 +28,16 @@ export async function startCampaign(campaignId: string): Promise<void> {
   } = await supabase.auth.getSession();
   const accessToken = session?.access_token;
   if (!accessToken) {
+    // Not signed in yet — remember the campaign so the auth callback can bring
+    // them back to it after the magic-link loop, instead of dropping them on a
+    // bare /basecamp with the campaign intent lost.
+    const jar = await cookies();
+    jar.set(CAMPAIGN_INTENT_COOKIE, `/campaign/${campaignId}`, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 60 * 30, // 30 min — long enough to receive + click the email link.
+    });
     redirect("/");
   }
 

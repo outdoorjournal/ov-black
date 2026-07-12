@@ -170,6 +170,9 @@ export function ConciergeChat({
     },
     onDone: () => {
       setWorking(false);
+      // How many nodes the agent BUILT this turn (campaign spine / from-inventory
+      // writes). Capture before the reset below.
+      const revealBurst = revealCountRef.current;
       // Next turn's reveal burst starts fresh.
       revealCountRef.current = 0;
       const id = streamingIdRef.current;
@@ -180,6 +183,22 @@ export function ConciergeChat({
       }
       streamingIdRef.current = null;
       setStreaming(false);
+      // Nodes the agent built server-side land in the client store immediately
+      // (so the canvas reveals them), but the day scaffold — which groups cards
+      // into dated days — is server-rendered onto the timeline prop and does NOT
+      // re-derive from the store. On a trip whose dates the spine itself
+      // established (e.g. an empty campaign shell at kickoff), the stale scaffold
+      // has no bucket for the new dates, so the journal shows "an open day" until
+      // a reload. Re-run the route's RSC once the reveal burst has settled so the
+      // scaffold rebuilds from the fresh graph. Same mechanism as
+      // onItineraryUpdated; the store's in-session state survives the refresh.
+      if (revealBurst > 0) {
+        const timer = setTimeout(
+          () => router.refresh(),
+          revealBurst * REVEAL_STAGGER_MS + REVEAL_STAGGER_MS,
+        );
+        revealTimersRef.current.push(timer);
+      }
     },
     onError: () => {
       setWorking(false);

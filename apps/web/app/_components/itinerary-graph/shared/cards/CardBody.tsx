@@ -43,6 +43,8 @@ export function inferCardKind(node: NodeResponse): CardKind {
       return "free_time";
     case "note":
       return "note";
+    case "article":
+      return "article";
     case "destination":
       return "destination";
     // Granular Phase-1 transit modes carry their own card kind 1:1.
@@ -142,6 +144,8 @@ export function CardBody({
       return <FreeTimeBody node={node} meta={meta} start={start} dur={dur} />;
     case "note":
       return <NoteBody node={node} meta={meta} />;
+    case "article":
+      return <ArticleBody node={node} meta={meta} />;
     default:
       return <GenericBody node={node} meta={meta} start={start} dur={dur} />;
   }
@@ -474,6 +478,58 @@ function NoteBody({
         <p className="mt-1.5 line-clamp-4 text-[11px] leading-relaxed text-ink/80">
           {meta.body}
         </p>
+      ) : null}
+    </>
+  );
+}
+
+function looksLikeUrl(s: string | undefined | null): boolean {
+  return !!s && /^https?:\/\//i.test(s.trim());
+}
+
+// A readable label from a URL when nothing better exists: the host without the
+// www. prefix (e.g. "https://www.backpacker.com/…" → "backpacker.com").
+function hostLabel(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+// Reading-list article. Its node.title (and OpenGraph snapshot title, when the
+// fetch failed) is the raw URL, so the card prefers the human-friendly metadata:
+// note → a non-URL snapshot title → publication → the bare host — never the URL.
+function ArticleBody({
+  node,
+  meta,
+}: {
+  node: NodeResponse;
+  meta: HorizontalNodeMeta;
+}) {
+  const snap = meta.snapshot;
+  const url = meta.url ?? (looksLikeUrl(node.title) ? node.title : undefined);
+  const snapTitle = looksLikeUrl(snap?.title) ? undefined : snap?.title;
+  const title =
+    meta.note?.trim() ||
+    snapTitle ||
+    meta.publication ||
+    hostLabel(url) ||
+    node.title;
+  // Show the publication as the subline unless the title already is it.
+  const sub =
+    meta.publication && meta.publication !== title
+      ? meta.publication
+      : hostLabel(url);
+  return (
+    <>
+      <Title>{title}</Title>
+      {sub ? <Sub>{sub}</Sub> : null}
+      {snap?.cover_image ? (
+        <div className="mt-2">
+          <ImageStub src={snap.cover_image} fallbackTint="#5a4a7a" />
+        </div>
       ) : null}
     </>
   );
