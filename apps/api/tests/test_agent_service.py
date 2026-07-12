@@ -830,6 +830,123 @@ async def test_stream_turn_in_flight_tool_gets_wider_liveness_deadline(
     assert assistant.content == "Here is the plan."
 
 
+async def test_stream_turn_between_tool_gap_gets_wider_liveness_deadline(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """The silent think BETWEEN tools is bounded by the wider tool deadline.
+
+    Regression for the intermittent ``upstream_unavailable`` on tool-heavy
+    planning turns: after a tool's 'result' the model reasons silently to pick
+    its next tool — no tool is in flight, but this is provably a tool-using
+    turn. That gap (0.3 s here) exceeds the tight first-token window (0.15 s)
+    yet sits under the tool leash (0.5 s), so once any tool has run the turn
+    must survive it. Before the fix the post-'result' gap fell back to the
+    first-token deadline and cut the turn.
+    """
+    tight = Settings(
+        bedrock_agentcore_runtime_arn=settings.bedrock_agentcore_runtime_arn,
+        agent_first_token_timeout_seconds=0.15,
+        agent_tool_liveness_timeout_seconds=0.5,
+        agent_max_retries=0,
+    )
+
+    async def two_tool_stream() -> AsyncIterator[dict]:
+        import anyio as _anyio
+
+        yield {"type": "activity", "phase": "call"}
+        yield {"type": "activity", "phase": "result"}
+        await _anyio.sleep(0.3)  # inter-tool think: > 0.15 first-token, < 0.5 tool
+        yield {"type": "activity", "phase": "call"}
+        yield {"type": "activity", "phase": "result"}
+        yield {"type": "delta", "text": "Here is the plan."}
+        yield {"type": "done"}
+
+    class TwoToolRuntime:
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
+            return two_tool_stream()
+
+        async def create_event(self, **_: Any) -> None:
+            return None
+
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            TwoToolRuntime(),
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="plan me a week in Greece",
+            settings=tight,
+        )
+    )
+    joined = b"".join(frames)
+    assert b'"type":"error"' not in joined
+    assert b'"type":"delta","text":"Here is the plan."' in joined
+
+    turns = [r for r in factory.turns if isinstance(r, AgentTurn)]
+    assistant = next(t for t in turns if t.role is TurnRole.assistant)
+    assert assistant.error_reason is None
+
+
+async def test_stream_turn_reasoning_pulse_rearms_without_faking_a_tool(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """A thinking-first turn survives on reasoning pulses alone.
+
+    Sonnet 5's adaptive thinking streams no text to the wire; the agent
+    translates each chunk into an anonymous ``activity`` pulse with
+    ``phase='thinking'``. Those must re-arm the first-token watchdog (so a long
+    silent think isn't cut) WITHOUT being mistaken for a tool call — the pulse
+    keeps the tight first-token window (each gap here stays under it) and never
+    flips tool-in-flight state.
+    """
+    tight = Settings(
+        bedrock_agentcore_runtime_arn=settings.bedrock_agentcore_runtime_arn,
+        agent_first_token_timeout_seconds=0.3,
+        agent_max_retries=0,
+    )
+
+    async def thinking_first_stream() -> AsyncIterator[dict]:
+        import anyio as _anyio
+
+        await _anyio.sleep(0.15)
+        yield {"type": "activity", "phase": "thinking"}
+        await _anyio.sleep(0.15)
+        yield {"type": "activity", "phase": "thinking"}
+        await _anyio.sleep(0.15)  # total 0.45 s > 0.3 s window; each gap < it
+        yield {"type": "delta", "text": "Here is the plan."}
+        yield {"type": "done"}
+
+    class ThinkingRuntime:
+        def invoke_stream(self, *, agentcore_session_id: str, payload: dict) -> AsyncIterator[dict]:
+            return thinking_first_stream()
+
+        async def create_event(self, **_: Any) -> None:
+            return None
+
+    frames = await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            ThinkingRuntime(),
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="what's the shape of this trip?",
+            settings=tight,
+        )
+    )
+    joined = b"".join(frames)
+    assert b'"type":"error"' not in joined
+    assert b'"type":"delta","text":"Here is the plan."' in joined
+    turns = [r for r in factory.turns if isinstance(r, AgentTurn)]
+    assistant = next(t for t in turns if t.role is TurnRole.assistant)
+    assert assistant.error_reason is None
+
+
 async def test_stream_turn_tool_slower_than_liveness_deadline_fires_fallback(
     factory: FakeFactory,
     advisor_actor: ActorContext,

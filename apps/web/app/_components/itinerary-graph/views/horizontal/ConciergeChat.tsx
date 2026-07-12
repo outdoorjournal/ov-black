@@ -72,6 +72,10 @@ type ConciergeChatProps = {
   autoKickoff?: boolean;
 };
 
+/** Gap between staggered card reveals when a server-built batch (the campaign
+ *  spine) streams in — snappy, ~1.5s for a 7-night spine. */
+const REVEAL_STAGGER_MS = 90;
+
 export function ConciergeChat({
   audience,
   apiBaseUrl,
@@ -113,6 +117,13 @@ export function ConciergeChat({
   // over whatever sits beside this chat.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const seqRef = useRef(0);
+  // Snappy staggered reveal of a server-built batch (the campaign spine): the
+  // nodes arrive in one burst, so space their drops ~90ms apart for the
+  // "cards appearing" effect instead of a single pop. `revealCountRef` indexes
+  // the current burst (reset each turn on `done`); `revealTimersRef` holds the
+  // pending timers so they can be cancelled on unmount.
+  const revealCountRef = useRef(0);
+  const revealTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const canChat = Boolean(apiBaseUrl && accessToken && clientId);
 
   const getAccessToken = useMemo<() => Promise<string | null>>(() => {
@@ -159,6 +170,8 @@ export function ConciergeChat({
     },
     onDone: () => {
       setWorking(false);
+      // Next turn's reveal burst starts fresh.
+      revealCountRef.current = 0;
       const id = streamingIdRef.current;
       if (id) {
         setMessages((prev) =>
@@ -194,6 +207,26 @@ export function ConciergeChat({
         source_id: node.source_id ?? null,
         metadata: node.metadata ?? {},
       });
+    },
+    onNodeCreated: (node) => {
+      // A node the agent BUILT server-side (campaign spine) — drop it straight
+      // onto the canvas, no accept step. Stagger the burst for the reveal.
+      const payload = {
+        id: node.id,
+        itinerary_id: node.itinerary_id,
+        type: node.type,
+        status: node.status,
+        title: node.title,
+        source: node.source ?? null,
+        source_id: node.source_id ?? null,
+        metadata: node.metadata ?? {},
+      };
+      const delay = revealCountRef.current * REVEAL_STAGGER_MS;
+      revealCountRef.current += 1;
+      const timer = setTimeout(() => {
+        storeApi.getState().insertCreatedNode(payload);
+      }, delay);
+      revealTimersRef.current.push(timer);
     },
     onNodeUpdated: (node) => {
       storeApi.getState().applyNodeUpdate({
@@ -266,7 +299,13 @@ export function ConciergeChat({
 
   useEffect(() => {
     const ref = abortRef;
-    return () => ref.current?.abort();
+    const timers = revealTimersRef;
+    return () => {
+      ref.current?.abort();
+      // Cancel any pending staggered reveals so they don't fire post-unmount.
+      for (const t of timers.current) clearTimeout(t);
+      timers.current = [];
+    };
   }, []);
 
   const handleSubmit = useCallback(

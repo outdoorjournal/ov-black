@@ -1620,6 +1620,32 @@ class CampaignKickoffResponse(BaseModel):
     reason: str
     node_count: int
     edge_count: int
+    # The freshly-instantiated spine nodes, placement-ready (each carries a
+    # ``metadata.start_time`` so the canvas can lay it out immediately). The
+    # agent turn fans these out as ``node_created`` frames so the scaffold
+    # streams onto the dashboard live instead of only after a reload. Ordered by
+    # start so a staggered reveal reads chronologically. Empty on the idempotent
+    # no-op (the spine was already there).
+    created_nodes: list[NodeResponse] = Field(default_factory=list)
+
+
+def _placement_ready_node(node: Any) -> NodeResponse:
+    """Serialize a persisted spine node so it's ready to drop on the canvas.
+
+    ``_node_response_from_node`` gives the row's ``starts_at`` as a top-level
+    ISO field, but the client's timeline gates placement on
+    ``metadata.start_time`` (``isNodeScheduled``). The initial graph seed runs
+    through an adapter that stamps it; a ``node_created`` frame bypasses that
+    adapter, so mirror the invariant here — copy ``starts_at`` into
+    ``metadata.start_time`` (+ duration) when the node is scheduled.
+    """
+    resp = _node_response_from_node(node)
+    if resp.starts_at and not resp.metadata.get("start_time"):
+        meta = {**resp.metadata, "start_time": resp.starts_at}
+        if resp.duration_minutes is not None and meta.get("duration_minutes") is None:
+            meta["duration_minutes"] = resp.duration_minutes
+        resp.metadata = meta
+    return resp
 
 
 @router.post(
@@ -1686,6 +1712,20 @@ async def campaign_kickoff_endpoint(
         session, template=template, itinerary=itinerary, trip_start_at=trip_start_at
     )
 
+    # Return the freshly-created nodes so the agent turn can stream them onto the
+    # canvas live (as ``node_created`` frames). The itinerary was empty before
+    # this call (guarded above), so every node here is spine. Order by start so
+    # the staggered reveal reads front-to-back through the trip.
+    created_rows = (
+        (await session.execute(select(Node).where(Node.itinerary_id == itinerary_id)))
+        .scalars()
+        .all()
+    )
+    created_nodes = sorted(
+        (_placement_ready_node(n) for n in created_rows),
+        key=lambda n: (n.starts_at is None, n.starts_at or ""),
+    )
+
     return CampaignKickoffResponse(
         itinerary_id=itinerary.id,
         campaign_id=campaign.id,
@@ -1694,6 +1734,7 @@ async def campaign_kickoff_endpoint(
         reason=reason,
         node_count=node_count,
         edge_count=edge_count,
+        created_nodes=created_nodes,
     )
 
 

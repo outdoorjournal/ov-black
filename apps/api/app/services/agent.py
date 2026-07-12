@@ -682,25 +682,59 @@ async def _campaign_for_itinerary(
 
 
 def _campaign_kickoff_directive(campaign: Campaign) -> str:
-    """The dashboard-kickoff instruction: build the skeleton, then trim it.
+    """The dashboard-kickoff instruction: lay the scaffold, then make it theirs.
 
     Appended to the traveler context on a ``surface="kickoff"`` turn (planning
-    mode). The agent speaks first here — it should act, not ask.
+    mode). The template already exists, so ``assemble_campaign_spine`` drops the
+    skeleton near-instantly and the cards stream onto the canvas live. The
+    agent's real job here is the MAGIC on top: narrate as it goes, personalize
+    the scaffold from what it knows about the traveler, find a real way in, and
+    open a conversation. It should NEVER fall silent while a tool runs.
     """
     reading = "\n".join(f"- {a.url} ({a.publication})" for a in campaign.reading_list)
+
+    # The way in — real flight + chauffeured transfer — is campaign data (this
+    # traveler's home airport is in context as the origin). Skipped cleanly for a
+    # campaign that hasn't declared its arrival gateway.
+    if campaign.arrival_airport and campaign.arrival_place and campaign.base_place:
+        arrival = (
+            "3. GET THEM THERE — find a real flight. Call ``search_inventory`` "
+            "with kinds=['flight'], origin = the traveler's home airport (in your "
+            f"context), destination = '{campaign.arrival_airport}', dated to the "
+            "trip's arrival day, then ``propose_flight`` the best option and say a "
+            "word about why.\n"
+            f"4. Airport transfer: ``add_transfer`` origin='{campaign.arrival_place}', "
+            f"destination='{campaign.base_place}', service_class='chauffeur_black', "
+            "party_size = the trip's party.\n"
+        )
+    else:
+        arrival = ""
+
     return (
-        "KICKOFF: You are opening the dashboard for this campaign trip and you "
-        "speak first — build, don't ask. In THIS turn, in order:\n"
-        "1. Call ``assemble_campaign_spine`` to lay down the skeleton. It returns "
-        "a ``reason`` when it snapped the trip length — narrate that reason warmly "
-        "in your prose (e.g. why Olympus wants a certain number of days).\n"
-        "2. Add the airport ground transfer with ``add_transfer`` — origin the "
-        "arrival airport, destination the first hotel/base, "
-        "service_class='chauffeur_black', party_size = the trip's party.\n"
-        "3. Add the reading list to the Collection: for each link below call "
+        "KICKOFF: You are opening the dashboard for this campaign trip and the "
+        "traveler is watching. Work in THIS order and NARRATE as you go — a warm "
+        "line of prose before and between the tool calls, never a silent stall.\n"
+        "0. FIRST, before ANY tool, write one warm opening line (a sentence or "
+        "two) — you're laying out their trip and glad to. This lands immediately "
+        "so the screen is never blank.\n"
+        "1. LAY THE SKELETON: call ``assemble_campaign_spine``. The cards appear "
+        "on the canvas as you speak — the template already exists, so this is "
+        "fast. If it returns a ``reason`` (the trip length was snapped), narrate "
+        "it warmly (why the mountain wants that many days).\n"
+        "2. MAKE IT THEIRS: you have this traveler's dossier + profile in context "
+        "(call ``get_traveler_context`` for more). Look at the skeleton you just "
+        "laid and make 2–3 GENUINE personalized touches that reflect what you "
+        "know — reschedule a stop to their rhythm (``move_node``), sharpen a card "
+        "(``update_node_details``), or add ONE experience that fits them "
+        "(``search_inventory`` → ``propose_card``). Narrate each in a sentence "
+        "(\"Since you…\", \"I moved… so…\"). NEVER reveal Dossier/OSINT content "
+        "verbatim — let it shape the choice, not the words.\n"
+        + arrival
+        + "5. Add the reading list to the Collection: for each link call "
         "``save_link_to_collection`` with kind='article':\n" + reading + "\n"
-        "4. Close with a short, warm line inviting the traveler to look it over "
-        "and change anything. Keep the prose tight — the cards carry the detail."
+        "6. CLOSE by inviting them to look it over, and ask ONE real question "
+        "that moves the trip forward (a genuine choice you want their answer to). "
+        "Keep prose tight — the cards carry the detail."
     )
 
 
@@ -1484,6 +1518,15 @@ async def stream_turn(
         # to its own HTTP timeout, so the tight first-token window would cut a
         # legitimately-working tool-first turn. Reset per attempt.
         tool_in_flight = False
+        # Whether ANY tool has run this turn yet. Once one has, we're provably in
+        # a tool-using (planning) turn where the model reasons silently BETWEEN
+        # tools — the gap after a 'result' and before the next 'call', when
+        # nothing is in flight. That silent think is legitimate work, so widen
+        # its liveness ceiling to the tool deadline instead of the tight
+        # first-token one. Model-agnostic: it protects turns where thinking is
+        # off (Sonnet 4.6, or Sonnet 5 with no reasoning pulse reaching us) just
+        # as well as ones where reasoning frames re-arm the window directly.
+        seen_tool_activity = False
         try:
             stream = runtime.invoke_stream(
                 agentcore_session_id=agentcore_session_id,
@@ -1504,7 +1547,9 @@ async def stream_turn(
                     try:
                         if first_token_ms is None:
                             deadline = (
-                                tool_liveness_deadline if tool_in_flight else first_token_deadline
+                                tool_liveness_deadline
+                                if (tool_in_flight or seen_tool_activity)
+                                else first_token_deadline
                             )
                             with anyio.fail_after(deadline):
                                 event = await anext(events_iter)
@@ -1716,6 +1761,7 @@ async def stream_turn(
                         phase = event.get("phase")
                         if phase == "call":
                             tool_in_flight = True
+                            seen_tool_activity = True
                         elif phase == "result":
                             tool_in_flight = False
                         got_first_byte = True

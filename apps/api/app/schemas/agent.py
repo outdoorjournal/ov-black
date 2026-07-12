@@ -86,14 +86,18 @@ class TurnRequest(BaseModel):
     ``"intake"`` (the immersive first conversation on a brand-new trip) keeps
     the agent in intake mode for the whole immersive screen — mode detection
     would otherwise flip to planning the moment the brief lands mid-
-    conversation. It only ever *narrows* the toolset (intake is the least
-    capable mode), so a forged value grants nothing.
+    conversation. It only ever *narrows* the toolset, so a forged value grants
+    nothing. ``"kickoff"`` is the campaign dashboard's one agent-first turn: it
+    pins planning mode and appends the build directive so the agent lays down
+    the campaign spine. Unlike intake it *broadens* to planning, but only on the
+    viewer's own pinned working copy — every write still passes the server-side
+    fork/advisor gates, which are the real authority.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     content: Annotated[str, Field(min_length=1, max_length=8000)]
-    surface: Literal["intake"] | None = None
+    surface: Literal["intake", "kickoff"] | None = None
 
 
 class AgentTurnSummary(BaseModel):

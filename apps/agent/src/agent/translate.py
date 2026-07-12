@@ -5,6 +5,9 @@ The entrypoint feeds every dict that ``stream_async`` yields into
 
 - ``{"type": "delta", "text": "..."}`` — streamed tokens
 - ``{"type": "card_proposed", "node": {...}}`` — a new node
+- ``{"type": "node_created", "node": {...}}`` — a persisted node the agent built
+  server-side (e.g. a campaign-spine card); the store drops it straight onto the
+  canvas, no accept step. One frame per node so a batch reveals card-by-card.
 - ``{"type": "draft_assembled", "edges_created": int}`` — day-by-day ordering
 - ``{"type": "node_updated", "node": {...}}`` — advisor adjustment applied
 - ``{"type": "itinerary_updated", "itinerary": {...}}`` — trip-level edit (dates)
@@ -81,6 +84,12 @@ _TOOL_FRAME_TYPES = {
     # turn and the client renders it via ordinary markdown.
     "propose_timeline": "timeline",
 }
+
+# Tools that build a BATCH of persisted nodes server-side (the campaign spine).
+# They aren't proposals — they're the instantiated trip — so each returned node
+# fans out as its own ``node_created`` frame (via ``created_nodes`` on the tool
+# result), letting the whole skeleton stream onto the canvas live.
+_MULTI_NODE_CREATE_TOOLS = {"assemble_campaign_spine"}
 
 
 def _timeline_fence(output: dict) -> str | None:
@@ -320,6 +329,21 @@ class EventTranslator:
             yield from self._emit_delta(delta_text)
             return
 
+        # Reasoning / thinking stream. Any model with thinking enabled (Sonnet 5
+        # has it always on; Sonnet 4.6 emits it when thinking is turned on) fans
+        # out ``{"reasoning": True, ...}`` frames whose text is INTERNAL — never
+        # surfaced to the traveler (``_extract_delta_text`` deliberately returns
+        # None for them). But a long think between tool calls is silent on the
+        # wire, and the API's first-token liveness watchdog cuts a turn it
+        # believes has gone dead — the intermittent ``upstream_unavailable``. So
+        # emit an anonymous, content-free pulse: it re-arms that watchdog exactly
+        # like a tool-activity frame, without disclosing the thinking. Distinct
+        # phase so it never flips the tool-in-flight state; the browser drops the
+        # unknown phase, making this a server-side liveness signal only.
+        if event.get("reasoning") is True:
+            yield {"type": "activity", "phase": "thinking"}
+            return
+
         message = event.get("message")
         if isinstance(message, dict):
             yield from self._translate_message(message)
@@ -397,12 +421,26 @@ class EventTranslator:
                 "tool_use_id": tuid if isinstance(tuid, str) else None,
                 "status": status if isinstance(status, str) else None,
             }
+        # Batch node builders (campaign spine): fan each created node out as its
+        # own ``node_created`` frame so the skeleton streams onto the canvas
+        # live. These tools aren't in ``_TOOL_FRAME_TYPES`` (no single frame).
+        if name in _MULTI_NODE_CREATE_TOOLS:
+            raw = tr.get("output") or tr.get("content") or tr.get("result")
+            output = _tool_result_payload(raw)
+            if output is not None:
+                created = output.get("created_nodes")
+                if isinstance(created, list):
+                    for node in created:
+                        if isinstance(node, dict):
+                            yield {"type": "node_created", "node": node}
+            return
+
         if name not in _TOOL_FRAME_TYPES:
             return  # Read-only tools — no UI frame.
 
         # Output may be at content/output/result keys; payload may be a
         # plain dict or Strands' wrapped content-block list.
-        raw: Any = tr.get("output")
+        raw = tr.get("output")
         if raw is None:
             raw = tr.get("content")
         if raw is None:

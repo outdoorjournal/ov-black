@@ -80,17 +80,25 @@ export function IntakeDetailsCard({
   details: IntakeDetails;
   party: IntakePartyMember[];
 }) {
+  // Companions are everyone but the account holder. A settled solo trip seats
+  // the primary alone — that's a real answer ("just you"), not silence, so it
+  // must stop the "still listening…" state rather than list the traveler's own
+  // name back at them.
+  const companions = party.filter((m) => !m.is_primary);
+  const soloSettled = companions.length === 0 && party.some((m) => m.is_primary);
   const partyLine =
-    party.length === 0
-      ? null
-      : party
+    companions.length > 0
+      ? companions
           .map((m) => {
             const name = m.full_name?.trim() || "someone new";
             return m.relationship_to_primary
               ? `${name} (${m.relationship_to_primary})`
               : name;
           })
-          .join(" · ");
+          .join(" · ")
+      : soloSettled
+        ? "Just you"
+        : null;
 
   return (
     <aside

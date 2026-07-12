@@ -311,6 +311,9 @@ export type ItineraryGraphState = {
   proposeNode: (node: AgentNode) => void;
   acceptProposal: (id: string) => void;
   dismissProposal: (id: string) => void;
+  /** Drop a node the agent PERSISTED server-side (campaign spine) straight onto
+   *  the canvas — no accept step. Idempotent by id (a reload may race). */
+  insertCreatedNode: (node: AgentNode) => void;
   applyNodeUpdate: (node: AgentNode) => void;
   flashNode: (id: string | null) => void;
   pulseAssemble: () => void;
@@ -1004,6 +1007,26 @@ export const itineraryGraphStore = createStoreContext<
           set((s) => ({
             pendingProposals: s.pendingProposals.filter((p) => p.id !== id),
           })),
+        insertCreatedNode: (node) =>
+          set((s) => {
+            // Idempotent: a mid-turn reveal can race a page reload that already
+            // seeded this node from the DB. Never double-insert.
+            if (s.nodes.some((n) => n.id === node.id)) return s;
+            const asNode: NodeResponse = {
+              id: node.id,
+              itinerary_id: node.itinerary_id,
+              parent_subgraph_id: null,
+              type: node.type as NodeResponse["type"],
+              // The real status the agent persisted (pending/approved/…), NOT a
+              // forced "pending" — this node is the trip, not a proposal.
+              status: node.status as NodeResponse["status"],
+              title: node.title,
+              source: node.source,
+              source_id: node.source_id,
+              metadata: node.metadata,
+            };
+            return { nodes: [...s.nodes, asNode], flashNodeId: node.id };
+          }),
         applyNodeUpdate: (node) =>
           set((s) => ({
             nodes: s.nodes.map((n) =>

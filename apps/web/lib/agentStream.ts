@@ -33,6 +33,7 @@ import type {
   IntakeCompleteFrame,
   ItineraryUpdatedFrame,
   MoodFrame,
+  NodeCreatedFrame,
   NodeUpdatedFrame,
   PartyUpdatedFrame,
   ProfileUpdatedFrame,
@@ -54,6 +55,7 @@ export type {
   IntakeCompleteFrame,
   ItineraryUpdatedFrame,
   MoodFrame,
+  NodeCreatedFrame,
   NodeUpdatedFrame,
   PartyUpdatedFrame,
   ProfileUpdatedFrame,
@@ -75,6 +77,7 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "error",
   "card",
   "card_proposed",
+  "node_created",
   "draft_assembled",
   "node_updated",
   "itinerary_updated",
@@ -112,7 +115,11 @@ function isSseFrame(value: unknown): value is SseFrame {
     if (typeof v.node_id !== "string") return false;
     if (!v.snapshot || typeof v.snapshot !== "object") return false;
   }
-  if (type === "card_proposed" || type === "node_updated") {
+  if (
+    type === "card_proposed" ||
+    type === "node_created" ||
+    type === "node_updated"
+  ) {
     const node = (value as { node?: unknown }).node;
     if (!node || typeof node !== "object") return false;
     const n = node as { id?: unknown; itinerary_id?: unknown };
@@ -217,6 +224,13 @@ export type UseAgentStreamOptions = {
    * node. The payload is the full persisted node.
    */
   onCardProposed?: (node: AgentNode) => void;
+  /**
+   * Fires for ``node_created`` frames — a node the agent BUILT and persisted
+   * server-side (e.g. a campaign-spine card). Unlike ``card_proposed`` (a
+   * proposal awaiting accept) this node is already the trip, so consumers drop
+   * it straight onto the canvas. A spine reveals as one frame per node.
+   */
+  onNodeCreated?: (node: AgentNode) => void;
   onDraftAssembled?: (frame: DraftAssembledFrame) => void;
   onNodeUpdated?: (node: AgentNode) => void;
   /**
@@ -418,6 +432,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "card_proposed":
                 current.onCardProposed?.(frame.node);
                 break;
+              case "node_created":
+                current.onNodeCreated?.(frame.node);
+                break;
               case "draft_assembled":
                 current.onDraftAssembled?.(frame);
                 break;
@@ -493,6 +510,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "card_proposed":
         current.onCardProposed?.(frame.node);
+        break;
+      case "node_created":
+        current.onNodeCreated?.(frame.node);
         break;
       case "draft_assembled":
         current.onDraftAssembled?.(frame);

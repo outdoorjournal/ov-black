@@ -50,6 +50,13 @@ class Campaign:
     spine_slugs_by_length: dict[int, str]
     #: Reading-list links the agent may drop into the Collection.
     reading_list: tuple[ArticleSeed, ...] = field(default_factory=tuple)
+    #: Arrival airport IATA the kickoff flight search targets (origin = the
+    #: traveler's home airport). None → the agent skips the flight step.
+    arrival_airport: str | None = None
+    #: Human place label for the airport ground-transfer ORIGIN (routing input).
+    arrival_place: str | None = None
+    #: Human place label for the transfer DESTINATION — the trip's first base.
+    base_place: str | None = None
 
 
 OLYMPUS = Campaign(
@@ -63,19 +70,39 @@ OLYMPUS = Campaign(
     opener=(
         "Mount Olympus has been waiting for you. I've started shaping the "
         "ascent — Litochoro, the refuge, the summit ridge. Before I build it "
-        "out: who's coming with you, and roughly when are we going?"
+        "out, two things: how many days do you have for the mountain, and "
+        "who's coming with you?"
     ),
     directive=(
         "This trip was started from the Mount Olympus inbound campaign. Open "
         "grounded in Olympus — the traveler already knows this is the "
-        "destination, so don't ask where. Your job in intake is to narrow the "
-        "WHEN (rough dates or a window) and the PARTY (who's coming), set the "
-        "campaign mood, and record at most one genuine profile fact if it "
-        "surfaces. Do not build the itinerary yet — that happens on the "
-        "dashboard right after."
+        "destination, so don't ask where. Your ONLY job in intake is to settle "
+        "two things, then hand off:\n"
+        "1. LENGTH — how many days/nights they have for the mountain. This is "
+        "the single most important thing to pin down: the ascent is built as a "
+        "5-, 7-, or 14-night shape (short summit push, the classic ascent, or "
+        "the unhurried full traverse), and the length decides which one you lay "
+        "down on the dashboard next. Steer warmly toward a number of nights — if "
+        "they're vague (\"about a week\"), that's fine, land on a rough count. "
+        "The MOMENT you have it, call ``update_trip_timing``: ``window`` with "
+        "``duration_nights`` (and a rough date range if they gave one), or "
+        "``exact`` if they named firm dates. Do not finish intake without a "
+        "duration recorded.\n"
+        "2. PARTY — who is actually coming. If they're travelling solo, seat "
+        "THEM as the party by calling ``record_party_member`` with "
+        "``is_primary=true`` (their own name) so the ledger reads \"just you\" "
+        "instead of hanging on \"still listening\"; don't keep asking who else "
+        "once they've said it's only them. For companions, record each one.\n"
+        "Set the campaign mood, and record at most one genuine profile fact if "
+        "it surfaces. Do NOT build the itinerary yet — the skeleton goes down on "
+        "the dashboard right after. Once length and party are settled, call "
+        "``complete_intake``."
     ),
     supported_lengths=(5, 7, 14),
     spine_slugs_by_length={5: "olympus-5d", 7: "olympus-7d", 14: "olympus-14d"},
+    arrival_airport="SKG",
+    arrival_place="Thessaloniki Airport (SKG), Greece",
+    base_place="Litochoro, Greece",
     reading_list=(
         ArticleSeed(
             url="https://www.outsideonline.com/adventure-travel/destinations/europe/mount-olympus-greece/",

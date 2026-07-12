@@ -404,6 +404,66 @@ def test_post_turn_happy_path_streams_sse_frames_in_order(
     assert frames[4].startswith('data: {"type":"done"')
 
 
+def test_post_turn_accepts_kickoff_surface_and_threads_it(
+    client: TestClient,
+    fake_session: FakeSession,
+    override_actor_as_advisor: uuid.UUID,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The campaign dashboard's agent-first turn posts ``surface="kickoff"``.
+
+    Regression: the ``TurnRequest.surface`` literal only allowed ``"intake"``,
+    so the web's kickoff turn 422'd (``Input should be 'intake'``). Neither test
+    lane crossed this seam — the e2e calls the deterministic kickoff *endpoint*
+    directly, and the agent-eval scenarios send a plain turn with no surface —
+    so the schema/UI contract gap went unnoticed. Assert the value is both
+    accepted AND threaded through to ``stream_turn``.
+    """
+    advisor = override_actor_as_advisor
+    session_id = uuid.uuid4()
+    client_row = _client_row(owner_id=advisor)
+    agent_sess = _FakeAgentSession(session_id=session_id, client_id=client_row.id)
+
+    async def _fake_load(session: Any, sid: uuid.UUID) -> tuple[Any, Any]:
+        return agent_sess, client_row
+
+    monkeypatch.setattr(agent_router_module, "_load_session_with_client", _fake_load)
+
+    seen: dict[str, str | None] = {"surface": "unset"}
+
+    async def _capture_stream(
+        _factory: Any,
+        _runtime: Any,
+        *,
+        actor: ActorContext,
+        session_id: uuid.UUID,
+        content: str,
+        auth_bearer: str | None = None,
+        surface: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        seen["surface"] = surface
+        yield b'data: {"type":"done","turn_id":"abc","latency_ms":1}\n\n'
+
+    monkeypatch.setattr(agent_router_module, "stream_turn", _capture_stream)
+
+    resp = client.post(
+        f"/sessions/{session_id}/turn",
+        json={"content": "Let's build it out.", "surface": "kickoff"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert seen["surface"] == "kickoff"
+
+    # And an unknown surface is still rejected (the literal is closed).
+    bad = client.post(
+        f"/sessions/{session_id}/turn",
+        json={"content": "hi", "surface": "planning"},
+        headers=auth_headers,
+    )
+    assert bad.status_code == 422
+
+
 def test_post_turn_empty_content_returns_422(
     client: TestClient,
     fake_session: FakeSession,

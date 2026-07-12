@@ -81,6 +81,34 @@ def test_empty_delta_is_dropped() -> None:
     assert _one({"delta": ""}) is None
 
 
+def test_reasoning_event_emits_liveness_pulse_not_text() -> None:
+    """A thinking chunk becomes an anonymous ``activity`` pulse, never a delta.
+
+    The pulse re-arms the API's first-token watchdog so a long silent think
+    between tool calls isn't cut to ``upstream_unavailable``; the thinking text
+    itself must never reach the traveler.
+    """
+    # Strands ``ReasoningTextStreamEvent`` shape.
+    event = {
+        "reasoningText": "The traveler wants a quiet base near Litochoro…",
+        "delta": {"reasoningContent": {"text": "…"}},
+        "reasoning": True,
+    }
+    frames = list(translate_event(event))
+    assert frames == [{"type": "activity", "phase": "thinking"}]
+    # And it must NOT surface as reply text.
+    assert all(f.get("type") != "delta" for f in frames)
+
+
+def test_redacted_reasoning_event_also_pulses() -> None:
+    event = {
+        "reasoningRedactedContent": b"\x00\x01",
+        "delta": {"reasoningContent": {"redactedContent": b"\x00\x01"}},
+        "reasoning": True,
+    }
+    assert list(translate_event(event)) == [{"type": "activity", "phase": "thinking"}]
+
+
 def test_tool_result_propose_card_maps_to_card_proposed() -> None:
     event = {"tool_result": {"name": "propose_card", "output": {"id": "n1", "title": "Dolomites trek"}}}
     assert _one(event) == {
@@ -130,6 +158,49 @@ def test_propose_flight_round_trip_fans_out_to_two_cards() -> None:
             },
         },
     ]
+
+
+def test_assemble_campaign_spine_fans_out_one_node_created_per_node() -> None:
+    # The campaign spine builds a batch of persisted nodes server-side. It isn't
+    # in _TOOL_FRAME_TYPES (no single frame); instead each node under
+    # ``created_nodes`` fans out as its own ``node_created`` frame so the whole
+    # skeleton streams onto the canvas live (not only after a reload).
+    event = {
+        "tool_result": {
+            "name": "assemble_campaign_spine",
+            "output": {
+                "snapped_length": 7,
+                "reason": "Olympus wants seven days.",
+                "created_nodes": [
+                    {"id": "n1", "itinerary_id": "it-1", "title": "Arrive Thessaloniki"},
+                    {"id": "n2", "itinerary_id": "it-1", "title": "Rail to Litochoro"},
+                ],
+            },
+        }
+    }
+    frames = _ui(translate_event(event))
+    assert frames == [
+        {
+            "type": "node_created",
+            "node": {"id": "n1", "itinerary_id": "it-1", "title": "Arrive Thessaloniki"},
+        },
+        {
+            "type": "node_created",
+            "node": {"id": "n2", "itinerary_id": "it-1", "title": "Rail to Litochoro"},
+        },
+    ]
+
+
+def test_assemble_campaign_spine_noop_emits_no_node_frames() -> None:
+    # The idempotent no-op (spine already laid) returns an empty created_nodes —
+    # no frames, so a re-fire never double-reveals the skeleton.
+    event = {
+        "tool_result": {
+            "name": "assemble_campaign_spine",
+            "output": {"snapped_length": 7, "reason": "", "created_nodes": []},
+        }
+    }
+    assert _ui(translate_event(event)) == []
 
 
 def test_tool_result_assemble_draft_counts_edges_via_list() -> None:

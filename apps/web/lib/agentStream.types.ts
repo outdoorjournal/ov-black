@@ -72,6 +72,16 @@ export type CardProposedFrame = {
   node: AgentNode;
 };
 
+// A node the agent built and PERSISTED server-side (e.g. a campaign-spine card),
+// as opposed to a proposal awaiting accept. The store drops it straight onto the
+// canvas. One frame per node so a batch (the whole spine) reveals card-by-card.
+// The node carries `metadata.start_time`, so it lays out on the timeline exactly
+// like a reloaded node would.
+export type NodeCreatedFrame = {
+  type: "node_created";
+  node: AgentNode;
+};
+
 export type DraftAssembledFrame = {
   type: "draft_assembled";
   edges_created: number;
@@ -174,6 +184,7 @@ export type SseFrame =
   | ErrorFrame
   | CardFrame
   | CardProposedFrame
+  | NodeCreatedFrame
   | DraftAssembledFrame
   | NodeUpdatedFrame
   | ItineraryUpdatedFrame

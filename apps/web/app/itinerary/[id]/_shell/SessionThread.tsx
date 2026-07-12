@@ -48,6 +48,13 @@ export function SessionThread({
   const [chatKey, setChatKey] = useState("draft");
   const [boundId, setBoundId] = useState<string | undefined>(undefined);
   const [listOpen, setListOpen] = useState(false);
+  // Has the mount-time "resume latest" pass finished? The campaign kickoff must
+  // NOT fire until it has: otherwise ConciergeChat's autoKickoff races the
+  // async resume, opens a throwaway session, and gets aborted when the resume
+  // remounts it onto the real one — spawning an empty conversation and building
+  // nothing. Gating the kickoff on this makes it a single clean turn in the
+  // resumed (intake) session.
+  const [resolved, setResolved] = useState(false);
   const seeded = useRef(false);
 
   const canApi = Boolean(apiBaseUrl && accessToken && clientId);
@@ -81,6 +88,9 @@ export function SessionThread({
         setBoundId(latest.session_id);
         setChatKey(latest.session_id);
       }
+      // Kickoff is now free to fire — into the resumed session if there was one,
+      // or a fresh draft as the backstop when there genuinely isn't.
+      setResolved(true);
     })();
   }, [canApi, refetch]);
 
@@ -229,7 +239,7 @@ export function SessionThread({
           itineraryId={itineraryId}
           hideHeader
           hydrateHistory={Boolean(boundId)}
-          autoKickoff={autoKickoff}
+          autoKickoff={autoKickoff && resolved}
           {...(boundId ? { sessionId: boundId } : {})}
           {...(intro ? { intro } : {})}
           onSessionOpened={handleOpened}
