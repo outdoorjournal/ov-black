@@ -13,7 +13,34 @@ separate re-examination and intentionally not folded into the affordance model.
   cap governs the margin channel, not card width. Journal test suites green (47),
   web typecheck clean. *Visual confirmation on a wide viewport still pending —
   batch it with the Phase 2c UI review.*
-- **Phase 2a–4 — not started.**
+- **Phase 2a — done.** New pure resolver
+  `views/journal/affordances.ts` → `resolveNodeAffordances(s, node, {hasProblem})`
+  returning `{approve, reschedule, edit, notes, ask, locked}` as string unions.
+  Composes the existing selectors (`s.canEdit` = advisor, `selectCanSchedule` =
+  real editable fork, `selectCanApprove`/`selectCanLeaveNote`/`isSchedulePinned`).
+  13 matrix tests in `tests/itineraryGraph/journalAffordances.test.ts`, all green;
+  web typecheck clean.
+  - **Refinement vs the plan's matrix:** "advisor editable" = the working-copy
+    fork (`selectCanSchedule`), not "any advisor on the trunk" — the UI routes
+    advisor authoring through forks, so advisor-on-trunk resolves to `none`
+    (edit in your workspace), matching the existing `RailEditPanel` gate.
+- **⚠ 2b question raised (see below).**
+- **Phase 2c–4 — not started.**
+
+### Open question on Phase 2b (surfaced while building 2a)
+
+The "advisor edits an approved card → traveler re-approves" capability **already
+exists via fork + reconcile**: forking demotes `approved → pending`
+([fork.py:8/71](../apps/api/app/services/fork.py)) so an advisor never edits an
+"approved" node — they edit a pending one in their working copy — and reconcile
+demotes the trunk node + applies the change
+([fork.py:701–726](../apps/api/app/services/fork.py)), after which the traveler
+re-approves. So **2b (a direct, in-place atomic demote-edit on the trunk) is only
+needed if advisors should edit approved cards from the rail WITHOUT switching to
+their working copy.** Pending a decision: build 2b (enables in-place), or drop it
+(rely on the existing fork/reconcile flow) and treat advisor·approved in the rail
+as "edit in your workspace." The resolver already carries the `advisor-demote`
+branch, dormant until this is decided.
 
 ## Problem
 
