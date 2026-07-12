@@ -30,11 +30,16 @@ export const dynamic = "force-dynamic";
 type LayoutProps = {
   params: Promise<{ id: string }>;
   children: React.ReactNode;
+  // The @modal parallel slot — the card-detail intercepting route ((.)item/
+  // [nodeId]) renders into it, empty (default.tsx) otherwise. Rendered inside
+  // ItineraryShell so the modal shares the graph store + concierge.
+  modal: React.ReactNode;
 };
 
 export default async function ItineraryLayout({
   params,
   children,
+  modal,
 }: LayoutProps) {
   const { id: itineraryId } = await params;
 
@@ -149,6 +154,7 @@ export default async function ItineraryLayout({
         totalDisplay={result.total_display ?? null}
       >
         {children}
+        {modal}
       </ItineraryShell>
     </div>
   );

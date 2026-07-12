@@ -45,7 +45,18 @@ separate re-examination and intentionally not folded into the affordance model.
     image source, and fuller convergence (route every gate through the resolver;
     2c drives the ask via the resolver but keeps the proven action-component
     gates). Advisor·approved "edit in your workspace" hint not yet added.
-- **Phase 3–4 — not started.**
+- **Phase 3 — done (structure; browser pass pending).** Added the `@modal`
+  parallel slot under `(shell)`: `@modal/default.tsx` (null), the intercept
+  `@modal/(.)item/[nodeId]/page.tsx`, and `_shell/CardDetailModal.tsx` (a
+  dismissible overlay reusing `CardDetailView`; Escape / backdrop / ✕ →
+  `router.back()`, body-scroll lock). The shell layout now takes a `modal` slot
+  and renders it inside `ItineraryShell` (so the modal shares the store +
+  concierge). `next build` registers both `/itinerary/[id]/(.)item/[nodeId]`
+  (intercept) and `/itinerary/[id]/item/[nodeId]` (hard-nav full page); typecheck
+  clean. **Pending:** a browser pass to confirm soft-nav → overlay, hard-nav →
+  full page, and dismiss; plus visual polish (CardDetailView is a full-bleed
+  takeover — its own back-chrome may want hiding inside the modal frame).
+- **Phase 4 — not started.**
 
 > ⚠ **Pre-existing, unrelated test failure** (not from this work): the full web
 > suite has one red — `store.test.tsx > selectCanApprove > advisor may
