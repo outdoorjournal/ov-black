@@ -365,7 +365,7 @@ function MessageBubble({
       data-role={message.role}
       data-streaming={message.streaming ? "true" : undefined}
       className={[
-        "max-w-[86%] rounded-lg px-3 py-2 text-[13px] leading-relaxed",
+        "max-w-[86%] rounded-lg px-3 py-2 text-[16px] leading-relaxed",
         isUser ? "ml-auto bg-ink text-paper" : "bg-ink/5 text-ink",
       ].join(" ")}
     >
