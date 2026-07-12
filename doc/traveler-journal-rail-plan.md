@@ -27,7 +27,16 @@ separate re-examination and intentionally not folded into the affordance model.
 - **⚠ 2b question raised (see below).**
 - **Phase 2c–4 — not started.**
 
-### Open question on Phase 2b (surfaced while building 2a)
+### Phase 2b — DROPPED (decided)
+
+Decision: **do not build the in-place trunk demote-edit.** Advisor-edits-approved
+→ re-approval is delivered by the existing fork + reconcile flow; advisor·approved
+in the rail resolves to "edit in your working copy." The resolver keeps its
+`advisor-demote` / `reapproval-warning` branch as tested, defensive forward-compat
+(fork demotion means production data won't present advisor·editable·approved, so
+it stays dormant — cheap to keep, ready if in-place editing is ever wanted).
+
+### (History) Open question on Phase 2b — surfaced while building 2a
 
 The "advisor edits an approved card → traveler re-approves" capability **already
 exists via fork + reconcile**: forking demotes `approved → pending`
@@ -153,7 +162,10 @@ parked).
 
 Not surfaced in the rail (filtered from the reading) — no row.
 
-## Backend rule change (option b)
+## Backend rule change (option b) — DROPPED
+
+> **Not building this** (decided after 2a). The fork+reconcile path already
+> delivers advisor-edits-approved → re-approval. Kept below for context.
 
 Today the G1 status gate lumps `approved` with `booked/confirmed`
 ([`_FIRMED_STATUSES`](../apps/api/app/services/itineraries.py), itineraries.py:590)
@@ -200,12 +212,8 @@ unions (e.g. `reschedule: 'live' | 'fork-offer' | 'pinned-airline' |
 status checks. **Exhaustive unit tests** over the matrix (every role × state ×
 fork cell + the modifiers).
 
-**2b — Backend: approved→pending atomic advisor edit.** Implement the option-(b)
-change in `itineraries.py` (`_check_status_gate` / `update_node`): advisor edit of
-an `approved` node demotes to `pending` + applies in one transaction; recorded in
-node_history with `actor_kind=advisor`. `booked/confirmed` unchanged. Pytest for
-advisor-edit-approved (→ pending + edit landed) and advisor-edit-booked (still
-refused). Regenerate `packages/api-client` if the surface changes.
+**2b — DROPPED.** See the decision above — the fork+reconcile flow already
+covers advisor-edits-approved → re-approval, so no backend change.
 
 **2c — Render zones from the resolver.** Rewrite `RightRail` active state: drop the
 `NodeZoomCard` lead; build Zone 1 (identity + ask, vertical color/icon, Approve /
