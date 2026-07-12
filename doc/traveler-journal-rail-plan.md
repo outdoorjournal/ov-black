@@ -4,6 +4,17 @@ Plan of record for the `feat/traveler-journal` right-rail + layout rework. Desig
 was settled in conversation; this is the build spec. Diff mode is **parked** for
 separate re-examination and intentionally not folded into the affordance model.
 
+## Progress log (handoff)
+
+- **Phase 1 — done.** `JournalView.tsx`: dropped `mx-auto max-w-6xl` from the
+  container (was centering the whole rig) and capped the Journal column at
+  `lg:max-w-[680px]`. Spine now rides the left; freed width trails right for the
+  rail / future `2xl` inline detail. Cards were already `max-w-[420px]`, so the
+  cap governs the margin channel, not card width. Journal test suites green (47),
+  web typecheck clean. *Visual confirmation on a wide viewport still pending —
+  batch it with the Phase 2c UI review.*
+- **Phase 2a–4 — not started.**
+
 ## Problem
 
 Two independent faults in [`JournalView`](../apps/web/app/_components/itinerary-graph/views/journal/JournalView.tsx):

@@ -324,7 +324,7 @@ export function JournalView({
     >
       <div
         data-testid="journal"
-        className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:flex-row lg:gap-10"
+        className="flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:flex-row lg:gap-10"
       >
         {/* The floating day minimap — an in-flow sticky column immediately left
             of the Journal spine on desktop (its mobile bottom pill is fixed).
@@ -337,8 +337,11 @@ export function JournalView({
           scrollRootRef={scrollRootRef}
         />
 
-        {/* The Journal column */}
-        <div className="min-w-0 flex-1 lg:order-2">
+        {/* The Journal column — left-anchored (the container no longer centers)
+            and capped at a reading measure so the spine rides the left instead
+            of stretching; the freed width trails right for the rail / the 2xl
+            inline-detail tier. */}
+        <div className="min-w-0 flex-1 lg:order-2 lg:max-w-[680px]">
           {journal.nodeCount === 0 && awaitingProposal ? (
             <EmptyJournal awaitingProposal={awaitingProposal} />
           ) : (
