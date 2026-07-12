@@ -11,6 +11,7 @@
 // can address it with the SAME day indexing the derivation produced.
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ChevronDown } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { sunColorAtHour } from "../../model/sun";
@@ -248,11 +249,21 @@ export function ElisionMarker({
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
             data-testid="journal-elision-toggle"
-            className="rounded-full border border-dashed border-ink/25 px-3 py-1 text-left font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 transition-colors hover:border-ink/45 hover:text-ink"
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink/15 bg-ink/[0.04] px-3.5 py-1.5 text-left font-sans text-[11px] uppercase tracking-[0.16em] text-ink/70 transition-colors hover:border-ink/40 hover:bg-ink/[0.08] hover:text-ink"
           >
-            {rangeLabel} · {elision.dayCount} open days
-            <span aria-hidden className="ml-2">
-              {expanded ? "–" : "+"}
+            <ChevronDown
+              aria-hidden
+              className={[
+                "h-3.5 w-3.5 shrink-0 transition-transform",
+                expanded ? "rotate-180" : "",
+              ].join(" ")}
+            />
+            <span className="font-medium">
+              {expanded ? "Hide" : "Show"} {elision.dayCount} open day
+              {elision.dayCount === 1 ? "" : "s"}
+            </span>
+            <span aria-hidden className="text-ink/35">
+              · {rangeLabel}
             </span>
           </button>
           {jumpLabel ? (
@@ -260,7 +271,7 @@ export function ElisionMarker({
               type="button"
               onClick={skip}
               data-testid="journal-elision-skip"
-              className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/40 underline-offset-4 transition-colors hover:text-ink hover:underline"
+              className="font-sans text-[10px] uppercase tracking-[0.16em] text-ink/45 underline-offset-4 transition-colors hover:text-ink hover:underline"
             >
               skip to {jumpLabel} ↓
             </button>
