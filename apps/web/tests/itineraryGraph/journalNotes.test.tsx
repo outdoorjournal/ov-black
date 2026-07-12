@@ -221,16 +221,18 @@ describe("margin channel · leaving a note on a card (trunk-safe)", () => {
     );
   });
 
-  test("the rail offers Leave a note for the active node", async () => {
+  test("the rail renders the notes thread + composer for the active node", async () => {
     renderJournal();
     // Activate the host card (a click pin — also what flips the rail).
     fireEvent.click(screen.getByText("Tea ceremony"));
 
-    fireEvent.click(screen.getByTestId("journal-rail-leave-note"));
-    fireEvent.change(screen.getByTestId("journal-rail-note-input"), {
+    // The rail's notes thread hosts the NotesPanel composer (always visible —
+    // no "leave a note" toggle anymore).
+    const railNotes = screen.getByTestId("journal-rail-notes");
+    fireEvent.change(within(railNotes).getByTestId("note-composer-input"), {
       target: { value: "note from the rail" },
     });
-    fireEvent.click(screen.getByTestId("journal-rail-note-submit"));
+    fireEvent.click(within(railNotes).getByTestId("note-composer-submit"));
 
     await waitFor(() =>
       expect(createNodeMock).toHaveBeenCalledWith(

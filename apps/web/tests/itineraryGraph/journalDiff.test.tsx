@@ -338,8 +338,8 @@ describe("diff mode disables the content gestures", () => {
     await enterDiffMode();
     act(() => api().focusNode("n-chg", "click"));
     expect(screen.queryByTestId("journal-rail-edit")).not.toBeInTheDocument();
-    // …but the note action survives (reading/deciding mode, feedback stays).
-    expect(screen.getByTestId("journal-rail-leave-note")).toBeInTheDocument();
+    // …but the notes thread survives (reading/deciding mode, feedback stays).
+    expect(screen.getByTestId("journal-rail-notes")).toBeInTheDocument();
   });
 });
 
@@ -399,7 +399,7 @@ describe("the rail in diff mode", () => {
       screen.queryByTestId("journal-rail-open-detail"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("journal-rail-leave-note"),
+      screen.queryByTestId("journal-rail-notes"),
     ).not.toBeInTheDocument();
     expect(pushMock).not.toHaveBeenCalled();
   });

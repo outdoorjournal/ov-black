@@ -177,6 +177,7 @@ export function CardDetailView({ nodeId }: { nodeId: string }) {
               <NotesPanel
                 notes={notes}
                 canAdd={canLeaveNote}
+                viewerActorKind={canEdit ? "advisor" : "client"}
                 onAddNote={(text) => storeApi.getState().addAttachedNote(node.id, text)}
                 onDeleteNote={
                   canLeaveNote

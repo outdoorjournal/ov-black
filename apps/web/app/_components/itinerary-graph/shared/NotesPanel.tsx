@@ -18,6 +18,24 @@ interface NotesPanelProps {
   onAddNote?: (text: string) => void;
   /** When given, each note gets a delete (×) control that soft-deletes it. */
   onDeleteNote?: ((noteId: string) => void) | undefined;
+  /** When set and the thread is longer than this, collapse to the most recent
+   *  `collapseAfter` and offer a show-all/less toggle — the rail's compressible
+   *  thread (the modal has room, so it leaves this unset and shows everything). */
+  collapseAfter?: number | undefined;
+  /** The viewer's own actor kind ("advisor" | "client"). A note by the viewer
+   *  is attributed "You"; everyone else gets their role name. */
+  viewerActorKind?: string | undefined;
+}
+
+// Who left a note, from the node's recorded `actor_kind`. The viewer's own
+// notes read "You"; a fresh (optimistic, not-yet-persisted) note has no
+// actor_kind yet and is the viewer's, so it's "You" too.
+function noteAuthor(actorKind: string | null | undefined, viewer?: string): string {
+  if (!actorKind) return "You";
+  if (viewer && actorKind === viewer) return "You";
+  if (actorKind === "advisor") return "Advisor";
+  if (actorKind === "agent") return "Artemis";
+  return "Traveler";
 }
 
 export function NotesPanel({
@@ -25,9 +43,16 @@ export function NotesPanel({
   canAdd = false,
   onAddNote,
   onDeleteNote,
+  collapseAfter,
+  viewerActorKind,
 }: NotesPanelProps) {
   const [text, setText] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const showComposer = canAdd && Boolean(onAddNote);
+  const collapsible =
+    collapseAfter != null && notes.length > collapseAfter && !expanded;
+  // Compress to the MOST RECENT few (the tail) — a note thread reads newest-last.
+  const shownNotes = collapsible ? notes.slice(-collapseAfter) : notes;
 
   if (notes.length === 0 && !showComposer) return null;
 
@@ -48,14 +73,35 @@ export function NotesPanel({
         <span>Notes{notes.length > 0 ? ` · ${notes.length}` : ""}</span>
       </div>
 
+      {collapsible ? (
+        <button
+          type="button"
+          data-testid="notes-panel-show-all"
+          onClick={() => setExpanded(true)}
+          className="mt-1.5 font-sans text-[10px] uppercase tracking-[0.16em] text-amber-900/60 underline-offset-4 transition-colors hover:text-amber-900 hover:underline"
+        >
+          Show all {notes.length}
+        </button>
+      ) : null}
+
       {notes.length > 0 ? (
         <ul className="mt-1.5 space-y-1.5">
-          {notes.map((n) => (
+          {shownNotes.map((n) => (
             <li
               key={n.id}
-              className="flex items-start justify-between gap-2 font-serif text-[12px] leading-snug text-ink/85"
+              className="flex items-start justify-between gap-2"
             >
-              <span>{n.title}</span>
+              <div className="flex flex-col gap-0.5">
+                <span className="font-sans text-[9px] uppercase tracking-[0.14em] text-amber-900/50">
+                  {noteAuthor(
+                    (n as { actor_kind?: string | null }).actor_kind,
+                    viewerActorKind,
+                  )}
+                </span>
+                <span className="font-serif text-[12px] leading-snug text-ink/85">
+                  {n.title}
+                </span>
+              </div>
               {onDeleteNote ? (
                 <button
                   type="button"
