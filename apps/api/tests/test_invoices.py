@@ -41,7 +41,9 @@ from app.services.invoices import (
     get_invoice,
     issue_invoice,
     list_invoices,
+    mark_invoice_viewed,
     remove_line_item,
+    settlement_display,
     void_invoice,
     void_line_item,
 )
@@ -268,23 +270,38 @@ async def test_signed_ledger_totals_and_void(db_session: AsyncSession) -> None:
 
 @integration
 @pytest.mark.asyncio
-async def test_currency_mismatch_rejected(db_session: AsyncSession) -> None:
+async def test_manual_line_may_add_a_new_currency(db_session: AsyncSession) -> None:
+    # Since 0050 one invoice may hold several NATIVE currencies — a manual EUR line
+    # onto a USD-home invoice is accepted and shows up as its own subtotal.
     itin = await create_itinerary(db_session, _actor(), title="cur")
     try:
         invoice = await create_invoice(
             db_session, _actor(), itinerary_id=itin.id, label="Balance", currency="USD"
         )
         assert isinstance(invoice, Invoice)
-        bad = await add_line_item(
+        usd = await add_line_item(
             db_session,
             _actor(),
             invoice_id=invoice.id,
-            description="EUR line",
+            description="USD fee",
             amount=Decimal("100.00"),
-            currency="EUR",
+            currency="USD",
+            kind=InvoiceLineKind.fee,
         )
-        assert isinstance(bad, ItineraryError)
-        assert bad.detail == "currency_mismatch"
+        assert isinstance(usd, InvoiceLineItem)
+        eur = await add_line_item(
+            db_session,
+            _actor(),
+            invoice_id=invoice.id,
+            description="EUR fee",
+            amount=Decimal("50.00"),
+            currency="EUR",
+            kind=InvoiceLineKind.fee,
+        )
+        assert isinstance(eur, InvoiceLineItem)
+        view = await get_invoice(db_session, invoice.id)
+        assert isinstance(view, InvoiceView)
+        assert view.subtotals == {"USD": Decimal("100.00"), "EUR": Decimal("50.00")}
     finally:
         await _cleanup(itin.id)
 
@@ -587,7 +604,7 @@ def invoice_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def _get(_s: Any, invoice_id: uuid.UUID) -> Any:
         inv = _invoice()
         inv.id = invoice_id
-        return InvoiceView(invoice=inv, lines=[], total=Decimal("0.00"), payments=[])
+        return InvoiceView(invoice=inv, lines=[], total=Decimal("0.00"), payments=[], subtotals={})
 
     async def _load_itin(_s: Any, _iid: uuid.UUID) -> Any:
         # a baseline-less itinerary: no owner/creator, so access hinges on advisor
@@ -681,3 +698,154 @@ def test_get_invoice_endpoint_forbidden_for_stranger(
     resp = client.get(f"/invoices/{uuid.uuid4()}", headers=_headers(make_token))
     assert resp.status_code == 403
     assert resp.json()["detail"] == "forbidden"
+
+
+# ── Settlement display (0050) — pure conversion, no DB ───────────────────────
+
+
+class _FakeFx:
+    """Minimal FxService stand-in for settlement_display unit tests."""
+
+    def __init__(self, rates: dict[tuple[str, str], Decimal], *, enabled: bool = True) -> None:
+        self._rates = rates
+        self.enabled = enabled
+        self._at = datetime(2026, 7, 12, tzinfo=UTC)
+
+    async def get_rate(self, base: str, target: str) -> Decimal | None:
+        if base == target:
+            return Decimal(1)
+        return self._rates.get((base, target))
+
+    def fetched_at(self, base: str) -> datetime | None:
+        return self._at
+
+
+def _bare_invoice(*, settlement_currency: str | None) -> Invoice:
+    return Invoice(
+        id=uuid.uuid4(),
+        itinerary_id=uuid.uuid4(),
+        label="Deposit",
+        currency="EUR",
+        settlement_currency=settlement_currency,
+        status=InvoiceStatus.issued,
+        created_at=datetime.now(UTC),
+    )
+
+
+def _bare_view(inv: Invoice, subtotals: dict[str, Decimal]) -> InvoiceView:
+    return InvoiceView(
+        invoice=inv, lines=[], total=Decimal("0.00"), payments=[], subtotals=subtotals
+    )
+
+
+async def test_settlement_display_converts_multi_currency_subtotals() -> None:
+    view = _bare_view(
+        _bare_invoice(settlement_currency="USD"),
+        {"EUR": Decimal("100.00"), "GBP": Decimal("50.00")},
+    )
+    fx = _FakeFx({("EUR", "USD"): Decimal("1.10"), ("GBP", "USD"): Decimal("1.25")})
+    disp = await settlement_display(view, fx)  # type: ignore[arg-type]
+    assert disp is not None
+    assert disp.currency == "USD"
+    # 100 × 1.10 + 50 × 1.25 = 110.00 + 62.50
+    assert disp.total == Decimal("172.50")
+    assert disp.rates == {"EUR": Decimal("1.10"), "GBP": Decimal("1.25")}
+    assert disp.as_of is not None
+
+
+async def test_settlement_display_none_when_fx_disabled() -> None:
+    view = _bare_view(_bare_invoice(settlement_currency="USD"), {"EUR": Decimal("100.00")})
+    fx = _FakeFx({}, enabled=False)
+    assert await settlement_display(view, fx) is None  # type: ignore[arg-type]
+
+
+async def test_settlement_display_none_without_settlement_currency() -> None:
+    view = _bare_view(_bare_invoice(settlement_currency=None), {"EUR": Decimal("100.00")})
+    fx = _FakeFx({("EUR", "USD"): Decimal("1.10")})
+    assert await settlement_display(view, fx) is None  # type: ignore[arg-type]
+
+
+async def test_settlement_display_none_when_a_rate_is_missing() -> None:
+    # All-or-nothing: an unresolved leg drops the whole settlement (no misleading partial).
+    view = _bare_view(
+        _bare_invoice(settlement_currency="USD"),
+        {"EUR": Decimal("100.00"), "JPY": Decimal("2000")},
+    )
+    fx = _FakeFx({("EUR", "USD"): Decimal("1.10")})  # no JPY→USD
+    assert await settlement_display(view, fx) is None  # type: ignore[arg-type]
+
+
+# ── first_viewed_at (0050) ───────────────────────────────────────────────────
+
+
+@integration
+@pytest.mark.asyncio
+async def test_first_viewed_at_stamped_once(db_session: AsyncSession) -> None:
+    itin = await create_itinerary(db_session, _actor(), title="viewed")
+    try:
+        invoice = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="Deposit", currency="USD"
+        )
+        assert isinstance(invoice, Invoice)
+        line = await add_line_item(
+            db_session,
+            _actor(),
+            invoice_id=invoice.id,
+            description="fee",
+            amount=Decimal("100.00"),
+            currency="USD",
+            kind=InvoiceLineKind.fee,
+        )
+        assert isinstance(line, InvoiceLineItem)
+
+        await mark_invoice_viewed(db_session, invoice_id=invoice.id)
+        v1 = await get_invoice(db_session, invoice.id)
+        assert isinstance(v1, InvoiceView)
+        assert v1.invoice.first_viewed_at is not None
+        first = v1.invoice.first_viewed_at
+
+        # Idempotent — a second view never re-stamps.
+        await mark_invoice_viewed(db_session, invoice_id=invoice.id)
+        v2 = await get_invoice(db_session, invoice.id)
+        assert isinstance(v2, InvoiceView)
+        assert v2.invoice.first_viewed_at == first
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_create_invoice_defaults_settlement_from_client_preference(
+    db_session: AsyncSession,
+) -> None:
+    # The settlement currency defaults to the owning client's preferred_currency.
+    owner_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    await db_session.execute(
+        text(
+            "insert into auth.users (id, email, aud, role, instance_id) "
+            "values (:id, :email, 'authenticated', 'authenticated', "
+            "'00000000-0000-0000-0000-000000000000')"
+        ),
+        {"id": owner_id, "email": f"pref-{owner_id}@x.com"},
+    )
+    await db_session.execute(
+        text(
+            "insert into public.clients (id, owner_id, full_name, email, preferred_currency) "
+            "values (:id, :o, 'Pref Traveler', :e, 'USD')"
+        ),
+        {"id": client_id, "o": owner_id, "e": f"pref-{client_id}@x.com"},
+    )
+    await db_session.commit()
+    itin = await create_itinerary(db_session, _actor(), title="pref", client_id=client_id)
+    try:
+        invoice = await create_invoice(
+            db_session, _actor(), itinerary_id=itin.id, label="Deposit", currency="EUR"
+        )
+        assert isinstance(invoice, Invoice)
+        assert invoice.settlement_currency == "USD"
+    finally:
+        await _cleanup(itin.id)
+        await db_session.execute(text("delete from public.clients where id = :i"), {"i": client_id})
+        await db_session.execute(text("delete from auth.users where id = :i"), {"i": owner_id})
+        await db_session.commit()

@@ -26,7 +26,7 @@ from app.models import (
     PaymentStatus,
 )
 from app.services.billing_summary import derive_billing_state
-from app.services.invoices import InvoiceView
+from app.services.invoices import InvoiceView, subtotals_by_currency
 
 _IT = uuid.uuid4()
 
@@ -98,7 +98,13 @@ def _view(
     invoice: Invoice, lines: list[InvoiceLineItem], payments: list[Payment] | None = None
 ) -> InvoiceView:
     total = sum((line.amount for line in lines), Decimal("0.00"))
-    return InvoiceView(invoice=invoice, lines=lines, total=total, payments=payments or [])
+    return InvoiceView(
+        invoice=invoice,
+        lines=lines,
+        total=total,
+        payments=payments or [],
+        subtotals=subtotals_by_currency(lines),
+    )
 
 
 def test_partially_billed_node_keeps_a_remaining_balance() -> None:

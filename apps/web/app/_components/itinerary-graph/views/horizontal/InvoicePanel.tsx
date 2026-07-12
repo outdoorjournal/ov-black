@@ -10,6 +10,8 @@ import {
   type NodeResponse,
   addInvoiceLineItem,
   createApiClient,
+  createDepositInvoice,
+  createFinalInvoice,
   createInvoice,
   getInvoice,
   getItinerary,
@@ -71,6 +73,29 @@ const money = (currency: string, amount: number): string => {
 
 /** Round a major-unit amount to cents (charge lines are always 2dp). */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** Human invoice number — INV-000123 (0050). Blank until the row is flushed. */
+const invoiceNumber = (n: number | null | undefined): string | null =>
+  n == null ? null : `INV-${String(n).padStart(6, "0")}`;
+
+/** Short calendar date — "Jul 12, 2026" — for issued / rate-as-of stamps. */
+const fmtDate = (iso: string | null | undefined): string | null => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+};
+
+/** Σ of an invoice's per-currency native subtotals as one "EUR 1,200 · GBP 400"
+ *  string (0050). Falls back to the legacy single total when subtotals absent. */
+const subtotalsSummary = (invoice: InvoiceResponse): string => {
+  const subs = invoice.subtotals ?? {};
+  const entries = Object.entries(subs);
+  if (entries.length === 0) return `${invoice.total} ${invoice.currency}`;
+  return entries
+    .map(([ccy, amt]) => money(ccy, Number.parseFloat(String(amt)) || 0))
+    .join(" · ");
+};
 
 // ── Card identity, wherever money references it (ADV-15) ─────────────────────
 // The invoice ↔ inventory relation was previously only legible as ledger text
@@ -250,6 +275,30 @@ export function InvoicePanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itineraryId, newLabel, newCurrency, creating]);
+
+  // Server-side quick actions (doc/thoughts.md §5): one call drafts a whole
+  // invoice — Deposit (100% flights / 20% else) or Final (every remaining balance)
+  // — spanning currencies, so the advisor never hand-assembles the common case.
+  const captureQuick = useCallback(
+    async (kind: "deposit" | "final") => {
+      if (!api || creating) return;
+      setCreating(true);
+      setError(null);
+      try {
+        const result =
+          kind === "deposit"
+            ? await createDepositInvoice(api, itineraryId)
+            : await createFinalInvoice(api, itineraryId);
+        if (!mounted.current) return;
+        if (result.ok) await refresh();
+        else setError(copy(result.detail));
+      } finally {
+        if (mounted.current) setCreating(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [itineraryId, creating],
+  );
 
   // Create a draft, then charge a `fraction` of each node's remaining balance onto
   // it — the one gesture behind "Bill all uninvoiced" (a deposit at <100%, or the
@@ -446,9 +495,41 @@ export function InvoicePanel({
 
       {/* New invoice */}
       {canManage ? (
-        <section className="flex flex-col gap-2 border-y border-ink/10 py-3">
+        <section className="flex flex-col gap-3 border-y border-ink/10 py-3">
+          {/* Quick actions (doc/thoughts.md §5): one gesture drafts the whole
+              deposit or final invoice, multi-currency, server-side. */}
+          <div className="flex flex-col gap-2">
+            <span className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/55">
+              Capture
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void captureQuick("deposit")}
+                disabled={creating}
+                data-testid="invoice-capture-deposit"
+                className="rounded-md border border-ink/20 bg-ink px-3 py-1 font-sans text-[10px] uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                Capture deposit
+              </button>
+              <button
+                type="button"
+                onClick={() => void captureQuick("final")}
+                disabled={creating}
+                data-testid="invoice-capture-final"
+                className="rounded-md border border-ink/20 bg-paper px-3 py-1 font-sans text-[10px] uppercase tracking-[0.18em] text-ink transition-colors hover:bg-ink/5 disabled:opacity-40"
+              >
+                Capture final
+              </button>
+            </div>
+            <span className="font-sans text-[10px] text-ink/45">
+              Deposit = 100% of flights, 20% of everything else. Final = every
+              remaining balance.
+            </span>
+          </div>
+
           <span className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/55">
-            New invoice
+            New manual invoice
           </span>
           <div className="flex items-center gap-2">
             <input
@@ -663,9 +744,18 @@ function InvoiceCard({
       data-testid={`invoice-${invoice.id}`}
       className="flex flex-col gap-2 border-b border-ink/10 pb-4"
     >
-      <header className="flex items-baseline justify-between gap-2">
-        <span className="font-serif text-base text-ink">{invoice.label || "Invoice"}</span>
-        <span className="flex items-baseline gap-2">
+      {/* Invoice-like header: number + date + status on top, the per-currency
+          native subtotals and the settlement (pay-currency) equivalent below. */}
+      <header className="flex flex-col gap-1 rounded-lg border border-ink/10 bg-ink/[0.015] px-3 py-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="flex items-baseline gap-2">
+            <span className="font-serif text-base text-ink">{invoice.label || "Invoice"}</span>
+            {invoiceNumber(invoice.number) ? (
+              <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+                {invoiceNumber(invoice.number)}
+              </span>
+            ) : null}
+          </span>
           <span
             className={`font-sans text-[10px] uppercase tracking-[0.18em] ${
               STATUS_TONE[invoice.status] ?? "text-ink/55"
@@ -673,10 +763,36 @@ function InvoiceCard({
           >
             {invoice.status}
           </span>
-          <span className="font-sans text-sm tabular-nums text-ink" data-testid="invoice-total">
-            {invoice.total} {invoice.currency}
+        </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="font-sans text-[10px] uppercase tracking-[0.12em] text-ink/40">
+            {fmtDate(invoice.issued_at) ? `Issued ${fmtDate(invoice.issued_at)}` : "Draft"}
+            {invoice.first_viewed_at
+              ? ` · Viewed ${fmtDate(invoice.first_viewed_at)}`
+              : ""}
           </span>
-        </span>
+          <span
+            className="font-sans text-sm tabular-nums text-ink"
+            data-testid="invoice-total"
+          >
+            {subtotalsSummary(invoice)}
+          </span>
+        </div>
+        {/* Settlement (pay-currency) display — the long-cached website rate; the
+            actual charge locks a fresher rate at pay time. */}
+        {invoice.settlement_total != null && invoice.settlement_currency ? (
+          <div
+            data-testid="invoice-settlement"
+            className="flex items-baseline justify-end gap-1 font-sans text-[11px] text-ink/55"
+          >
+            <span className="tabular-nums">
+              ≈ {money(invoice.settlement_currency, Number.parseFloat(invoice.settlement_total))}
+            </span>
+            {fmtDate(invoice.rates_as_of) ? (
+              <span className="text-ink/40">· rate as of {fmtDate(invoice.rates_as_of)}</span>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       {lines.length === 0 ? (
@@ -691,6 +807,7 @@ function InvoiceCard({
               itineraryId={itineraryId}
               timing={timing}
               reversed={reversedIds.has(line.id)}
+              invoicePaid={invoice.status === "paid"}
               canWrite={canWrite}
               onVoid={() =>
                 api &&
@@ -825,6 +942,7 @@ function LineRow({
   itineraryId,
   timing,
   reversed,
+  invoicePaid,
   canWrite,
   onVoid,
 }: {
@@ -834,11 +952,18 @@ function LineRow({
   itineraryId: string;
   timing: TripTimingLike | null;
   reversed: boolean;
+  /** Whether the whole invoice has settled — per-line paid is all-or-nothing
+   *  (one charge covers the whole invoice), so a live line is paid iff the
+   *  invoice is (doc/thoughts.md §4). */
+  invoicePaid: boolean;
   canWrite: boolean;
   onVoid: () => void;
 }) {
   const isReversal = line.kind === "reversal";
   const negative = Number(line.amount) < 0;
+  // Per-line paid: the line's own amount once the invoice settles, else 0 — the
+  // "what was invoiced vs paid for this line" thoughts.md asks for.
+  const linePaid = invoicePaid && !reversed;
   return (
     <li className="flex items-center gap-3 py-2" data-testid={`line-${line.id}`}>
       <div className="min-w-0 flex-1">
@@ -864,12 +989,24 @@ function LineRow({
           {line.kind}
         </p>
       </div>
-      <span
-        className={`shrink-0 font-sans text-sm tabular-nums ${
-          negative ? "text-[#8b2a1d]" : "text-ink/90"
-        }`}
-      >
-        {line.amount} {line.currency}
+      <span className="flex shrink-0 flex-col items-end">
+        <span
+          className={`font-sans text-sm tabular-nums ${
+            negative ? "text-[#8b2a1d]" : "text-ink/90"
+          }`}
+        >
+          {line.amount} {line.currency}
+        </span>
+        {!isReversal && !negative ? (
+          <span
+            data-testid={`line-paid-${line.id}`}
+            className={`font-sans text-[9px] uppercase tracking-[0.12em] ${
+              linePaid ? "text-[#1d6b3a]" : "text-ink/40"
+            }`}
+          >
+            {linePaid ? "Paid" : "Unpaid"}
+          </span>
+        ) : null}
       </span>
       {canWrite && !isReversal && !reversed ? (
         <button

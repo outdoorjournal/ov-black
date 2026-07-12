@@ -136,13 +136,25 @@ class Invoice(Base):
         nullable=False,
     )
     label: Mapped[str] = mapped_column(nullable=False, server_default=text("''"))
+    # Human-facing monotonic number (0050), rendered as INV-000123. Assigned by the
+    # DB sequence default on insert, so it is None only on an unflushed instance.
+    number: Mapped[int | None] = mapped_column(nullable=True)
     status: Mapped[InvoiceStatus] = mapped_column(
         invoice_status_enum,
         nullable=False,
         default=InvoiceStatus.draft,
         server_default=text("'draft'::public.invoice_status"),
     )
+    # Legacy "primary"/home currency of the invoice (0023). Lines used to be forced
+    # to match it; since 0050 a line carries its node's NATIVE currency and one
+    # invoice may hold several, so this is now just the create-time default.
     currency: Mapped[str] = mapped_column(nullable=False)
+    # The single currency the traveler PAYS in (0050). NULL = pay native
+    # (back-compat with single-currency invoices). Defaulted from the client's
+    # preferred_currency at create time.
+    settlement_currency: Mapped[str | None] = mapped_column(nullable=True)
+    # When the owning traveler first opened the issued invoice (advisor signal, 0050).
+    first_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # When the invoice went out (draft → issued), stamped by issue_invoice()
     # since 0042. NULL on drafts and on invoices issued before the column.
@@ -259,3 +271,42 @@ class Payment(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class PaymentQuote(Base):
+    """A short-lived pay-time FX lock over a multi-currency invoice (0050).
+
+    When a traveler opens the pay dialog we pull a FRESH rate per native line
+    currency, compute the exact charge in the invoice's ``settlement_currency``,
+    and persist it here locked until ``expires_at``. The pay call references the
+    quote and charges the locked ``settlement_amount``; an expired or already
+    ``consumed_at`` quote forces a re-quote. ``rates`` records the native→
+    settlement multipliers used, for audit.
+    """
+
+    __tablename__ = "payment_quotes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    settlement_currency: Mapped[str] = mapped_column(nullable=False)
+    settlement_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    rates: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -41,8 +41,10 @@ from app.routers.itineraries import (
     _resolve_client_auth_user_id,
 )
 from app.services import billing_summary as billing_summary_svc
+from app.services import finance_rules as finance_rules_svc
 from app.services import invoices as invoices_svc
 from app.services import payments as payments_svc
+from app.services.fx import FxService, get_fx_service
 from app.services.invoices import InvoiceView
 from app.services.itineraries import ItineraryError, ItineraryOutcome
 
@@ -74,6 +76,9 @@ class CreateInvoiceRequest(BaseModel):
     label: str = Field(default="", max_length=256)
     currency: str = Field(min_length=3, max_length=3)
     due_at: datetime | None = None
+    # The currency the traveler pays in. Omit to default to the client's
+    # preferred_currency (0050); NULL there → pay native.
+    settlement_currency: str | None = Field(default=None, min_length=3, max_length=3)
 
 
 class AddLineItemRequest(BaseModel):
@@ -119,21 +124,49 @@ class PayInvoiceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     payment_method_nonce: str = Field(min_length=1, max_length=4096)
+    # Required for a settlement (multi-currency / pay-currency) invoice: the locked
+    # FX quote to charge against (0050). Omitted for a native-currency invoice.
+    quote_id: uuid.UUID | None = None
 
 
 class PaymentTokenResponse(BaseModel):
     client_token: str
 
 
+class PaymentQuoteResponse(BaseModel):
+    """A short-lived pay-time FX lock (0050) the browser charges against."""
+
+    id: uuid.UUID
+    invoice_id: uuid.UUID
+    settlement_currency: str
+    settlement_amount: Decimal
+    rates: dict[str, str]
+    expires_at: datetime
+
+
 class InvoiceResponse(BaseModel):
     id: uuid.UUID
+    # Human-facing monotonic number (0050); None only for a not-yet-flushed row.
+    number: int | None = None
     itinerary_id: uuid.UUID
     label: str
     status: InvoiceStatus
     currency: str
+    # The currency the traveler pays in (0050); None → pay native.
+    settlement_currency: str | None = None
     due_at: datetime | None = None
     issued_at: datetime | None = None
+    first_viewed_at: datetime | None = None
+    # Σ of ALL lines regardless of currency — only meaningful single-currency.
+    # Multi-currency consumers read ``subtotals``.
     total: Decimal
+    # currency → Σ signed native line amounts (the authoritative money shape, 0050).
+    subtotals: dict[str, Decimal] = Field(default_factory=dict)
+    # Read-side DISPLAY conversion of ``subtotals`` into ``settlement_currency``
+    # (0050). None when no settlement currency or FX is unavailable.
+    settlement_total: Decimal | None = None
+    settlement_rates: dict[str, Decimal] | None = None
+    rates_as_of: datetime | None = None
     created_at: datetime
     lines: list[InvoiceLineItemResponse] = Field(default_factory=list)
     payments: list[PaymentResponse] = Field(default_factory=list)
@@ -213,17 +246,25 @@ def _payment_response(payment: Payment) -> PaymentResponse:
     )
 
 
-def _invoice_response(view: InvoiceView) -> InvoiceResponse:
+async def _invoice_response(view: InvoiceView, fx: FxService) -> InvoiceResponse:
     inv = view.invoice
+    settlement = await invoices_svc.settlement_display(view, fx)
     return InvoiceResponse(
         id=inv.id,
+        number=inv.number,
         itinerary_id=inv.itinerary_id,
         label=inv.label,
         status=inv.status,
         currency=inv.currency,
+        settlement_currency=inv.settlement_currency,
         due_at=inv.due_at,
         issued_at=inv.issued_at,
+        first_viewed_at=inv.first_viewed_at,
         total=view.total,
+        subtotals=view.subtotals,
+        settlement_total=settlement.total if settlement is not None else None,
+        settlement_rates=settlement.rates if settlement is not None else None,
+        rates_as_of=settlement.as_of if settlement is not None else None,
         created_at=inv.created_at,
         lines=[_line_response(line) for line in view.lines],
         payments=[_payment_response(p) for p in view.payments],
@@ -300,12 +341,13 @@ async def create_invoice_endpoint(
         label=payload.label,
         currency=payload.currency,
         due_at=payload.due_at,
+        settlement_currency=payload.settlement_currency,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
     view = await invoices_svc.get_invoice(session, result.id)
     assert not isinstance(view, ItineraryError)
-    return _invoice_response(view)
+    return await _invoice_response(view, get_fx_service())
 
 
 @router.get(
@@ -320,7 +362,48 @@ async def list_invoices_endpoint(
 ) -> list[InvoiceResponse]:
     await _assert_itinerary_access(session, user, itinerary_id)
     views = await invoices_svc.list_invoices(session, itinerary_id)
-    return [_invoice_response(v) for v in views]
+    fx = get_fx_service()
+    return [await _invoice_response(v, fx) for v in views]
+
+
+@router.post(
+    "/itinerary/{itinerary_id}/invoices/deposit",
+    status_code=status.HTTP_201_CREATED,
+    response_model=InvoiceResponse,
+    summary="Draft a deposit invoice (100% of flights, 20% of everything else).",
+)
+async def create_deposit_invoice_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+) -> InvoiceResponse:
+    actor = _advisor_actor_from_user(user)
+    result = await finance_rules_svc.seed_deposit_invoice(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    view = await invoices_svc.get_invoice(session, result.id)
+    assert not isinstance(view, ItineraryError)
+    return await _invoice_response(view, get_fx_service())
+
+
+@router.post(
+    "/itinerary/{itinerary_id}/invoices/final",
+    status_code=status.HTTP_201_CREATED,
+    response_model=InvoiceResponse,
+    summary="Draft a balance invoice for every chargeable node's remaining balance.",
+)
+async def create_final_invoice_endpoint(
+    itinerary_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_advisor),
+    session: AsyncSession = Depends(get_session),
+) -> InvoiceResponse:
+    actor = _advisor_actor_from_user(user)
+    result = await finance_rules_svc.seed_final_invoice(session, actor, itinerary_id=itinerary_id)
+    if isinstance(result, ItineraryError):
+        _raise_for_error(result)
+    view = await invoices_svc.get_invoice(session, result.id)
+    assert not isinstance(view, ItineraryError)
+    return await _invoice_response(view, get_fx_service())
 
 
 @router.get(
@@ -390,7 +473,16 @@ async def get_invoice_endpoint(
     if isinstance(view, ItineraryError):
         _raise_for_error(view)
     await _assert_itinerary_access(session, user, view.invoice.itinerary_id)
-    return _invoice_response(view)
+    # Stamp "viewed" when the owning TRAVELER (not an advisor) opens an issued
+    # invoice — the advisor's signal that the traveler has seen it (0050).
+    actor = _actor_from_user(user)
+    if view.invoice.status is InvoiceStatus.issued and not await _is_requester_advisor(
+        session, actor.user_id
+    ):
+        # Same session → same Invoice instance, so ``view.invoice.first_viewed_at``
+        # reflects the stamp without a re-read.
+        await invoices_svc.mark_invoice_viewed(session, invoice_id=invoice_id)
+    return await _invoice_response(view, get_fx_service())
 
 
 @router.post(
@@ -485,7 +577,7 @@ async def issue_invoice_endpoint(
         _raise_for_error(result)
     view = await invoices_svc.get_invoice(session, invoice_id)
     assert not isinstance(view, ItineraryError)
-    return _invoice_response(view)
+    return await _invoice_response(view, get_fx_service())
 
 
 @router.post(
@@ -504,7 +596,7 @@ async def void_invoice_endpoint(
         _raise_for_error(result)
     view = await invoices_svc.get_invoice(session, invoice_id)
     assert not isinstance(view, ItineraryError)
-    return _invoice_response(view)
+    return await _invoice_response(view, get_fx_service())
 
 
 # ── Payments (M005/I2) ──────────────────────────────────────────────────────
@@ -559,9 +651,41 @@ async def pay_invoice_endpoint(
         payment_method_nonce=payload.payment_method_nonce,
         client_id=client_id,
         idempotency_key=idempotency_key,
+        quote_id=payload.quote_id,
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
     paid = await invoices_svc.get_invoice(session, invoice_id)
     assert not isinstance(paid, ItineraryError)
-    return _invoice_response(paid)
+    return await _invoice_response(paid, get_fx_service())
+
+
+@router.post(
+    "/invoices/{invoice_id}/payment-quote",
+    response_model=PaymentQuoteResponse,
+    summary="Freeze a short-lived FX lock to pay a settlement invoice.",
+)
+async def payment_quote_endpoint(
+    invoice_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> PaymentQuoteResponse:
+    """Lock the native→settlement rate for a few minutes so the traveler pays a
+    stable pay-currency amount (0050). The pay call passes the returned ``id``."""
+    view = await invoices_svc.get_invoice(session, invoice_id)
+    if isinstance(view, ItineraryError):
+        _raise_for_error(view)
+    await _assert_itinerary_access(session, user, view.invoice.itinerary_id)
+    quote = await payments_svc.create_payment_quote(
+        session, get_fx_service(), invoice_id=invoice_id
+    )
+    if isinstance(quote, ItineraryError):
+        _raise_for_error(quote)
+    return PaymentQuoteResponse(
+        id=quote.id,
+        invoice_id=quote.invoice_id,
+        settlement_currency=quote.settlement_currency,
+        settlement_amount=quote.settlement_amount,
+        rates={k: str(v) for k, v in quote.rates.items()},
+        expires_at=quote.expires_at,
+    )

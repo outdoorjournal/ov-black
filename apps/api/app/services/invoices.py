@@ -34,6 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Client,
     Invoice,
     InvoiceLineItem,
     InvoiceLineKind,
@@ -43,11 +44,13 @@ from app.models import (
     Payment,
 )
 from app.services import node_cost
+from app.services.fx import FxService
 from app.services.itineraries import ActorContext, ItineraryError, ItineraryOutcome
 
 logger = logging.getLogger("ov_black.invoices")
 
 _ZERO = Decimal("0.00")
+_CENTS = Decimal("0.01")
 
 # A node may be billed across several charge lines (a deposit now, the balance
 # later — D-PAY amount-aware coverage), but the signed charge total for one node
@@ -72,12 +75,66 @@ _ADJUSTING_KINDS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class InvoiceView:
-    """An invoice with its ledger lines, payments, and computed total (Σ lines)."""
+    """An invoice with its ledger lines, payments, and per-currency subtotals.
+
+    Since 0050 a single invoice may hold lines in several NATIVE currencies, so
+    ``subtotals`` (currency → Σ signed line amounts, reversals netting out) is the
+    authoritative money shape. ``total`` is retained as a convenience — the sum of
+    every line regardless of currency — and is only meaningful for a single-currency
+    invoice; multi-currency consumers must read ``subtotals``.
+    """
 
     invoice: Invoice
     lines: list[InvoiceLineItem]
     total: Decimal
     payments: list[Payment]
+    subtotals: dict[str, Decimal]
+
+
+@dataclass(frozen=True, slots=True)
+class SettlementDisplay:
+    """The read-side conversion of an invoice's native subtotals into the single
+    currency the traveler pays in (0050). DISPLAY only — the long-cached website
+    rate, re-adjusting over time; the actual charge locks a fresher rate at pay
+    time (Phase 5, payment_quotes). ``None`` when there is no settlement currency
+    or FX is unavailable (then the UI shows native subtotals only)."""
+
+    currency: str
+    total: Decimal
+    rates: dict[str, Decimal]
+    as_of: datetime | None
+
+
+async def settlement_display(view: InvoiceView, fx: FxService) -> SettlementDisplay | None:
+    """Convert ``view.subtotals`` into the invoice's ``settlement_currency``.
+
+    Returns ``None`` when the invoice has no settlement currency, FX is disabled, or
+    any needed rate can't be resolved (partial conversions would mislead, so it is
+    all-or-nothing). Zero-net currencies are skipped.
+    """
+    target = view.invoice.settlement_currency
+    if target is None or not fx.enabled:
+        return None
+    rates: dict[str, Decimal] = {}
+    total = _ZERO
+    as_of: datetime | None = None
+    for currency, subtotal in view.subtotals.items():
+        if subtotal == _ZERO:
+            continue
+        rate = await fx.get_rate(currency, target)
+        if rate is None:
+            return None
+        rates[currency] = rate
+        total += subtotal * rate
+        fetched = fx.fetched_at(currency)
+        if fetched is not None and (as_of is None or fetched < as_of):
+            as_of = fetched
+    return SettlementDisplay(
+        currency=target,
+        total=total.quantize(_CENTS),
+        rates=rates,
+        as_of=as_of,
+    )
 
 
 def _err(detail: str) -> ItineraryError:
@@ -142,11 +199,27 @@ async def _node_charged_total(session: AsyncSession, node_id: uuid.UUID) -> Deci
 
 
 def _total_of(lines: list[InvoiceLineItem]) -> Decimal:
-    """Σ of signed line amounts, computed in Python from already-fetched rows."""
+    """Σ of signed line amounts, computed in Python from already-fetched rows.
+
+    Only meaningful single-currency (a multi-currency Σ mixes units); prefer
+    :func:`subtotals_by_currency` for a multi-currency invoice.
+    """
     total = _ZERO
     for line in lines:
         total += line.amount
     return total
+
+
+def subtotals_by_currency(lines: list[InvoiceLineItem]) -> dict[str, Decimal]:
+    """currency → Σ signed line amounts in that currency (reversals net out).
+
+    The authoritative money shape of a (possibly multi-currency) invoice since
+    0050. Zero-net currencies are kept so a fully-reversed currency still shows.
+    """
+    out: dict[str, Decimal] = {}
+    for line in lines:
+        out[line.currency] = out.get(line.currency, _ZERO) + line.amount
+    return out
 
 
 async def _lines_for(session: AsyncSession, invoice_id: uuid.UUID) -> list[InvoiceLineItem]:
@@ -224,7 +297,25 @@ async def _view(session: AsyncSession, invoice: Invoice) -> InvoiceView:
     # separate SUM query would re-read the same rows.
     lines = await _lines_for(session, invoice.id)
     payments = await _payments_for(session, invoice.id)
-    return InvoiceView(invoice=invoice, lines=lines, total=_total_of(lines), payments=payments)
+    return InvoiceView(
+        invoice=invoice,
+        lines=lines,
+        total=_total_of(lines),
+        payments=payments,
+        subtotals=subtotals_by_currency(lines),
+    )
+
+
+async def _client_preferred_currency(session: AsyncSession, itinerary: Itinerary) -> str | None:
+    """The owning client's ISO 4217 preferred (settlement) currency, if set."""
+    if itinerary.client_id is None:
+        return None
+    pref = (
+        await session.execute(
+            select(Client.preferred_currency).where(Client.id == itinerary.client_id)
+        )
+    ).scalar_one_or_none()
+    return pref.strip().upper() if pref else None
 
 
 async def create_invoice(
@@ -235,8 +326,14 @@ async def create_invoice(
     label: str,
     currency: str,
     due_at: datetime | None = None,
+    settlement_currency: str | None = None,
 ) -> Invoice | ItineraryError:
-    """Create a draft invoice over an existing itinerary."""
+    """Create a draft invoice over an existing itinerary.
+
+    ``settlement_currency`` (the single currency the traveler pays in) defaults to
+    the owning client's ``preferred_currency``; pass it explicitly to override. NULL
+    when neither is set → the invoice is paid in its native currency (back-compat).
+    """
     currency = currency.strip().upper()
     if not currency:
         return _err("currency_required")
@@ -246,10 +343,15 @@ async def create_invoice(
     if itinerary is None:
         return _not_found()
 
+    settlement = (settlement_currency or "").strip().upper() or None
+    if settlement is None:
+        settlement = await _client_preferred_currency(session, itinerary)
+
     invoice = Invoice(
         itinerary_id=itinerary_id,
         label=label,
         currency=currency,
+        settlement_currency=settlement,
         status=InvoiceStatus.draft,
         due_at=due_at,
         created_by=actor.user_id,
@@ -294,13 +396,18 @@ async def add_line_item(
         return _err("zero_amount")
 
     currency = currency.strip().upper()
-    if currency != invoice.currency:
-        return _err("currency_mismatch")
+    if len(currency) != 3 or not currency.isalpha():
+        return _err("currency_invalid")
 
     if node_id is not None:
         node = (await session.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
         if node is None or node.itinerary_id != invoice.itinerary_id:
             return _err("node_not_in_itinerary")
+        # A node line must carry the node's NATIVE currency (0050): one invoice may
+        # hold several currencies, but a given node's charge is only ever native so
+        # the money gate's per-node native coverage stays exact.
+        if node.cost_currency is not None and currency != node.cost_currency.upper():
+            return _err("currency_mismatch")
         # Amount-aware coverage (D-PAY): a node may be split across a deposit +
         # balance, but its running charge total can't exceed its effective cost —
         # else per-node coverage would over-count. Guards ``charge`` lines only (a
@@ -552,6 +659,22 @@ async def mark_invoice_paid(
     return invoice
 
 
+async def mark_invoice_viewed(
+    session: AsyncSession,
+    *,
+    invoice_id: uuid.UUID,
+) -> None:
+    """Stamp ``first_viewed_at`` the first time the owning traveler opens the
+    invoice (advisor signal, 0050). Idempotent — a no-op once already set. Best
+    effort: a failure here must never block the read, so callers ignore errors."""
+    invoice = await _load_invoice(session, invoice_id)
+    if invoice is None or invoice.first_viewed_at is not None:
+        return
+    invoice.first_viewed_at = datetime.now(UTC)
+    await session.commit()
+    logger.info("invoice.viewed", extra={"invoice_id": str(invoice_id)})
+
+
 async def get_invoice(
     session: AsyncSession,
     invoice_id: uuid.UUID,
@@ -590,6 +713,7 @@ async def list_invoices(
             lines=lines_by_invoice.get(inv.id, []),
             total=_total_of(lines_by_invoice.get(inv.id, [])),
             payments=payments_by_invoice.get(inv.id, []),
+            subtotals=subtotals_by_currency(lines_by_invoice.get(inv.id, [])),
         )
         for inv in invoices
     ]
@@ -627,6 +751,7 @@ async def list_invoices_for_client(
                 lines=lines_by_invoice.get(inv.id, []),
                 total=_total_of(lines_by_invoice.get(inv.id, [])),
                 payments=payments_by_invoice.get(inv.id, []),
+                subtotals=subtotals_by_currency(lines_by_invoice.get(inv.id, [])),
             ),
             itin,
         )

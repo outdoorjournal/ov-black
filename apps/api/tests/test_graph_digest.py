@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from app.models import InvoiceStatus, NodeStatus
+from app.models import InvoiceStatus, NodeStatus, NodeType
 from app.services.billing_summary import (
     BillingCurrencyRow,
     BillingState,
@@ -115,6 +115,7 @@ def test_billing_lines_render_only_when_nonzero() -> None:
                 effective=Decimal("1200.00"),
                 charged=Decimal("200.00"),
                 remaining=Decimal("1000.00"),
+                node_type=NodeType.hotel,
             )
         ],
         invoices=[

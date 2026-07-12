@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
 
@@ -59,6 +60,9 @@ class FxService:
         self._client = client or httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT)
         # base_code -> (fetched_at_monotonic, {target: rate})
         self._cache: dict[str, tuple[float, dict[str, Decimal]]] = {}
+        # base_code -> wall-clock time the table was fetched (for "rate as of …"
+        # display); monotonic can't be turned into a calendar time, so track both.
+        self._fetched_wall: dict[str, datetime] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -91,6 +95,16 @@ class FxService:
             return None
         return amount * rate
 
+    def fetched_at(self, base: str) -> datetime | None:
+        """Wall-clock time the cached table for ``base`` was last pulled (or None).
+
+        Powers the invoice's "rate as of …" display. ``None`` when nothing has been
+        fetched for that base yet (identity conversions never fetch)."""
+        b = _norm(base)
+        if b is None:
+            return None
+        return self._fetched_wall.get(b)
+
     async def _latest(self, base: str) -> dict[str, Decimal] | None:
         """Return the cached ``{target: rate}`` table for ``base``, refreshing on miss."""
         ttl = self._settings.exchange_rate_cache_ttl_seconds
@@ -107,6 +121,7 @@ class FxService:
             table = await self._fetch_latest(base)
             if table is not None:
                 self._cache[base] = (time.monotonic(), table)
+                self._fetched_wall[base] = datetime.now(UTC)
             elif cached is not None:
                 # Upstream hiccup — serve the stale table rather than dropping to native.
                 return cached[1]

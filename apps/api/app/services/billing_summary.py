@@ -38,7 +38,7 @@ from app.models import (
     InvoiceStatus,
     Node,
     NodeStatus,
-    PaymentStatus,
+    NodeType,
 )
 from app.services import invoices as invoices_svc
 from app.services.invoices import InvoiceView
@@ -61,6 +61,8 @@ class UnbilledNode:
     effective: Decimal
     charged: Decimal
     remaining: Decimal
+    # Drives the deposit schedule (finance_rules): flights deposit 100%, else 20%.
+    node_type: NodeType
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,13 +121,6 @@ def _charged_by_node(views: Sequence[InvoiceView]) -> dict[uuid.UUID, Decimal]:
     return charged
 
 
-def _settled_paid(view: InvoiceView) -> Decimal:
-    return sum(
-        (p.amount for p in view.payments if p.status is PaymentStatus.succeeded),
-        _ZERO,
-    )
-
-
 def _is_chargeable(node: Node) -> bool:
     return (
         node.status is NodeStatus.approved
@@ -160,10 +155,17 @@ def derive_billing_state(
                     effective=effective,
                     charged=billed,
                     remaining=remaining,
+                    node_type=node.type,
                 )
             )
 
     # Per-currency rollup over issued + paid invoices (drafts pending, void out).
+    # Keyed on each line's NATIVE currency via ``view.subtotals`` (an invoice may hold
+    # several since 0050). Payments settle the WHOLE invoice in the settlement
+    # currency, so "paid"/"outstanding" are all-or-nothing per invoice: a paid
+    # invoice's native subtotals count as paid, an issued (unpaid) one's as
+    # outstanding — never mixing the settlement-denominated Payment amounts into a
+    # native bucket.
     invoiced_by_ccy: dict[str, Decimal] = {}
     paid_by_ccy: dict[str, Decimal] = {}
     outstanding_by_ccy: dict[str, Decimal] = {}
@@ -171,14 +173,12 @@ def derive_billing_state(
         status = view.invoice.status
         if status not in (InvoiceStatus.issued, InvoiceStatus.paid):
             continue
-        ccy = view.invoice.currency
-        settled = _settled_paid(view)
-        invoiced_by_ccy[ccy] = invoiced_by_ccy.get(ccy, _ZERO) + view.total
-        paid_by_ccy[ccy] = paid_by_ccy.get(ccy, _ZERO) + settled
-        if status is InvoiceStatus.issued:
-            outstanding_by_ccy[ccy] = outstanding_by_ccy.get(ccy, _ZERO) + max(
-                _ZERO, view.total - settled
-            )
+        for ccy, subtotal in view.subtotals.items():
+            invoiced_by_ccy[ccy] = invoiced_by_ccy.get(ccy, _ZERO) + subtotal
+            if status is InvoiceStatus.paid:
+                paid_by_ccy[ccy] = paid_by_ccy.get(ccy, _ZERO) + subtotal
+            else:  # issued (unpaid) — the whole native subtotal is outstanding
+                outstanding_by_ccy[ccy] = outstanding_by_ccy.get(ccy, _ZERO) + subtotal
 
     currencies = sorted(set(totals) | set(invoiced_by_ccy) | {n.currency for n in unbilled})
     rows = [
@@ -201,7 +201,8 @@ def derive_billing_state(
             status=view.invoice.status,
             currency=view.invoice.currency,
             total=view.total,
-            paid=_settled_paid(view),
+            # Whole-invoice payment: paid-in-full or not at all (0050).
+            paid=view.total if view.invoice.status is InvoiceStatus.paid else _ZERO,
         )
         for view in views
         if view.invoice.status is not InvoiceStatus.void

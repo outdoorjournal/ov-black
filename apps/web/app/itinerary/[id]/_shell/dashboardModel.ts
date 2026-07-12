@@ -114,6 +114,8 @@ export type ChargeableNode = {
   id: string;
   status: string;
   title?: string | undefined;
+  /** Node kind — drives the deposit schedule (flights deposit 100%, else 20%). */
+  type?: string | undefined;
   cost_amount?: string | null | undefined;
   cost_currency?: string | null | undefined;
   cost_kind?: string | null | undefined;
@@ -302,6 +304,77 @@ export function reconcileBilling(input: {
     coverage,
     supplemental: hasIssued && billableNodes.length > 0,
   };
+}
+
+// ── Per-item Finances table (doc/thoughts.md §3) ─────────────────────────────
+// The advisor's tabular breakdown of every cost item: what it costs, what's been
+// invoiced/paid, what remains, and the deposit due — with deposit-paid inferred
+// from paid ≥ deposit-due. Mirrors the server deposit schedule (finance_rules):
+// a FLIGHT deposits 100% of its cost, everything else 20%. Pure, so the table and
+// the server stay in lockstep.
+
+const _round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** The deposit level for a node — 100% of a flight, 20% of everything else. */
+export function depositDueForNode(n: ChargeableNode, partySize: number): number {
+  const effective = effectiveNodeCost(n, partySize);
+  const fraction = n.type === "flight" ? 1 : 0.2;
+  return _round2(effective * fraction);
+}
+
+export type FinanceRow = {
+  nodeId: string;
+  title?: string | undefined;
+  currency: string;
+  /** Party-expanded effective cost. */
+  cost: number;
+  /** Σ charge coverage on issued + paid invoices (what's been billed out). */
+  invoiced: number;
+  /** Σ charge coverage on paid invoices (what's actually been collected). */
+  paid: number;
+  /** max(0, cost − paid) — still owed on this item. */
+  remaining: number;
+  /** Deposit level (100% flight / 20% else). */
+  depositDue: number;
+  /** paid ≥ deposit-due — the "deposit captured" inference (thoughts.md §3). */
+  depositPaid: boolean;
+};
+
+/**
+ * One FinanceRow per chargeable node (approved/booked/confirmed with a cost),
+ * splitting coverage by invoice status: `invoiced` counts issued + paid charge
+ * lines, `paid` counts only paid ones (a whole invoice settles at once). Reversed
+ * and void lines drop out via `coverageByNode`.
+ */
+export function deriveFinanceRows(input: {
+  invoices: InvoiceResponse[];
+  nodes: ChargeableNode[];
+  partySize?: number | undefined;
+}): FinanceRow[] {
+  const partySize = input.partySize ?? 1;
+  const coverage = coverageByNode(input.invoices);
+  return input.nodes.filter(isChargeable).map((n) => {
+    const cov = coverage.get(n.id) ?? [];
+    const invoiced = cov
+      .filter((c) => c.status === "issued" || c.status === "paid")
+      .reduce((s, c) => s + c.amount, 0);
+    const paid = cov
+      .filter((c) => c.status === "paid")
+      .reduce((s, c) => s + c.amount, 0);
+    const cost = effectiveNodeCost(n, partySize);
+    const depositDue = depositDueForNode(n, partySize);
+    return {
+      nodeId: n.id,
+      title: n.title,
+      currency: n.cost_currency as string,
+      cost,
+      invoiced,
+      paid,
+      remaining: Math.max(0, cost - paid),
+      depositDue,
+      depositPaid: paid + COVERAGE_EPSILON >= depositDue && depositDue > 0,
+    };
+  });
 }
 
 // ── Per-card billing chip (ADV-15) ───────────────────────────────────────────

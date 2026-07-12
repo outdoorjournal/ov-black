@@ -32,7 +32,7 @@ from app.payments.base import PaymentGatewayError, SaleResult
 from app.payments.braintree_gateway import DECLINED_NONCE, VALID_NONCE, FakeGateway
 from app.services.invoices import add_line_item, create_invoice, get_invoice, issue_invoice
 from app.services.itineraries import ActorContext, ActorKind, ItineraryError, create_itinerary
-from app.services.payments import generate_client_token, pay_invoice
+from app.services.payments import create_payment_quote, generate_client_token, pay_invoice
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -396,7 +396,13 @@ def pay_routes(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def _get(_s: Any, invoice_id: uuid.UUID) -> Any:
         inv = _invoice()
         inv.id = invoice_id
-        return InvoiceView(invoice=inv, lines=[], total=Decimal("500.00"), payments=[])
+        return InvoiceView(
+            invoice=inv,
+            lines=[],
+            total=Decimal("500.00"),
+            payments=[],
+            subtotals={"USD": Decimal("500.00")},
+        )
 
     async def _load_itin(_s: Any, _iid: uuid.UUID) -> Any:
         return Itinerary(id=uuid.uuid4(), client_id=None, created_by=None)
@@ -464,3 +470,144 @@ def test_payment_token_endpoint_200(client: Any, pay_routes: Any, make_token: An
     resp = client.post(f"/invoices/{uuid.uuid4()}/payment-token", headers=_headers(make_token))
     assert resp.status_code == 200, resp.text
     assert resp.json()["client_token"] == "fake-client-token"
+
+
+# ── Settlement (pay-currency) quotes + charging (0050) ───────────────────────
+
+
+class _FakeFx:
+    """Minimal FxService stand-in for payment-quote tests."""
+
+    def __init__(self, rates: dict[tuple[str, str], Decimal], *, enabled: bool = True) -> None:
+        self._rates = rates
+        self.enabled = enabled
+
+    async def get_rate(self, base: str, target: str) -> Decimal | None:
+        if base == target:
+            return Decimal(1)
+        return self._rates.get((base, target))
+
+    def fetched_at(self, base: str) -> None:
+        return None
+
+
+async def _issued_settlement_invoice(
+    session: AsyncSession, *, native: str = "EUR", amount: str = "1000.00", settlement: str = "USD"
+) -> Invoice:
+    itin = await create_itinerary(session, _actor(ActorKind.ADVISOR), title="settle")
+    invoice = await create_invoice(
+        session,
+        _actor(ActorKind.ADVISOR),
+        itinerary_id=itin.id,
+        label="Deposit",
+        currency=native,
+        settlement_currency=settlement,
+    )
+    assert isinstance(invoice, Invoice)
+    line = await add_line_item(
+        session,
+        _actor(ActorKind.ADVISOR),
+        invoice_id=invoice.id,
+        description="Suite",
+        amount=Decimal(amount),
+        currency=native,
+    )
+    assert not isinstance(line, ItineraryError)
+    issued = await issue_invoice(session, _actor(ActorKind.ADVISOR), invoice_id=invoice.id)
+    assert isinstance(issued, Invoice)
+    return invoice
+
+
+@integration
+@pytest.mark.asyncio
+async def test_payment_quote_locks_the_settlement_amount(db_session: AsyncSession) -> None:
+    invoice = await _issued_settlement_invoice(db_session, native="EUR", amount="1000.00")
+    try:
+        fx = _FakeFx({("EUR", "USD"): Decimal("1.10")})
+        quote = await create_payment_quote(db_session, fx, invoice_id=invoice.id)  # type: ignore[arg-type]
+        assert not isinstance(quote, ItineraryError)
+        assert quote.settlement_currency == "USD"
+        assert quote.settlement_amount == Decimal("1100.00")  # 1000 EUR × 1.10
+        assert quote.rates == {"EUR": "1.10"}
+        assert quote.consumed_at is None
+    finally:
+        await _cleanup(invoice.itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_settlement_pay_charges_the_locked_quote(db_session: AsyncSession) -> None:
+    invoice = await _issued_settlement_invoice(db_session, native="EUR", amount="1000.00")
+    try:
+        fx = _FakeFx({("EUR", "USD"): Decimal("1.10")})
+        quote = await create_payment_quote(db_session, fx, invoice_id=invoice.id)  # type: ignore[arg-type]
+        assert not isinstance(quote, ItineraryError)
+        gateway = _SpyGateway()
+        payment = await pay_invoice(
+            db_session,
+            _actor(),
+            gateway,
+            invoice_id=invoice.id,
+            payment_method_nonce=VALID_NONCE,
+            quote_id=quote.id,
+        )
+        assert isinstance(payment, Payment)
+        # Charged the LOCKED settlement figure in the pay currency — not native EUR.
+        assert payment.amount == Decimal("1100.00")
+        assert payment.currency == "USD"
+        call = gateway.calls[-1]
+        assert call["amount"] == Decimal("1100.00")
+        assert call["currency"] == "USD"
+        view = await get_invoice(db_session, invoice.id)
+        assert not isinstance(view, ItineraryError)
+        assert view.invoice.status is InvoiceStatus.paid
+    finally:
+        await _cleanup(invoice.itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_settlement_pay_requires_a_quote(db_session: AsyncSession) -> None:
+    invoice = await _issued_settlement_invoice(db_session)
+    # Capture up front: the no-quote path rolls back, which expires the ORM object,
+    # so a later attribute read would trigger a lazy load outside the async context.
+    itinerary_id = invoice.itinerary_id
+    try:
+        result = await pay_invoice(
+            db_session,
+            _actor(),
+            _SpyGateway(),
+            invoice_id=invoice.id,
+            payment_method_nonce=VALID_NONCE,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "quote_required"
+    finally:
+        await _cleanup(itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_settlement_pay_rejects_an_expired_quote(db_session: AsyncSession) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    invoice = await _issued_settlement_invoice(db_session)
+    itinerary_id = invoice.itinerary_id
+    try:
+        fx = _FakeFx({("EUR", "USD"): Decimal("1.10")})
+        quote = await create_payment_quote(db_session, fx, invoice_id=invoice.id)  # type: ignore[arg-type]
+        assert not isinstance(quote, ItineraryError)
+        quote.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+        result = await pay_invoice(
+            db_session,
+            _actor(),
+            _SpyGateway(),
+            invoice_id=invoice.id,
+            payment_method_nonce=VALID_NONCE,
+            quote_id=quote.id,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.detail == "quote_expired"
+    finally:
+        await _cleanup(itinerary_id)

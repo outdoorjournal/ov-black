@@ -49,6 +49,7 @@ from app.models.invoice import (  # noqa: E402,F401  (re-exported)
     InvoiceLineKind,
     InvoiceStatus,
     Payment,
+    PaymentQuote,
     PaymentStatus,
     RefundStatus,
 )
@@ -149,6 +150,7 @@ __all__ = [
     "PartyMember",
     "PartyMemberActor",
     "Payment",
+    "PaymentQuote",
     "PaymentStatus",
     "Profile",
     "ProfileFact",

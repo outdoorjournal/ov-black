@@ -6,7 +6,9 @@ import dropin, { type Dropin } from "braintree-web-drop-in";
 
 import {
   type InvoiceResponse,
+  type PaymentQuote,
   createApiClient,
+  createPaymentQuote,
   getInvoice,
   getPaymentToken,
   payInvoice,
@@ -26,8 +28,34 @@ const ERROR_COPY: Record<string, string> = {
   payment_declined: "The payment was declined. Please try another card.",
   payments_unconfigured: "Payments aren't available right now.",
   nothing_to_pay: "There's nothing to pay on this invoice.",
+  quote_required: "The exchange rate needs to refresh — one moment.",
+  quote_expired: "The exchange rate refreshed. Please review and pay again.",
+  fx_unavailable: "Currency conversion is unavailable right now.",
+  rate_unavailable: "Currency conversion is unavailable right now.",
   network_error: "Could not reach the server. Try again in a moment.",
 };
+
+/** M:SS countdown label for the pay-time FX lock. */
+function fmtCountdown(seconds: number): string {
+  const s = Math.max(0, seconds);
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${String(rem).padStart(2, "0")}`;
+}
+
+/** A localized money string ("$13,442"), falling back to "CODE 1,234". */
+function money(currency: string, amount: string): string {
+  const n = Number.parseFloat(amount);
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(Number.isFinite(n) ? n : 0);
+  } catch {
+    return `${currency} ${Math.round(Number.isFinite(n) ? n : 0).toLocaleString()}`;
+  }
+}
 
 function copy(detail: string): string {
   return ERROR_COPY[detail] ?? "Something went wrong. Try again.";
@@ -56,6 +84,10 @@ export function PayInvoiceView({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  // Settlement (pay-currency) invoices lock a fresh FX rate at pay time (0050):
+  // fetch a quote, show a countdown, re-quote on expiry, and charge the locked id.
+  const [quote, setQuote] = useState<PaymentQuote | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<Dropin | null>(null);
   const mounted = useRef(true);
@@ -83,6 +115,46 @@ export function PayInvoiceView({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const isSettlement = Boolean(invoice?.settlement_currency);
+
+  const fetchQuote = useCallback(async () => {
+    const result = await createPaymentQuote(api, invoiceId);
+    if (!mounted.current) return;
+    if (result.ok) setQuote(result.quote);
+    else {
+      setQuote(null);
+      setError(copy(result.detail));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceId, apiBaseUrl, accessToken]);
+
+  // Fetch the first lock once a settlement invoice is issued.
+  useEffect(() => {
+    if (invoice?.status === "issued" && invoice.settlement_currency) void fetchQuote();
+  }, [invoice?.status, invoice?.settlement_currency, fetchQuote]);
+
+  // Tick the lock's countdown; re-quote at a fresher rate when it lapses.
+  useEffect(() => {
+    if (!quote) {
+      setSecondsLeft(null);
+      return;
+    }
+    const expiry = new Date(quote.expiresAt).getTime();
+    const compute = () => Math.round((expiry - Date.now()) / 1000);
+    setSecondsLeft(compute());
+    const id = setInterval(() => {
+      const left = compute();
+      if (left <= 0) {
+        clearInterval(id);
+        setSecondsLeft(0);
+        void fetchQuote();
+      } else {
+        setSecondsLeft(left);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [quote, fetchQuote]);
 
   // Mount the Braintree drop-in once the invoice is issued + container exists.
   useEffect(() => {
@@ -121,11 +193,18 @@ export function PayInvoiceView({
   // demo test-card flow (they differ only in where the nonce comes from).
   const submitNonce = useCallback(async (nonce: string) => {
     if (paying) return;
+    // A settlement invoice charges the locked quote — never without one.
+    if (isSettlement && !quote) {
+      setError(copy("quote_required"));
+      void fetchQuote();
+      return;
+    }
     setPaying(true);
     setError(null);
     try {
       const result = await payInvoice(api, invoiceId, {
         payment_method_nonce: nonce,
+        ...(isSettlement && quote ? { quote_id: quote.id } : {}),
       });
       if (!mounted.current) return;
       if (result.ok) {
@@ -134,6 +213,8 @@ export function PayInvoiceView({
         setInvoice(result.invoice);
       } else {
         setError(copy(result.detail));
+        // The lock lapsed between quote and charge — grab a fresher one to retry.
+        if (result.detail === "quote_expired") void fetchQuote();
       }
     } catch {
       if (mounted.current) setError("Something went wrong. Try again.");
@@ -141,7 +222,7 @@ export function PayInvoiceView({
       if (mounted.current) setPaying(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoiceId, paying]);
+  }, [invoiceId, paying, isSettlement, quote, fetchQuote]);
 
   const pay = useCallback(async () => {
     const instance = instanceRef.current;
@@ -177,6 +258,14 @@ export function PayInvoiceView({
     (p) => p.status === "succeeded",
   );
 
+  // For a settlement invoice the headline is the locked pay-currency figure; the
+  // native subtotals sit beneath it. A native invoice shows its own currency.
+  const settlementLabel =
+    isSettlement && quote ? money(quote.settlementCurrency, quote.settlementAmount) : null;
+  const nativeLabel = `${invoice.total} ${invoice.currency}`;
+  const payAmount = isSettlement ? (settlementLabel ?? "…") : nativeLabel;
+  const settlementReady = !isSettlement || Boolean(quote);
+
   return (
     <div
       data-testid="pay-invoice"
@@ -184,12 +273,22 @@ export function PayInvoiceView({
     >
       <header className="flex flex-col gap-1">
         <h1 className="font-serif text-2xl tracking-tight">{invoice.label || "Invoice"}</h1>
-        <p className="font-sans text-sm tabular-nums text-ink/70">
-          {invoice.total} {invoice.currency}
+        <p className="font-sans text-sm tabular-nums text-ink/70" data-testid="pay-amount">
+          {payAmount}
           <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-ink/45">
             {invoice.status}
           </span>
         </p>
+        {isSettlement ? (
+          <p className="font-sans text-[11px] text-ink/50" data-testid="pay-settlement-note">
+            {nativeLabel}
+            {invoice.status === "issued" && secondsLeft != null ? (
+              <span className="ml-2 tabular-nums text-ink/45">
+                · rate locked {fmtCountdown(secondsLeft)}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
       </header>
 
       {invoice.status === "paid" ? (
@@ -208,11 +307,11 @@ export function PayInvoiceView({
           <button
             type="button"
             onClick={() => void pay()}
-            disabled={paying}
+            disabled={paying || !settlementReady}
             data-testid="pay-submit"
             className="rounded-md border border-ink/20 bg-ink px-4 py-2 font-sans text-sm uppercase tracking-[0.18em] text-paper transition-opacity hover:opacity-90 disabled:opacity-40"
           >
-            {paying ? "Processing…" : `Pay ${invoice.total} ${invoice.currency}`}
+            {paying ? "Processing…" : !settlementReady ? "Fetching rate…" : `Pay ${payAmount}`}
           </button>
           {demoTestCard ? (
             <button

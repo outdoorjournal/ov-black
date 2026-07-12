@@ -65,8 +65,8 @@ test("ADV-11: advisor stands up the first invoice from the billing cockpit", asy
   // pinned to this itinerary. No edit lock needed: invoicing gates on advisor role,
   // not the graph build-lock (it must work on any itinerary status).
   await page.goto(`/itinerary/${itineraryId}/dashboard`);
-  await page.getByTestId("rail-invoices").click();
-  await expect(page.getByTestId("invoices-view")).toBeVisible();
+  await page.getByTestId("rail-finances").click();
+  await expect(page.getByTestId("finances-view")).toBeVisible();
 
   // The reconciliation glance renders, grouped by currency, with the uninvoiced
   // remainder — the "am I done billing?" truth. Everything is still uninvoiced.

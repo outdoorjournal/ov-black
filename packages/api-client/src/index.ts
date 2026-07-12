@@ -53,6 +53,8 @@ import {
   diffForkEndpointItineraryForkIdDiffGet,
   forkItineraryEndpointItineraryItineraryIdForkPost,
   createInvoiceEndpointItineraryItineraryIdInvoicesPost,
+  createDepositInvoiceEndpointItineraryItineraryIdInvoicesDepositPost,
+  createFinalInvoiceEndpointItineraryItineraryIdInvoicesFinalPost,
   listInvoicesEndpointItineraryItineraryIdInvoicesGet,
   getInvoiceEndpointInvoicesInvoiceIdGet,
   addLineItemEndpointInvoicesInvoiceIdLineItemsPost,
@@ -61,6 +63,7 @@ import {
   issueInvoiceEndpointInvoicesInvoiceIdIssuePost,
   voidInvoiceEndpointInvoicesInvoiceIdVoidPost,
   paymentTokenEndpointInvoicesInvoiceIdPaymentTokenPost,
+  paymentQuoteEndpointInvoicesInvoiceIdPaymentQuotePost,
   payInvoiceEndpointInvoicesInvoiceIdPayPost,
   refreshOfferEndpointItineraryItineraryIdNodesNodeIdOffersRefreshPost,
   listOffersEndpointItineraryItineraryIdNodesNodeIdOffersGet,
@@ -4376,6 +4379,9 @@ export type InvoiceDetail =
   | "already_reversed"
   | "no_line_items"
   | "line_not_found"
+  | "currency_invalid"
+  | "nothing_to_deposit"
+  | "nothing_to_bill"
   | "validation_error"
   | "network_error"
   | "unknown";
@@ -4388,6 +4394,9 @@ const _INVOICE_TOKENS = new Set<InvoiceDetail>([
   "already_reversed",
   "no_line_items",
   "line_not_found",
+  "currency_invalid",
+  "nothing_to_deposit",
+  "nothing_to_bill",
 ]);
 
 function _parseInvoiceDetail(status: number, error?: unknown): InvoiceDetail {
@@ -4415,6 +4424,56 @@ export async function createInvoice(
         client,
         path: { itinerary_id: itineraryId },
         body,
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+/** POST /itinerary/{itinerary_id}/invoices/deposit — draft a deposit invoice
+ *  (100% of flights, 20% of everything else) over the chargeable nodes (advisor). */
+export async function createDepositInvoice(
+  client: Client,
+  itineraryId: string,
+): Promise<CreateInvoiceResult> {
+  try {
+    const { data, error, response } =
+      await createDepositInvoiceEndpointItineraryItineraryIdInvoicesDepositPost({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, invoice: data };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parseInvoiceDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+/** POST /itinerary/{itinerary_id}/invoices/final — draft a balance invoice for
+ *  every chargeable node's remaining balance (advisor). */
+export async function createFinalInvoice(
+  client: Client,
+  itineraryId: string,
+): Promise<CreateInvoiceResult> {
+  try {
+    const { data, error, response } =
+      await createFinalInvoiceEndpointItineraryItineraryIdInvoicesFinalPost({
+        client,
+        path: { itinerary_id: itineraryId },
       });
     if (error === undefined && data !== undefined) {
       return { ok: true, invoice: data };
@@ -4641,6 +4700,11 @@ export type PaymentDetail =
   | "payment_declined"
   | "payments_unconfigured"
   | "nothing_to_pay"
+  | "quote_required"
+  | "quote_expired"
+  | "no_settlement_currency"
+  | "fx_unavailable"
+  | "rate_unavailable"
   | "validation_error"
   | "network_error"
   | "unknown";
@@ -4650,6 +4714,11 @@ const _PAYMENT_TOKENS = new Set<PaymentDetail>([
   "payment_declined",
   "payments_unconfigured",
   "nothing_to_pay",
+  "quote_required",
+  "quote_expired",
+  "no_settlement_currency",
+  "fx_unavailable",
+  "rate_unavailable",
 ]);
 
 function _parsePaymentDetail(status: number, error?: unknown): PaymentDetail {
@@ -4678,6 +4747,57 @@ export async function getPaymentToken(
       });
     if (error === undefined && data !== undefined) {
       return { ok: true, clientToken: data.client_token };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePaymentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type PaymentQuote = {
+  id: string;
+  invoiceId: string;
+  settlementCurrency: string;
+  settlementAmount: string;
+  rates: Record<string, string>;
+  expiresAt: string;
+};
+
+export type CreatePaymentQuoteResult =
+  | { ok: true; quote: PaymentQuote }
+  | { ok: false; status: number; detail: PaymentDetail };
+
+/**
+ * POST /invoices/{invoice_id}/payment-quote — freeze a short-lived FX lock for a
+ * settlement (pay-currency) invoice (0050). The returned quote's `id` is passed to
+ * `payInvoice`; an expired quote (`quote_expired`) forces a re-quote.
+ */
+export async function createPaymentQuote(
+  client: Client,
+  invoiceId: string,
+): Promise<CreatePaymentQuoteResult> {
+  try {
+    const { data, error, response } =
+      await paymentQuoteEndpointInvoicesInvoiceIdPaymentQuotePost({
+        client,
+        path: { invoice_id: invoiceId },
+      });
+    if (error === undefined && data !== undefined) {
+      return {
+        ok: true,
+        quote: {
+          id: data.id,
+          invoiceId: data.invoice_id,
+          settlementCurrency: data.settlement_currency,
+          settlementAmount: data.settlement_amount,
+          rates: data.rates,
+          expiresAt: data.expires_at,
+        },
+      };
     }
     return {
       ok: false,

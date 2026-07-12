@@ -16,6 +16,8 @@ vi.mock("@ov-black/api-client", () => ({
   listInvoices: vi.fn(),
   getItinerary: vi.fn(),
   createInvoice: vi.fn(),
+  createDepositInvoice: vi.fn(),
+  createFinalInvoice: vi.fn(),
   addInvoiceLineItem: vi.fn(),
   voidInvoiceLineItem: vi.fn(),
   issueInvoice: vi.fn(),
@@ -24,6 +26,8 @@ vi.mock("@ov-black/api-client", () => ({
 
 import {
   addInvoiceLineItem,
+  createDepositInvoice,
+  createFinalInvoice,
   createInvoice,
   getItinerary,
   issueInvoice,
@@ -409,4 +413,43 @@ test("a charged node NOT in the graph still renders its ledger description", asy
   await screen.findByTestId("invoice-panel");
   const row = await screen.findByTestId("line-ln-charge");
   expect(row.textContent).toContain("Aman Kyoto");
+});
+
+test("Capture deposit calls createDepositInvoice", async () => {
+  vi.mocked(createDepositInvoice).mockResolvedValue({ ok: true, invoice: INVOICE });
+  renderPanel();
+  const btn = await screen.findByTestId("invoice-capture-deposit");
+  fireEvent.click(btn);
+  await waitFor(() => expect(createDepositInvoice).toHaveBeenCalledWith({}, "itin-1"));
+});
+
+test("Capture final calls createFinalInvoice", async () => {
+  vi.mocked(createFinalInvoice).mockResolvedValue({ ok: true, invoice: INVOICE });
+  renderPanel();
+  const btn = await screen.findByTestId("invoice-capture-final");
+  fireEvent.click(btn);
+  await waitFor(() => expect(createFinalInvoice).toHaveBeenCalledWith({}, "itin-1"));
+});
+
+test("renders the number, subtotals and settlement block", async () => {
+  const multi: InvoiceResponse = {
+    ...INVOICE,
+    id: "inv-multi",
+    number: 7,
+    status: "issued",
+    issued_at: "2026-07-12T00:00:00Z",
+    subtotals: { EUR: "1000.00", GBP: "400.00" },
+    settlement_currency: "USD",
+    settlement_total: "1620.00",
+    settlement_rates: { EUR: "1.10", GBP: "1.28" },
+    rates_as_of: "2026-07-12T09:00:00Z",
+    lines: [],
+  };
+  vi.mocked(listInvoices).mockResolvedValue({ ok: true, invoices: [multi] });
+  renderPanel();
+  await screen.findByText("INV-000007");
+  const settlement = await screen.findByTestId("invoice-settlement");
+  // The settlement figure is the pay-currency equivalent, with a "rate as of" stamp.
+  expect(settlement.textContent).toContain("$1,620");
+  expect(settlement.textContent?.toLowerCase()).toContain("rate as of");
 });

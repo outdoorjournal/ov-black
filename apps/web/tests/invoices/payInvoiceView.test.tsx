@@ -20,9 +20,11 @@ vi.mock("@ov-black/api-client", () => ({
   getInvoice: vi.fn(),
   getPaymentToken: vi.fn(),
   payInvoice: vi.fn(),
+  createPaymentQuote: vi.fn(),
 }));
 
 import {
+  createPaymentQuote,
   getInvoice,
   getPaymentToken,
   payInvoice,
@@ -168,4 +170,37 @@ test("a paid invoice shows the receipt and never mounts the drop-in", async () =
   await screen.findByTestId("pay-receipt");
   expect(screen.queryByTestId("pay-submit")).toBeNull();
   expect(create).not.toHaveBeenCalled();
+});
+
+test("a settlement invoice locks a quote and pays with quote_id", async () => {
+  vi.mocked(getInvoice).mockResolvedValue({
+    ok: true,
+    invoice: invoice({ currency: "EUR", total: "1000.00", settlement_currency: "USD" }),
+  });
+  vi.mocked(createPaymentQuote).mockResolvedValue({
+    ok: true,
+    quote: {
+      id: "q1",
+      invoiceId: "inv-1",
+      settlementCurrency: "USD",
+      settlementAmount: "1100.00",
+      rates: { EUR: "1.10" },
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    },
+  });
+  renderView();
+  // The pay-currency lock is fetched and the headline shows it + a countdown.
+  await waitFor(() => expect(createPaymentQuote).toHaveBeenCalledWith({}, "inv-1"));
+  await waitFor(() =>
+    expect(screen.getByTestId("pay-amount").textContent).toContain("$1,100"),
+  );
+  expect(screen.getByTestId("pay-settlement-note").textContent).toMatch(/rate locked/);
+
+  fireEvent.click(await screen.findByTestId("pay-submit"));
+  await waitFor(() =>
+    expect(payInvoice).toHaveBeenCalledWith({}, "inv-1", {
+      payment_method_nonce: "fake-valid-nonce",
+      quote_id: "q1",
+    }),
+  );
 });

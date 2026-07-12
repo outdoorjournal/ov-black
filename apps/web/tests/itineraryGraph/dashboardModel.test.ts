@@ -10,6 +10,8 @@ import {
   type ChargeableNode,
   chargedByNode,
   coverageByNode,
+  depositDueForNode,
+  deriveFinanceRows,
   effectiveNodeCost,
   firstUnpaidIssued,
   formatTiming,
@@ -399,5 +401,62 @@ describe("billingChipsByNode (ADV-15)", () => {
     expect(
       billingChipsByNode({ invoices, nodes: [perPerson], partySize: 1 })["n1"],
     ).toEqual({ state: "billed", invoiceId: "iv1" });
+  });
+});
+
+describe("depositDueForNode / deriveFinanceRows (Finances table)", () => {
+  test("deposit schedule — flights 100%, everything else 20%", () => {
+    const flight = node({ id: "f", type: "flight", cost_amount: "1000.00", cost_kind: "total" });
+    const hotel = node({ id: "h", type: "hotel", cost_amount: "2000.00", cost_kind: "total" });
+    expect(depositDueForNode(flight, 1)).toBe(1000);
+    expect(depositDueForNode(hotel, 1)).toBe(400);
+    // per_person expands before the fraction applies
+    const guide = node({ id: "g", type: "experience", cost_amount: "500.00", cost_kind: "per_person" });
+    expect(depositDueForNode(guide, 3)).toBe(300); // 500×3×0.2
+  });
+
+  test("per-item rows split invoiced (issued+paid) from paid (paid only)", () => {
+    const nodes = [
+      node({ id: "n1", type: "hotel", cost_amount: "1000.00", cost_kind: "total" }),
+    ];
+    const invoices: InvoiceResponse[] = [
+      invoice({
+        id: "dep",
+        status: "paid",
+        lines: [chargeLine({ id: "d1", node_id: "n1", amount: "200.00" })],
+      }),
+      invoice({
+        id: "bal",
+        status: "issued",
+        lines: [chargeLine({ id: "b1", node_id: "n1", amount: "800.00" })],
+      }),
+    ];
+    const [row] = deriveFinanceRows({ invoices, nodes, partySize: 1 });
+    expect(row?.cost).toBe(1000);
+    expect(row?.invoiced).toBe(1000); // issued (800) + paid (200)
+    expect(row?.paid).toBe(200); // only the paid invoice
+    expect(row?.remaining).toBe(800); // cost − paid
+    expect(row?.depositDue).toBe(200); // 20% of 1000
+    expect(row?.depositPaid).toBe(true); // paid (200) ≥ deposit-due (200)
+  });
+
+  test("deposit unpaid when nothing settled; void invoices drop out", () => {
+    const nodes = [node({ id: "n1", type: "hotel", cost_amount: "1000.00", cost_kind: "total" })];
+    const invoices: InvoiceResponse[] = [
+      invoice({
+        id: "iv",
+        status: "issued",
+        lines: [chargeLine({ id: "l1", node_id: "n1", amount: "1000.00" })],
+      }),
+      invoice({
+        id: "void",
+        status: "void",
+        lines: [chargeLine({ id: "l2", node_id: "n1", amount: "500.00" })],
+      }),
+    ];
+    const [row] = deriveFinanceRows({ invoices, nodes, partySize: 1 });
+    expect(row?.invoiced).toBe(1000); // void excluded
+    expect(row?.paid).toBe(0);
+    expect(row?.depositPaid).toBe(false);
   });
 });

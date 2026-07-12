@@ -77,8 +77,10 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
     ...(role === "advisor"
       ? [
           {
+            // Route segment stays `invoices` (deep links + /invoices/[id] pay
+            // page); the Rail labels it "Finances" (doc/thoughts.md).
             href: `/itinerary/${id}/invoices` as Route,
-            label: "Invoices",
+            label: "Finances",
             active: activeSeg === "invoices",
             icon: <InvoiceIcon />,
           },

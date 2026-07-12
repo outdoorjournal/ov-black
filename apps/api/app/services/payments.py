@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from functools import partial
 
@@ -37,15 +38,97 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Invoice, InvoiceStatus, Payment, PaymentStatus
+from app.models import Invoice, InvoiceStatus, Payment, PaymentQuote, PaymentStatus
 from app.observability import emit_metric, span
 from app.payments.base import PaymentGateway, PaymentGatewayError, new_gateway_reference
+from app.services import invoices as invoices_svc
+from app.services.fx import FxService
 from app.services.invoices import _invoice_total, mark_invoice_paid
 from app.services.itineraries import ActorContext, ItineraryError, ItineraryOutcome
 
 logger = logging.getLogger("ov_black.payments")
 
 _ZERO = Decimal("0.00")
+_CENTS = Decimal("0.01")
+
+
+async def create_payment_quote(
+    session: AsyncSession,
+    fx: FxService,
+    *,
+    invoice_id: uuid.UUID,
+) -> PaymentQuote | ItineraryError:
+    """Freeze a short-lived pay-time FX lock over a settlement invoice (0050).
+
+    Pulls the current native→settlement rate per currency, computes the exact
+    charge in the invoice's ``settlement_currency``, and persists it locked for
+    ``payment_quote_ttl_seconds``. The pay call references the quote and charges the
+    locked amount; an expired/consumed quote forces a re-quote. Only for issued
+    invoices with a settlement currency and FX configured — a native invoice pays
+    directly (``no_settlement_currency``)."""
+    from app.config import get_settings
+
+    view = await invoices_svc.get_invoice(session, invoice_id)
+    if isinstance(view, ItineraryError):
+        return view
+    invoice = view.invoice
+    if invoice.status is not InvoiceStatus.issued:
+        return _err("invoice_not_issued")
+    target = invoice.settlement_currency
+    if target is None:
+        return _err("no_settlement_currency")
+    if not fx.enabled:
+        return _err("fx_unavailable")
+
+    rates: dict[str, str] = {}
+    total = _ZERO
+    for currency, subtotal in view.subtotals.items():
+        if subtotal == _ZERO:
+            continue
+        rate = await fx.get_rate(currency, target)
+        if rate is None:
+            return _err("rate_unavailable")
+        rates[currency] = str(rate)
+        total += subtotal * rate
+    total = total.quantize(_CENTS)
+    if total <= _ZERO:
+        return _err("nothing_to_pay")
+
+    ttl = get_settings().payment_quote_ttl_seconds
+    quote = PaymentQuote(
+        invoice_id=invoice_id,
+        settlement_currency=target,
+        settlement_amount=total,
+        rates=rates,
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
+    )
+    session.add(quote)
+    await session.flush()
+    await session.commit()
+    logger.info(
+        "invoice.payment_quote",
+        extra={"invoice_id": str(invoice_id), "quote_id": str(quote.id)},
+    )
+    return quote
+
+
+async def _load_valid_quote(
+    session: AsyncSession, invoice_id: uuid.UUID, quote_id: uuid.UUID
+) -> PaymentQuote | None:
+    """The quote if it belongs to this invoice and is neither consumed nor expired."""
+    quote = (
+        await session.execute(
+            select(PaymentQuote).where(
+                PaymentQuote.id == quote_id,
+                PaymentQuote.invoice_id == invoice_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if quote is None or quote.consumed_at is not None:
+        return None
+    if quote.expires_at <= datetime.now(UTC):
+        return None
+    return quote
 
 
 def _err(detail: str) -> ItineraryError:
@@ -118,8 +201,15 @@ async def pay_invoice(
     payment_method_nonce: str,
     client_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
+    quote_id: uuid.UUID | None = None,
 ) -> Payment | ItineraryError:
     """Charge an issued invoice and record the payment.
+
+    An invoice with a ``settlement_currency`` (0050) charges in that currency at a
+    **locked** pay-time quote: ``quote_id`` must reference a fresh, unconsumed
+    :class:`PaymentQuote` (``quote_required`` / ``quote_expired`` otherwise), and the
+    charge is its frozen ``settlement_amount``. A native invoice (no settlement)
+    charges Σ(lines) in its own currency as before.
 
     On a settled sale the invoice flips to ``paid`` and the ``succeeded`` payment
     is returned. On a decline the ``failed`` payment is still recorded (audit)
@@ -161,8 +251,23 @@ async def pay_invoice(
         await session.rollback()
         return _err("invoice_not_issued")
 
-    total = await _invoice_total(session, invoice_id)
-    if total <= _ZERO:
+    # Resolve what to charge: a settlement invoice charges the locked quote amount
+    # in the pay currency; a native invoice charges Σ(lines) in its own currency.
+    quote: PaymentQuote | None = None
+    if invoice.settlement_currency is not None:
+        if quote_id is None:
+            await session.rollback()
+            return _err("quote_required")
+        quote = await _load_valid_quote(session, invoice_id, quote_id)
+        if quote is None:
+            await session.rollback()
+            return _err("quote_expired")
+        charge_amount = quote.settlement_amount
+        charge_currency = quote.settlement_currency
+    else:
+        charge_amount = await _invoice_total(session, invoice_id)
+        charge_currency = invoice.currency
+    if charge_amount <= _ZERO:
         await session.rollback()
         return _err("nothing_to_pay")
 
@@ -180,8 +285,8 @@ async def pay_invoice(
             sale = await anyio.to_thread.run_sync(
                 partial(
                     gateway.sale,
-                    amount=total,
-                    currency=invoice.currency,
+                    amount=charge_amount,
+                    currency=charge_currency,
                     payment_method_nonce=payment_method_nonce,
                     reference=reference,
                     metadata=metadata,
@@ -205,8 +310,8 @@ async def pay_invoice(
 
     payment = Payment(
         invoice_id=invoice_id,
-        amount=total,
-        currency=invoice.currency,
+        amount=charge_amount,
+        currency=charge_currency,
         status=PaymentStatus.succeeded if sale.ok else PaymentStatus.failed,
         gateway=gateway.name,
         gateway_reference=reference,
@@ -220,6 +325,9 @@ async def pay_invoice(
     session.add(payment)
 
     if sale.ok:
+        # Consume the FX lock so it can't be replayed for another charge.
+        if quote is not None:
+            quote.consumed_at = datetime.now(UTC)
         marked = await mark_invoice_paid(session, invoice_id=invoice_id)
         if isinstance(marked, ItineraryError):  # pragma: no cover — status re-checked above
             await session.rollback()

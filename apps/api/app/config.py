@@ -299,6 +299,18 @@ class Settings(BaseSettings):
             "charge; safe client retries go through the idempotency key instead."
         ),
     )
+    payment_quote_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        description=(
+            "Lifetime of a pay-time FX lock (payment_quotes, 0050). When a traveler "
+            "opens the pay dialog we freeze the native→settlement rate for this long; "
+            "an expired quote forces a re-quote at a fresher rate. Distinct from (and "
+            "much shorter than) exchange_rate_cache_ttl_seconds, which is the longer "
+            "read-side DISPLAY cache."
+        ),
+    )
 
     inventory_providers_enabled: str = Field(
         default="ov,mock",

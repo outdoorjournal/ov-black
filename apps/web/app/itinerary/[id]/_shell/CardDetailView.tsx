@@ -587,7 +587,7 @@ function EditFacet({
   };
 
   const fieldClass =
-    "rounded-md border border-ink/20 bg-paper px-2 py-1 font-sans text-sm text-ink";
+    "rounded-md border border-ink/20 bg-paper-white px-2 py-1 font-sans text-sm text-ink";
 
   return (
     <FacetCard label="Edit details" testid="card-detail-edit">
