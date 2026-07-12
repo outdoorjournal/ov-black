@@ -56,7 +56,31 @@ separate re-examination and intentionally not folded into the affordance model.
   clean. **Pending:** a browser pass to confirm soft-nav → overlay, hard-nav →
   full page, and dismiss; plus visual polish (CardDetailView is a full-bleed
   takeover — its own back-chrome may want hiding inside the modal frame).
-- **Phase 4 — not started.**
+- **Browser verification (P1–P3) — done.** Drove the running stack as an advisor
+  (magic-link login, Japan trunk `eb6aabf2…`) at mdpi 1280×800:
+  - **P1** — spine left-anchored ✓. Caveat: with the concierge panel *open* at
+    mdpi the middle column is squeezed and spine cards clip on the right (the
+    concierge + 340px rail both claim width). Pre-existing (the rail was always
+    340) — flag, not a P1 regression. Collapsed (its intended state) is clean.
+  - **P2c** — `NodeZoomCard` duplicate gone; compact identity + zones confirmed ✓.
+  - **P3** — soft-nav renders the intercepted modal overlay; Escape/✕/backdrop
+    dismiss back to the Journal ✓.
+- **Advisor feedback applied (post-verification):**
+  - Zone 1 now wears the real per-type token icon (`TYPE_TOKENS`/`inferCardKind`)
+    in its accent, not a generic dot.
+  - The rail renders the full notes THREAD (`NotesPanel`, compressible to the
+    most recent 3), each note attributed to its author ("You"/"Advisor"/
+    "Artemis"/"Traveler") from `actor_kind`. Replaced `RailNoteAction`; the modal
+    shows authors too. `NotesPanel` gained `collapseAfter` + `viewerActorKind`.
+  - The elision "open days" expander is now an obvious button (filled pill +
+    chevron + "Show N open days") — it was an unfindable faint label.
+  - All verified in-browser; suites green (rail/notes/diff/phase5 + affordances).
+- **Follow-ups still open:** the concierge-open mdpi card-clipping (pre-existing,
+  worth a fix — maybe a spine min-width or a narrower/hidden rail when the
+  concierge is open); the Zone-3 map; atmosphere image source; CardDetailView's
+  own back-chrome inside the modal frame.
+- **Phase 4 — not started** (deferred until after this verification round; ready
+  to pick up).
 
 > ⚠ **Pre-existing, unrelated test failure** (not from this work): the full web
 > suite has one red — `store.test.tsx > selectCanApprove > advisor may
