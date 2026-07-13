@@ -42,6 +42,7 @@ from app.services.invoices import (
     issue_invoice,
     list_invoices,
     mark_invoice_viewed,
+    pay_context,
     remove_line_item,
     settlement_display,
     void_invoice,
@@ -844,6 +845,57 @@ async def test_create_invoice_defaults_settlement_from_client_preference(
         )
         assert isinstance(invoice, Invoice)
         assert invoice.settlement_currency == "USD"
+    finally:
+        await _cleanup(itin.id)
+        await db_session.execute(text("delete from public.clients where id = :i"), {"i": client_id})
+        await db_session.execute(text("delete from auth.users where id = :i"), {"i": owner_id})
+        await db_session.commit()
+
+
+@integration
+@pytest.mark.asyncio
+async def test_pay_context_returns_trip_and_client_billing(
+    db_session: AsyncSession,
+) -> None:
+    # The pay page's prefill/narration source: trip title + owning client's billing.
+    owner_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    await db_session.execute(
+        text(
+            "insert into auth.users (id, email, aud, role, instance_id) "
+            "values (:id, :email, 'authenticated', 'authenticated', "
+            "'00000000-0000-0000-0000-000000000000')"
+        ),
+        {"id": owner_id, "email": f"ctx-{owner_id}@x.com"},
+    )
+    await db_session.execute(
+        text(
+            "insert into public.clients (id, owner_id, full_name, email, address, "
+            "city, region, postal_code, country_code, preferred_currency) "
+            "values (:id, :o, 'Ada Lovelace', :e, '1 Analytical Way', 'London', "
+            "'LDN', 'EC1A 1AA', 'GB', 'GBP')"
+        ),
+        {"id": client_id, "o": owner_id, "e": f"ctx-{client_id}@x.com"},
+    )
+    await db_session.commit()
+    itin = await create_itinerary(
+        db_session, _actor(), title="Kyoto in autumn", client_id=client_id
+    )
+    try:
+        ctx = await pay_context(db_session, itin.id)
+        assert not isinstance(ctx, ItineraryError)
+        assert ctx.itinerary_title == "Kyoto in autumn"
+        assert ctx.full_name == "Ada Lovelace"
+        assert ctx.address == "1 Analytical Way"
+        assert ctx.city == "London"
+        assert ctx.region == "LDN"
+        assert ctx.postal_code == "EC1A 1AA"
+        assert ctx.country_code == "GB"
+        assert ctx.preferred_currency == "GBP"
+
+        # A missing itinerary collapses to NOT_FOUND.
+        missing = await pay_context(db_session, uuid.uuid4())
+        assert isinstance(missing, ItineraryError)
     finally:
         await _cleanup(itin.id)
         await db_session.execute(text("delete from public.clients where id = :i"), {"i": client_id})

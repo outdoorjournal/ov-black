@@ -63,6 +63,7 @@ import {
   issueInvoiceEndpointInvoicesInvoiceIdIssuePost,
   voidInvoiceEndpointInvoicesInvoiceIdVoidPost,
   paymentTokenEndpointInvoicesInvoiceIdPaymentTokenPost,
+  invoicePayContextEndpointInvoicesInvoiceIdPayContextGet,
   paymentQuoteEndpointInvoicesInvoiceIdPaymentQuotePost,
   payInvoiceEndpointInvoicesInvoiceIdPayPost,
   refreshOfferEndpointItineraryItineraryIdNodesNodeIdOffersRefreshPost,
@@ -174,6 +175,7 @@ import type {
   InvoiceResponse,
   InvoiceLineItemResponse,
   PayInvoiceRequest,
+  InvoicePayContextResponse,
   PaymentResponse,
   PaymentTokenResponse,
   BookNodeRequest,
@@ -321,6 +323,7 @@ export type {
   InvoiceStatus,
   InvoiceLineKind,
   PayInvoiceRequest,
+  InvoicePayContextResponse,
   PaymentResponse,
   PaymentTokenResponse,
   PaymentStatus,
@@ -4747,6 +4750,38 @@ export async function getPaymentToken(
       });
     if (error === undefined && data !== undefined) {
       return { ok: true, clientToken: data.client_token };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: _parsePaymentDetail(response.status, error),
+    };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type GetPayContextResult =
+  | { ok: true; context: InvoicePayContextResponse }
+  | { ok: false; status: number; detail: PaymentDetail };
+
+/**
+ * GET /invoices/{invoice_id}/pay-context — trip title + the owning traveler's
+ * billing identity, used to narrate *why* the invoice is owed and to pre-fill the
+ * pay form. Gated like the invoice read (advisor / owning client / creator).
+ */
+export async function getPayContext(
+  client: Client,
+  invoiceId: string,
+): Promise<GetPayContextResult> {
+  try {
+    const { data, error, response } =
+      await invoicePayContextEndpointInvoicesInvoiceIdPayContextGet({
+        client,
+        path: { invoice_id: invoiceId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, context: data };
     }
     return {
       ok: false,

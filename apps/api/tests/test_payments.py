@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from app.models import Invoice, InvoiceStatus, Payment, PaymentStatus
-from app.payments.base import PaymentGatewayError, SaleResult
+from app.payments.base import BillingInfo, PaymentGatewayError, SaleResult
 from app.payments.braintree_gateway import DECLINED_NONCE, VALID_NONCE, FakeGateway
 from app.services.invoices import add_line_item, create_invoice, get_invoice, issue_invoice
 from app.services.itineraries import ActorContext, ActorKind, ItineraryError, create_itinerary
@@ -158,6 +158,42 @@ async def test_pay_settles_and_marks_paid(db_session: AsyncSession) -> None:
         assert not isinstance(view, ItineraryError)
         assert view.invoice.status is InvoiceStatus.paid
         assert len(view.payments) == 1
+    finally:
+        await _cleanup(invoice.itinerary_id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_pay_forwards_billing_to_gateway(db_session: AsyncSession) -> None:
+    """The payer's name + address reach the gateway's billing block (and, via the
+    FakeGateway echo, land in the recorded payment's ``raw``)."""
+    invoice = await _issued_invoice(db_session, amount="500.00")
+    gateway = _SpyGateway()
+    billing = BillingInfo(
+        first_name="Ada",
+        last_name="Lovelace",
+        street_address="1 Analytical Way",
+        locality="London",
+        region="LDN",
+        postal_code="EC1A 1AA",
+        country_code_alpha2="GB",
+    )
+    try:
+        payment = await pay_invoice(
+            db_session,
+            _actor(),
+            gateway,
+            invoice_id=invoice.id,
+            payment_method_nonce=VALID_NONCE,
+            client_id=None,
+            billing=billing,
+        )
+        assert isinstance(payment, Payment)
+        assert gateway.calls[-1]["billing"] is billing
+        # FakeGateway echoes the mapped billing block into ``raw`` for assertion.
+        assert payment.raw["billing"]["first_name"] == "Ada"
+        assert payment.raw["billing"]["street_address"] == "1 Analytical Way"
+        assert payment.raw["billing"]["country_code_alpha2"] == "GB"
     finally:
         await _cleanup(invoice.itinerary_id)
 

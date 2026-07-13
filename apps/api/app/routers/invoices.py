@@ -32,7 +32,7 @@ from app.models import (
     Payment,
     PaymentStatus,
 )
-from app.payments.base import PaymentGateway
+from app.payments.base import BillingInfo, PaymentGateway
 from app.routers.itineraries import (
     _actor_from_user,
     _advisor_actor_from_user,
@@ -127,10 +127,34 @@ class PayInvoiceRequest(BaseModel):
     # Required for a settlement (multi-currency / pay-currency) invoice: the locked
     # FX quote to charge against (0050). Omitted for a native-currency invoice.
     quote_id: uuid.UUID | None = None
+    # Payer name + billing address (I2 pay form). Pre-filled from the client record
+    # and possibly edited by the traveler; forwarded to the gateway's billing block.
+    # Optional — an unconfigured billing form simply charges without it.
+    billing_name: str | None = Field(default=None, max_length=200)
+    billing_address: str | None = Field(default=None, max_length=2000)
+    billing_city: str | None = Field(default=None, max_length=200)
+    billing_region: str | None = Field(default=None, max_length=200)
+    billing_postal_code: str | None = Field(default=None, max_length=32)
+    billing_country: str | None = Field(default=None, max_length=2)
 
 
 class PaymentTokenResponse(BaseModel):
     client_token: str
+
+
+class InvoicePayContextResponse(BaseModel):
+    """Traveler + trip context for the pay page (I2): the trip title to narrate
+    *why* this is owed, plus the owning client's billing identity to pre-fill the
+    payment form. Reachable by the same viewers as the invoice itself."""
+
+    itinerary_title: str
+    full_name: str | None = None
+    address: str | None = None
+    city: str | None = None
+    region: str | None = None
+    postal_code: str | None = None
+    country_code: str | None = None
+    preferred_currency: str | None = None
 
 
 class PaymentQuoteResponse(BaseModel):
@@ -316,6 +340,43 @@ async def _load_invoice_or_404(session: AsyncSession, invoice_id: uuid.UUID) -> 
     if isinstance(view_or_err, ItineraryError):
         _raise_for_error(view_or_err)
     return view_or_err.invoice
+
+
+def _billing_from_request(payload: PayInvoiceRequest) -> BillingInfo | None:
+    """Build a :class:`BillingInfo` from the pay form's billing fields.
+
+    ``billing_name`` is split on the LAST space so a multi-word first name stays
+    intact ("Mary Jane Watson" → first "Mary Jane", last "Watson"); a single token
+    is treated as the first name. Returns ``None`` when nothing billing-shaped was
+    sent, so a bare pay call charges exactly as before."""
+    first = last = None
+    if payload.billing_name and payload.billing_name.strip():
+        first, _, last = payload.billing_name.strip().rpartition(" ")
+        if not first:  # no space → whole string is the first name
+            first, last = last, None
+    billing = BillingInfo(
+        first_name=first or None,
+        last_name=last or None,
+        street_address=payload.billing_address or None,
+        locality=payload.billing_city or None,
+        region=payload.billing_region or None,
+        postal_code=payload.billing_postal_code or None,
+        country_code_alpha2=(payload.billing_country.upper() if payload.billing_country else None),
+    )
+    # All-empty → don't bother the gateway with an empty billing block.
+    if any(
+        (
+            billing.first_name,
+            billing.last_name,
+            billing.street_address,
+            billing.locality,
+            billing.region,
+            billing.postal_code,
+            billing.country_code_alpha2,
+        )
+    ):
+        return billing
+    return None
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -602,6 +663,39 @@ async def void_invoice_endpoint(
 # ── Payments (M005/I2) ──────────────────────────────────────────────────────
 
 
+@router.get(
+    "/invoices/{invoice_id}/pay-context",
+    response_model=InvoicePayContextResponse,
+    summary="Trip title + traveler billing identity for the pay page (prefill).",
+)
+async def invoice_pay_context_endpoint(
+    invoice_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> InvoicePayContextResponse:
+    """Read-side context for the pay surface: the trip title (to narrate *why*
+    this is owed) plus the owning client's billing identity (to pre-fill the
+    form). Gated exactly like ``GET /invoices/{id}`` — advisor, owning client, or
+    creator — because it returns client PII."""
+    view = await invoices_svc.get_invoice(session, invoice_id)
+    if isinstance(view, ItineraryError):
+        _raise_for_error(view)
+    await _assert_itinerary_access(session, user, view.invoice.itinerary_id)
+    ctx = await invoices_svc.pay_context(session, view.invoice.itinerary_id)
+    if isinstance(ctx, ItineraryError):
+        _raise_for_error(ctx)
+    return InvoicePayContextResponse(
+        itinerary_title=ctx.itinerary_title,
+        full_name=ctx.full_name,
+        address=ctx.address,
+        city=ctx.city,
+        region=ctx.region,
+        postal_code=ctx.postal_code,
+        country_code=ctx.country_code,
+        preferred_currency=ctx.preferred_currency,
+    )
+
+
 @router.post(
     "/invoices/{invoice_id}/payment-token",
     response_model=PaymentTokenResponse,
@@ -652,6 +746,7 @@ async def pay_invoice_endpoint(
         client_id=client_id,
         idempotency_key=idempotency_key,
         quote_id=payload.quote_id,
+        billing=_billing_from_request(payload),
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)

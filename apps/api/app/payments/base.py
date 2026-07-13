@@ -52,6 +52,26 @@ class SaleResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BillingInfo:
+    """Optional customer + billing identity forwarded to the processor on a sale.
+
+    Sourced from the owning client's record (``full_name`` split on the last
+    space; the free-text ``address`` maps to ``street_address``) and possibly
+    edited by the traveler on the pay form. Every field is optional — a gateway
+    forwards only the parts that are present. Not PII-logged (never goes to a log
+    record; only into the processor request + the polymorphic ``raw`` column).
+    """
+
+    first_name: str | None = None
+    last_name: str | None = None
+    street_address: str | None = None
+    locality: str | None = None
+    region: str | None = None
+    postal_code: str | None = None
+    country_code_alpha2: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RefundResult:
     """Normalized outcome of returning a settled charge, vendor-independent.
 
@@ -88,6 +108,7 @@ class PaymentGateway(Protocol):
         payment_method_nonce: str,
         reference: str,
         metadata: dict[str, str],
+        billing: BillingInfo | None = None,
     ) -> SaleResult:
         """Charge ``amount`` against the tokenized ``payment_method_nonce``.
 
@@ -95,7 +116,8 @@ class PaymentGateway(Protocol):
         processor-side transaction, e.g. Braintree ``order_id``) so a row in the
         processor dashboard maps back to our invoice; ``metadata`` carries the
         invoice/itinerary/client ids for richer cross-referencing where the
-        processor supports it.
+        processor supports it. ``billing`` (optional) carries the payer's name +
+        address to the processor's customer/billing fields (AVS, receipts).
         """
         ...
 

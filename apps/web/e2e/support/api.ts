@@ -406,6 +406,70 @@ export async function approveNodeAsAdvisor(
   }
 }
 
+/** Set a client's billing identity (advisor, PATCH /clients/{id}) — the pay page
+ *  pre-fills its form from this, so the payment e2e seeds it up front (0051). */
+export async function setClientBillingAsAdvisor(
+  clientId: string,
+  body: {
+    address?: string;
+    city?: string;
+    region?: string;
+    postal_code?: string;
+    country_code?: string;
+  },
+): Promise<void> {
+  const resp = await advisorFetch(`/clients/${clientId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    throw new Error(`set client billing failed (${resp.status}): ${await resp.text()}`);
+  }
+}
+
+/** Draft a "Balance" invoice covering every remaining node balance (advisor,
+ *  POST /itinerary/{id}/invoices/final) — returns the new invoice id. */
+export async function createFinalInvoiceAsAdvisor(itineraryId: string): Promise<string> {
+  const resp = await advisorFetch(`/itinerary/${itineraryId}/invoices/final`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  if (!resp.ok) {
+    throw new Error(`create final invoice failed (${resp.status}): ${await resp.text()}`);
+  }
+  return ((await resp.json()) as { id: string }).id;
+}
+
+/** Issue a draft invoice (advisor, POST /invoices/{id}/issue) — flips it to
+ *  `issued` so the owning traveler can pay it. */
+export async function issueInvoiceAsAdvisor(invoiceId: string): Promise<void> {
+  const resp = await advisorFetch(`/invoices/${invoiceId}/issue`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  if (!resp.ok) {
+    throw new Error(`issue invoice failed (${resp.status}): ${await resp.text()}`);
+  }
+}
+
+/** One invoice with its payments (advisor) — the backstop for "the charge really
+ *  settled": status flips to `paid` and a succeeded payment (last-4) is recorded. */
+export async function getInvoiceAsAdvisor(invoiceId: string): Promise<{
+  id: string;
+  status: string;
+  payments: Array<{ status: string; amount: string; last_four: string | null }>;
+}> {
+  const resp = await advisorFetch(`/invoices/${invoiceId}`);
+  if (!resp.ok) {
+    throw new Error(`GET /invoices/${invoiceId} failed (${resp.status}): ${await resp.text()}`);
+  }
+  return (await resp.json()) as {
+    id: string;
+    status: string;
+    payments: Array<{ status: string; amount: string; last_four: string | null }>;
+  };
+}
+
 /** Every invoice on the itinerary (advisor) — the API-seam backstop for the
  *  billing cockpit: assert what the browser actions actually persisted. */
 export async function listInvoicesAsAdvisor(

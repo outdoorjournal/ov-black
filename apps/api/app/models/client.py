@@ -88,6 +88,12 @@ class Client(Base):
     address: Mapped[str | None] = mapped_column(nullable=True)
     favorite_airport: Mapped[str | None] = mapped_column(nullable=True)
     preferred_currency: Mapped[str | None] = mapped_column(nullable=True)
+    # Structured billing-address parts (0051) — `address` above is the street
+    # line; these complete it for the pay form + Braintree billing. All nullable.
+    city: Mapped[str | None] = mapped_column(nullable=True)
+    region: Mapped[str | None] = mapped_column(nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(nullable=True)
+    country_code: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -99,6 +99,7 @@ def test_node_type_enum_values_match_migration() -> None:
         "walk",
         "boat",
         "waiting",
+        "article",
     }
     assert {m.value for m in NodeStatus} == {
         "pending",

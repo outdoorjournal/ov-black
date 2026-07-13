@@ -342,6 +342,10 @@ async def get_client_endpoint(
         address=client.address,
         favorite_airport=client.favorite_airport,
         preferred_currency=client.preferred_currency,
+        city=client.city,
+        region=client.region,
+        postal_code=client.postal_code,
+        country_code=client.country_code,
         dossier=_dossier_detail(ctx.dossier),
         dossier_facts=[
             DossierFactDetail.model_validate(f, from_attributes=True) for f in ctx.dossier_facts
@@ -395,6 +399,14 @@ async def update_client_endpoint(
         client.preferred_currency = (
             payload.preferred_currency.upper() if payload.preferred_currency else None
         )
+    if "city" in provided:
+        client.city = payload.city
+    if "region" in provided:
+        client.region = payload.region
+    if "postal_code" in provided:
+        client.postal_code = payload.postal_code
+    if "country_code" in provided:
+        client.country_code = payload.country_code.upper() if payload.country_code else None
 
     await session.flush()
     await session.commit()

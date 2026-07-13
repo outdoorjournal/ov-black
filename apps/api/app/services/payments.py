@@ -40,7 +40,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Invoice, InvoiceStatus, Payment, PaymentQuote, PaymentStatus
 from app.observability import emit_metric, span
-from app.payments.base import PaymentGateway, PaymentGatewayError, new_gateway_reference
+from app.payments.base import (
+    BillingInfo,
+    PaymentGateway,
+    PaymentGatewayError,
+    new_gateway_reference,
+)
 from app.services import invoices as invoices_svc
 from app.services.fx import FxService
 from app.services.invoices import _invoice_total, mark_invoice_paid
@@ -202,6 +207,7 @@ async def pay_invoice(
     client_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     quote_id: uuid.UUID | None = None,
+    billing: BillingInfo | None = None,
 ) -> Payment | ItineraryError:
     """Charge an issued invoice and record the payment.
 
@@ -290,6 +296,7 @@ async def pay_invoice(
                     payment_method_nonce=payment_method_nonce,
                     reference=reference,
                     metadata=metadata,
+                    billing=billing,
                 )
             )
     except PaymentGatewayError as exc:

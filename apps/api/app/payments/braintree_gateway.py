@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Any
 
 import braintree
 
-from app.payments.base import PaymentGateway, PaymentGatewayError, RefundResult, SaleResult
+from app.payments.base import (
+    BillingInfo,
+    PaymentGateway,
+    PaymentGatewayError,
+    RefundResult,
+    SaleResult,
+)
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -78,20 +84,27 @@ class BraintreeGateway:
         payment_method_nonce: str,
         reference: str,
         metadata: dict[str, str],
+        billing: BillingInfo | None = None,
     ) -> SaleResult:
         # ``order_id`` carries our cross-reference key onto the Braintree side so
         # a dashboard row maps back to our invoice. (Custom fields would add
         # invoice/itinerary ids too but must be pre-registered in the control
         # panel; order_id always works — see D025 / mvp-plan §8.)
+        request: dict[str, Any] = {
+            "amount": str(amount),
+            "payment_method_nonce": payment_method_nonce,
+            "order_id": reference,
+            "options": {"submit_for_settlement": True},
+        }
+        # Forward the payer's name + address to Braintree's billing block (AVS,
+        # dashboard, receipts) — mirrors the voyage-site checkout. Only non-empty
+        # parts are sent; the free-text address becomes ``street_address``.
+        if billing is not None:
+            billing_request = _braintree_billing(billing)
+            if billing_request:
+                request["billing"] = billing_request
         try:
-            result = self._gateway.transaction.sale(
-                {
-                    "amount": str(amount),
-                    "payment_method_nonce": payment_method_nonce,
-                    "order_id": reference,
-                    "options": {"submit_for_settlement": True},
-                }
-            )
+            result = self._gateway.transaction.sale(request)
         except Exception as exc:  # noqa: BLE001 — a raise is infra failure, not a decline
             raise _as_gateway_error(exc) from exc
         return _to_sale_result(result, metadata=metadata)
@@ -123,6 +136,26 @@ class BraintreeGateway:
 
     def __repr__(self) -> str:  # never leak the gateway's keyed config
         return "BraintreeGateway(braintree)"
+
+
+def _braintree_billing(billing: BillingInfo) -> dict[str, str]:
+    """Map our :class:`BillingInfo` to Braintree's ``billing`` address block.
+
+    Braintree accepts ``first_name``/``last_name`` on the billing address plus
+    ``street_address``, ``locality``, ``region``, ``postal_code``, and
+    ``country_code_alpha2`` (mirrors the voyage-site ``billing`` object). Only
+    non-empty parts are included so we never send blank fields.
+    """
+    fields = {
+        "first_name": billing.first_name,
+        "last_name": billing.last_name,
+        "street_address": billing.street_address,
+        "locality": billing.locality,
+        "region": billing.region,
+        "postal_code": billing.postal_code,
+        "country_code_alpha2": billing.country_code_alpha2,
+    }
+    return {key: value for key, value in fields.items() if value}
 
 
 def _to_sale_result(result: Any, *, metadata: dict[str, str]) -> SaleResult:
@@ -215,6 +248,7 @@ class FakeGateway:
         payment_method_nonce: str,
         reference: str,
         metadata: dict[str, str],
+        billing: BillingInfo | None = None,
     ) -> SaleResult:
         if "declin" in payment_method_nonce.lower():
             return SaleResult(
@@ -223,6 +257,8 @@ class FakeGateway:
                 processor_response="2000 Do Not Honor (fake)",
                 raw={"fake": True, "reference": reference, "nonce": payment_method_nonce},
             )
+        # Echo the billing block back through ``raw`` so a service-level test can
+        # assert it threaded through without a live Braintree sandbox.
         return SaleResult(
             ok=True,
             status="submitted_for_settlement",
@@ -236,6 +272,7 @@ class FakeGateway:
                 "amount": str(amount),
                 "currency": currency,
                 "metadata": metadata,
+                "billing": _braintree_billing(billing) if billing is not None else {},
             },
         )
 

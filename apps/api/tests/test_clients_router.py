@@ -91,7 +91,7 @@ class FakeSession:
         sql = str(compiled).lower()
 
         # ── LIST /clients — the Wave F total (count, filters only, no join) ──
-        if "count" in sql and "from clients" in sql and "join" not in sql:
+        if "count(" in sql and "from clients" in sql and "join" not in sql:
             advisor_id = next((v for v in params.values() if isinstance(v, uuid.UUID)), None)
             owned = [c for c in self.clients_by_id.values() if c.owner_id == advisor_id]
             return _ExecResult([len(owned)])
@@ -537,6 +537,10 @@ def test_patch_client_updates_logistics_and_uppercases_codes(
             "address": "1 Park Ave, New York",
             "favorite_airport": "jfk",
             "preferred_currency": "usd",
+            "city": "New York",
+            "region": "NY",
+            "postal_code": "10016",
+            "country_code": "us",
         },
     )
     assert resp.status_code == 200
@@ -544,9 +548,15 @@ def test_patch_client_updates_logistics_and_uppercases_codes(
     assert body["address"] == "1 Park Ave, New York"
     assert body["favorite_airport"] == "JFK"
     assert body["preferred_currency"] == "USD"
+    # Structured billing parts (0051) persist; the country code upper-cases.
+    assert body["city"] == "New York"
+    assert body["region"] == "NY"
+    assert body["postal_code"] == "10016"
+    assert body["country_code"] == "US"
     # The mutation stuck on the persisted row.
     assert own.favorite_airport == "JFK"
     assert own.preferred_currency == "USD"
+    assert own.country_code == "US"
 
 
 def test_patch_client_other_advisors_client_returns_404(

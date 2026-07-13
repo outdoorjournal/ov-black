@@ -318,6 +318,49 @@ async def _client_preferred_currency(session: AsyncSession, itinerary: Itinerary
     return pref.strip().upper() if pref else None
 
 
+@dataclass(frozen=True, slots=True)
+class PayContext:
+    """Trip + owning-client context for the traveler pay page (I2)."""
+
+    itinerary_title: str
+    full_name: str | None
+    address: str | None
+    city: str | None
+    region: str | None
+    postal_code: str | None
+    country_code: str | None
+    preferred_currency: str | None
+
+
+async def pay_context(
+    session: AsyncSession, itinerary_id: uuid.UUID
+) -> PayContext | ItineraryError:
+    """Load the trip title + owning client's billing identity for the pay page.
+
+    Returns ``NOT_FOUND`` if the itinerary is gone. Client fields are ``None`` when
+    the trip has no linked client or the field was never recorded."""
+    itinerary = (
+        await session.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
+    if itinerary is None:
+        return _not_found()
+    client: Client | None = None
+    if itinerary.client_id is not None:
+        client = (
+            await session.execute(select(Client).where(Client.id == itinerary.client_id))
+        ).scalar_one_or_none()
+    return PayContext(
+        itinerary_title=itinerary.title,
+        full_name=client.full_name if client else None,
+        address=client.address if client else None,
+        city=client.city if client else None,
+        region=client.region if client else None,
+        postal_code=client.postal_code if client else None,
+        country_code=client.country_code if client else None,
+        preferred_currency=client.preferred_currency if client else None,
+    )
+
+
 async def create_invoice(
     session: AsyncSession,
     actor: ActorContext,

@@ -8,7 +8,7 @@
 
 import { notFound, redirect } from "next/navigation";
 
-import { createApiClient, getInvoice } from "@ov-black/api-client";
+import { createApiClient, getInvoice, getPayContext } from "@ov-black/api-client";
 
 import { demoTestCard, publicEnv } from "@/lib/env";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -49,11 +49,16 @@ export default async function InvoicePage({ params }: PageProps) {
     notFound();
   }
 
+  // Best-effort prefill/narration context — the invoice gate above is the real
+  // authority, so a context miss just renders an empty billing form.
+  const ctx = await getPayContext(api, invoiceId);
+
   return (
     <PayInvoiceView
       apiBaseUrl={apiBaseUrl}
       accessToken={accessToken}
       invoiceId={invoiceId}
+      payContext={ctx.ok ? ctx.context : null}
       demoTestCard={demoTestCard()}
     />
   );

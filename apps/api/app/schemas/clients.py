@@ -37,6 +37,8 @@ from app.schemas.facts import (
 # both are stored upper-case and pinned to 3 letters (matching the DB CHECKs).
 IataAirport = Annotated[str, Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")]
 Iso4217Currency = Annotated[str, Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")]
+# ISO 3166-1 alpha-2 country code (0051), stored upper-cased (matches the DB CHECK).
+CountryCodeAlpha2 = Annotated[str, Field(min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")]
 
 
 class ClientCreatePayload(BaseModel):
@@ -96,6 +98,11 @@ class ClientUpdatePayload(BaseModel):
     address: str | None = Field(default=None, max_length=2000)
     favorite_airport: IataAirport | None = None
     preferred_currency: Iso4217Currency | None = None
+    # Structured billing-address parts (0051). `country_code` is stored upper-cased.
+    city: str | None = Field(default=None, max_length=200)
+    region: str | None = Field(default=None, max_length=200)
+    postal_code: str | None = Field(default=None, max_length=32)
+    country_code: CountryCodeAlpha2 | None = None
 
 
 # Where the client sits on the invite → sign-in path. Derived server-side from
@@ -159,6 +166,11 @@ class ClientDetail(BaseModel):
     address: str | None = None
     favorite_airport: str | None = None
     preferred_currency: str | None = None
+    # Structured billing-address parts (0051). None = not yet recorded.
+    city: str | None = None
+    region: str | None = None
+    postal_code: str | None = None
+    country_code: str | None = None
     dossier: DossierDetail | None
     dossier_facts: list[DossierFactDetail] = Field(default_factory=list)
     profile_facts: list[ProfileFactDetail] = Field(default_factory=list)
