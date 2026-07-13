@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { plusAddress } from "../support/auth";
+
 // Unauthenticated landing page. Needs only the web server running; the
 // submit-confirmation test additionally exercises the API's POST /auth/login.
 test.describe("sign-in landing page", () => {
@@ -23,9 +25,10 @@ test.describe("sign-in landing page", () => {
   test("submitting an email shows the inbox confirmation", async ({ page }) => {
     await page.goto("/");
 
-    // example.com is RFC 2606 reserved: it passes the API's email validation,
-    // resolves to "no account" (→ 204), and can never deliver real mail.
-    await page.locator("#sign-in-email").fill("e2e-smoke@example.com");
+    // A plus-addressed mailbox with no account: passes the API's email
+    // validation and resolves to "no account" (→ 204), so no mail is sent and
+    // the "sent"/"no account" responses are indistinguishable by design.
+    await page.locator("#sign-in-email").fill(plusAddress("e2e-smoke"));
 
     // The submit button is gated on the controlled input's React state, so it
     // only enables once the page has hydrated and registered the value. Wait

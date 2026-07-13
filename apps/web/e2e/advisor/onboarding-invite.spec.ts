@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { type Page, expect, test } from "@playwright/test";
 
-import { travelerCallbackUrlForEmail } from "../support/auth";
+import { plusAddress, travelerCallbackUrlForEmail } from "../support/auth";
 import { findClientByEmail } from "../support/api";
 
 // ONB-1 / ONB-1A / ONB-1B — the advisor's onboarding surface, driven as a QA
@@ -15,7 +15,7 @@ import { findClientByEmail } from "../support/api";
 // these tests need is the one the browser form creates.
 
 function uniqueEmail(tag: string): string {
-  return `e2e-onb-${tag}-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-onb-${tag}-${randomUUID()}`);
 }
 
 // Fill + submit the New Client form (assumes we're already on /new-client).

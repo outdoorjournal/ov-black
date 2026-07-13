@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { plusAddress } from "../support/auth";
 
 import { type Page, expect, test } from "@playwright/test";
 
 import {
   createClientAsAdvisor,
   createItineraryForClientAsAdvisor,
+  forkItineraryAsAdvisor,
   getGraphNodesAsAdvisor,
   seedScheduledItemAsAdvisor,
 } from "../support/api";
@@ -17,28 +19,26 @@ import {
 // card preview — and place it either in the Collection or, from a timeline slot,
 // scheduled at that time.
 //
-// Flow: seed a client + a brief'd itinerary (past the intake gate), acquire the
-// edit lock on the Timeline, then summon the composer. The API seam backstops
-// the persisted type + cost pair (and starts_at for the scheduled path).
+// Flow: seed a client + a brief'd itinerary (past the intake gate), enter the
+// advisor's WORKSPACE fork on the Timeline, then summon the composer. Authoring
+// gates on being on a fork (D030 — the advisor builds privately, then publishes),
+// so the working copy is the precondition; we seed + enter it (the same place the
+// "My workspace" toggle lands once a fork exists). The API seam backstops the
+// persisted type + cost pair (and starts_at for the scheduled path).
 // (`actor_kind = advisor` isn't on the node read — Pillar 3 asserts provenance.)
 //
 // Runs under the `advisor` project (setup:advisor's captured session).
 
 function uniqueEmail(tag: string): string {
-  return `e2e-adv4-${tag}-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-adv4-${tag}-${randomUUID()}`);
 }
 
-// Acquire the edit lock on the Timeline (the composer's writes gate on it).
-async function acquireLock(page: Page, itineraryId: string): Promise<void> {
-  await page.goto(`/itinerary/${itineraryId}/timeline`);
-  const edit = page
-    .locator('[data-testid="itinerary-graph-edit"]:visible')
-    .first();
-  await expect(edit).toBeVisible();
-  await edit.click();
-  await expect(
-    page.locator('[data-testid="itinerary-graph-release"]:visible').first(),
-  ).toBeEnabled();
+// Enter the advisor's workspace fork on the Timeline. Returns the fork id — the
+// working copy every authored card lands on (assert against THIS, not the trunk).
+async function enterWorkspace(page: Page, trunkId: string): Promise<string> {
+  const forkId = await forkItineraryAsAdvisor(trunkId);
+  await page.goto(`/itinerary/${forkId}/timeline`);
+  return forkId;
 }
 
 test("ADV-4: advisor composes a typed + priced card (with live preview) into the Collection", async ({
@@ -48,13 +48,13 @@ test("ADV-4: advisor composes a typed + priced card (with live preview) into the
     "E2E ADV-4 Client",
     uniqueEmail("typed"),
   );
-  const itineraryId = await createItineraryForClientAsAdvisor(clientId, {
+  const trunkId = await createItineraryForClientAsAdvisor(clientId, {
     title: "Kyoto, bespoke",
     brief: "A few days in Kyoto with hand-picked meals",
   });
   const title = `Kaiseki dinner ${randomUUID().slice(0, 8)}`;
 
-  await acquireLock(page, itineraryId);
+  const itineraryId = await enterWorkspace(page, trunkId);
   // Summon the unified Add composer straight from the Timeline toolbar — the
   // authoring tools live here now, not on a separate Studio route.
   await page
@@ -80,14 +80,11 @@ test("ADV-4: advisor composes a typed + priced card (with live preview) into the
   await page.locator('[data-testid="composer-submit"]').click();
   await expect(page.locator('[data-testid="card-composer"]')).toBeHidden();
 
-  // Lands in the Collection (unscheduled proposed node). Wait for the route to
-  // settle before asserting — mid-transition the outgoing timeline (which shows
-  // the collection-dominant board when nothing is scheduled) and the incoming
-  // Collection route are briefly both mounted.
-  await page.locator('[data-testid="rail-collection"]').click();
-  await page.waitForURL(`**/itinerary/${itineraryId}/collection`);
+  // Lands in the Collection (unscheduled proposed node) — the dedicated
+  // Collection view is its own rail route now.
+  await page.goto(`/itinerary/${itineraryId}/collection`);
   await expect(
-    page.locator('[data-testid="collection-card"]').filter({ hasText: title }),
+    page.locator('[data-testid="collection-card"]:visible').filter({ hasText: title }),
   ).toBeVisible();
 
   // API backstop: type + cost pair, unscheduled.
@@ -114,16 +111,16 @@ test("ADV-4: advisor composes a pasted link into the Collection", async ({
     "E2E ADV-4 Link Client",
     uniqueEmail("link"),
   );
-  const itineraryId = await createItineraryForClientAsAdvisor(clientId, {
+  const trunkId = await createItineraryForClientAsAdvisor(clientId, {
     title: "Kyoto, bespoke",
     brief: "A few days in Kyoto with hand-picked places",
   });
   const url = `https://example.com/spot-${randomUUID().slice(0, 8)}`;
 
-  await acquireLock(page, itineraryId);
-  // Summon from the Collection add affordance this time.
-  await page.locator('[data-testid="rail-collection"]').click();
-  await page.locator('[data-testid="collection-add-card"]').click();
+  const itineraryId = await enterWorkspace(page, trunkId);
+  // Summon from the Collection add affordance this time (its own rail route).
+  await page.goto(`/itinerary/${itineraryId}/collection`);
+  await page.locator('[data-testid="collection-add-card"]:visible').first().click();
   await expect(page.locator('[data-testid="card-composer"]')).toBeVisible();
 
   await page.locator('[data-testid="composer-mode-link"]').click();
@@ -155,7 +152,7 @@ test("ADV-4: advisor clicks an empty timeline slot to schedule a new card", asyn
     "E2E ADV-4 Schedule Client",
     uniqueEmail("sched"),
   );
-  const itineraryId = await createItineraryForClientAsAdvisor(clientId, {
+  const trunkId = await createItineraryForClientAsAdvisor(clientId, {
     title: "Kyoto, bespoke",
     brief: "A few days in Kyoto with a firm evening",
     // Declare the window the cards live in: days_anchor stamps from
@@ -163,14 +160,15 @@ test("ADV-4: advisor clicks an empty timeline slot to schedule a new card", asyn
     // test clicks is on the seeded card's day — not the day the test ran.
     timing: { kind: "window", dateStart: "2026-08-01", dateEnd: "2026-08-05" },
   });
-  // Seed a scheduled node so the timeline renders a day column to click into.
-  await seedScheduledItemAsAdvisor(itineraryId, {
+  // Seed a scheduled node so the timeline renders a day column to click into
+  // (the fork copies it, so the workspace timeline has the same day column).
+  await seedScheduledItemAsAdvisor(trunkId, {
     title: "Evening anchor",
     startsAt: "2026-08-01T18:00:00Z",
   });
   const title = `Morning temple ${randomUUID().slice(0, 8)}`;
 
-  await acquireLock(page, itineraryId);
+  const itineraryId = await enterWorkspace(page, trunkId);
 
   // Click empty column space near the top (morning) — the create-slot layer maps
   // it to a day + minute and opens the composer pre-set to that slot.

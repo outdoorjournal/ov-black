@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { plusAddress } from "../support/auth";
 
 import { expect, test } from "@playwright/test";
 
@@ -29,7 +30,7 @@ import {
 // Runs under the `advisor` project (setup:advisor's captured session).
 
 function uniqueEmail(tag: string): string {
-  return `e2e-adv11-${tag}-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-adv11-${tag}-${randomUUID()}`);
 }
 
 test("ADV-11: advisor stands up the first invoice from the billing cockpit", async ({

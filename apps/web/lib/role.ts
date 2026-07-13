@@ -15,25 +15,32 @@ export type UserRole = "advisor" | "client" | "unknown";
 export async function resolveUserRole(
   supabase: SupabaseClient,
 ): Promise<UserRole> {
+  // Resolve via the API, not `supabase.from("profiles")`: the Supabase Data API
+  // (PostgREST) is disabled on the deployed project — apps/api is the only DB
+  // surface — so a direct read fails there (it only worked against a local
+  // `supabase start`). GET /me/role runs the same profile lookup server-side.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
+  if (!accessToken) {
     return "unknown";
   }
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data) {
+  const { apiBaseUrl } = publicEnv();
+  try {
+    const res = await fetch(`${apiBaseUrl}/me/role`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return "unknown";
+    }
+    const body = (await res.json()) as { role?: unknown };
+    return body.role === "advisor" || body.role === "client" ? body.role : "unknown";
+  } catch {
     return "unknown";
   }
-
-  return data.role === "advisor" ? "advisor" : "client";
 }
 
 // Delegates to GET /me/client on the API. RLS on public.clients only allows

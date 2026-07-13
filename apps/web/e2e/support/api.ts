@@ -185,6 +185,36 @@ export async function createItineraryForClientAsAdvisor(
   return ((await resp.json()) as { id: string }).id;
 }
 
+/**
+ * Seed `count` Profile facts for a client (advisor write, POST
+ * /clients/{id}/profile/facts). Two is the `evaluate_onboarding` bar, so this
+ * is how a spec fast-forwards a fresh traveler to "onboarding complete" — the
+ * precondition basecamp needs before it shows the self-serve "Start a new
+ * itinerary" atelier (rather than the first-prompt opener). See
+ * app/routers/me.py::evaluate_onboarding.
+ */
+export async function seedProfileFactsAsAdvisor(
+  clientId: string,
+  count = 2,
+): Promise<void> {
+  const kinds = ["preference", "passion", "motivation", "aspiration"];
+  for (let i = 0; i < count; i++) {
+    const resp = await advisorFetch(`/clients/${clientId}/profile/facts`, {
+      method: "POST",
+      body: JSON.stringify({
+        kind: kinds[i % kinds.length],
+        text: `E2E onboarding seed fact #${i + 1}`,
+        source_kind: "advisor",
+      }),
+    });
+    if (!resp.ok) {
+      throw new Error(
+        `seed profile fact failed (${resp.status}): ${await resp.text()}`,
+      );
+    }
+  }
+}
+
 /** A client's durable party roster as the advisor sees it (for cross-actor backstops). */
 export async function getClientPartyAsAdvisor(
   clientId: string,

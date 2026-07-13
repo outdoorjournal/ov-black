@@ -616,3 +616,65 @@ async def test_onboarding_session_reports_onboarding_complete(
                 await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
         finally:
             await engine.dispose()
+
+
+@integration
+async def test_my_role_resolves_advisor_client_and_unknown(
+    db_session: AsyncSession,
+) -> None:
+    """GET /me/role reflects public.profiles.role, defaulting to 'unknown'.
+
+    Guards the web post-login redirect (resolveUserRole), which reads role via
+    this endpoint rather than the disabled Supabase Data API.
+    """
+    from app.auth import AuthenticatedUser
+    from app.routers.me import get_my_role_endpoint
+
+    advisor_uid = uuid.uuid4()
+    client_uid = uuid.uuid4()
+    for uid in (advisor_uid, client_uid):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.execute(
+        text("insert into public.profiles (id, role) values (:id, 'advisor')"),
+        {"id": advisor_uid},
+    )
+    await db_session.execute(
+        text("insert into public.profiles (id, role) values (:id, 'client')"),
+        {"id": client_uid},
+    )
+    await db_session.commit()
+
+    def _user(uid: uuid.UUID) -> AuthenticatedUser:
+        return AuthenticatedUser(
+            sub=str(uid), email=f"{uid}@x.com", role="authenticated", claims={}
+        )
+
+    try:
+        advisor_resp = await get_my_role_endpoint(user=_user(advisor_uid), session=db_session)
+        assert advisor_resp.role == "advisor"
+
+        client_resp = await get_my_role_endpoint(user=_user(client_uid), session=db_session)
+        assert client_resp.role == "client"
+
+        # No profile row → 'unknown' (never 403; the caller branches on it).
+        orphan_resp = await get_my_role_endpoint(user=_user(uuid.uuid4()), session=db_session)
+        assert orphan_resp.role == "unknown"
+    finally:
+        await db_session.execute(
+            text("delete from public.profiles where id = any(:ids)"),
+            {"ids": [advisor_uid, client_uid]},
+        )
+        await db_session.execute(
+            text("delete from auth.users where id = any(:ids)"),
+            {"ids": [advisor_uid, client_uid]},
+        )
+        await db_session.commit()

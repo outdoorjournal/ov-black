@@ -65,7 +65,11 @@ curl -sf -o /dev/null "$SUPABASE_URL/auth/v1/settings" \
 
 # 1. ensure user exists (idempotent — same shape as bootstrap-login.sh)
 log "ensuring auth user for $EMAIL"
-users=$(admin GET "/auth/v1/admin/users?filter=$EMAIL")
+# URL-encode the email for the ?filter= query: a plus-addressed mailbox
+# (chris+tag@…) would otherwise have its '+' decoded as a space, so the lookup
+# misses the existing user and the create below 409s ("failed to create").
+EMAIL_Q=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$EMAIL")
+users=$(admin GET "/auth/v1/admin/users?filter=$EMAIL_Q")
 uid=$(printf '%s' "$users" | python3 -c '
 import json,sys
 d=json.load(sys.stdin); us=d.get("users") or []

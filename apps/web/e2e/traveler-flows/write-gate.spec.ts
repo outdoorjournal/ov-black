@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { freshTravelerCallbackUrl } from "../support/auth";
+import { reachFreshIntake } from "../support/builder";
 
 // ITB-5 (browser slice) — the same relationship gate that guards brief *writes*
 // also guards *visibility*: a non-entitled viewer can't even open the draft. The
@@ -13,16 +14,9 @@ test("ITB-5: a stranger cannot open another traveler's draft itinerary", async (
   browser,
   baseURL,
 }) => {
-  // Owner A starts a draft and reaches its intake.
-  const { callbackUrl } = await freshTravelerCallbackUrl(baseURL!);
-  await page.goto(callbackUrl);
-  await expect(page).toHaveURL(/\/basecamp/);
-  await page.getByRole("button", { name: "Start a new itinerary" }).click();
-  await page.waitForURL(/\/itinerary\/[0-9a-f-]{36}/, { timeout: 30_000 });
-  const id = page.url().split("/itinerary/")[1]!.split(/[?#]/)[0]!;
-  await expect(
-    page.getByRole("heading", { name: "Where shall we take you?" }),
-  ).toBeVisible();
+  // Owner A starts a draft and reaches its intake (the helper leaves the page on
+  // the intake and asserts the "Where shall we take you?" headline).
+  const { id } = await reachFreshIntake(page, baseURL!);
 
   // Stranger B (a different linked traveler, no relationship to A's itinerary)
   // hits the same URL in their own session and is refused.

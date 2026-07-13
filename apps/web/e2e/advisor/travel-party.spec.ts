@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { plusAddress } from "../support/auth";
 
 import { expect, test } from "@playwright/test";
 
@@ -26,7 +27,7 @@ import {
 // Runs under the `advisor` project (setup:advisor's captured session).
 
 function uniqueEmail(tag: string): string {
-  return `e2e-adv2b-${tag}-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-adv2b-${tag}-${randomUUID()}`);
 }
 
 test.describe("ADV-2B: advisor builds the travel party", () => {
@@ -84,8 +85,8 @@ test.describe("ADV-2B: advisor builds the travel party", () => {
       brief: "A relaxed week with the whole family",
     });
 
-    // The advisor lands on the trip dashboard, which carries the trip-party panel.
-    await page.goto(`/itinerary/${itineraryId}`);
+    // The trip-party panel is its own rail route now ("Party").
+    await page.goto(`/itinerary/${itineraryId}/party`);
     await expect(
       page.getByRole("heading", { name: "On this trip" }).first(),
     ).toBeVisible();

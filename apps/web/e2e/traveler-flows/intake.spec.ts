@@ -1,93 +1,81 @@
 import { type Page, expect, test } from "@playwright/test";
 
-import { freshTravelerCallbackUrl } from "../support/auth";
+import { enterFreshBuilder } from "../support/builder";
 import { getItineraryAsAdvisor } from "../support/api";
 
-// ITB-1 family — the itinerary builder's first-run intake, driven as a QA person
-// would: a fresh traveler starts a trip from basecamp, lands on the intake gate,
-// writes the brief, picks a timing mode, and saves into the builder. The browser
-// asserts the *experience* (gate blocks → builder reveals); the API seam confirms
-// the *state* (the exact brief + timing that was persisted).
+// ITB-1 family — capturing the trip's brief + timing as first-class, structured
+// data. The immersive first-run intake is a conversation now; the STRUCTURED
+// controls it used to carry (a brief line + a timing picker) moved into the
+// builder's DashboardHero — the editable "hero-brief" field and the "hero-timing"
+// popover (the shared TimingFields). So these drive the hero as a QA person
+// would, and confirm the exact brief + timing that persisted at the API seam.
 //
 // Each test provisions its own throwaway traveler + itinerary, so a run never
-// pollutes the shared `traveler` persona (a saved itinerary flips its basecamp
-// variant). Local-only — freshTraveler provisioning needs the local Supabase.
+// pollutes the shared `traveler` persona. Local-only — freshTraveler
+// provisioning needs the local Supabase.
 
-const HEADING = "Where shall we take you?"; // traveler-audience intake heading
-const REVEALED = "A blank canvas, ready when you are"; // builder empty-state
+// Set the trip brief via the hero's inline editor (blur commits).
+async function setBrief(page: Page, brief: string): Promise<void> {
+  await page.getByTestId("hero-brief").click();
+  const input = page.getByTestId("hero-brief-input");
+  await input.fill(brief);
+  await input.blur();
+  await expect(page.getByTestId("hero-brief")).toContainText(brief);
+}
 
-// Fresh traveler → basecamp → "Start a new itinerary" → the intake gate.
-// Returns the new itinerary id (parsed from the builder URL).
-async function openFreshIntake(page: Page, baseURL: string): Promise<string> {
-  const { callbackUrl } = await freshTravelerCallbackUrl(baseURL);
-  await page.goto(callbackUrl);
-  await expect(page).toHaveURL(/\/basecamp/);
-
-  await page.getByRole("button", { name: "Start a new itinerary" }).click();
-  await page.waitForURL(/\/itinerary\/[0-9a-f-]{36}/, { timeout: 30_000 });
-  const id = page.url().split("/itinerary/")[1]!.split(/[?#]/)[0]!;
-
-  // The intake gate stands in front of the (empty) timeline.
-  await expect(page.getByRole("heading", { name: HEADING })).toBeVisible();
-  return id;
+// Open the hero's timing popover (the structured When? controls + note + Save).
+async function openTiming(page: Page): Promise<void> {
+  await page.getByTestId("hero-timing").click();
+  await expect(page.getByTestId("hero-timing-popover")).toBeVisible();
 }
 
 function pickMode(page: Page, mode: "exact" | "window" | "flexible") {
-  const label =
-    mode === "exact"
-      ? "Exact dates"
-      : mode === "window"
-        ? "A rough window"
-        : "Flexible";
-  return page.getByRole("button", { name: label }).click();
+  return page.getByTestId(`timing-mode-${mode}`).click();
 }
 
-// ITB-1 — the intake blocks the timeline until a brief is written; saving
-// reveals the builder in place; and on reload the intake no longer blocks (the
-// brief is now persisted first-class, so the builder is shown directly).
-test("ITB-1: first-run intake gates the timeline, saves, and doesn't re-block on reload", async ({
+function saveTiming(page: Page) {
+  return page.getByTestId("hero-timing-save").click();
+}
+
+// ITB-1 — the hero captures a brief + a rough window as first-class data, and
+// they survive a reload (persisted, not buried in a title).
+test("ITB-1: the hero captures the brief + timing and persists across reload", async ({
   page,
   baseURL,
 }) => {
-  const id = await openFreshIntake(page, baseURL!);
+  const { id } = await enterFreshBuilder(page, baseURL!);
   const brief = "Sailing in Greece with my family";
 
-  // Save is inert until the brief is written — the timeline stays gated.
-  await expect(page.getByRole("button", { name: "Start building" })).toBeDisabled();
-  await expect(page.getByRole("heading", { name: REVEALED })).toHaveCount(0);
-
-  await page.getByLabel("The trip, in a sentence").fill(brief);
+  await setBrief(page, brief);
+  await openTiming(page);
   await pickMode(page, "window");
-  await page.getByLabel("No earlier than").fill("2027-06-01");
-  await page.getByLabel("No later than").fill("2027-08-31");
-  await page.getByLabel("About how many nights").fill("7");
+  await page.getByTestId("timing-date-start").fill("2027-06-01");
+  await page.getByTestId("timing-date-end").fill("2027-08-31");
+  await page.getByTestId("timing-nights").fill("7");
+  await saveTiming(page);
+  await expect(page.getByTestId("hero-timing-popover")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Start building" }).click();
-
-  // The intake gives way to the builder — the empty-state proves we crossed over.
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
-  await expect(page.getByRole("heading", { name: HEADING })).toHaveCount(0);
-
-  // Reload: the brief is persisted, so the gate is gone and the builder renders.
-  await page.goto(`/itinerary/${id}`);
-  await expect(page.getByRole("heading", { name: HEADING })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
+  // Reload: the brief is persisted first-class, so the hero renders it directly.
+  await page.goto(`/itinerary/${id}/dashboard`);
+  await expect(page.getByTestId("hero-brief")).toContainText(brief);
 
   // State backstop: the brief landed as first-class data (not buried in a title).
   const it = await getItineraryAsAdvisor(id);
   expect(it.brief).toBe(brief);
+  expect(it.timing_kind).toBe("window");
 });
 
 // ITB-1A — exact dates: the entered range IS the trip.
 test("ITB-1A: exact dates persist as the trip range", async ({ page, baseURL }) => {
-  const id = await openFreshIntake(page, baseURL!);
+  const { id } = await enterFreshBuilder(page, baseURL!);
 
-  await page.getByLabel("The trip, in a sentence").fill("A week in Kyoto");
+  await setBrief(page, "A week in Kyoto");
+  await openTiming(page);
   await pickMode(page, "exact");
-  await page.getByLabel("Start").fill("2027-03-18");
-  await page.getByLabel("End").fill("2027-03-25");
-  await page.getByRole("button", { name: "Start building" }).click();
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
+  await page.getByTestId("timing-date-start").fill("2027-03-18");
+  await page.getByTestId("timing-date-end").fill("2027-03-25");
+  await saveTiming(page);
+  await expect(page.getByTestId("hero-timing-popover")).toHaveCount(0);
 
   const it = await getItineraryAsAdvisor(id);
   expect(it.timing_kind).toBe("exact");
@@ -101,15 +89,16 @@ test("ITB-1B: a rough window keeps bounds plus a target duration", async ({
   page,
   baseURL,
 }) => {
-  const id = await openFreshIntake(page, baseURL!);
+  const { id } = await enterFreshBuilder(page, baseURL!);
 
-  await page.getByLabel("The trip, in a sentence").fill("Generally summer, about a week");
+  await setBrief(page, "Generally summer, about a week");
+  await openTiming(page);
   await pickMode(page, "window");
-  await page.getByLabel("No earlier than").fill("2027-06-01");
-  await page.getByLabel("No later than").fill("2027-08-31");
-  await page.getByLabel("About how many nights").fill("7");
-  await page.getByRole("button", { name: "Start building" }).click();
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
+  await page.getByTestId("timing-date-start").fill("2027-06-01");
+  await page.getByTestId("timing-date-end").fill("2027-08-31");
+  await page.getByTestId("timing-nights").fill("7");
+  await saveTiming(page);
+  await expect(page.getByTestId("hero-timing-popover")).toHaveCount(0);
 
   const it = await getItineraryAsAdvisor(id);
   expect(it.timing_kind).toBe("window");
@@ -124,16 +113,17 @@ test("ITB-1C: flexible keeps the constraints note and no dates", async ({
   page,
   baseURL,
 }) => {
-  const id = await openFreshIntake(page, baseURL!);
+  const { id } = await enterFreshBuilder(page, baseURL!);
   const note = "can't go in August; must be back by a Sunday";
 
-  await page.getByLabel("The trip, in a sentence").fill("Somewhere warm, eventually");
+  await setBrief(page, "Somewhere warm, eventually");
+  await openTiming(page);
   await pickMode(page, "flexible");
   // Flexible hides the date inputs entirely.
-  await expect(page.getByLabel("Start")).toHaveCount(0);
-  await page.getByLabel(/Anything to work around/).fill(note);
-  await page.getByRole("button", { name: "Start building" }).click();
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
+  await expect(page.getByTestId("timing-date-start")).toHaveCount(0);
+  await page.getByTestId("hero-timing-note").fill(note);
+  await saveTiming(page);
+  await expect(page.getByTestId("hero-timing-popover")).toHaveCount(0);
 
   const it = await getItineraryAsAdvisor(id);
   expect(it.timing_kind).toBe("flexible");
@@ -142,25 +132,25 @@ test("ITB-1C: flexible keeps the constraints note and no dates", async ({
   expect(it.timing_note).toBe(note);
 });
 
-// ITB-2 (browser slice) — switching modes mid-intake clears what the new mode
-// doesn't own: pick exact dates, then switch to flexible, and the dates both
-// disappear from the form and are persisted as null. (The post-save partial
-// edit of a persisted itinerary has no UI yet — that half stays API-only.)
+// ITB-2 (browser slice) — switching modes clears what the new mode doesn't own:
+// pick exact dates, then switch to flexible, and the dates both disappear from
+// the popover and are persisted as null.
 test("ITB-2: switching to flexible clears the dates", async ({ page, baseURL }) => {
-  const id = await openFreshIntake(page, baseURL!);
+  const { id } = await enterFreshBuilder(page, baseURL!);
 
-  await page.getByLabel("The trip, in a sentence").fill("Plans in flux");
+  await setBrief(page, "Plans in flux");
+  await openTiming(page);
   await pickMode(page, "exact");
-  await page.getByLabel("Start").fill("2027-03-18");
-  await page.getByLabel("End").fill("2027-03-25");
+  await page.getByTestId("timing-date-start").fill("2027-03-18");
+  await page.getByTestId("timing-date-end").fill("2027-03-25");
 
   // Switch to flexible — the date inputs unmount.
   await pickMode(page, "flexible");
-  await expect(page.getByLabel("Start")).toHaveCount(0);
-  await expect(page.getByLabel("End")).toHaveCount(0);
+  await expect(page.getByTestId("timing-date-start")).toHaveCount(0);
+  await expect(page.getByTestId("timing-date-end")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Start building" }).click();
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
+  await saveTiming(page);
+  await expect(page.getByTestId("hero-timing-popover")).toHaveCount(0);
 
   const it = await getItineraryAsAdvisor(id);
   expect(it.timing_kind).toBe("flexible");
@@ -168,21 +158,21 @@ test("ITB-2: switching to flexible clears the dates", async ({ page, baseURL }) 
   expect(it.date_end ?? null).toBeNull();
 });
 
-// ITB-3 (browser slice) — a reversed range is caught in the intake before it can
-// be saved: the inline error shows and the save button stays disabled. (The
-// zero/oversized-duration and unknown-field rejections have no intake surface —
-// they stay API/DB-CHECK-only.)
-test("ITB-3: a reversed date range is refused in the intake", async ({
+// ITB-3 (browser slice) — a reversed range is caught before it can be saved: the
+// inline error shows and the Save button stays disabled. (The
+// zero/oversized-duration and unknown-field rejections have no UI surface — they
+// stay API/DB-CHECK-only.)
+test("ITB-3: a reversed date range is refused in the hero", async ({
   page,
   baseURL,
 }) => {
-  await openFreshIntake(page, baseURL!);
+  await enterFreshBuilder(page, baseURL!);
 
-  await page.getByLabel("The trip, in a sentence").fill("Backwards in time");
+  await openTiming(page);
   await pickMode(page, "exact");
-  await page.getByLabel("Start").fill("2027-03-25");
-  await page.getByLabel("End").fill("2027-03-18");
+  await page.getByTestId("timing-date-start").fill("2027-03-25");
+  await page.getByTestId("timing-date-end").fill("2027-03-18");
 
   await expect(page.getByText(/The end can.t be before the start/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start building" })).toBeDisabled();
+  await expect(page.getByTestId("hero-timing-save")).toBeDisabled();
 });

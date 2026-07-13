@@ -272,20 +272,6 @@ class OfferAmount(RootModel[str]):
     ]
 
 
-class CampaignKickoffResponse(BaseModel):
-    """
-    Result of instantiating the length-snapped campaign spine onto a fork.
-    """
-
-    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
-    campaign_id: Annotated[str, Field(title='Campaign Id')]
-    requested_nights: Annotated[int | None, Field(title='Requested Nights')]
-    snapped_length: Annotated[int, Field(title='Snapped Length')]
-    reason: Annotated[str, Field(title='Reason')]
-    node_count: Annotated[int, Field(title='Node Count')]
-    edge_count: Annotated[int, Field(title='Edge Count')]
-
-
 class CampaignSeedRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -474,6 +460,27 @@ class ClientSummary(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
 
 
+class City(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='City')]
+
+
+class Region(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Region')]
+
+
+class PostalCode(RootModel[str]):
+    root: Annotated[str, Field(max_length=32, title='Postal Code')]
+
+
+class CountryCode(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            max_length=2, min_length=2, pattern='^[A-Za-z]{2}$', title='Country Code'
+        ),
+    ]
+
+
 class ClientUpdatePayload(BaseModel):
     """
     Partial update for the traveler-logistics fields via ``PATCH /clients/{id}``.
@@ -494,6 +501,10 @@ class ClientUpdatePayload(BaseModel):
     preferred_currency: Annotated[
         PreferredCurrency | None, Field(title='Preferred Currency')
     ] = None
+    city: Annotated[City | None, Field(title='City')] = None
+    region: Annotated[Region | None, Field(title='Region')] = None
+    postal_code: Annotated[PostalCode | None, Field(title='Postal Code')] = None
+    country_code: Annotated[CountryCode | None, Field(title='Country Code')] = None
 
 
 class ClientsPage(BaseModel):
@@ -557,6 +568,10 @@ class CostKind(StrEnum):
     total = 'total'
 
 
+class SettlementCurrency(RootModel[str]):
+    root: Annotated[str, Field(max_length=3, min_length=3, title='Settlement Currency')]
+
+
 class CreateInvoiceRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -564,6 +579,9 @@ class CreateInvoiceRequest(BaseModel):
     label: Annotated[str | None, Field(max_length=256, title='Label')] = ''
     currency: Annotated[str, Field(max_length=3, min_length=3, title='Currency')]
     due_at: Annotated[AwareDatetime | None, Field(title='Due At')] = None
+    settlement_currency: Annotated[
+        SettlementCurrency | None, Field(title='Settlement Currency')
+    ] = None
 
 
 class Brief(RootModel[str]):
@@ -1031,6 +1049,33 @@ class InvoiceLineKind(StrEnum):
     reversal = 'reversal'
 
 
+class InvoicePayContextResponse(BaseModel):
+    """
+    Traveler + trip context for the pay page (I2): the trip title to narrate
+    *why* this is owed, plus the owning client's billing identity to pre-fill the
+    payment form. Reachable by the same viewers as the invoice itself.
+    """
+
+    itinerary_title: Annotated[str, Field(title='Itinerary Title')]
+    full_name: Annotated[str | None, Field(title='Full Name')] = None
+    address: Annotated[str | None, Field(title='Address')] = None
+    city: Annotated[str | None, Field(title='City')] = None
+    region: Annotated[str | None, Field(title='Region')] = None
+    postal_code: Annotated[str | None, Field(title='Postal Code')] = None
+    country_code: Annotated[str | None, Field(title='Country Code')] = None
+    preferred_currency: Annotated[str | None, Field(title='Preferred Currency')] = None
+
+
+class SettlementTotal(RootModel[str]):
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    root: Annotated[
+        str,
+        Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Settlement Total'),
+    ]
+
+
 class InvoiceStatus(StrEnum):
     """
     Mirrors the public.invoice_status Postgres enum (0023).
@@ -1290,6 +1335,25 @@ class MyOnboardingSessionResponse(BaseModel):
     seeded_opener: Annotated[str | None, Field(title='Seeded Opener')]
     has_prior_session: Annotated[bool, Field(title='Has Prior Session')]
     onboarding_complete: Annotated[bool, Field(title='Onboarding Complete')]
+
+
+class Role(StrEnum):
+    advisor = 'advisor'
+    client = 'client'
+    unknown = 'unknown'
+
+
+class MyRoleResponse(BaseModel):
+    """
+    Response for ``GET /me/role`` — the caller's application role.
+
+    ``advisor`` / ``client`` mirror ``public.profiles.role``; ``unknown`` when no
+    profile row exists yet (e.g. a freshly magic-linked invitee before the first
+    ``/me/client`` JIT-backfill). The web app uses this to branch the post-login
+    redirect without reading ``profiles`` through the (disabled) Data API.
+    """
+
+    role: Annotated[Role, Field(title='Role')]
 
 
 class NodeChangeResponse(BaseModel):
@@ -1581,6 +1645,30 @@ class PatchSessionRequest(BaseModel):
     archived: Annotated[bool | None, Field(title='Archived')] = None
 
 
+class BillingName(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Billing Name')]
+
+
+class BillingAddress(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Billing Address')]
+
+
+class BillingCity(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Billing City')]
+
+
+class BillingRegion(RootModel[str]):
+    root: Annotated[str, Field(max_length=200, title='Billing Region')]
+
+
+class BillingPostalCode(RootModel[str]):
+    root: Annotated[str, Field(max_length=32, title='Billing Postal Code')]
+
+
+class BillingCountry(RootModel[str]):
+    root: Annotated[str, Field(max_length=2, title='Billing Country')]
+
+
 class PayInvoiceRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1588,6 +1676,40 @@ class PayInvoiceRequest(BaseModel):
     payment_method_nonce: Annotated[
         str, Field(max_length=4096, min_length=1, title='Payment Method Nonce')
     ]
+    quote_id: Annotated[UUID | None, Field(title='Quote Id')] = None
+    billing_name: Annotated[BillingName | None, Field(title='Billing Name')] = None
+    billing_address: Annotated[
+        BillingAddress | None, Field(title='Billing Address')
+    ] = None
+    billing_city: Annotated[BillingCity | None, Field(title='Billing City')] = None
+    billing_region: Annotated[BillingRegion | None, Field(title='Billing Region')] = (
+        None
+    )
+    billing_postal_code: Annotated[
+        BillingPostalCode | None, Field(title='Billing Postal Code')
+    ] = None
+    billing_country: Annotated[
+        BillingCountry | None, Field(title='Billing Country')
+    ] = None
+
+
+class PaymentQuoteResponse(BaseModel):
+    """
+    A short-lived pay-time FX lock (0050) the browser charges against.
+    """
+
+    model_config = ConfigDict(
+        regex_engine="python-re",
+    )
+    id: Annotated[UUID, Field(title='Id')]
+    invoice_id: Annotated[UUID, Field(title='Invoice Id')]
+    settlement_currency: Annotated[str, Field(title='Settlement Currency')]
+    settlement_amount: Annotated[
+        str,
+        Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Settlement Amount'),
+    ]
+    rates: Annotated[dict[str, str], Field(title='Rates')]
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
 
 
 class PaymentStatus(StrEnum):
@@ -2096,12 +2218,13 @@ class TransitItem(BaseModel):
     mode: Annotated[str | None, Field(title='Mode')] = None
 
 
-class SurfaceEnum(StrEnum):
+class Surface(StrEnum):
     intake = 'intake'
+    kickoff = 'kickoff'
 
 
-class Surface(RootModel[SurfaceEnum | None]):
-    root: Annotated[SurfaceEnum | None, Field(title='Surface')] = None
+class ViewingNodeId(RootModel[str]):
+    root: Annotated[str, Field(max_length=64, title='Viewing Node Id')]
 
 
 class TurnRequest(BaseModel):
@@ -2115,8 +2238,20 @@ class TurnRequest(BaseModel):
     ``"intake"`` (the immersive first conversation on a brand-new trip) keeps
     the agent in intake mode for the whole immersive screen — mode detection
     would otherwise flip to planning the moment the brief lands mid-
-    conversation. It only ever *narrows* the toolset (intake is the least
-    capable mode), so a forged value grants nothing.
+    conversation. It only ever *narrows* the toolset, so a forged value grants
+    nothing. ``"kickoff"`` is the campaign dashboard's one agent-first turn: it
+    pins planning mode and appends the build directive so the agent lays down
+    the campaign spine. Unlike intake it *broadens* to planning, but only on the
+    viewer's own pinned working copy — every write still passes the server-side
+    fork/advisor gates, which are the real authority.
+
+    ``viewing_node_id`` is ambient, silent context: the card the user is looking
+    at on screen right now (the Journal's focused card, or an open detail sheet).
+    It is NOT shown in the transcript — the client no longer prefixes "Regarding
+    X"; instead the agent silently learns what's on screen so deictic references
+    ("this", "it", "that one") resolve to the right card. The backend only honours
+    it if the node belongs to this session's itinerary, so a forged id reveals
+    nothing the caller can't already see.
     """
 
     model_config = ConfigDict(
@@ -2124,6 +2259,9 @@ class TurnRequest(BaseModel):
     )
     content: Annotated[str, Field(max_length=8000, min_length=1, title='Content')]
     surface: Annotated[Surface | None, Field(title='Surface')] = None
+    viewing_node_id: Annotated[ViewingNodeId | None, Field(title='Viewing Node Id')] = (
+        None
+    )
 
 
 class TurnRole(StrEnum):
@@ -3329,6 +3467,23 @@ class BookingStateResponse(BaseModel):
     rows: Annotated[list[BookingStateRowResponse] | None, Field(title='Rows')] = None
 
 
+class CampaignKickoffResponse(BaseModel):
+    """
+    Result of instantiating the length-snapped campaign spine onto a fork.
+    """
+
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    campaign_id: Annotated[str, Field(title='Campaign Id')]
+    requested_nights: Annotated[int | None, Field(title='Requested Nights')]
+    snapped_length: Annotated[int, Field(title='Snapped Length')]
+    reason: Annotated[str, Field(title='Reason')]
+    node_count: Annotated[int, Field(title='Node Count')]
+    edge_count: Annotated[int, Field(title='Edge Count')]
+    created_nodes: Annotated[
+        list[NodeResponse] | None, Field(title='Created Nodes')
+    ] = None
+
+
 class ClientCreatePayload(BaseModel):
     """
     Payload for ``POST /clients``: a new client + their Dossier.
@@ -3390,6 +3545,10 @@ class ClientDetail(BaseModel):
     address: Annotated[str | None, Field(title='Address')] = None
     favorite_airport: Annotated[str | None, Field(title='Favorite Airport')] = None
     preferred_currency: Annotated[str | None, Field(title='Preferred Currency')] = None
+    city: Annotated[str | None, Field(title='City')] = None
+    region: Annotated[str | None, Field(title='Region')] = None
+    postal_code: Annotated[str | None, Field(title='Postal Code')] = None
+    country_code: Annotated[str | None, Field(title='Country Code')] = None
     dossier: DossierDetail | None
     dossier_facts: Annotated[
         list[DossierFactDetail] | None, Field(title='Dossier Facts')
@@ -3469,15 +3628,30 @@ class InvoiceResponse(BaseModel):
         regex_engine="python-re",
     )
     id: Annotated[UUID, Field(title='Id')]
+    number: Annotated[int | None, Field(title='Number')] = None
     itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
     label: Annotated[str, Field(title='Label')]
     status: InvoiceStatus
     currency: Annotated[str, Field(title='Currency')]
+    settlement_currency: Annotated[str | None, Field(title='Settlement Currency')] = (
+        None
+    )
     due_at: Annotated[AwareDatetime | None, Field(title='Due At')] = None
     issued_at: Annotated[AwareDatetime | None, Field(title='Issued At')] = None
+    first_viewed_at: Annotated[AwareDatetime | None, Field(title='First Viewed At')] = (
+        None
+    )
     total: Annotated[
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Total')
     ]
+    subtotals: Annotated[dict[str, str] | None, Field(title='Subtotals')] = None
+    settlement_total: Annotated[
+        SettlementTotal | None, Field(title='Settlement Total')
+    ] = None
+    settlement_rates: Annotated[
+        dict[str, str] | None, Field(title='Settlement Rates')
+    ] = None
+    rates_as_of: Annotated[AwareDatetime | None, Field(title='Rates As Of')] = None
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     lines: Annotated[list[InvoiceLineItemResponse] | None, Field(title='Lines')] = None
     payments: Annotated[list[PaymentResponse] | None, Field(title='Payments')] = None

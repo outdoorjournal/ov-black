@@ -399,6 +399,11 @@ export class ApiStack extends Stack {
         OVB_SUPABASE_URL: props.supabaseUrl,
         OVB_SUPABASE_ANON_KEY: props.supabaseAnonKey,
         OVB_MAPBOX_TOKEN: props.mapboxToken,
+        // The public origin the browser reaches us on. Behind the ALB, Next's
+        // standalone server derives request URLs from its bind address
+        // (0.0.0.0:3000), so server-built absolute redirects (e.g. the
+        // /auth/callback loop) must use this instead. See app/auth/callback.
+        OVB_WEB_ORIGIN: `https://${props.webHost}`,
       },
       portMappings: [{ containerPort: 3000, name: 'web' }],
       essential: true,

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { plusAddress } from "../support/auth";
 
 import { expect, test } from "@playwright/test";
 
@@ -13,7 +14,7 @@ import {
 // the client workspace sub-nav, and the read-only session replay.
 
 function uniqueEmail(tag: string): string {
-  return `e2e-ccf-${tag}-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-ccf-${tag}-${randomUUID()}`);
 }
 
 test("advisor reaches Mission Control with an active session", async ({

@@ -21,6 +21,7 @@ Two design rules carried from the existing harness:
 
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -80,11 +81,19 @@ def require_live_agent_turn(result: Any) -> None:
 def unique_email(prefix: str = "e2e") -> str:
     """A collision-free invite target so ``ensure_client`` always creates fresh.
 
-    Uses a normal gTLD (``.dev``) — ``EmailStr`` (email-validator) rejects the
-    reserved special-use TLDs (``.test`` / ``.example`` / ``.invalid``) with a 422
-    before the request reaches the handler, which would mask the real flow.
+    ``POST /clients`` issues a real Supabase invite that sends a welcome email
+    through the project's SMTP (Resend on staging). The recipient domain must be
+    genuinely deliverable or GoTrue fails the send with ``500 Error sending
+    invite email`` (surfaced as ``502 auth_upstream_unavailable``). We therefore
+    plus-address a real mailbox: ``$OVB_E2E_EMAIL_BASE`` (default
+    ``chris@outdoorvoyage.com``) with a unique ``+tag`` per client, so every
+    address is unique yet lands in one deliverable inbox. A reserved/undeliverable
+    TLD (``.dev`` / ``.test``) bounces the send and masks the real flow.
     """
-    return f"{prefix}-{uuid.uuid4().hex[:12]}@ovblack.dev"
+    base = os.environ.get("OVB_E2E_EMAIL_BASE", "chris+ovb@outdoorvoyage.com")
+    local, _, domain = base.partition("@")
+    tag = f"{prefix}-{uuid.uuid4().hex[:12]}"
+    return f"{local}+{tag}@{domain}"
 
 
 async def ensure_client(

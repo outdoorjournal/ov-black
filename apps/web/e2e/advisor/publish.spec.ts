@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { plusAddress } from "../support/auth";
 
 import { expect, test } from "@playwright/test";
 
@@ -22,7 +23,7 @@ import {
 // Runs under the `advisor` project (setup:advisor's captured session).
 
 function uniqueEmail(tag: string): string {
-  return `e2e-publish-${tag}-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-publish-${tag}-${randomUUID()}`);
 }
 
 test("advisor publishes their workspace into the official trunk", async ({
@@ -47,14 +48,15 @@ test("advisor publishes their workspace into the official trunk", async ({
   });
   expect(await getGraphNodesAsAdvisor(trunkId)).toHaveLength(0);
 
-  await page.goto(`/itinerary/${forkId}`);
+  // The version switcher + Publish live on the Timeline toolbar.
+  await page.goto(`/itinerary/${forkId}/timeline`);
 
   // The switcher shows the advisor is on their workspace, with Publish live.
-  await expect(page.getByTestId("version-mine")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  const publish = page.getByTestId("publish-mine");
+  // (The timeline mounts a desktop + mobile toolbar, so scope to the visible one.)
+  await expect(
+    page.locator('[data-testid="version-mine"]:visible'),
+  ).toHaveAttribute("aria-pressed", "true");
+  const publish = page.locator('[data-testid="publish-mine"]:visible');
   await expect(publish).toBeVisible();
   await publish.click();
 

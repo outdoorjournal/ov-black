@@ -40,8 +40,15 @@ pytestmark = pytest.mark.e2e
 
 
 def _editable_bookable(graph: Any) -> Any | None:
-    """First currently-editable bookable node (a candidate to book then lock)."""
-    bookable = {"flight", "hotel", "experience", "meal"}
+    """First currently-editable bookable node (a candidate to book then lock).
+
+    Excludes ``flight``: since the fresh-offer money gate, booking a flight
+    additionally requires a non-expired ``NodeOffer`` (``offer_required``) that
+    ``book_node_via_money_gate`` doesn't mint — flights book off a re-priced
+    offer, a separate flow. Any static-cost bookable (hotel/experience/meal)
+    proves the same G1 status×actor lock this test asserts.
+    """
+    bookable = {"hotel", "experience", "meal"}
     editable = {"pending", "approved"}
     return next(
         (n for n in graph.nodes if str(n.type) in bookable and str(n.status) in editable),

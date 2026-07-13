@@ -5,6 +5,7 @@ import {
   findClientByEmail,
 } from "../support/api";
 import { freshTravelerCallbackUrl } from "../support/auth";
+import { enterFreshBuilder } from "../support/builder";
 
 // ITB-4 — once a brief is set but the timeline still has no nodes, the builder
 // shows a guiding empty-state (not a bare canvas): it explains the concierge
@@ -13,17 +14,12 @@ test("ITB-4: an empty timeline guides the traveler to the concierge", async ({
   page,
   baseURL,
 }) => {
-  const { callbackUrl } = await freshTravelerCallbackUrl(baseURL!);
-  await page.goto(callbackUrl);
-  await expect(page).toHaveURL(/\/basecamp/);
-
-  await page.getByRole("button", { name: "Start a new itinerary" }).click();
-  await page.waitForURL(/\/itinerary\/[0-9a-f-]{36}/, { timeout: 30_000 });
-
   // A brief unblocks the timeline; with no nodes yet, the empty-state stands in.
-  await page.getByLabel("The trip, in a sentence").fill("A blank slate for now");
-  await page.getByRole("button", { name: "Flexible" }).click();
-  await page.getByRole("button", { name: "Start building" }).click();
+  const { id } = await enterFreshBuilder(page, baseURL!, {
+    brief: "A blank slate for now",
+    timing: { kind: "flexible" },
+  });
+  await page.goto(`/itinerary/${id}/timeline`);
 
   // The builder mounts both a desktop and a mobile empty-state (one hidden by
   // responsive CSS), so text lives in the DOM twice. getByRole filters to the
@@ -62,7 +58,7 @@ test("an advisor-crafted trip with nothing published shows the teaser", async ({
     brief: "A week in Kyoto — composed by the advisor, not yet published",
   });
 
-  await page.goto(`/itinerary/${trunkId}`);
+  await page.goto(`/itinerary/${trunkId}/timeline`);
 
   await expect(
     page.getByRole("heading", { name: "Your advisor is crafting something" }),

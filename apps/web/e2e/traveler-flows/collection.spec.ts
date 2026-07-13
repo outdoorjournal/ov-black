@@ -1,6 +1,6 @@
 import { type Page, expect, test } from "@playwright/test";
 
-import { freshTravelerCallbackUrl } from "../support/auth";
+import { enterFreshBuilder } from "../support/builder";
 import {
   discardNodeAsAdvisor,
   getCollectionAsAdvisor,
@@ -20,26 +20,17 @@ import {
 // so every locator is scoped to `:visible`. Local-only (freshTraveler needs the
 // local Supabase). See doc/qa/collection.md.
 
-const HEADING = "Where shall we take you?"; // traveler-audience intake heading
-const REVEALED = "A blank canvas, ready when you are"; // builder empty-state
-
-// Fresh traveler → basecamp → new itinerary → intake → builder. `flexible`
-// keeps the timeline off, so the Collection is the dominant surface once items
-// exist. Returns the new itinerary id.
+// Fresh traveler → dashboard builder with a brief and `flexible` timing, which
+// keeps the dated timeline off so the Collection is the dominant surface once
+// items exist. Returns the working-copy itinerary id.
 async function startFlexibleTrip(page: Page, baseURL: string, brief: string): Promise<string> {
-  const { callbackUrl } = await freshTravelerCallbackUrl(baseURL);
-  await page.goto(callbackUrl);
-  await expect(page).toHaveURL(/\/basecamp/);
-
-  await page.getByRole("button", { name: "Start a new itinerary" }).click();
-  await page.waitForURL(/\/itinerary\/[0-9a-f-]{36}/, { timeout: 30_000 });
-  const id = page.url().split("/itinerary/")[1]!.split(/[?#]/)[0]!;
-
-  await expect(page.getByRole("heading", { name: HEADING })).toBeVisible();
-  await page.getByLabel("The trip, in a sentence").fill(brief);
-  await page.getByRole("button", { name: "Flexible" }).click();
-  await page.getByRole("button", { name: "Start building" }).click();
-  await expect(page.getByRole("heading", { name: REVEALED })).toBeVisible();
+  const { id } = await enterFreshBuilder(page, baseURL, {
+    brief,
+    timing: { kind: "flexible" },
+  });
+  // The Collection is its own planning view now (a shell route), not an inline
+  // panel on the dashboard — that's where the board + add affordances live.
+  await page.goto(`/itinerary/${id}/collection`);
   return id;
 }
 
@@ -102,9 +93,12 @@ test("COL-2: switching the grouping axis re-lanes the same items", async ({
   await expect(visibleCards(page)).toHaveCount(2);
 });
 
-// COL-3 — the traveler jots a note straight into the wish list; it persists as a
-// timeless note (no time, no host) and never touches a timeline.
-test("COL-3: a traveler jots a note into the wish list", async ({ page, baseURL }) => {
+// COL-3 — the traveler jots a note from the Collection rail; it persists as a
+// timeless note (no time, no host) and never touches a timeline. Notes are
+// deliberately NOT shown as wish-list cards on the board — they're staff-facing
+// feedback whose home is the Journal (CollectionRail: "notes not needed in
+// collection") — so this asserts the write + persistence, not a board card.
+test("COL-3: a traveler jots a note from the collection rail", async ({ page, baseURL }) => {
   const id = await startFlexibleTrip(page, baseURL!, "Notes to self");
   await seedCollectionItemAsAdvisor(id, { type: "experience", title: "Starter idea" });
   await page.reload();
@@ -113,20 +107,27 @@ test("COL-3: a traveler jots a note into the wish list", async ({ page, baseURL 
   const field = page.locator('[data-testid="collection-add-note"]:visible');
   await field.fill(note);
   await field.press("Enter");
+  // The field clears on submit — the note was accepted.
+  await expect(field).toHaveValue("");
 
-  await expect(visibleCards(page).filter({ hasText: "sushi counter" })).toHaveCount(1);
-
-  // State backstop: a timeless note landed in the Collection (unscheduled).
+  // State backstop: a timeless note landed in the Collection (unscheduled). The
+  // board never renders it (notes live in the Journal), so this is the seam that
+  // proves the jot actually saved.
   await expect
     .poll(async () => (await getCollectionAsAdvisor(id)).map((n) => n.title))
     .toContain(note);
   const saved = (await getCollectionAsAdvisor(id)).find((n) => n.title === note);
   expect(saved?.type).toBe("note");
   expect(saved?.starts_at ?? null).toBeNull();
+  // And it stays out of the board's wish-list cards.
+  await expect(visibleCards(page).filter({ hasText: "sushi counter" })).toHaveCount(0);
 });
 
 // COL-4 — the traveler pastes a link; it persists as an unscheduled `web` node.
 // OpenGraph enrichment is best-effort, so we assert the provenance, not wording.
+// A bare link (no rich OG) resolves to a note-kind web node, which — like any
+// note — lives in the Journal rather than the board, so this asserts the saved
+// provenance at the seam, not a second board card.
 test("COL-4: a traveler saves a pasted link", async ({ page, baseURL }) => {
   const id = await startFlexibleTrip(page, baseURL!, "Reading list");
   await seedCollectionItemAsAdvisor(id, { type: "experience", title: "Starter idea" });
@@ -145,11 +146,6 @@ test("COL-4: a traveler saves a pasted link", async ({ page, baseURL }) => {
   const web = (await getCollectionAsAdvisor(id)).find((n) => n.source === "web");
   expect(web?.source_id).toContain("example.com");
   expect(web?.starts_at ?? null).toBeNull();
-
-  // And a second card lands on the board (starter + the saved link). This rides
-  // the browser's OWN from-link round-trip — the backend's OpenGraph fetch can
-  // take up to its 5s timeout — so give it room beyond the default 5s window.
-  await expect(visibleCards(page)).toHaveCount(2, { timeout: 15_000 });
 });
 
 // COL-5 — dragging a collection card onto a day gives it a real time and lays

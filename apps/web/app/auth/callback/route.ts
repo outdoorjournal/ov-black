@@ -50,8 +50,21 @@ async function roleAwareRedirect(
   return NextResponse.redirect(new URL("/basecamp", origin));
 }
 
+// The public origin to build absolute redirects from. Behind the ALB, Next's
+// standalone server derives `request.url` from its own bind address, so
+// `new URL(request.url).origin` is `https://0.0.0.0:3000` — a dead internal
+// address the browser can't reach (ERR_SSL_PROTOCOL_ERROR). When the hosting
+// env advertises the real origin (OVB_WEB_ORIGIN, injected by the ECS task) we
+// trust it; locally it's unset and the request origin is already correct.
+function publicOrigin(request: NextRequest): string {
+  const configured = process.env["OVB_WEB_ORIGIN"];
+  if (configured) return configured.replace(/\/$/, "");
+  return new URL(request.url).origin;
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = publicOrigin(request);
 
   const code = searchParams.get("code");
   const tokenHash = searchParams.get("token_hash");

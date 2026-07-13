@@ -12,16 +12,34 @@ import {
 import os from "node:os";
 import path from "node:path";
 
+// All e2e identities plus-address one real, deliverable mailbox. `POST /clients`
+// issues a real Supabase invite whose welcome email is sent through the project's
+// SMTP (Resend on staging); an undeliverable recipient domain (example.com / .dev)
+// makes GoTrue fail the send with `500 Error sending invite email` (surfaced as
+// `502 auth_upstream_unavailable`). Plus-addressing keeps every address unique yet
+// lands it in one inbox. Override the base per-machine via $OVB_E2E_EMAIL_BASE.
+const E2E_EMAIL_BASE =
+  process.env["OVB_E2E_EMAIL_BASE"] ?? "chris@outdoorvoyage.com";
+
+/** `<local>+<tag>@<domain>` from the configured base mailbox. */
+export function plusAddress(tag: string): string {
+  const [local, domain] = E2E_EMAIL_BASE.split("@");
+  return `${local}+${tag}@${domain}`;
+}
+
+/** A collision-free, deliverable invite target (fresh client per call). */
+export function uniqueEmail(prefix = "e2e"): string {
+  return plusAddress(`${prefix}-${randomUUID()}`);
+}
+
 // Stable, throwaway identities. Override per-machine / for staging via env.
 // Locally the auth users + linkage are created on demand; on staging they must
-// be provisioned ahead of time (see scripts/provision-staging-users.sh).
-// NB: example.com is RFC 2606 reserved — it passes the API's strict EmailStr
-// validation (POST /clients, /auth/login) where a .test TLD is rejected, and
-// it can never deliver real mail.
+// be provisioned ahead of time (see scripts/provision-staging-users.sh). The
+// fixed +tags keep these addresses stable across runs so captured sessions reuse.
 export const E2E_ADVISOR_EMAIL =
-  process.env["E2E_ADVISOR_EMAIL"] ?? "e2e-advisor@example.com";
+  process.env["E2E_ADVISOR_EMAIL"] ?? plusAddress("ovb-e2e-advisor");
 export const E2E_TRAVELER_EMAIL =
-  process.env["E2E_TRAVELER_EMAIL"] ?? "e2e-traveler@example.com";
+  process.env["E2E_TRAVELER_EMAIL"] ?? plusAddress("ovb-e2e-traveler");
 
 // Captured cookie sessions, relative to the apps/web working directory.
 export const ADVISOR_STORAGE_STATE = "e2e/.auth/advisor.json";
@@ -365,9 +383,10 @@ export async function freshTravelerCallbackUrl(
     );
   }
   const key = getServiceRoleKey(supabaseUrl);
-  // RFC 2606 reserved domain (see E2E_*_EMAIL) so it passes the API's EmailStr
-  // and can never deliver mail; the UUID keeps each run's traveler distinct.
-  const email = `e2e-onb-${randomUUID()}@example.com`;
+  // Deliverable, plus-addressed target (see plusAddress); the UUID keeps each
+  // run's traveler distinct. This path is local-only (mailpit), but stays on the
+  // same strategy as the rest of the suite.
+  const email = uniqueEmail("e2e-onb");
 
   await ensureTravelerLinkedClient(getApiBaseUrl(), mintAdvisorAccessToken(), email);
   await confirmUser(supabaseUrl, key, email);

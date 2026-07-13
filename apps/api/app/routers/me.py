@@ -24,7 +24,7 @@ import logging
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -43,9 +43,11 @@ from app.models import (
     Node,
     NodeStatus,
     NodeType,
+    Profile,
     ProfileFact,
     SessionAudience,
     TurnRole,
+    UserRole,
 )
 from app.services import invoices as invoices_svc
 from app.services.clients import resolve_client_for_auth_user
@@ -64,6 +66,18 @@ class MyClientResponse(BaseModel):
     """Response for ``GET /me/client`` — the client_id the caller belongs to."""
 
     client_id: uuid.UUID
+
+
+class MyRoleResponse(BaseModel):
+    """Response for ``GET /me/role`` — the caller's application role.
+
+    ``advisor`` / ``client`` mirror ``public.profiles.role``; ``unknown`` when no
+    profile row exists yet (e.g. a freshly magic-linked invitee before the first
+    ``/me/client`` JIT-backfill). The web app uses this to branch the post-login
+    redirect without reading ``profiles`` through the (disabled) Data API.
+    """
+
+    role: Literal["advisor", "client", "unknown"]
 
 
 class MyItinerarySummary(BaseModel):
@@ -269,6 +283,36 @@ async def get_my_client_endpoint(
     if client is None:
         raise HTTPException(status_code=404, detail="client_not_found")
     return MyClientResponse(client_id=client.id)
+
+
+@router.get(
+    "/role",
+    response_model=MyRoleResponse,
+    summary="Resolve the calling user's application role (advisor/client).",
+)
+async def get_my_role_endpoint(
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> MyRoleResponse:
+    """The app role from ``public.profiles``, resolved server-side.
+
+    The web app's post-login redirect needs the caller's role, but the Supabase
+    Data API (PostgREST) is disabled on this project — ``apps/api`` is the only
+    DB surface — so the browser can't read ``profiles`` directly. This mirrors
+    the profile lookup ``require_advisor`` does, but returns the role rather than
+    gating, and never 403s: a missing profile resolves to ``unknown``.
+    """
+    try:
+        user_id = uuid.UUID(user.sub)
+    except ValueError:  # pragma: no cover — Supabase subs are always UUIDs
+        return MyRoleResponse(role="unknown")
+
+    profile = (
+        await session.execute(select(Profile).where(Profile.id == user_id))
+    ).scalar_one_or_none()
+    if profile is None:
+        return MyRoleResponse(role="unknown")
+    return MyRoleResponse(role="advisor" if profile.role is UserRole.advisor else "client")
 
 
 @router.get(

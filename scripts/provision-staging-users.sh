@@ -85,8 +85,15 @@ curl -sf -o /dev/null "$SUPABASE_URL/auth/v1/settings" -H "apikey: $ANON_KEY" \
 curl -sf -o /dev/null "$API_URL/health" || die "staging API unreachable at $API_URL/health"
 
 # ── Identities ───────────────────────────────────────────────────────────────
-ADV_EMAIL="ovb-e2e-advisor@ovblack.dev"
-TRV_EMAIL="ovb-e2e-traveler@ovblack.dev"
+# Plus-address one deliverable mailbox: the traveler-linked client is created via
+# POST /clients, whose Supabase invite emails a welcome link through Resend — an
+# undeliverable domain (.dev/example.com) fails the send with 500 (→ 502). Stable
+# +tags keep the two service identities constant across runs. Override the base
+# via $OVB_E2E_EMAIL_BASE (shared with the e2e suites).
+EMAIL_BASE="${OVB_E2E_EMAIL_BASE:-chris@outdoorvoyage.com}"
+EMAIL_LOCAL="${EMAIL_BASE%@*}"; EMAIL_DOMAIN="${EMAIL_BASE#*@}"
+ADV_EMAIL="${EMAIL_LOCAL}+ovb-e2e-advisor@${EMAIL_DOMAIN}"
+TRV_EMAIL="${EMAIL_LOCAL}+ovb-e2e-traveler@${EMAIL_DOMAIN}"
 
 cli_get() {  # cli_get <profile> <key>  (empty string when absent)
   python3 - "$CLI" "$1" "$2" <<'PY'
@@ -129,8 +136,12 @@ grant() {  # grant <email> <password> -> prints access_token (empty on failure)
 }
 
 ensure_user() {  # ensure_user <email> <password> -> prints uid (creates or updates password+confirm)
-  local email="$1" pw="$2" users uid body
-  users=$(admin GET "/auth/v1/admin/users?filter=$email")
+  local email="$1" pw="$2" users uid body email_q
+  # URL-encode the email for the ?filter= query — a plus-addressed mailbox
+  # (chris+tag@…) would otherwise have its '+' read as a space, missing the
+  # existing user and forcing a duplicate create.
+  email_q=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$email")
+  users=$(admin GET "/auth/v1/admin/users?filter=$email_q")
   uid=$(printf '%s' "$users" | python3 -c '
 import json, sys
 us = json.load(sys.stdin).get("users") or []

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { plusAddress } from "../support/auth";
 
 import { expect, test } from "@playwright/test";
 
@@ -30,7 +31,7 @@ import { withAgentTurnLock } from "../support/agentLock";
 // Runs under the `advisor` project (setup:advisor's captured session).
 
 function uniqueEmail(): string {
-  return `e2e-adv3-${randomUUID()}@example.com`;
+  return plusAddress(`e2e-adv3-${randomUUID()}`);
 }
 
 test("ADV-3: advisor drives a concierge build turn from the private aside", async ({
@@ -62,20 +63,25 @@ test("ADV-3: advisor drives a concierge build turn from the private aside", asyn
   // the shared agent lock so it never contends with a traveler chat turn on the
   // single local agent (see support/agentLock.ts).
   const composer = page.locator(
-    'input[placeholder="Ask me to propose, assemble, or swap…"]:visible',
+    'textarea[placeholder="Ask me to propose, assemble, or swap…"]:visible',
   );
   await expect(composer).toBeVisible();
-  await composer.fill("Give us three days around Florence, food-led.");
+  const message = "Give us three days around Florence, food-led.";
+  const send = page.locator("button:visible", { hasText: "Send" });
 
   await withAgentTurnLock(async () => {
-    await page.locator("button:visible", { hasText: "Send" }).click();
+    // The concierge re-disables the composer in bursts while it opens a session,
+    // so a fill or click can be dropped — retry the whole submit (fill + Send)
+    // until the composer clears, which only happens once a turn actually fired.
+    await expect(async () => {
+      await composer.fill(message);
+      await expect(composer).toHaveValue(message);
+      await send.click({ timeout: 4000 });
+      await expect(composer).toHaveValue("");
+    }).toPass({ timeout: 40_000 });
 
-    // The message registers (composer clears while the turn streams) and the
-    // private thread shows what we sent.
-    await expect(composer).toHaveValue("");
-    await expect(
-      page.getByText("Give us three days around Florence, food-led.").first(),
-    ).toBeVisible();
+    // The private thread shows what we sent.
+    await expect(page.getByText(message).first()).toBeVisible();
 
     // The turn runs end-to-end: the composer re-enables once the reply has
     // streamed in.

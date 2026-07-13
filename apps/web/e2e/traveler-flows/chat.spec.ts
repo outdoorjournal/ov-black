@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { freshTravelerCallbackUrl } from "../support/auth";
+import { enterFreshBuilder } from "../support/builder";
 import { withAgentTurnLock } from "../support/agentLock";
 
 // Live concierge chat, driven in the browser. Both surfaces that let a traveler
@@ -73,39 +74,40 @@ test("ITB-4: the concierge takes a turn from an empty builder", async ({
 }) => {
   test.setTimeout(180_000);
 
-  const { callbackUrl } = await freshTravelerCallbackUrl(baseURL!);
-  await page.goto(callbackUrl);
-  await expect(page).toHaveURL(/\/basecamp/);
-
-  await page.getByRole("button", { name: "Start a new itinerary" }).click();
-  await page.waitForURL(/\/itinerary\/[0-9a-f-]{36}/, { timeout: 30_000 });
-  await page.getByLabel("The trip, in a sentence").fill("A quiet week somewhere coastal");
-  await page.getByRole("button", { name: "Flexible" }).click();
-  await page.getByRole("button", { name: "Start building" }).click();
+  const { id } = await enterFreshBuilder(page, baseURL!, {
+    brief: "A quiet week somewhere coastal",
+    timing: { kind: "flexible" },
+  });
+  await page.goto(`/itinerary/${id}/timeline`);
   await expect(
     page.getByRole("heading", { name: "A blank canvas, ready when you are" }),
   ).toBeVisible();
 
-  // The concierge composer sits in the builder aside. The builder mounts a
-  // desktop and a mobile layout (one hidden by responsive CSS), so scope to the
-  // visible copy.
+  // The concierge composer sits in the builder aside — an auto-growing textarea.
+  // The builder mounts a desktop and a mobile layout (one hidden by responsive
+  // CSS), so scope to the visible copy.
   const composer = page.locator(
-    'input[placeholder="Ask me to propose, assemble, or swap…"]:visible',
+    'textarea[placeholder="Ask me to propose, assemble, or swap…"]:visible',
   );
   await expect(composer).toBeVisible();
-  await composer.fill("Can you suggest a boutique hotel to start?");
+  const message = "Can you suggest a boutique hotel to start?";
+  const send = page.locator("button:visible", { hasText: "Send" });
 
   // The turn runs under the shared agent lock so it never contends with another
   // live turn on the single local agent.
   await withAgentTurnLock(async () => {
-    await page.locator("button:visible", { hasText: "Send" }).click();
+    // The concierge re-disables the composer in bursts while it opens a session,
+    // so a fill or click can be dropped — retry the whole submit (fill + Send)
+    // until the composer clears, which only happens once a turn actually fired.
+    await expect(async () => {
+      await composer.fill(message);
+      await expect(composer).toHaveValue(message);
+      await send.click({ timeout: 4000 });
+      await expect(composer).toHaveValue("");
+    }).toPass({ timeout: 40_000 });
 
-    // The message registers (the composer clears + disables while the turn
-    // streams), and the thread shows what we sent.
-    await expect(composer).toHaveValue("");
-    await expect(
-      page.getByText("Can you suggest a boutique hotel to start?").first(),
-    ).toBeVisible();
+    // The thread shows what we sent.
+    await expect(page.getByText(message).first()).toBeVisible();
 
     // The composer re-enables once the reply has streamed in.
     await expect(composer).toBeEnabled({ timeout: 150_000 });
