@@ -10,7 +10,7 @@ export function StartItineraryButton() {
     <form action={startNewItinerary}>
       <button
         type="submit"
-        className="rounded-full border border-ink/20 px-4 py-1.5 text-[11px] uppercase tracking-label text-ink/70 transition-colors hover:border-brand hover:text-ink"
+        className="rounded-md bg-brand px-4 py-1.5 text-[11px] uppercase tracking-label text-brand-foreground transition-colors hover:bg-brand/90"
       >
         Start a new itinerary
       </button>

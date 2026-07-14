@@ -76,11 +76,7 @@ export default async function CampaignLandingPage({ params }: PageProps) {
         <form action={start}>
           <button
             type="submit"
-            className="mt-2 rounded-full px-8 py-3 text-base font-medium shadow-lg transition-transform hover:scale-[1.02]"
-            style={{
-              backgroundColor: mood.palette.accent,
-              color: mood.palette.bg,
-            }}
+            className="mt-2 rounded-lg bg-brand px-8 py-3 text-base font-medium bg-brand text-brand-foreground shadow-lg transition-transform hover:scale-[1.02] hover:bg-brand/90"
           >
             {display.cta}
           </button>

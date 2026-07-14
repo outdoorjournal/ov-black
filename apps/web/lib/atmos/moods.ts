@@ -184,10 +184,15 @@ export const MOODS: Record<MoodId, MoodEntry> = {
     imageUrl: UNSPLASH("1732045133230-1a670eef8620"),
     keywords: [],
   },
-  // Mount Olympus / Greece campaign — sun-warmed stone + Aegean light.
+  // Mount Olympus / Greece campaign — the hero for every campaign-created
+  // itinerary. Sourced from the campaign's cornerstone OV trip ("Trip to Mount
+  // Olympus — The Path to Symbolism") rather than Unsplash, so the dashboard
+  // hero matches the real adventure the spine is built around. Served from the
+  // OV public CDN (allowlisted in next.config.ts for the next/image path).
   olympus: {
     palette: { bg: "#1c1913", fg: "#e8dcc4", accent: "#c69a54" },
-    imageUrl: UNSPLASH("1602343168117-bb8ffe3e2e9f"),
+    imageUrl:
+      "https://cdn-pub.prod.outdoorvoyage.com/operators/018f395d-288e-777c-a64d-3808a193b686/trips/018f39f5-7050-7b2c-a1c4-0c689797f113/images/xVMqslnvADKj.jpg",
     keywords: [],
   },
 };

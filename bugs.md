@@ -6,29 +6,9 @@ We need to handle day/timezone changes better.
 
 AP:
 Right hand side of the journal is unhelpful
-Need to fix the detail view of a card
 What does the invoice screen look like?
-
-
-X Need to add Address
-X Favorite Airport
-
-X Medical for Profile (allergies)
-
 Change onboarding prompt
 Add a hello prompt to the new client flow.
-
-X USD vs EUR
-X Error messages don't render after refresh.
-
-X When Agent talks to advisor, needs to switch voice to be talking about the traveler.
-
-X Better chat field | and up arrow.
-
-18:51:21 DEBUG   httpcore.http11  receive_response_body.failed exception=CancelledError('Cancelled via cancel scope 1137ad490; reason: deadline exceeded')  method=POST path=/sessions/7d474fd9-efa3-4385-a803-e3a65aee6435/turn  [c27a1998]
-
-X Notes not needed in collection.
--> z-index for itin header
 
 Future:
  * Sync OSINT with Brevo

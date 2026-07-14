@@ -21,6 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CardTemplate, EdgeType, NodeStatus, NodeType
 from app.seed_data.japan_itinerary import FixtureItem
+from app.seed_data.olympus_cornerstones import (
+    CORNERSTONE_ANCHOR_ID_HINT,
+    cornerstone_for_nights,
+)
 from app.seed_data.olympus_itinerary import OLYMPUS_DAYS, TRIP_ANCHOR
 from app.services.templates import (
     add_template_edge,
@@ -48,11 +52,19 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
 
     ``nights`` must be one of :data:`OLYMPUS_SPINE_SLUGS`. The spine is the first
     ``nights`` days of the shared fixture, wired with within-day + day-to-day
-    ``follows`` edges exactly like the Japan builder.
+    ``follows`` edges exactly like the Japan builder. The summit node is enriched
+    with the length's real OV cornerstone trip (cover, gallery, description,
+    price) — see :mod:`app.seed_data.olympus_cornerstones`.
     """
     slug = OLYMPUS_SPINE_SLUGS.get(nights)
     if slug is None:
         raise ValueError(f"unsupported Olympus spine length: {nights}")
+
+    # Real OV trip this spine is built around — the longest spine anchors on the
+    # full "Path to Symbolism" ascent, the shorter ones on the 2-day summit push.
+    # Its cover + gallery + price enrich the summit node so the demo shows genuine
+    # Olympus photography behind the curated skeleton.
+    cornerstone = cornerstone_for_nights(nights, longest=max(OLYMPUS_SPINE_SLUGS))
 
     template, created = await find_or_create_template(
         session,
@@ -84,6 +96,10 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
         first_in_day: uuid.UUID | None = None
         for item in day.items:
             metadata = item.attrs.model_dump(mode="json", exclude_none=True)
+            # The summit node is the spine's cornerstone: fold in the real OV
+            # trip's cover (hero), gallery, description, and price.
+            if item.id_hint == CORNERSTONE_ANCHOR_ID_HINT:
+                metadata.update(cornerstone.enrichment())
             utcoffset = item.starts_at.utcoffset()
             if utcoffset is not None:
                 metadata["tz_offset_minutes"] = int(utcoffset.total_seconds() // 60)

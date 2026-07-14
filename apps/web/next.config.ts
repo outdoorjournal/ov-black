@@ -16,9 +16,11 @@ const nextConfig: NextConfig = {
     // Mood-frame backgrounds load directly from the Unsplash CDN — see
     // lib/atmos/moods.ts. Keeping them remote avoids committing ~7 MB of
     // binary placeholders and lets the curated photo IDs evolve without
-    // touching the repo.
+    // touching the repo. The Olympus campaign mood + card heroes/galleries are
+    // served from the Outdoor Voyage public CDN (real cornerstone trip imagery).
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },
+      { protocol: "https", hostname: "cdn-pub.prod.outdoorvoyage.com" },
     ],
   },
 };

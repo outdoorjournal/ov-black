@@ -81,11 +81,13 @@ test("ADV-4: advisor composes a typed + priced card (with live preview) into the
   await expect(page.locator('[data-testid="card-composer"]')).toBeHidden();
 
   // Lands in the Collection (unscheduled proposed node) — the dedicated
-  // Collection view is its own rail route now.
+  // Collection view is its own rail route now. Give the freshly-written node a
+  // generous window: against a deployed stack the create → navigate → SSR-fetch
+  // → render round-trip runs slower than the default 5s expect timeout.
   await page.goto(`/itinerary/${itineraryId}/collection`);
   await expect(
     page.locator('[data-testid="collection-card"]:visible').filter({ hasText: title }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
 
   // API backstop: type + cost pair, unscheduled.
   await expect

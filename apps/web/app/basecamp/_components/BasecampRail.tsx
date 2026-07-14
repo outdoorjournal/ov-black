@@ -7,7 +7,7 @@
 
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
-import { Home, Receipt, Users, Vault } from "lucide-react";
+import { BookOpen, Home, Receipt, Users, Vault } from "lucide-react";
 
 import { AppRail, type RailItem } from "@/app/_components/shell/AppRail";
 
@@ -26,6 +26,12 @@ export function BasecampRail() {
       label: "Party",
       active: pathname.startsWith("/basecamp/party"),
       icon: <Users size={18} strokeWidth={1.6} aria-hidden />,
+    },
+    {
+      href: "/basecamp/reading" as Route,
+      label: "Reading",
+      active: pathname.startsWith("/basecamp/reading"),
+      icon: <BookOpen size={18} strokeWidth={1.6} aria-hidden />,
     },
     {
       href: "/basecamp/vault" as Route,

@@ -8,11 +8,14 @@ test("traveler reaches basecamp with an active session", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/basecamp/);
 
-  // The first-prompt composer proves an authenticated basecamp rendered for a
-  // linked client — not the login page or a no-client 404.
-  await expect(
-    page.getByPlaceholder("Begin in your own words…"),
-  ).toBeVisible();
+  // Authenticated basecamp rendered for a linked client — not the login page or
+  // a no-client 404. Basecamp resolves one of two variants server-side: the
+  // first-touch composer (traveler with no itineraries yet) or the itinerary
+  // grid (returning traveler). Accept either so the check is robust to whatever
+  // trips the shared account has accumulated.
+  const composer = page.getByPlaceholder("Begin in your own words…");
+  const itineraries = page.getByRole("heading", { name: "Your itineraries" });
+  await expect(composer.or(itineraries)).toBeVisible();
 
   // The public sign-in CTA must be absent — its presence would mean the auth
   // gate bounced us back to /.
