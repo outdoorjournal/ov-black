@@ -117,11 +117,6 @@ class OlympusCornerstone:
         }
 
 
-#: id_hint of the fixture node the cornerstone enriches — the Mytikas summit,
-#: the pinnacle experience present in every spine (5/7/14 all include day 4).
-CORNERSTONE_ANCHOR_ID_HINT = "d04-summit"
-
-
 _OV_CDN = "https://cdn-pub.prod.outdoorvoyage.com"
 
 
@@ -321,7 +316,6 @@ def cornerstone_for_nights(nights: int, *, longest: int) -> OlympusCornerstone:
 
 
 __all__ = [
-    "CORNERSTONE_ANCHOR_ID_HINT",
     "GUIDED_2DAY",
     "SYMBOLISM",
     "OlympusCornerstone",

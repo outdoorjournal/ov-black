@@ -90,6 +90,11 @@ export interface AgentNode {
   source: string | null;
   source_id: string | null;
   metadata: Record<string, unknown>;
+  // A server-persisted node can be a subgraph CHILD (a day of a multi-day
+  // package / campaign cornerstone). Carrying its parent id lets the Journal
+  // derive it as a journey beat live, before a reload rehydrates the graph —
+  // without it the child renders as a parentless top-level card (or not at all).
+  parent_subgraph_id?: string | null;
 }
 
 export interface ChatMessage {
@@ -1019,7 +1024,10 @@ export const itineraryGraphStore = createStoreContext<
             const asNode: NodeResponse = {
               id: node.id,
               itinerary_id: node.itinerary_id,
-              parent_subgraph_id: null,
+              // Preserve subgraph parentage so a materialized child (a campaign
+              // cornerstone's day) derives as a journey beat immediately, rather
+              // than rendering as a parentless top-level card until a reload.
+              parent_subgraph_id: node.parent_subgraph_id ?? null,
               type: node.type as NodeResponse["type"],
               // The real status the agent persisted (pending/approved/…), NOT a
               // forced "pending" — this node is the trip, not a proposal.

@@ -65,6 +65,9 @@ export type AgentNode = {
   source: string | null;
   source_id: string | null;
   metadata: Record<string, unknown> & { snapshot?: ExperienceSnapshot };
+  // Present when the streamed node is a subgraph CHILD (a day of a multi-day
+  // package). Threaded through so the Journal derives it as a journey beat live.
+  parent_subgraph_id?: string | null;
 };
 
 export type CardProposedFrame = {

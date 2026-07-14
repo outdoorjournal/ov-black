@@ -235,6 +235,7 @@ export function ConciergeChat({
       const payload = {
         id: node.id,
         itinerary_id: node.itinerary_id,
+        parent_subgraph_id: node.parent_subgraph_id ?? null,
         type: node.type,
         status: node.status,
         title: node.title,
@@ -411,6 +412,9 @@ export function ConciergeChat({
             storeApi.getState().insertCreatedNode({
               id: node.id,
               itinerary_id: node.itinerary_id,
+              // Cornerstone day-children carry a parent — keep it so they derive
+              // as journey beats live, not as parentless top-level cards.
+              parent_subgraph_id: node.parent_subgraph_id ?? null,
               type: node.type,
               status: node.status,
               title: node.title,

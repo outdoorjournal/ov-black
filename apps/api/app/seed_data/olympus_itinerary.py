@@ -1,20 +1,26 @@
-"""Mt Olympus / Greece campaign spine — length-variant seed fixture.
+"""Mt Olympus / Greece campaign spine — cornerstone-led seed fixture.
 
-Backs the ``olympus`` campaign (see :mod:`app.campaigns.registry`). A single
-14-day day-list authored here is sliced by :mod:`app.services.olympus_template`
-into three shipped spines — 5, 7, and 14 nights — so the dashboard kickoff can
-snap the traveler's chosen dates to the nearest length and drop a right-sized
-skeleton onto their fork.
+Backs the ``olympus`` campaign (see :mod:`app.campaigns.registry`). The spine is
+composed at build time (:mod:`app.services.olympus_template`) from three parts so
+the mountain is told ONCE — by the real OV cornerstone trip — and never
+double-booked by hand-authored cards:
 
-The days are ordered so any prefix is a coherent trip:
+1. **Arrival** — the inbound flight (the airport transfer is added live by the
+   agent). Day 1.
+2. **The cornerstone** — the real, bookable OV adventure (Path to Symbolism for
+   the long spine, the 2-Day Summit push for the short ones). Its day-by-day
+   itinerary is materialized as a SUBGRAPH whose children lay across the mountain
+   days as the itinerary's experiences (see ``olympus_template``). This is the
+   ONLY mountain content — there are deliberately no hand-authored gorge / refuge
+   / summit / descend cards competing with it.
+3. **The extension** — the grand tour AFTER the guided ascent (Riviera, Dion,
+   Meteora, wine country, Pelion). Authored relative to its own day 0 and shifted
+   by the cornerstone's span at build time, then prefix-sliced to fill whatever
+   nights remain. Any prefix is a coherent extension.
 
-- **first 5** — arrive, base at Litochoro, acclimatize in the Enipeas gorge,
-  ascend to the Spilios Agapitos refuge, summit Mytikas, and come down to the
-  coast. A complete ascent-and-down.
-- **first 7** — add the Dion archaeological park and a second Olympian Riviera
-  day: the mountain plus its mythic foothills.
-- **all 14** — the grand tour: Meteora, Vergína, Pelion, and the wine country
-  of the north.
+So a 14-night trip = a 6-day guided ascent (6 beats) + an 8-day grand tour; a
+7-night = a 2-day summit push (2 beats) + a 5-day tour; a 5-night = the push + a
+3-day tour. The mountain days carry the cornerstone's beats and only the beats.
 
 Every item is a Pydantic ``CardAttributes`` model, so a schema violation fails
 the import — the fixture is its own smoke test, exactly like the Japan seed.
@@ -28,18 +34,30 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.schemas.card_attrs import (
+    CardSnapshot,
     ExperienceCardAttrs,
     FlightCardAttrs,
     FreeTimeCardAttrs,
+    GalleryImage,
     GeoPoint,
     HotelCardAttrs,
-    MealCardAttrs,
     TrainCardAttrs,
 )
 from app.seed_data.japan_itinerary import FixtureDay, FixtureItem
 
 # Greece summer is EEST (+03:00).
 EEST = timezone(timedelta(hours=3))
+
+
+def _img(photo_id: str, *, w: int = 1600, q: int = 80) -> str:
+    """An Unsplash CDN url for a bare ``photo-…`` id (host allowlisted in
+    ``next.config.ts``). Mirrors the mood-frame convention in ``lib/atmos``."""
+    return f"https://images.unsplash.com/{photo_id}?w={w}&q={q}&auto=format&fit=crop"
+
+
+def _gallery(*pairs: tuple[str, str]) -> list[GalleryImage]:
+    """Build a ``(photo_id, credit)`` list into thumbnail gallery images."""
+    return [GalleryImage(url=_img(pid, w=900, q=70), credit=credit) for pid, credit in pairs]
 
 
 def _at(date_iso: str, hhmm: str) -> datetime:
@@ -53,20 +71,21 @@ def _at(date_iso: str, hhmm: str) -> datetime:
 
 SKG = GeoPoint(lat=40.5197, lng=22.9709, label="Thessaloniki Airport (SKG)")
 LITOCHORO = GeoPoint(lat=40.1008, lng=22.5011, label="Litochoro")
-ENIPEAS = GeoPoint(lat=40.0872, lng=22.4358, label="Enipeas Gorge")
-PRIONIA = GeoPoint(lat=40.0872, lng=22.3775, label="Prionia trailhead")
-REFUGE = GeoPoint(lat=40.0869, lng=22.3597, label="Spilios Agapitos refuge")
-MYTIKAS = GeoPoint(lat=40.0885, lng=22.3489, label="Mytikas summit")
 RIVIERA = GeoPoint(lat=40.1667, lng=22.5833, label="Olympian Riviera")
 DION = GeoPoint(lat=40.1731, lng=22.4931, label="Dion Archaeological Park")
 METEORA = GeoPoint(lat=39.7217, lng=21.6306, label="Meteora")
-VERGINA = GeoPoint(lat=40.4894, lng=22.3186, label="Vergína (Aigai)")
 PELION = GeoPoint(lat=39.4000, lng=23.1000, label="Mount Pelion")
 NAOUSSA = GeoPoint(lat=40.6289, lng=22.0678, label="Naoussa wine country")
 
 
-# Anchor: start-of-day on the arrival date, EEST.
+# Anchor: start-of-day on the arrival date, EEST. Trip day 1 = this instant; the
+# extension day-list below is authored from the SAME anchor (its own day 0) and
+# shifted by the cornerstone's span at build time.
 TRIP_ANCHOR = datetime(2026, 9, 14, 0, 0, tzinfo=EEST)
+
+#: The cornerstone anchor card starts here on day 1 — after the inbound flight
+#: lands (13:30), so its first beat ("airport pickup → Litochoro") reads forward.
+CORNERSTONE_ANCHOR_HHMM = "15:00"
 
 
 def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
@@ -75,180 +94,68 @@ def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
     )
 
 
-# ── The 14-day day-list (any prefix is a coherent trip) ────────────────
+# ── Part 1: arrival (day 1) ────────────────────────────────────────────
+# The inbound flight + a Litochoro base for the mountain days. The base is the
+# night-bar lane (it never collides with the cornerstone's experience beats); the
+# refuge nights are told by the beats themselves.
 
-OLYMPUS_DAYS: list[FixtureDay] = [
-    # Day 01 — arrive Thessaloniki, train south to Litochoro, base camp.
+ARRIVAL_ITEMS: list[FixtureItem] = [
+    FixtureItem(
+        id_hint="d01-arrive",
+        title="Arrive Thessaloniki (SKG)",
+        starts_at=_at("2026-09-14", "13:30"),
+        duration_minutes=45,
+        status="confirmed",
+        attrs=FlightCardAttrs(iata_to="SKG", to_location=SKG, location=SKG),
+    ),
+    FixtureItem(
+        id_hint="d01-base",
+        title="Litochoro base — Villa Drosos",
+        starts_at=_at("2026-09-14", "18:00"),
+        duration_minutes=60,
+        status="booked",
+        attrs=_hotel(
+            "Villa Drosos",
+            2,
+            LITOCHORO,
+            "Stone rooms at the mountain's foot, olive terrace, Mytikas on the skyline.",
+        ),
+    ),
+]
+
+
+# ── Part 3: the extension grand tour (authored from its own day 0) ─────
+# Shifted by the cornerstone's span at build time, then prefix-sliced to fill the
+# nights left after the guided ascent. Ordered so any prefix reads coherently:
+# recover on the Riviera, the mythic foothills (Dion), then the wider grand tour.
+
+EXTENSION_DAYS: list[FixtureDay] = [
+    # Ext day 1 — recover on the coast; move to the seafront base.
     FixtureDay(
         date="2026-09-14",
         weather_emoji="☀",
         items=[
             FixtureItem(
-                id_hint="d01-arrive",
-                title="Arrive Thessaloniki (SKG)",
-                starts_at=_at("2026-09-14", "13:30"),
-                duration_minutes=45,
-                status="confirmed",
-                attrs=FlightCardAttrs(iata_to="SKG", to_location=SKG, location=SKG),
-            ),
-            FixtureItem(
-                id_hint="d01-train",
-                title="Rail south to Litochoro",
-                starts_at=_at("2026-09-14", "16:00"),
-                duration_minutes=70,
-                status="approved",
-                attrs=TrainCardAttrs(from_location=SKG, to_location=LITOCHORO),
-            ),
-            FixtureItem(
-                id_hint="d01-hotel",
-                title="Check in — Litochoro base",
-                starts_at=_at("2026-09-14", "18:00"),
-                duration_minutes=60,
-                status="booked",
-                attrs=_hotel(
-                    "Villa Drosos",
-                    4,
-                    LITOCHORO,
-                    "Stone rooms at the mountain's foot, olive terrace, Mytikas on the skyline.",
-                ),
-            ),
-        ],
-    ),
-    # Day 02 — acclimatize in the Enipeas gorge; taverna dinner.
-    FixtureDay(
-        date="2026-09-15",
-        weather_emoji="⛅",
-        items=[
-            FixtureItem(
-                id_hint="d02-gorge",
-                title="Enipeas Gorge acclimatization hike",
-                starts_at=_at("2026-09-15", "08:30"),
+                id_hint="ext-riviera",
+                title="Recovery day — Olympian Riviera",
+                starts_at=_at("2026-09-14", "11:00"),
                 duration_minutes=300,
-                status="approved",
-                attrs=ExperienceCardAttrs(
-                    category="hiking", difficulty="moderate", energy_required=3, location=ENIPEAS
-                ),
-            ),
-            FixtureItem(
-                id_hint="d02-dinner",
-                title="Taverna dinner in Litochoro",
-                starts_at=_at("2026-09-15", "20:00"),
-                duration_minutes=120,
-                status="pending",
-                attrs=MealCardAttrs(cuisine_class="taverna", location=LITOCHORO),
-            ),
-        ],
-    ),
-    # Day 03 — Prionia trailhead up to the Spilios Agapitos refuge.
-    FixtureDay(
-        date="2026-09-16",
-        weather_emoji="🌤",
-        items=[
-            FixtureItem(
-                id_hint="d03-ascend",
-                title="Prionia → Spilios Agapitos refuge",
-                starts_at=_at("2026-09-16", "09:00"),
-                duration_minutes=210,
-                status="approved",
-                attrs=ExperienceCardAttrs(
-                    category="trekking", difficulty="strenuous", energy_required=4, location=PRIONIA
-                ),
-            ),
-            FixtureItem(
-                id_hint="d03-refuge",
-                title="Overnight — Refuge A (Spilios Agapitos)",
-                starts_at=_at("2026-09-16", "17:00"),
-                duration_minutes=60,
-                status="booked",
-                attrs=_hotel(
-                    "Refuge A · Spilios Agapitos",
-                    1,
-                    REFUGE,
-                    "The classic hut at 2,100 m — bunks, hearty dinner, an alpine start.",
-                ),
-            ),
-        ],
-    ),
-    # Day 04 — summit Mytikas, descend to the refuge.
-    FixtureDay(
-        date="2026-09-17",
-        weather_emoji="🌄",
-        items=[
-            FixtureItem(
-                id_hint="d04-summit",
-                title="Summit Mytikas (2,918 m)",
-                starts_at=_at("2026-09-17", "06:00"),
-                duration_minutes=420,
-                status="pending",
-                attrs=ExperienceCardAttrs(
-                    category="mountaineering",
-                    difficulty="strenuous",
-                    energy_required=5,
-                    location=MYTIKAS,
-                ),
-            ),
-            FixtureItem(
-                id_hint="d04-refuge",
-                title="Second night at the refuge",
-                starts_at=_at("2026-09-17", "18:00"),
-                duration_minutes=60,
-                status="pending",
-                attrs=_hotel(
-                    "Refuge A · Spilios Agapitos",
-                    1,
-                    REFUGE,
-                    "Back to the hut, legs earned, for the last night on the mountain.",
-                ),
-            ),
-        ],
-    ),
-    # Day 05 — descend to Litochoro, recover on the Olympian Riviera.
-    FixtureDay(
-        date="2026-09-18",
-        weather_emoji="☀",
-        items=[
-            FixtureItem(
-                id_hint="d05-descend",
-                title="Descend to Litochoro",
-                starts_at=_at("2026-09-18", "08:30"),
-                duration_minutes=240,
-                status="approved",
-                attrs=ExperienceCardAttrs(
-                    category="hiking", difficulty="moderate", energy_required=3, location=LITOCHORO
-                ),
-            ),
-            FixtureItem(
-                id_hint="d05-riviera",
-                title="Recovery afternoon — Olympian Riviera",
-                starts_at=_at("2026-09-18", "16:00"),
-                duration_minutes=180,
                 status="pending",
                 attrs=FreeTimeCardAttrs(
                     energy_advice="Feet up, sea swim, long dinner — you've summited.",
                     location=RIVIERA,
-                ),
-            ),
-        ],
-    ),
-    # Day 06 — Dion, the sacred city at the mountain's foot.
-    FixtureDay(
-        date="2026-09-19",
-        weather_emoji="🏛",
-        items=[
-            FixtureItem(
-                id_hint="d06-dion",
-                title="Dion Archaeological Park",
-                starts_at=_at("2026-09-19", "10:00"),
-                duration_minutes=180,
-                status="pending",
-                attrs=ExperienceCardAttrs(
-                    category="culture", difficulty="easy", energy_required=1, location=DION
+                    ambient_image=_img("photo-1629286521404-77161a73af35"),
+                    description=(
+                        "The long exhale after the summit. Blue-flag beaches unspool along the "
+                        "Pierian coast beneath Olympus itself — swim in the Thermaic Gulf, nap "
+                        "under a tamarisk, and let a seaside taverna stretch dinner past sunset."
+                    ),
                 ),
             ),
             FixtureItem(
-                id_hint="d06-hotel",
+                id_hint="ext-riviera-hotel",
                 title="Check in — Riviera seafront",
-                starts_at=_at("2026-09-19", "15:00"),
+                starts_at=_at("2026-09-14", "16:00"),
                 duration_minutes=60,
                 status="pending",
                 attrs=_hotel(
@@ -260,93 +167,150 @@ OLYMPUS_DAYS: list[FixtureDay] = [
             ),
         ],
     ),
-    # Day 07 — a slow Riviera day.
+    # Ext day 2 — Dion, the sacred city at the mountain's foot.
     FixtureDay(
-        date="2026-09-20",
-        weather_emoji="🏖",
+        date="2026-09-15",
+        weather_emoji="🏛",
         items=[
             FixtureItem(
-                id_hint="d07-beach",
-                title="Olympian Riviera — a slow day",
-                starts_at=_at("2026-09-20", "11:00"),
-                duration_minutes=300,
-                status="pending",
-                attrs=FreeTimeCardAttrs(
-                    energy_advice="Nothing on the plan but the sea.", location=RIVIERA
-                ),
-            ),
-        ],
-    ),
-    # Day 08 — Meteora, the monasteries in the sky.
-    FixtureDay(
-        date="2026-09-21",
-        weather_emoji="⛰",
-        items=[
-            FixtureItem(
-                id_hint="d08-meteora",
-                title="Meteora — monasteries in the sky",
-                starts_at=_at("2026-09-21", "09:00"),
-                duration_minutes=420,
-                status="pending",
-                attrs=ExperienceCardAttrs(
-                    category="culture", difficulty="easy", energy_required=2, location=METEORA
-                ),
-            ),
-        ],
-    ),
-    # Day 09 — Vergína, the royal tombs of Macedon.
-    FixtureDay(
-        date="2026-09-22",
-        weather_emoji="🏺",
-        items=[
-            FixtureItem(
-                id_hint="d09-vergina",
-                title="Vergína — royal tombs of Aigai",
-                starts_at=_at("2026-09-22", "10:00"),
+                id_hint="ext-dion",
+                title="Dion Archaeological Park",
+                starts_at=_at("2026-09-15", "10:00"),
                 duration_minutes=180,
                 status="pending",
                 attrs=ExperienceCardAttrs(
-                    category="culture", difficulty="easy", energy_required=1, location=VERGINA
+                    category="culture",
+                    difficulty="easy",
+                    energy_required=1,
+                    location=DION,
+                    ambient_image=_img("photo-1507475380673-1246fa72eeea"),
+                    description=(
+                        "The sacred city where Macedonian kings sacrificed to Olympian Zeus "
+                        "before marching to war. Wander marble streets, the sanctuary of Isis, "
+                        "and a Hellenistic theatre — mosaics and toppled columns half-swallowed "
+                        "by wetland reeds at the mountain's foot."
+                    ),
+                    snapshot=CardSnapshot(
+                        title="Dion Archaeological Park",
+                        cover_image=_img("photo-1507475380673-1246fa72eeea"),
+                        location="Dion, Pieria",
+                        difficulty="Easy",
+                    ),
+                    gallery=_gallery(
+                        ("photo-1697455621587-1011833b931c", "Dawid Tkocz"),
+                        ("photo-1603566541830-972ff1b4b2cd", "Constantinos Kollias"),
+                    ),
                 ),
             ),
         ],
     ),
-    # Day 10 — wine country of Naoussa.
+    # Ext day 3 — Meteora, the monasteries in the sky.
     FixtureDay(
-        date="2026-09-23",
+        date="2026-09-16",
+        weather_emoji="⛰",
+        items=[
+            FixtureItem(
+                id_hint="ext-meteora",
+                title="Meteora — monasteries in the sky",
+                starts_at=_at("2026-09-16", "09:00"),
+                duration_minutes=420,
+                status="pending",
+                attrs=ExperienceCardAttrs(
+                    category="culture",
+                    difficulty="easy",
+                    energy_required=2,
+                    location=METEORA,
+                    ambient_image=_img("photo-1495386217358-4ffdde036fe7"),
+                    description=(
+                        "Byzantine monasteries perched on sheer sandstone pillars hundreds of "
+                        "metres above the Thessalian plain. Six still-active retreats cling to "
+                        "the rock; the drive between them, and the light at dawn, are among the "
+                        "most otherworldly sights in all of Greece."
+                    ),
+                    snapshot=CardSnapshot(
+                        title="Meteora",
+                        cover_image=_img("photo-1495386217358-4ffdde036fe7"),
+                        location="Kalambaka, Thessaly",
+                        difficulty="Easy",
+                    ),
+                    gallery=_gallery(
+                        ("photo-1552482496-3c03befc5c25", "George Tasios"),
+                        ("photo-1672643344999-5c92165cefd7", "Hendrik Morkel"),
+                    ),
+                ),
+            ),
+        ],
+    ),
+    # Ext day 4 — wine country of Naoussa.
+    FixtureDay(
+        date="2026-09-17",
         weather_emoji="🍇",
         items=[
             FixtureItem(
-                id_hint="d10-wine",
+                id_hint="ext-wine",
                 title="Naoussa wine country",
-                starts_at=_at("2026-09-23", "11:00"),
+                starts_at=_at("2026-09-17", "11:00"),
                 duration_minutes=240,
                 status="pending",
                 attrs=ExperienceCardAttrs(
-                    category="food_wine", difficulty="easy", energy_required=1, location=NAOUSSA
+                    category="food_wine",
+                    difficulty="easy",
+                    energy_required=1,
+                    location=NAOUSSA,
+                    ambient_image=_img("photo-1585867313424-06b0fd07d314"),
+                    description=(
+                        "The heartland of Xinomavro, Greece's great age-worthy red. Tour family "
+                        "estates on the slopes of Mount Vermio, taste barrel to bottle, and lunch "
+                        "long over local charcuterie and the region's famous peaches."
+                    ),
+                    snapshot=CardSnapshot(
+                        title="Naoussa wine country",
+                        cover_image=_img("photo-1585867313424-06b0fd07d314"),
+                        location="Naoussa, Imathia",
+                        difficulty="Easy",
+                    ),
+                    gallery=_gallery(
+                        ("photo-1588157138186-e801edd25c2b", "Dmitry Ant"),
+                        ("photo-1712560357606-5696232746a5", "Divya Kothari"),
+                    ),
                 ),
             ),
         ],
     ),
-    # Day 11 — transfer to Pelion.
+    # Ext day 5 — into the Pelion villages; change base.
     FixtureDay(
-        date="2026-09-24",
+        date="2026-09-18",
         weather_emoji="🌲",
         items=[
             FixtureItem(
-                id_hint="d11-pelion",
+                id_hint="ext-pelion",
                 title="Into the Pelion villages",
-                starts_at=_at("2026-09-24", "14:00"),
+                starts_at=_at("2026-09-18", "14:00"),
                 duration_minutes=120,
                 status="pending",
                 attrs=ExperienceCardAttrs(
-                    category="scenic", difficulty="easy", energy_required=1, location=PELION
+                    category="scenic",
+                    difficulty="easy",
+                    energy_required=1,
+                    location=PELION,
+                    ambient_image=_img("photo-1596562307805-d136e6ef40ba"),
+                    description=(
+                        "The mythic home of the centaurs — a green mountain of cobbled lanes, "
+                        "plane-shaded squares, and stone mansions above the Pagasetic Gulf. "
+                        "Settle into a restored archontiko as the chestnut forests turn."
+                    ),
+                    snapshot=CardSnapshot(
+                        title="Mount Pelion villages",
+                        cover_image=_img("photo-1596562307805-d136e6ef40ba"),
+                        location="Pelion, Magnesia",
+                    ),
+                    gallery=_gallery(("photo-1759063295341-3fa9bccbe006", "Nikos Kavvadas")),
                 ),
             ),
             FixtureItem(
-                id_hint="d11-hotel",
+                id_hint="ext-pelion-hotel",
                 title="Check in — Pelion mansion",
-                starts_at=_at("2026-09-24", "17:00"),
+                starts_at=_at("2026-09-18", "17:00"),
                 duration_minutes=60,
                 status="pending",
                 attrs=_hotel(
@@ -358,57 +322,92 @@ OLYMPUS_DAYS: list[FixtureDay] = [
             ),
         ],
     ),
-    # Day 12 — Pelion trails to the sea.
+    # Ext day 6 — Pelion trails to the sea.
     FixtureDay(
-        date="2026-09-25",
+        date="2026-09-19",
         weather_emoji="🥾",
         items=[
             FixtureItem(
-                id_hint="d12-trail",
+                id_hint="ext-trail",
                 title="Cobbled trail down to Damouchari",
-                starts_at=_at("2026-09-25", "09:30"),
+                starts_at=_at("2026-09-19", "09:30"),
                 duration_minutes=240,
                 status="pending",
                 attrs=ExperienceCardAttrs(
-                    category="hiking", difficulty="moderate", energy_required=3, location=PELION
+                    category="hiking",
+                    difficulty="moderate",
+                    energy_required=3,
+                    location=PELION,
+                    ambient_image=_img("photo-1782820057276-3e6c38bdc600"),
+                    description=(
+                        "A centuries-old kalderimi threads down through olive groves and oak to "
+                        "Damouchari, a tiny pebble cove on the Aegean. Easy underfoot and all "
+                        "downhill, ending with a swim off the rocks where Mamma Mia! was filmed."
+                    ),
+                    snapshot=CardSnapshot(
+                        title="Kalderimi to Damouchari",
+                        cover_image=_img("photo-1782820057276-3e6c38bdc600"),
+                        location="Damouchari, Pelion",
+                        difficulty="Moderate",
+                    ),
+                    gallery=_gallery(
+                        ("photo-1758384265478-9deff5c5a77d", "Luis Gonçalves"),
+                        ("photo-1761236246445-ddc075864919", "Ludovico Ceroseis"),
+                    ),
                 ),
             ),
         ],
     ),
-    # Day 13 — a last slow day.
+    # Ext day 7 — a last slow day in the villages.
     FixtureDay(
-        date="2026-09-26",
+        date="2026-09-20",
         weather_emoji="☕",
         items=[
             FixtureItem(
-                id_hint="d13-slow",
-                title="A slow last day in the villages",
-                starts_at=_at("2026-09-26", "11:00"),
+                id_hint="ext-slow",
+                title="A slow day in the villages",
+                starts_at=_at("2026-09-20", "11:00"),
                 duration_minutes=240,
                 status="pending",
                 attrs=FreeTimeCardAttrs(
-                    energy_advice="Coffee in the platía, a long lunch, no agenda.", location=PELION
+                    energy_advice="Coffee in the platía, a long lunch, no agenda.",
+                    location=PELION,
+                    ambient_image=_img("photo-1601581875039-e899893d520c"),
+                    description=(
+                        "No agenda but the platía. A slow Greek coffee under the plane tree, a "
+                        "wander between village bakeries, a long lunch, an afternoon that goes "
+                        "nowhere on purpose."
+                    ),
                 ),
             ),
         ],
     ),
-    # Day 14 — back north toward Thessaloniki.
+    # Ext day 8 — back north toward Thessaloniki.
     FixtureDay(
-        date="2026-09-27",
+        date="2026-09-21",
         weather_emoji="🚉",
         items=[
             FixtureItem(
-                id_hint="d14-north",
+                id_hint="ext-north",
                 title="North to Thessaloniki",
-                starts_at=_at("2026-09-27", "10:00"),
+                starts_at=_at("2026-09-21", "10:00"),
                 duration_minutes=180,
                 status="pending",
-                attrs=TrainCardAttrs(from_location=PELION, to_location=SKG),
+                attrs=TrainCardAttrs(
+                    from_location=PELION,
+                    to_location=SKG,
+                    ambient_image=_img("photo-1766261010715-f5c230be72f7"),
+                    description=(
+                        "Back to the north and the sea. A scenic run to Thessaloniki — the White "
+                        "Tower, the waterfront promenade, and one last night of the city's "
+                        "celebrated food before you fly home."
+                    ),
+                ),
             ),
             FixtureItem(
-                id_hint="d14-hotel",
+                id_hint="ext-north-hotel",
                 title="Check in — Thessaloniki waterfront",
-                starts_at=_at("2026-09-27", "16:00"),
+                starts_at=_at("2026-09-21", "16:00"),
                 duration_minutes=60,
                 status="pending",
                 attrs=_hotel(
@@ -423,4 +422,9 @@ OLYMPUS_DAYS: list[FixtureDay] = [
 ]
 
 
-__all__ = ["OLYMPUS_DAYS", "TRIP_ANCHOR"]
+__all__ = [
+    "ARRIVAL_ITEMS",
+    "CORNERSTONE_ANCHOR_HHMM",
+    "EXTENSION_DAYS",
+    "TRIP_ANCHOR",
+]

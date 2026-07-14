@@ -1,10 +1,20 @@
-"""Mt Olympus campaign spine builder — length-variant templates.
+"""Mt Olympus campaign spine builder — cornerstone-led, length-variant templates.
 
-Turns the :mod:`app.seed_data.olympus_itinerary` day-list into three
-``card_templates`` subgraphs — 5, 7, and 14 nights — by taking the first *N*
-days of the (prefix-coherent) fixture. Each is idempotent via
-``find_or_create_template`` + ``has_subgraph``, so building on every cold start
-is a no-op after the first.
+Composes each shipped spine (5 / 7 / 14 nights) from three parts rather than
+slicing one hand-authored day-list (see :mod:`app.seed_data.olympus_itinerary`):
+
+1. **Arrival** — the inbound flight + a Litochoro base (a night-bar lane).
+2. **The cornerstone** — a single anchor card for the real OV adventure, carrying
+   its cover/gallery/price enrichment AND its day-by-day itinerary as a SUBGRAPH.
+   The subgraph children lay across the mountain days as the trip's experiences
+   (the frontend's ``deriveJourneyBeats`` spreads them from the anchor's day
+   forward). This is the ONLY mountain content — nothing hand-authored competes.
+3. **The extension** — the grand tour AFTER the guided ascent, shifted past the
+   cornerstone's day-span and prefix-sliced to fill the remaining nights.
+
+So the cornerstone owns the mountain segment and the extension owns the days
+after it — a beat and a hand-authored card never land on the same day. Each build
+is idempotent via ``find_or_create_template`` + ``has_subgraph``.
 
 The kickoff (``POST /itinerary/{id}/campaign/kickoff``) snaps the traveler's
 chosen nights to one of these lengths and instantiates the matching template
@@ -15,18 +25,22 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CardTemplate, EdgeType, NodeStatus, NodeType
 from app.seed_data.japan_itinerary import FixtureItem
 from app.seed_data.olympus_cornerstones import (
-    CORNERSTONE_ANCHOR_ID_HINT,
     OlympusCornerstone,
     cornerstone_for_nights,
 )
-from app.seed_data.olympus_itinerary import OLYMPUS_DAYS, TRIP_ANCHOR
+from app.seed_data.olympus_itinerary import (
+    ARRIVAL_ITEMS,
+    CORNERSTONE_ANCHOR_HHMM,
+    EXTENSION_DAYS,
+    TRIP_ANCHOR,
+)
 from app.services.subgraph import day_subgraph_metadata
 from app.services.templates import (
     add_template_edge,
@@ -37,16 +51,34 @@ from app.services.templates import (
 
 logger = logging.getLogger("ov_black.templates.olympus")
 
+_MINUTES_PER_DAY = 24 * 60
+#: EEST (+03:00) — the fixture's zone; stamped so cards read in local time.
+_EEST_OFFSET_MINUTES = 180
+
 #: nights → template slug, mirrored by app.campaigns.registry OLYMPUS.
 OLYMPUS_SPINE_SLUGS: dict[int, str] = {5: "olympus-5d", 7: "olympus-7d", 14: "olympus-14d"}
 
 
-def _offset_minutes(starts_at: datetime) -> int:
-    return int((starts_at - TRIP_ANCHOR).total_seconds() // 60)
+def _item_offset_minutes(item: FixtureItem) -> int:
+    """Minutes from ``TRIP_ANCHOR`` to the item's authored start."""
+    return int((item.starts_at - TRIP_ANCHOR).total_seconds() // 60)
 
 
 def _node_type_for(item: FixtureItem) -> NodeType:
     return NodeType(item.attrs.kind)
+
+
+def _is_night_bar(item: FixtureItem) -> bool:
+    return bool(getattr(item.attrs, "night_bar", False))
+
+
+def _item_metadata(item: FixtureItem) -> dict[str, Any]:
+    metadata = item.attrs.model_dump(mode="json", exclude_none=True)
+    utcoffset = item.starts_at.utcoffset()
+    if utcoffset is not None:
+        metadata["tz_offset_minutes"] = int(utcoffset.total_seconds() // 60)
+    metadata["_seed_status"] = NodeStatus(item.status).value
+    return metadata
 
 
 async def _build_cornerstone_subgraph(
@@ -92,13 +124,12 @@ async def _build_cornerstone_subgraph(
 
 
 async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardTemplate:
-    """Find-or-create the ``nights``-length Olympus spine + populate its subgraph.
+    """Find-or-create the ``nights``-length Olympus spine.
 
-    ``nights`` must be one of :data:`OLYMPUS_SPINE_SLUGS`. The spine is the first
-    ``nights`` days of the shared fixture, wired with within-day + day-to-day
-    ``follows`` edges exactly like the Japan builder. The summit node is enriched
-    with the length's real OV cornerstone trip (cover, gallery, description,
-    price) — see :mod:`app.seed_data.olympus_cornerstones`.
+    ``nights`` must be one of :data:`OLYMPUS_SPINE_SLUGS`. Composes arrival + the
+    cornerstone anchor (with its day-by-day SUBGRAPH) + a shifted, prefix-sliced
+    extension, so the guided ascent owns the mountain days and the grand tour owns
+    the days after it.
     """
     slug = OLYMPUS_SPINE_SLUGS.get(nights)
     if slug is None:
@@ -106,22 +137,25 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
 
     # Real OV trip this spine is built around — the longest spine anchors on the
     # full "Path to Symbolism" ascent, the shorter ones on the 2-day summit push.
-    # Its cover + gallery + price enrich the summit node so the demo shows genuine
-    # Olympus photography behind the curated skeleton.
     cornerstone = cornerstone_for_nights(nights, longest=max(OLYMPUS_SPINE_SLUGS))
+    # The mountain segment is exactly as long as the cornerstone's own itinerary;
+    # the extension picks up on the day after it and fills the remaining nights.
+    span_days = len(cornerstone.days)
+    extension_days = EXTENSION_DAYS[: max(0, nights - span_days)]
 
     template, created = await find_or_create_template(
         session,
         slug=slug,
         name=f"Mount Olympus · {nights} nights",
         description=(
-            f"Curated {nights}-night Mt Olympus / Greece spine — Litochoro base, "
-            "Enipeas gorge, the Spilios Agapitos refuge, and the Mytikas summit."
+            f"Curated {nights}-night Mt Olympus / Greece spine — a guided "
+            f"{cornerstone.title} ascent, then the grand tour of the north."
         ),
         metadata={
             "trip_anchor_iso": TRIP_ANCHOR.isoformat(),
             "campaign_id": "olympus",
             "nights": nights,
+            "cornerstone_span_days": span_days,
         },
     )
     if not created and await has_subgraph(session, template_id=template.id):
@@ -131,69 +165,97 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
         )
         return template
 
-    last_of_previous_day: uuid.UUID | None = None
     total_nodes = 0
     total_edges = 0
+    # A single ``follows`` chain threads the spine's scheduled cards in start
+    # order; night-bar lodging sits in its own lane and stays off the chain.
+    prev_spine: uuid.UUID | None = None
 
-    for day in OLYMPUS_DAYS[:nights]:
-        prev_in_day: uuid.UUID | None = None
-        first_in_day: uuid.UUID | None = None
-        for item in day.items:
-            metadata = item.attrs.model_dump(mode="json", exclude_none=True)
-            # The summit node is the spine's cornerstone: fold in the real OV
-            # trip's cover (hero), gallery, description, and price.
-            if item.id_hint == CORNERSTONE_ANCHOR_ID_HINT:
-                metadata.update(cornerstone.enrichment())
-            utcoffset = item.starts_at.utcoffset()
-            if utcoffset is not None:
-                metadata["tz_offset_minutes"] = int(utcoffset.total_seconds() // 60)
-            metadata["_seed_status"] = NodeStatus(item.status).value
-            tnode = await add_template_node(
-                session,
-                template_id=template.id,
-                type=_node_type_for(item),
-                title=item.title,
-                starts_at_offset_minutes=_offset_minutes(item.starts_at),
-                duration_minutes=item.duration_minutes,
-                metadata=metadata,
-            )
-            total_nodes += 1
-            # The cornerstone anchor is a real multi-day OV adventure — lay its
-            # day-by-day itinerary down as this node's SUBGRAPH (children carry
-            # ``parent_id`` = the anchor; ``instantiate_into`` clones that as
-            # ``parent_subgraph_id`` on the fork). The card then reads as the
-            # bookable OV trip it is: an expandable day-by-day journey, not a
-            # single photo. Children are unscheduled + provenance-free and
-            # chained by ``follows`` — identical to the from-inventory path.
-            if item.id_hint == CORNERSTONE_ANCHOR_ID_HINT:
-                n, e = await _build_cornerstone_subgraph(
-                    session, template_id=template.id, parent_id=tnode.id, cornerstone=cornerstone
-                )
-                total_nodes += n
-                total_edges += e
-            if first_in_day is None:
-                first_in_day = tnode.id
-            if prev_in_day is not None:
+    async def add_node_from(
+        *,
+        type_: NodeType,
+        title: str,
+        offset_minutes: int,
+        duration_minutes: int,
+        metadata: dict[str, Any],
+        on_chain: bool,
+    ) -> uuid.UUID:
+        nonlocal total_nodes, total_edges, prev_spine
+        tnode = await add_template_node(
+            session,
+            template_id=template.id,
+            type=type_,
+            title=title,
+            starts_at_offset_minutes=offset_minutes,
+            duration_minutes=duration_minutes,
+            metadata=metadata,
+        )
+        total_nodes += 1
+        if on_chain:
+            if prev_spine is not None:
                 await add_template_edge(
                     session,
                     template_id=template.id,
-                    from_template_node_id=prev_in_day,
+                    from_template_node_id=prev_spine,
                     to_template_node_id=tnode.id,
                     type=EdgeType.follows,
                 )
                 total_edges += 1
-            prev_in_day = tnode.id
+            prev_spine = tnode.id
+        return tnode.id
 
-        if last_of_previous_day is not None and first_in_day is not None:
-            await add_template_edge(
-                session,
-                template_id=template.id,
-                from_template_node_id=last_of_previous_day,
-                to_template_node_id=first_in_day,
-                type=EdgeType.follows,
+    # 1. Arrival — flight + Litochoro base (the base is a night-bar, off-chain).
+    for item in ARRIVAL_ITEMS:
+        await add_node_from(
+            type_=_node_type_for(item),
+            title=item.title,
+            offset_minutes=_item_offset_minutes(item),
+            duration_minutes=item.duration_minutes,
+            metadata=_item_metadata(item),
+            on_chain=not _is_night_bar(item),
+        )
+
+    # 2. The cornerstone anchor — one experience card that IS the guided OV trip:
+    # its cover/gallery/price enrich it, and its day-by-day itinerary hangs off it
+    # as a subgraph whose beats lay across the mountain days (day 1 rides this
+    # card's start, later days step forward morning by morning on the frontend).
+    hh, mm = (int(part) for part in CORNERSTONE_ANCHOR_HHMM.split(":", 1))
+    anchor_metadata: dict[str, Any] = {
+        "category": "mountaineering",
+        "difficulty": "strenuous",
+        "energy_required": 5,
+        "location": {"lat": 40.0885, "lng": 22.3489, "label": "Mount Olympus"},
+        "tz_offset_minutes": _EEST_OFFSET_MINUTES,
+        "_seed_status": NodeStatus.pending.value,
+        **cornerstone.enrichment(),
+    }
+    anchor_id = await add_node_from(
+        type_=NodeType.experience,
+        title=cornerstone.title,
+        offset_minutes=hh * 60 + mm,
+        duration_minutes=span_days * _MINUTES_PER_DAY,
+        metadata=anchor_metadata,
+        on_chain=True,
+    )
+    n, e = await _build_cornerstone_subgraph(
+        session, template_id=template.id, parent_id=anchor_id, cornerstone=cornerstone
+    )
+    total_nodes += n
+    total_edges += e
+
+    # 3. Extension — shifted past the cornerstone's span, then prefix-sliced. Its
+    # items are authored from their own day 0, so add span_days to every offset.
+    shift = span_days * _MINUTES_PER_DAY
+    for day in extension_days:
+        for item in day.items:
+            await add_node_from(
+                type_=_node_type_for(item),
+                title=item.title,
+                offset_minutes=_item_offset_minutes(item) + shift,
+                duration_minutes=item.duration_minutes,
+                metadata=_item_metadata(item),
+                on_chain=not _is_night_bar(item),
             )
-            total_edges += 1
-        last_of_previous_day = prev_in_day
 
     await session.commit()
     logger.info(
@@ -202,6 +264,7 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
             "template_id": str(template.id),
             "slug": slug,
             "nights": nights,
+            "cornerstone_span_days": span_days,
             "node_count": total_nodes,
             "edge_count": total_edges,
         },

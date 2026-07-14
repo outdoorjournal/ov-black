@@ -4,11 +4,14 @@ import type { NodeResponse } from "../model/horizontalTypes";
  * Embedded subgraphs (PRD "subgraphs for self-contained experiences"): a
  * multi-day inventory item (an OV adventure) lands as ONE experience card
  * whose internal day-by-day journey is materialized as child nodes carrying
- * `parent_subgraph_id`. Children are derived content — they never appear on
- * the timeline, in the Journal's day sequence, or in the Collection; the
- * parent owns the slot and the children tell the story inside it (the
- * Journal's expandable sub-journey). Subgraphs are inventory-born today;
- * advisor-authored reusable subgraphs will reuse the same read helpers.
+ * `parent_subgraph_id`. In the Journal those children DO surface on the
+ * timeline — `deriveJourneyBeats` (toJournal.ts) lays each one onto the day it
+ * covers as a derived "journey beat" (day k of N), spread forward from the
+ * parent card's day, so a multi-day package reads across the days it spans. The
+ * children are still derived content (never in the Collection, never
+ * independently draggable — the parent owns the slot and its provenance).
+ * Subgraphs are inventory-born or campaign-template-authored (the Olympus
+ * cornerstone); both feed these same read helpers.
  */
 
 /** Structured per-day fields the from-inventory materialization stores. */
