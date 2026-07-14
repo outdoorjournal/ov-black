@@ -239,6 +239,36 @@ async def test_note_writes_on_trunk_succeed(db_session: AsyncSession, kind: Acto
         await _cleanup([trunk])
 
 
+# ── Article writes by USER on a trunk still work (a saved read, not plan) ─────
+
+
+@integration
+@pytest.mark.parametrize("kind", [ActorKind.USER, ActorKind.AGENT])
+async def test_article_writes_on_trunk_succeed(db_session: AsyncSession, kind: ActorKind) -> None:
+    """A reading-list ``article`` is non-schedulable, Collection-only — like a
+    note it is not a plan commitment, so it lands on the trunk without a fork.
+    This is what lets the traveler's "Add to reading list" write straight into
+    their (client-owned, trunk) reading-list container."""
+    trunk = await insert_itinerary(db_session, title="readable trunk")
+    try:
+        created = await add_node(
+            db_session,
+            _actor(kind),
+            itinerary_id=trunk,
+            type=NodeType.article,
+            title="The Granite Spires of Patagonia",
+            source="reading_catalog",
+            source_id="https://www.climbing.com/places/patagonia/",
+            metadata={"snapshot": {"title": "The Granite Spires of Patagonia"}},
+        )
+        assert isinstance(created, Node), created
+        assert created.type is NodeType.article
+        # Non-schedulable — never on the timeline.
+        assert created.starts_at is None
+    finally:
+        await _cleanup([trunk])
+
+
 # ── ADVISOR content edits on a trunk succeed ─────────────────────────────────
 
 

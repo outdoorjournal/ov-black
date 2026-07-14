@@ -42,6 +42,17 @@ export function CollectionIcon() {
   );
 }
 
+export function ReadingIcon() {
+  return (
+    <svg {...BASE} aria-hidden>
+      {/* An open book — two pages spread from a central spine. */}
+      <path d="M10 5.5C8.5 4.3 6.4 4 3.5 4.2v10C6.4 14 8.5 14.3 10 15.5" />
+      <path d="M10 5.5C11.5 4.3 13.6 4 16.5 4.2v10c-2.9-.2-5 .1-6.5 1.3" />
+      <path d="M10 5.5v10" />
+    </svg>
+  );
+}
+
 export function StudioIcon() {
   return (
     <svg {...BASE} aria-hidden>

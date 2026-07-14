@@ -101,6 +101,36 @@ test("surfaceFromFrame narrows options and requires two usable options", () => {
   ).toBeNull();
 });
 
+test("surfaceFromFrame narrows an article payload; title+url are required", () => {
+  const surface = surfaceFromFrame({
+    type: "surface",
+    surface_id: "srf-read",
+    kind: "article",
+    payload: {
+      title: "The Granite Spires of Patagonia",
+      url: "https://www.climbing.com/places/patagonia/",
+      publication: "Climbing",
+      og_image: "https://images.unsplash.com/photo-1496340077100-9573d8b77463?w=1200",
+      excerpt: "Fitz Roy and Cerro Torre.",
+      reading_time_minutes: 11,
+    },
+  });
+  if (surface?.kind !== "article") throw new Error("expected article surface");
+  expect(surface.article.title).toBe("The Granite Spires of Patagonia");
+  expect(surface.article.publication).toBe("Climbing");
+  expect(surface.article.readingTimeMinutes).toBe(11);
+
+  // No url → nothing to save or link to → dropped.
+  expect(
+    surfaceFromFrame({
+      type: "surface",
+      surface_id: "s",
+      kind: "article",
+      payload: { title: "Untitled read" },
+    }),
+  ).toBeNull();
+});
+
 test("decodePolyline reproduces Google's reference vector as [lng, lat]", () => {
   const coords = decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@");
   expect(coords).toEqual([

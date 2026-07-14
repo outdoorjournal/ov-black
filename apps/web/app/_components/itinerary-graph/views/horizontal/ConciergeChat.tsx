@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
+  campaignKickoff,
   createApiClient,
   createSessionEndpoint,
   listTurns,
@@ -65,10 +66,11 @@ type ConciergeChatProps = {
    *  "left" (the HorizontalView prototype's right-hand aside); the routed
    *  shell's ConciergeColumn sits on the LEFT, so it passes "right". */
   surfaceSide?: "left" | "right";
-  /** Campaign dashboard: fire ONE agent-first "kickoff" turn on mount — the
-   *  agent lays down the skeleton (spine + transfer + reading list) unprompted.
-   *  The caller only sets this when it's the right moment (traveler's own
-   *  campaign trip, empty graph); this component fires it at most once. */
+  /** Campaign dashboard: on mount, DETERMINISTICALLY lay down the curated spine
+   *  (POST /campaign/kickoff), stream its cards in with the staggered reveal,
+   *  then fire ONE agent opener turn that greets the trip and asks about the
+   *  gaps (dates / party / the way in). The caller only sets this at the right
+   *  moment (traveler's own campaign trip, empty graph); fired at most once. */
   autoKickoff?: boolean;
 };
 
@@ -372,33 +374,86 @@ export function ConciergeChat({
     [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],
   );
 
-  // Campaign dashboard kickoff (fires at most once). The agent speaks first and
-  // builds the skeleton, so there's NO visible user bubble — just the streaming
-  // assistant reply. The `surface: "kickoff"` hint puts the backend turn into
-  // campaign-planning mode (spine + transfer + reading list). The trigger text
-  // is stored server-side but reads naturally if ever replayed.
+  // Campaign dashboard kickoff (fires at most once). Two phases:
+  //   1. DETERMINISTIC spine — POST /campaign/kickoff lays the curated skeleton
+  //      (+ its outdoorvoyage.com cornerstone) onto the traveler's itinerary and
+  //      returns the created nodes. We drop them into the store staggered, the
+  //      same "cards appearing" reveal a streamed spine used to get — but now it
+  //      happens instantly and reliably, not gated on the model choosing to call
+  //      a tool. Idempotent: a re-fire on a populated trip is a server no-op.
+  //   2. AGENT OPENER — one `surface: "kickoff"` turn. The spine is already on
+  //      screen, so the agent's job is just to greet it and ask about the gaps
+  //      (dates / party / the way in). NO visible user bubble — the trigger text
+  //      is stored server-side but reads naturally if ever replayed.
   const kickedOff = useRef(false);
   useEffect(() => {
     if (!autoKickoff || kickedOff.current || !canChat) return;
+    if (!apiBaseUrl || !accessToken) return;
     kickedOff.current = true;
-    const n = (seqRef.current += 1);
-    const assistantId = `${audience}-a-${n}`;
+    const assistantId = `${audience}-a-${(seqRef.current += 1)}`;
     setMessages((prev) => [
       ...prev,
       { id: assistantId, role: "assistant", text: "", streaming: true },
     ]);
     streamingIdRef.current = assistantId;
     setStreaming(true);
+    setWorking(true);
     void (async () => {
+      // Phase 1: lay the spine deterministically and reveal it staggered.
+      const api = createApiClient({ baseUrl: apiBaseUrl, accessToken });
+      const laid = await campaignKickoff(api, itineraryId);
+      let revealBurst = 0;
+      if (laid.ok) {
+        const created = laid.kickoff.created_nodes ?? [];
+        revealBurst = created.length;
+        created.forEach((node, i) => {
+          const timer = setTimeout(() => {
+            storeApi.getState().insertCreatedNode({
+              id: node.id,
+              itinerary_id: node.itinerary_id,
+              type: node.type,
+              status: node.status,
+              title: node.title,
+              source: node.source ?? null,
+              source_id: node.source_id ?? null,
+              metadata: node.metadata ?? {},
+            });
+          }, i * REVEAL_STAGGER_MS);
+          revealTimersRef.current.push(timer);
+        });
+      }
+      // The spine set the trip's dates; the day scaffold is server-rendered, so
+      // rebuild it once the reveal burst has settled (mirrors the onDone path).
+      if (revealBurst > 0) {
+        const timer = setTimeout(
+          () => router.refresh(),
+          revealBurst * REVEAL_STAGGER_MS + REVEAL_STAGGER_MS,
+        );
+        revealTimersRef.current.push(timer);
+      }
+
+      // Phase 2: the agent greets what's on screen and asks about the gaps.
       const sid = await ensureSession();
       if (!sid) {
+        setWorking(false);
         streamingIdRef.current = null;
         setStreaming(false);
         return;
       }
       await sendTurn("Let's build it out.", { surface: "kickoff" });
     })();
-  }, [autoKickoff, canChat, audience, ensureSession, sendTurn]);
+  }, [
+    autoKickoff,
+    canChat,
+    audience,
+    apiBaseUrl,
+    accessToken,
+    itineraryId,
+    storeApi,
+    router,
+    ensureSession,
+    sendTurn,
+  ]);
 
   // A tapped option answers through the ordinary turn path, phrased as the
   // traveler's own reply — the agent reads it like any message.

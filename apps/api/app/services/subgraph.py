@@ -30,13 +30,17 @@ from app.services.itineraries import ActorContext, ItineraryError, add_edge, add
 logger = logging.getLogger("ov_black.services.subgraph")
 
 
-def _day_metadata(day: ItineraryDay) -> dict[str, Any]:
+def day_subgraph_metadata(day: ItineraryDay) -> dict[str, Any]:
     """Node ``metadata`` for one day: a renderable snapshot + typed extras.
 
     ``snapshot`` follows the legacy card shape so existing snapshot-reading
     cards render the child like any other node; ``subgraph_day`` carries the
     structured fields (1-based index, active hours, geo point, vendor HTML
     description) the expanded sub-journey view reads directly.
+
+    Public so non-inventory subgraph builders (e.g. the Olympus campaign
+    template's baked cornerstone days) emit byte-identical child metadata and
+    render through the same journey view.
     """
     snapshot: dict[str, Any] = {"title": day.title}
     if day.location is not None and day.location.label:
@@ -82,7 +86,7 @@ async def materialize_day_subgraph(
             status=status,
             title=f"Day {day.day} — {day.title}",
             parent_subgraph_id=parent_node_id,
-            metadata=_day_metadata(day),
+            metadata=day_subgraph_metadata(day),
         )
         if isinstance(result, ItineraryError):
             logger.warning(

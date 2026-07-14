@@ -324,6 +324,10 @@ export type ItineraryGraphState = {
   // single pending card; clearing the last one derives the itinerary to approved.
   approve: () => void;
   approveNode: (id: string) => void;
+  // Soft-remove a node (→ `discarded`, the reversible side-state). A pure
+  // status flip, so the backend admits it on a trunk without a fork — the
+  // reading rack's quiet per-tile remove. Optimistic; reverts on refusal.
+  discardNode: (id: string) => void;
   /** ADV-15: (re)load the per-card billing chips from the live ledger. Advisor
    *  only — a no-op for travelers or without credentials. */
   refreshBilling: () => void;
@@ -1144,6 +1148,31 @@ export const itineraryGraphStore = createStoreContext<
               if (!result.ok) set({ status: previousStatus, nodes: previousNodes });
             })
             .finally(() => set({ approvingNodeId: null }));
+        },
+        // Soft-remove: flip the node to `discarded` (reversible; every derived
+        // view — Collection, reading rack, journal — already filters it out).
+        // Role-agnostic here: a pure status flip clears the trunk write gate
+        // for travelers too, and the backend stays the authority (a firmed
+        // node refuses and we revert).
+        discardNode: (id) => {
+          const s = get();
+          const target = s.nodes.find((n) => n.id === id);
+          if (!target || target.status === "discarded") return;
+          const c = client();
+          if (!c) return;
+          const previousNodes = s.nodes;
+          set({
+            nodes: s.nodes.map((n) =>
+              n.id === id ? { ...n, status: "discarded" as const } : n,
+            ),
+          });
+          void updateNodeStatus(c, {
+            itineraryId: s.itineraryId,
+            nodeId: id,
+            status: "discarded",
+          }).then((result) => {
+            if (!result.ok) set({ nodes: previousNodes });
+          });
         },
         // ADV-15: the board's per-card money chips. Advisor-only (billing is
         // advisor workflow) and self-contained like InvoicePanel's fetch — it

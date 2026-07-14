@@ -71,6 +71,7 @@ from app.services.party_members import (
     list_itinerary_party,
     update_party_member,
 )
+from app.services.reading import search_reading_catalog
 from app.services.route_plan import RoutePlan, RoutePlanError, compute_route
 
 logger = logging.getLogger("ov_black.routers.agent_internal")
@@ -541,3 +542,64 @@ async def compute_route_endpoint(
         raise HTTPException(status_code=502, detail=exc.reason) from exc
     finally:
         await client.aclose()
+
+
+# ── GET /agent/reading/search — FTS over the owned-media reading catalog ──
+#
+# The basecamp agent's discovery source (0052): given a free-text query built
+# from the traveler's destination + interests, return ranked editorial articles
+# from the concierge's owned properties. Read-only, client-agnostic corpus —
+# no token scope beyond "is a valid agent session", same as /agent/route.
+
+
+class ReadingHitResponse(BaseModel):
+    """One suggested article, shaped for the article-suggestion flyout."""
+
+    id: str
+    title: str
+    url: str
+    source_property: str
+    og_image: str | None
+    excerpt: str | None
+    reading_time_minutes: int | None
+
+
+class ReadingSearchResponse(BaseModel):
+    """Ranked reading-catalog results for the agent's query."""
+
+    results: list[ReadingHitResponse]
+
+
+@router.get(
+    "/reading/search",
+    response_model=ReadingSearchResponse,
+    include_in_schema=False,
+    summary="Full-text search the owned-media reading catalog (backend-only).",
+)
+async def search_reading_endpoint(
+    q: str = "",
+    limit: int = 3,
+    _claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> ReadingSearchResponse:
+    """Rank catalog articles for ``q``; blank/no-match falls back to recent.
+
+    The corpus is shared editorial inventory, so results carry no
+    client-specific data — only what the flyout renders (title, image,
+    publication, excerpt, reading time) plus the URL the Collection save uses.
+    """
+    hits = await search_reading_catalog(session, query=q, limit=limit)
+    return ReadingSearchResponse(
+        results=[
+            ReadingHitResponse(
+                id=h.id,
+                title=h.title,
+                url=h.url,
+                source_property=h.source_property,
+                og_image=h.og_image,
+                excerpt=h.excerpt,
+                reading_time_minutes=h.reading_time_minutes,
+            )
+            for h in hits
+        ]
+    )

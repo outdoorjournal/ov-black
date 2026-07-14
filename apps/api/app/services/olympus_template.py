@@ -23,9 +23,11 @@ from app.models import CardTemplate, EdgeType, NodeStatus, NodeType
 from app.seed_data.japan_itinerary import FixtureItem
 from app.seed_data.olympus_cornerstones import (
     CORNERSTONE_ANCHOR_ID_HINT,
+    OlympusCornerstone,
     cornerstone_for_nights,
 )
 from app.seed_data.olympus_itinerary import OLYMPUS_DAYS, TRIP_ANCHOR
+from app.services.subgraph import day_subgraph_metadata
 from app.services.templates import (
     add_template_edge,
     add_template_node,
@@ -45,6 +47,48 @@ def _offset_minutes(starts_at: datetime) -> int:
 
 def _node_type_for(item: FixtureItem) -> NodeType:
     return NodeType(item.attrs.kind)
+
+
+async def _build_cornerstone_subgraph(
+    session: AsyncSession,
+    *,
+    template_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    cornerstone: OlympusCornerstone,
+) -> tuple[int, int]:
+    """Add the cornerstone's day-by-day itinerary as ``parent_id``'s children.
+
+    Mirrors :func:`app.services.subgraph.materialize_day_subgraph` in template
+    space: one ``experience`` child per OV day (``Day N — title``, unscheduled,
+    ``day_subgraph_metadata`` shape) chained by ``follows`` edges. Returns
+    ``(node_count, edge_count)`` added. No-op (0, 0) when the cornerstone ships
+    no baked days.
+    """
+    node_count = 0
+    edge_count = 0
+    previous: uuid.UUID | None = None
+    for day in cornerstone.itinerary_days():
+        child = await add_template_node(
+            session,
+            template_id=template_id,
+            type=NodeType.experience,
+            title=f"Day {day.day} — {day.title}",
+            parent_id=parent_id,
+            metadata=day_subgraph_metadata(day),
+        )
+        node_count += 1
+        if previous is not None:
+            await add_template_edge(
+                session,
+                template_id=template_id,
+                from_template_node_id=previous,
+                to_template_node_id=child.id,
+                type=EdgeType.follows,
+                metadata={"reason": "day_sequence"},
+            )
+            edge_count += 1
+        previous = child.id
+    return node_count, edge_count
 
 
 async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardTemplate:
@@ -114,6 +158,19 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
                 metadata=metadata,
             )
             total_nodes += 1
+            # The cornerstone anchor is a real multi-day OV adventure — lay its
+            # day-by-day itinerary down as this node's SUBGRAPH (children carry
+            # ``parent_id`` = the anchor; ``instantiate_into`` clones that as
+            # ``parent_subgraph_id`` on the fork). The card then reads as the
+            # bookable OV trip it is: an expandable day-by-day journey, not a
+            # single photo. Children are unscheduled + provenance-free and
+            # chained by ``follows`` — identical to the from-inventory path.
+            if item.id_hint == CORNERSTONE_ANCHOR_ID_HINT:
+                n, e = await _build_cornerstone_subgraph(
+                    session, template_id=template.id, parent_id=tnode.id, cornerstone=cornerstone
+                )
+                total_nodes += n
+                total_edges += e
             if first_in_day is None:
                 first_in_day = tnode.id
             if prev_in_day is not None:

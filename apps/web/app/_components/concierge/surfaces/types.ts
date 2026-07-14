@@ -50,10 +50,20 @@ export type OptionsSurfaceView = {
   options: OptionView[];
 };
 
+export type ArticleSurfaceView = {
+  title: string;
+  url: string;
+  publication?: string;
+  ogImage?: string;
+  excerpt?: string;
+  readingTimeMinutes?: number;
+};
+
 export type ActiveSurface =
   | { kind: "place"; label: string; query: string }
   | { kind: "route"; surfaceId: string; route: RouteSurfaceView }
-  | { kind: "options"; surfaceId: string; options: OptionsSurfaceView };
+  | { kind: "options"; surfaceId: string; options: OptionsSurfaceView }
+  | { kind: "article"; surfaceId: string; article: ArticleSurfaceView };
 
 // ── Parsing helpers ──────────────────────────────────────────────────────
 
@@ -162,6 +172,26 @@ function parseOptions(payload: Record<string, unknown>): OptionsSurfaceView | nu
   return { question, options, ...(context ? { context } : {}) };
 }
 
+function parseArticle(payload: Record<string, unknown>): ArticleSurfaceView | null {
+  // Title + url are the load-bearing fields: without them there's nothing to
+  // show and nothing to save. Everything else enriches the flyout.
+  const title = str(payload["title"]);
+  const url = str(payload["url"]);
+  if (!title || !url) return null;
+  const publication = str(payload["publication"]);
+  const ogImage = str(payload["og_image"]);
+  const excerpt = str(payload["excerpt"]);
+  const readingTimeMinutes = num(payload["reading_time_minutes"]);
+  return {
+    title,
+    url,
+    ...(publication ? { publication } : {}),
+    ...(ogImage ? { ogImage } : {}),
+    ...(excerpt ? { excerpt } : {}),
+    ...(readingTimeMinutes !== undefined ? { readingTimeMinutes } : {}),
+  };
+}
+
 /**
  * Narrow a wire `surface` frame into an ActiveSurface, or null when the kind
  * is unknown (a newer agent talking to an older client — drop quietly) or
@@ -175,6 +205,10 @@ export function surfaceFromFrame(frame: SurfaceFrame): ActiveSurface | null {
   if (frame.kind === "options") {
     const options = parseOptions(frame.payload);
     return options ? { kind: "options", surfaceId: frame.surface_id, options } : null;
+  }
+  if (frame.kind === "article") {
+    const article = parseArticle(frame.payload);
+    return article ? { kind: "article", surfaceId: frame.surface_id, article } : null;
   }
   return null;
 }

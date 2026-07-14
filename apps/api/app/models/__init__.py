@@ -93,6 +93,7 @@ from app.models.profile_fact import (  # noqa: E402,F401  (re-exported)
     ProfileFact,
     ProfileFactKind,
 )
+from app.models.reading import ReadingArticle  # noqa: E402,F401  (re-exported)
 from app.models.template import (  # noqa: E402,F401
     CardTemplate,
     TemplateEdge,
@@ -156,6 +157,7 @@ __all__ = [
     "ProfileFact",
     "RefundStatus",
     "ProfileFactKind",
+    "ReadingArticle",
     "TemplateEdge",
     "TemplateNode",
     "Thread",

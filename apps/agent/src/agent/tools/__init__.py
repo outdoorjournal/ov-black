@@ -33,6 +33,7 @@ from agent.tools.mutations import (
 )
 from agent.tools.notes import add_note
 from agent.tools.proposals import assemble_draft, propose_card, propose_flight
+from agent.tools.reading import suggest_reading
 from agent.tools.reconcile import reconcile_alternative
 from agent.tools.request_reconcile import request_reconcile
 from agent.tools.set_mood import set_mood
@@ -71,6 +72,8 @@ _TOOLS_ONBOARDING = [
     # Drawer surfaces — a route brochure or a laid-out decision beside the chat.
     present_route,
     present_options,
+    # Editorial reading suggestions from the owned properties (basecamp-only).
+    suggest_reading,
     set_mood,
 ]
 
@@ -155,6 +158,9 @@ _TOOLS_QA = [
     # get from the ryokan to the station?" earns a route brochure).
     present_route,
     present_options,
+    # Reading suggestions — the tool self-gates to unpinned basecamp sessions,
+    # so it's inert on a trip-pinned Q&A turn.
+    suggest_reading,
     add_note,
     fork_itinerary,
     move_node,

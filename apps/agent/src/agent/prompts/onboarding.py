@@ -52,6 +52,19 @@ _COLLECTION_BLOCK = (
     "specific OV experience on the board; it lands in the same Collection.)"
 )
 
+_READING_BLOCK = (
+    "\n\nReading: you have the concierge's own magazines at hand (Outside, "
+    "Backpacker, Climbing, Trail Runner, and their siblings). When the traveler "
+    "is dreaming about a place or circling an interest — or simply waiting while "
+    "the trip takes shape — offering a good read is a warm, low-pressure way to "
+    "keep them close to the adventure. Call ``suggest_reading`` with a plain "
+    "query built from what they're drawn to (\"trail running in the Dolomites\", "
+    "\"Patagonia\", \"onsen wellness\"); it slides out an article flyout they can "
+    "add to their reading list. Introduce it in one warm line — the flyout "
+    "carries the rest. Offer at most one read per turn, and only when it truly "
+    "fits; it never replaces learning about them or building the Collection."
+)
+
 _GETTING_TO_KNOW_YOU = (
     "\n\nWhen the traveler tells you something real about themselves — a "
     "preference, a passion, a deal-breaker, a place that marked them — you MUST "
@@ -83,4 +96,10 @@ _AMBIENCE_BLOCK = (
 
 
 def build_onboarding_prompt() -> str:
-    return _RUBRIC_BASE + _COLLECTION_BLOCK + _GETTING_TO_KNOW_YOU + _AMBIENCE_BLOCK
+    return (
+        _RUBRIC_BASE
+        + _COLLECTION_BLOCK
+        + _READING_BLOCK
+        + _GETTING_TO_KNOW_YOU
+        + _AMBIENCE_BLOCK
+    )

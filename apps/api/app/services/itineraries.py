@@ -525,7 +525,7 @@ async def _check_write_gates(
     actor: ActorContext,
     *,
     pure_status_change: bool = False,
-    note_write: bool = False,
+    trunk_exempt: bool = False,
 ) -> ItineraryError | None:
     """Reject writes the itinerary-level gates forbid. One SELECT, two rules.
 
@@ -534,11 +534,13 @@ async def _check_write_gates(
     a trunk returns ``TRUNK_LOCKED`` / ``fork_required`` — fork first. Pure
     node-status changes are exempt (traveler approval/discard happens directly
     on the trunk), as are ADVISOR (reconcile applies through this path, plus
-    the deliberate escape hatch) and SYSTEM (seeds/demos) actors. **Note writes
-    are exempt too** (``note_write``): a note is feedback, not a plan
-    commitment (the Journal lets a traveler annotate the trunk directly), so —
-    like a status change and like the delete path's note carve-out — it lands
-    on the trunk without a fork. The editor lock below still applies.
+    the deliberate escape hatch) and SYSTEM (seeds/demos) actors. **Non-plan
+    Collection writes are exempt too** (``trunk_exempt``): a note is feedback
+    and a reading-list ``article`` is a non-schedulable saved read — neither is
+    a plan commitment (the Journal lets a traveler annotate the trunk directly,
+    and reading is Collection-only), so — like a status change and like the
+    delete path's note carve-out — they land on the trunk without a fork. The
+    editor lock below still applies.
 
     **Editor lock.** Non-advisor writes to an itinerary locked by a different
     user are rejected. Advisors always bypass — they hold the lock during
@@ -560,7 +562,7 @@ async def _check_write_gates(
     if (
         forked_from_id is None
         and not pure_status_change
-        and not note_write
+        and not trunk_exempt
         and actor.kind not in (ActorKind.ADVISOR, ActorKind.SYSTEM)
     ):
         return ItineraryError(
@@ -1203,7 +1205,12 @@ async def add_node(
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
     lock_err = await _check_write_gates(
-        session, itinerary_id, actor, note_write=type is NodeType.note
+        session,
+        itinerary_id,
+        actor,
+        # Notes and non-schedulable reads (articles) are Collection-only, not
+        # plan commitments — they land on a trunk without forking (see gate).
+        trunk_exempt=type is NodeType.note or not is_schedulable(type),
     )
     if lock_err is not None:
         return lock_err
@@ -1363,7 +1370,7 @@ async def update_node(
         itinerary_id,
         actor,
         pure_status_change=bool(updates) and not mutates_other_fields,
-        note_write=node.type is NodeType.note,
+        trunk_exempt=node.type is NodeType.note or not is_schedulable(node.type),
     )
     if lock_err is not None:
         return lock_err
@@ -1517,7 +1524,10 @@ async def delete_node(
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
 
     lock_err = await _check_write_gates(
-        session, itinerary_id, actor, note_write=node.type is NodeType.note
+        session,
+        itinerary_id,
+        actor,
+        trunk_exempt=node.type is NodeType.note or not is_schedulable(node.type),
     )
     if lock_err is not None:
         return lock_err

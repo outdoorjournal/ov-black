@@ -29,6 +29,7 @@ import {
   createDossierFactEndpointClientsClientIdDossierFactsPost,
   createEdgeEndpointItineraryItineraryIdEdgesPost,
   createItineraryEndpointItineraryPost,
+  campaignKickoffEndpointItineraryItineraryIdCampaignKickoffPost,
   seedCampaignItineraryDemosCampaignCampaignIdPost,
   createMyPartyMemberEndpointMePartyMembersPost,
   createNodeEndpointItineraryItineraryIdNodesPost,
@@ -84,6 +85,7 @@ import {
   getItineraryEndpointItineraryItineraryIdGet,
   updateItineraryEndpointItineraryItineraryIdPatch,
   getMyOnboardingSessionEndpointMeOnboardingSessionGet,
+  addToReadingListEndpointMeReadingListPost,
   getAwarenessEndpointAwarenessGet,
   getAdvisorOverviewEndpointAdvisorOverviewGet,
   getAdvisorActivityEndpointAdvisorActivityGet,
@@ -151,6 +153,7 @@ import type {
   ClientContactUpdate,
   ClientCreatePayload,
   ClientDetail,
+  CampaignKickoffResponse,
   CampaignSeedResponse,
   ClientSessionSummary,
   ClientSummary,
@@ -204,6 +207,7 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   PatchSessionRequest,
+  ReadingListAddRequest,
   SessionSummary,
   OpenThreadRequest,
   ThreadSummary,
@@ -1569,6 +1573,58 @@ export async function seedCampaign(
   }
 }
 
+export type CampaignKickoffResult =
+  | { ok: true; kickoff: CampaignKickoffResponse }
+  | {
+      ok: false;
+      status: number;
+      detail:
+        | "itinerary_not_found"
+        | "forbidden"
+        // The itinerary carries no campaign (or an unknown one), so there's no
+        // shipped spine to lay — the 409 the endpoint raises for both cases.
+        | "not_a_campaign_itinerary"
+        | "unknown"
+        | "network_error";
+    };
+
+/**
+ * Typed wrapper for POST /itinerary/{id}/campaign/kickoff. Instantiates the
+ * length-snapped campaign spine (the curated skeleton + its outdoorvoyage.com
+ * cornerstone) onto the traveler's own itinerary, and returns the freshly
+ * created nodes so the dashboard can stream them in with the staggered reveal.
+ *
+ * Deterministic and idempotent: called once when a traveler lands on an empty
+ * campaign trip. A re-fire on an itinerary that already has nodes is a no-op
+ * (`node_count: 0`, empty `created_nodes`) rather than a second skeleton.
+ */
+export async function campaignKickoff(
+  client: Client,
+  itineraryId: string,
+): Promise<CampaignKickoffResult> {
+  try {
+    const { data, error, response } =
+      await campaignKickoffEndpointItineraryItineraryIdCampaignKickoffPost({
+        client,
+        path: { itinerary_id: itineraryId },
+      });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, kickoff: data };
+    }
+    const detail =
+      response.status === 404
+        ? "itinerary_not_found"
+        : response.status === 403
+          ? "forbidden"
+          : response.status === 409
+            ? "not_a_campaign_itinerary"
+            : "unknown";
+    return { ok: false, status: response.status, detail };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
 export type UpdateItineraryDetail =
   | "itinerary_not_found"
   | "forbidden"
@@ -2847,6 +2903,40 @@ export async function getMyOnboardingSession(
       return { ok: true, session: data };
     }
     return { ok: false, status: response.status, detail: "unknown" };
+  } catch {
+    return { ok: false, status: 0, detail: "network_error" };
+  }
+}
+
+export type AddToReadingListResult =
+  | { ok: true; nodeId: string; itineraryId: string }
+  | { ok: false; status: number; detail: "client_not_found" | "network_error" | "unknown" };
+
+/**
+ * Typed wrapper for POST /me/reading-list.
+ *
+ * Saves a concierge-suggested article into the caller's reading list — an
+ * unscheduled `article` node in their Collection. The metadata is passed
+ * verbatim from the flyout (the agent already surfaced it), so the source
+ * page is never re-fetched.
+ */
+export async function addToReadingList(
+  client: Client,
+  body: ReadingListAddRequest,
+): Promise<AddToReadingListResult> {
+  try {
+    const { data, error, response } = await addToReadingListEndpointMeReadingListPost({
+      client,
+      body,
+    });
+    if (error === undefined && data !== undefined) {
+      return { ok: true, nodeId: data.node_id, itineraryId: data.itinerary_id };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 404 ? "client_not_found" : "unknown",
+    };
   } catch {
     return { ok: false, status: 0, detail: "network_error" };
   }

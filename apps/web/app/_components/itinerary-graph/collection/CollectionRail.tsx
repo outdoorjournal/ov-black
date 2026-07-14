@@ -63,10 +63,14 @@ export function CollectionRail({
   const [showScheduled, setShowScheduled] = useState(false);
 
   const items = useMemo(
-    // Notes are feedback for staff, not wish-list cards — they have their own
-    // home in the Journal, so they're kept OUT of the Collection (bugs.md:
-    // "notes not needed in collection"). Articles (reading list) stay in.
-    () => collectionItemsOf(nodes, pending).filter((n) => n.type !== "note"),
+    // The Collection is the wish list of places to stay/eat/do. Two node types
+    // are kept OUT because they have their own home: notes (staff feedback →
+    // the Journal, bugs.md "notes not needed in collection") and articles (the
+    // saved reading → the Reading destination). So the pile here is neither.
+    () =>
+      collectionItemsOf(nodes, pending).filter(
+        (n) => n.type !== "note" && n.type !== "article",
+      ),
     [nodes, pending],
   );
   // Split the pile: unscheduled maybes (the wish list proper) vs cards that

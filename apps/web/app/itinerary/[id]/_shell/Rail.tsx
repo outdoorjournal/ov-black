@@ -24,6 +24,7 @@ import {
   DashboardIcon,
   InvoiceIcon,
   PartyIcon,
+  ReadingIcon,
   StudioIcon,
   TimelineIcon,
   VaultIcon,
@@ -64,6 +65,12 @@ export function Rail({ onOpenConcierge }: { onOpenConcierge: () => void }) {
       label: "Collection",
       active: activeSeg === "collection",
       icon: <CollectionIcon />,
+    },
+    {
+      href: `/itinerary/${id}/reading` as Route,
+      label: "Reading",
+      active: activeSeg === "reading",
+      icon: <ReadingIcon />,
     },
     {
       href: `/itinerary/${id}/party` as Route,

@@ -59,6 +59,7 @@ export function AppRail({
   footer,
   ariaLabel = "Navigation",
   tone = "light",
+  className,
 }: {
   backItem?: RailBackItem;
   items: RailItem[];
@@ -66,13 +67,16 @@ export function AppRail({
   footer?: ReactNode;
   ariaLabel?: string;
   tone?: RailTone;
+  /** Extra positioning classes from shells whose page scrolls (e.g. basecamp's
+   *  sticky pin) — the itinerary shell pins the viewport instead and omits it. */
+  className?: string;
 }) {
   const t = TONE[tone];
   return (
     <nav
       data-testid="planner-rail"
       aria-label={ariaLabel}
-      className={`hidden w-[76px] shrink-0 flex-col items-stretch border-r py-3 md:flex ${t.nav}`}
+      className={`hidden w-[76px] shrink-0 flex-col items-stretch border-r py-3 md:flex ${t.nav}${className ? ` ${className}` : ""}`}
     >
       {backItem ? (
         <>

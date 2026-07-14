@@ -28,11 +28,13 @@ def snap_length(requested_nights: int | None, supported: tuple[int, ...]) -> tup
 
     ordered = sorted(supported)
     if requested_nights is None:
-        # No dates chosen yet — default to the shortest complete experience.
-        chosen = ordered[0]
+        # No dates chosen yet — default to the LONGEST shipped spine so the trip
+        # lands looking its fullest. It's easier to trim an over-generous ascent
+        # once dates firm up than to coax the traveler into adding days.
+        chosen = ordered[-1]
         return chosen, (
-            f"I've started with a {chosen}-night spine — the shortest that does "
-            f"the mountain justice. We can stretch it once your dates firm up."
+            f"I've laid out the full {chosen}-night ascent — the whole mountain, "
+            f"unhurried. We can tighten it once your dates firm up."
         )
 
     # Nearest by absolute distance; ties favour the longer option.

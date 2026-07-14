@@ -682,64 +682,54 @@ async def _campaign_for_itinerary(
 
 
 def _campaign_kickoff_directive(campaign: Campaign) -> str:
-    """The dashboard-kickoff instruction: lay the scaffold, then make it theirs.
+    """The dashboard-kickoff instruction: greet the laid-out spine, then gather.
 
     Appended to the traveler context on a ``surface="kickoff"`` turn (planning
-    mode). The template already exists, so ``assemble_campaign_spine`` drops the
-    skeleton near-instantly and the cards stream onto the canvas live. The
-    agent's real job here is the MAGIC on top: narrate as it goes, personalize
-    the scaffold from what it knows about the traveler, find a real way in, and
-    open a conversation. It should NEVER fall silent while a tool runs.
+    mode). The curated skeleton is ALREADY on the canvas by the time this turn
+    runs — the dashboard lays it down deterministically on arrival (the
+    ``/campaign/kickoff`` endpoint), so the cards are already staggering in as
+    the traveler watches. Your job here is NOT to build; it's to open the
+    conversation warmly and settle the handful of things the spine can't guess:
+    the dates, who's coming, and the way in. Keep this turn to PROSE and at most
+    a read — no long tool chains, no silent stalls. The offers below become real
+    actions on the NEXT turns, once the traveler answers.
     """
-    reading = "\n".join(f"- {a.url} ({a.publication})" for a in campaign.reading_list)
-
-    # The way in — real flight + chauffeured transfer — is campaign data (this
-    # traveler's home airport is in context as the origin). Skipped cleanly for a
-    # campaign that hasn't declared its arrival gateway.
+    # The way in — a real flight + chauffeured transfer — is campaign data (this
+    # traveler's home airport is in context as the origin). Offered as a question
+    # here; actually searched/booked on a later turn when they say yes. Skipped
+    # cleanly for a campaign that hasn't declared its arrival gateway.
     if campaign.arrival_airport and campaign.arrival_place and campaign.base_place:
         arrival = (
-            "3. GET THEM THERE — but FIRST seat the whole party. Check "
-            "``get_traveler_context``: a returning traveler has family on file. "
-            "Anyone coming on this trip who isn't seated yet must be seated "
-            "(``add_trip_traveler`` for someone already on file — the kids, a "
-            "spouse) so the flight passengers, rooms, and transfer are sized for "
-            "the whole group, not just the primary. THEN find a real flight: "
-            "``search_inventory`` with kinds=['flight'], origin = the traveler's "
-            f"home airport (in your context), destination = '{campaign.arrival_airport}', "
-            "dated to the trip's arrival day, passengers = the full party, then "
-            "``propose_flight`` the best option and say a word about why.\n"
-            f"4. Airport transfer: ``add_transfer`` origin='{campaign.arrival_place}', "
-            f"destination='{campaign.base_place}', service_class='chauffeur_black', "
-            "party_size = the trip's party.\n"
+            "- THE WAY IN: offer to sort the journey — a flight from their home "
+            f"airport (in your context) into {campaign.arrival_airport}, and a "
+            f"chauffeured transfer on to {campaign.base_place}. Ask before you "
+            "book it; don't search inventory this turn.\n"
         )
     else:
         arrival = ""
 
     return (
-        "KICKOFF: You are opening the dashboard for this campaign trip and the "
-        "traveler is watching. Work in THIS order and NARRATE as you go — a warm "
-        "line of prose before and between the tool calls, never a silent stall.\n"
-        "0. FIRST, before ANY tool, write one warm opening line (a sentence or "
-        "two) — you're laying out their trip and glad to. This lands immediately "
-        "so the screen is never blank.\n"
-        "1. LAY THE SKELETON: call ``assemble_campaign_spine``. The cards appear "
-        "on the canvas as you speak — the template already exists, so this is "
-        "fast. If it returns a ``reason`` (the trip length was snapped), narrate "
-        "it warmly (why the mountain wants that many days).\n"
-        "2. MAKE IT THEIRS: you have this traveler's dossier + profile in context "
-        "(call ``get_traveler_context`` for more). Look at the skeleton you just "
-        "laid and make 2–3 GENUINE personalized touches that reflect what you "
-        "know — reschedule a stop to their rhythm (``move_node``), sharpen a card "
-        "(``update_node_details``), or add ONE experience that fits them "
-        "(``search_inventory`` → ``propose_card``). Narrate each in a sentence "
-        "(\"Since you…\", \"I moved… so…\"). NEVER reveal Dossier/OSINT content "
-        "verbatim — let it shape the choice, not the words.\n"
+        "KICKOFF: The dashboard is opening on this campaign trip and the curated "
+        "spine is ALREADY dropping onto the canvas beside you — hotels, hikes, "
+        "the summit, wired in order. Do NOT call ``assemble_campaign_spine`` or "
+        "otherwise rebuild it; it's done. Your whole job this turn is to open the "
+        "conversation. Write warm, tight prose (a short paragraph, no tool "
+        "chains) that:\n"
+        "- GREETS what's on screen: name the shape you've laid out (the ascent, "
+        "the refuge, the summit) so it reads as intentional, not a data dump. If "
+        "the trip length was defaulted or snapped (you'll see it in the live plan "
+        "state / brief), own it warmly — why the mountain wants that many days.\n"
+        "- ASKS THE REAL GAPS, the things the skeleton can't guess:\n"
+        "  · WHEN + HOW LONG: if the dates or night-count aren't settled, ask — "
+        "and say you'll resize the ascent around whatever they choose.\n"
+        "  · WHO'S COMING: confirm the party so rooms, transfers, and per-person "
+        "costs size correctly (you may glance at ``get_traveler_context`` for "
+        "family already on file — but don't seat anyone this turn; just ask).\n"
         + arrival
-        + "5. Add the reading list to the Collection: for each link call "
-        "``save_link_to_collection`` with kind='article':\n" + reading + "\n"
-        "6. CLOSE by inviting them to look it over, and ask ONE real question "
-        "that moves the trip forward (a genuine choice you want their answer to). "
-        "Keep prose tight — the cards carry the detail."
+        + "Close by inviting them to look the ascent over, and end on ONE genuine "
+        "question you want answered (dates is usually the one that unlocks the "
+        "rest). Never reveal Dossier/OSINT content verbatim — let it shape your "
+        "tone, not your words. The cards carry the detail; keep your prose brief."
     )
 
 

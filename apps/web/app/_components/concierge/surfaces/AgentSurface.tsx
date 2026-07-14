@@ -21,16 +21,23 @@ import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
+import { ArticleSurface } from "./ArticleSurface";
 import { OptionsSurface } from "./OptionsSurface";
 import { PlaceSurface } from "./PlaceSurface";
 import { RouteSurface } from "./RouteSurface";
-import type { ActiveSurface, OptionView } from "./types";
+import type { ActiveSurface, ArticleSurfaceView, OptionView } from "./types";
 
 export type AgentSurfaceProps = {
   surface: ActiveSurface | null;
   busy: boolean;
   onClose: () => void;
   onChooseOption: (option: OptionView) => void;
+  /**
+   * Persist an article surface's piece into the Collection. Optional: hosts
+   * without a reading list (e.g. the itinerary shell) simply don't pass it,
+   * and an article surface there falls back to a read-only link.
+   */
+  onAddToReadingList?: (article: ArticleSurfaceView) => Promise<boolean>;
   /** The chat window the panel slides out from (measured, not re-parented). */
   anchorRef: RefObject<HTMLElement | null>;
   /**
@@ -47,6 +54,7 @@ const KIND_LABEL: Record<ActiveSurface["kind"], string> = {
   place: "Place brief",
   route: "The route",
   options: "A decision",
+  article: "A read",
 };
 
 const PANEL_MAX_WIDTH = 420;
@@ -86,6 +94,7 @@ export function AgentSurface({
   busy,
   onClose,
   onChooseOption,
+  onAddToReadingList,
   anchorRef,
   verticalAnchorRef,
   side,
@@ -183,6 +192,14 @@ export function AgentSurface({
                 <PlaceSurface label={surface.label} query={surface.query} />
               ) : surface.kind === "route" ? (
                 <RouteSurface route={surface.route} />
+              ) : surface.kind === "article" ? (
+                <ArticleSurface
+                  article={surface.article}
+                  onAdd={
+                    onAddToReadingList ??
+                    (async () => false)
+                  }
+                />
               ) : (
                 <OptionsSurface options={surface.options} busy={busy} onChoose={onChooseOption} />
               )}

@@ -20,6 +20,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  addToReadingList,
   createApiClient,
   createSessionEndpoint,
   type AgentTurnSummary,
@@ -31,7 +32,10 @@ import {
 } from "@/app/_components/concierge/ConversationPanel";
 import { AgentSurface } from "@/app/_components/concierge/surfaces/AgentSurface";
 import { SurfaceContext } from "@/app/_components/concierge/surfaces/SurfaceContext";
-import type { OptionView } from "@/app/_components/concierge/surfaces/types";
+import type {
+  ArticleSurfaceView,
+  OptionView,
+} from "@/app/_components/concierge/surfaces/types";
 import {
   optionReply,
   useAgentSurface,
@@ -242,6 +246,27 @@ function RightRailChatInner({
     [close, onSend],
   );
 
+  // "Add to reading list" on an article flyout writes straight to the
+  // Collection (no turn) — the metadata is already in hand, so no OG re-fetch.
+  // The panel stays open and swaps its button to "Added"; returning ok drives
+  // that. Uses a live token (getAccessToken) so a long basecamp sit can't 401.
+  const onAddToReadingList = useCallback(
+    async (article: ArticleSurfaceView): Promise<boolean> => {
+      const token = await getAccessToken();
+      if (!token) return false;
+      const api = createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
+      const result = await addToReadingList(api, {
+        title: article.title,
+        url: article.url,
+        publication: article.publication ?? null,
+        og_image: article.ogImage ?? null,
+        excerpt: article.excerpt ?? null,
+      });
+      return result.ok;
+    },
+    [apiBaseUrl, getAccessToken],
+  );
+
   useEffect(() => {
     const ref = abortRef;
     return () => {
@@ -337,6 +362,7 @@ function RightRailChatInner({
         busy={streaming !== null}
         onClose={close}
         onChooseOption={onChooseOption}
+        onAddToReadingList={onAddToReadingList}
         anchorRef={railRef}
         side="right"
       />

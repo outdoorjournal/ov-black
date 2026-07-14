@@ -25,8 +25,29 @@ the live ``japan_live`` build). Re-pull with the trip ids below to refresh.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from app.inventory.schemas import ItineraryDay
+
+
+@dataclass(frozen=True)
+class CornerstoneDay:
+    """One day of a cornerstone trip's internal itinerary.
+
+    Baked from the OV trip's ``itineraries[].days[]`` (``GET /api/trips/{id}``),
+    the same source the live from-inventory path reads. These become the summit
+    node's subgraph children so the anchor card reads as the real multi-day OV
+    adventure it is — an expandable day-by-day journey, not a single photo card.
+    """
+
+    #: 1-based day index within the trip.
+    day: int
+    title: str
+    #: Active hours on the trail, when the vendor states them (OV ``hours``).
+    hours: float | None = None
+    #: Plain-text day description (vendor HTML stripped at authoring time).
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +71,29 @@ class OlympusCornerstone:
     #: Human difficulty label (OV ``difficulty`` on a 1–10 scale).
     difficulty: str
     location_label: str
+    #: The trip's internal day-by-day itinerary — baked from OV, materialized as
+    #: the summit node's subgraph children (see :func:`itinerary_days`).
+    days: tuple[CornerstoneDay, ...] = field(default_factory=tuple)
+
+    def itinerary_days(self) -> list[ItineraryDay]:
+        """The cornerstone's days as :class:`ItineraryDay`, subgraph-ready.
+
+        Same shape the OV provider emits from a live detail fetch, so the
+        template builder can feed these through the shared subgraph-metadata
+        builder and the children render identically to an inventory-born
+        multi-day card. No per-day geo (OV doesn't expose it here), so
+        ``location`` is left unset.
+        """
+        return [
+            ItineraryDay(
+                day=d.day,
+                title=d.title,
+                description=d.description,
+                hours=d.hours,
+                location=None,
+            )
+            for d in self.days
+        ]
 
     def enrichment(self) -> dict[str, Any]:
         """Card-attrs fragment merged onto the spine's summit experience node.
@@ -121,6 +165,73 @@ SYMBOLISM = OlympusCornerstone(
     price_label="from €1,280",
     difficulty="6/10 — strenuous",
     location_label="Mount Olympus, Greece",
+    days=(
+        CornerstoneDay(
+            day=1,
+            title="Pick up from Thessaloniki airport",
+            description=(
+                "Pick up from Thessaloniki airport and transfer to your hotel in "
+                "Litochoro village just in time for dinner. Dinner and overnight "
+                "in Litochoro."
+            ),
+        ),
+        CornerstoneDay(
+            day=2,
+            title="National Park museum and Enipeas River",
+            description=(
+                "We visit the National Park museum for a virtual ascent from the "
+                "foothills to the top of the mountain, learning the history, flora, "
+                "and fauna of Olympus. We find the place where the cause of the "
+                "Trojan war began, hear local myths and tales, and — for the brave "
+                "— swim in the crystal-clear, freezing waters of the Enipeas river. "
+                "The day ends at the old monastery of Saint Dionysios and the cave "
+                "where he lived as a hermit. Dinner and overnight in Litochoro."
+            ),
+        ),
+        CornerstoneDay(
+            day=3,
+            title="Apostolidis refuge",
+            description=(
+                "Our goal is the Muses Plateau. We pass the Ithakisios cave, where "
+                "the great painter lived for more than 15 years, and the old "
+                "shepherds' settlement. After a light lunch at Petrostrouga refuge "
+                "we climb three more hours to the Muses Plateau, standing at last "
+                "before the Throne of Zeus. Dinner and overnight in Apostolidis "
+                "Refuge."
+            ),
+        ),
+        CornerstoneDay(
+            day=4,
+            title="Mytikas summit & Petrostrouga Refuge",
+            description=(
+                "Today we climb to the Mytikas summit, for those who want and can. "
+                "The whole group can visit Profitis Ilias summit and its chapel — "
+                "the highest in the Balkans. After some free time we begin the "
+                "descent before sunset to Petrostrouga Refuge. Dinner and overnight "
+                "in Petrostrouga Refuge."
+            ),
+        ),
+        CornerstoneDay(
+            day=5,
+            title="Vergina and Aridea",
+            description=(
+                "We wake to coffee on the finest balcony of Mount Olympus, with "
+                "panoramic views over the Thermaikos gulf and the Pieria Riviera. "
+                "From Gortsia we head to Vergina and the royal tomb of Philip II — "
+                "father of Alexander the Great — and close the day soaking in an "
+                "outdoor hot bath in the Aridaia region. Dinner and overnight in a "
+                "guesthouse."
+            ),
+        ),
+        CornerstoneDay(
+            day=6,
+            title="Thessaloniki Airport",
+            description=(
+                "Depending on your departure time we adapt the schedule (a final "
+                "visit and so on) and then take you back to Thessaloniki Airport."
+            ),
+        ),
+    ),
 )
 
 
@@ -166,6 +277,37 @@ GUIDED_2DAY = OlympusCornerstone(
     price_label="from €210",
     difficulty="7/10 — strenuous",
     location_label="Mount Olympus, Greece",
+    days=(
+        CornerstoneDay(
+            day=1,
+            title="Litochoro – Prionia – Spilios Agapitos Hut",
+            hours=4.0,
+            description=(
+                "We meet around 10:00 at Litochoro's central parking lot for an "
+                "equipment check and briefing, then drive to the Prionia trailhead "
+                "(1,100 m). From there we hike the most popular path on Olympus — "
+                "part of the E4 European trail — climbing steadily through shady "
+                "forest and towering Bosnian pines to the Spilios Agapitos refuge "
+                "(2,100 m): about 5.5 km and +1,000 m over roughly 3–3.5 hours. At "
+                "the hut we enjoy a warm meal, rest, and prepare for summit day."
+            ),
+        ),
+        CornerstoneDay(
+            day=2,
+            title="Summit Day",
+            hours=7.0,
+            description=(
+                "We start before dawn with headlamps to catch sunrise on the way "
+                "up. The E4 trail leads out of the forest into the alpine zone; "
+                "after about two hours we reach Skala peak (2,866 m) and put on "
+                "helmets and harnesses. Following the Kakoskala ridge we scramble, "
+                "roped to the guide, to the summit of Mytikas (2,918 m) — the "
+                "highest point in Greece. After photos and rest we descend to the "
+                "refuge for a light lunch, then continue down to Prionia and drive "
+                "back to Litochoro. Around 1,000 m of gain and loss, ~6 hours."
+            ),
+        ),
+    ),
 )
 
 

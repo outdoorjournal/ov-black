@@ -47,5 +47,14 @@ export function BasecampRail() {
     },
   ];
 
-  return <AppRail ariaLabel="Basecamp" items={items} />;
+  // Basecamp scrolls the document (unlike the itinerary shell's pinned
+  // viewport), so the rail pins itself below the sticky masthead — the same
+  // top-14 convention as the concierge sidebar in BasecampShell.
+  return (
+    <AppRail
+      ariaLabel="Basecamp"
+      items={items}
+      className="md:sticky md:top-14 md:h-[calc(100dvh-3.5rem)]"
+    />
+  );
 }

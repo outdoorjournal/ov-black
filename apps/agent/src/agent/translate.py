@@ -78,6 +78,9 @@ _TOOL_FRAME_TYPES = {
     # dropped so the browser never sees a malformed panel.
     "present_route": "surface",
     "present_options": "surface",
+    # The reading suggestion rides the same surface envelope (kind="article"):
+    # {surface_id, kind, payload} → article flyout beside the chat.
+    "suggest_reading": "surface",
     # Materialised into the reply text as a fenced markdown block rather than a
     # bespoke frame — see ``_timeline_fence``. The emitted frame is a plain
     # ``delta`` so the API's existing text accumulation persists it with the

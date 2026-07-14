@@ -52,6 +52,8 @@ from app.models import (
 from app.services import invoices as invoices_svc
 from app.services.clients import resolve_client_for_auth_user
 from app.services.display_status import DisplayStatus, display_status_expr
+from app.services.itineraries import ActorContext, ActorKind, ItineraryError
+from app.services.reading import add_article_to_reading_list
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -283,6 +285,75 @@ async def get_my_client_endpoint(
     if client is None:
         raise HTTPException(status_code=404, detail="client_not_found")
     return MyClientResponse(client_id=client.id)
+
+
+class ReadingListAddRequest(BaseModel):
+    """An article the traveler is saving to their reading list from a flyout.
+
+    All fields come from a reading-catalog suggestion the agent already
+    surfaced, so we trust them verbatim — no re-fetch of the source page.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    url: str
+    publication: str | None = None
+    og_image: str | None = None
+    excerpt: str | None = None
+
+
+class ReadingListAddResponse(BaseModel):
+    """The persisted reading-list article node + the container it landed in."""
+
+    node_id: uuid.UUID
+    itinerary_id: uuid.UUID
+
+
+@router.post(
+    "/reading-list",
+    status_code=201,
+    response_model=ReadingListAddResponse,
+    responses={404: {"description": "No client row is linked to this user."}},
+    summary="Save a suggested article into the caller's reading list (Collection).",
+)
+async def add_to_reading_list_endpoint(
+    payload: ReadingListAddRequest,
+    user: AuthenticatedUser = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> ReadingListAddResponse:
+    """Persist a suggested article as an ``article`` node in the caller's list.
+
+    The traveler taps "Add to reading list" on the concierge's article flyout;
+    this lands the piece — non-scheduled, Collection-only — in their stable
+    reading-list container. Metadata is carried from the catalog verbatim, so
+    the (auth-walled) source page is never re-fetched.
+    """
+    try:
+        user_id = uuid.UUID(user.sub)
+    except ValueError:  # pragma: no cover — Supabase subs are always UUIDs
+        raise HTTPException(status_code=404, detail="client_not_found") from None
+
+    client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
+    if client is None:
+        raise HTTPException(status_code=404, detail="client_not_found")
+
+    actor = ActorContext(user_id=user_id, kind=ActorKind.USER, actor_id=user.sub)
+    result = await add_article_to_reading_list(
+        session,
+        actor,
+        client_id=client.id,
+        title=payload.title,
+        url=payload.url,
+        publication=payload.publication,
+        og_image=payload.og_image,
+        excerpt=payload.excerpt,
+    )
+    if isinstance(result, ItineraryError):
+        # A save should succeed (article writes clear the trunk gate); a
+        # failure here is a validation/lock edge — surface it as a 400.
+        raise HTTPException(status_code=400, detail=result.detail or "reading_list_add_failed")
+    return ReadingListAddResponse(node_id=result.id, itinerary_id=result.itinerary_id)
 
 
 @router.get(
