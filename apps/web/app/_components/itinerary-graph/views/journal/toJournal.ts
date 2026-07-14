@@ -15,7 +15,11 @@ import { offsetHoursOr, parseIso } from "../../model/time";
 import type { EdgeResponse, NodeResponse } from "../../model/types";
 import { getVerticalMeta } from "../../model/types";
 import { dayKeyForNode } from "../../shared/groupNodesByDay";
-import { subgraphChildrenByParent, subgraphDayMeta } from "../../shared/subgraph";
+import {
+  subgraphChildrenByParent,
+  subgraphDayMeta,
+  subgraphDaySpan,
+} from "../../shared/subgraph";
 
 // ── Bucketing thresholds ──────────────────────────────────────────────────────
 /** Below this a gap is invisible — the spine simply continues. */
@@ -292,13 +296,20 @@ function deriveJourneyBeats(
         (u): u is string =>
           typeof u === "string" && u.length > 0 && u !== parentCover,
       );
+    // "day k of N" counts calendar days, not children — a day may hold
+    // several beat sub-moments.
+    const daySpan = subgraphDaySpan(children);
     children.forEach((child, i) => {
-      const dayIndex = subgraphDayMeta(child).index ?? i + 1;
-      const hours = subgraphDayMeta(child).hours;
-      // Day 1 rides the parent's own start instant (the card sorts first on a
-      // tie — input order is stable); later days start the morning.
-      const start =
-        dayIndex <= 1
+      const dayMeta = subgraphDayMeta(child);
+      const dayIndex = dayMeta.index ?? i + 1;
+      const hours = dayMeta.hours;
+      // An authored beat carries its own clock time within the day; a plain
+      // day child starts the morning — except day 1, which rides the parent's
+      // own start instant (the card sorts first on a tie — input order is
+      // stable).
+      const start = dayMeta.hhmm
+        ? `${addDaysToKey(parentDay, dayIndex - 1)}T${dayMeta.hhmm}:00${suffix}`
+        : dayIndex <= 1
           ? parentStart
           : `${addDaysToKey(parentDay, dayIndex - 1)}T${BEAT_START_TIME}:00${suffix}`;
       const childMeta = getVerticalMeta(child);
@@ -313,9 +324,12 @@ function deriveJourneyBeats(
           ...child.metadata,
           start_time: start,
           duration_minutes:
-            typeof hours === "number" && hours > 0
-              ? Math.round(hours * 60)
-              : BEAT_DEFAULT_MIN,
+            typeof dayMeta.duration_minutes === "number" &&
+            dayMeta.duration_minutes > 0
+              ? dayMeta.duration_minutes
+              : typeof hours === "number" && hours > 0
+                ? Math.round(hours * 60)
+                : BEAT_DEFAULT_MIN,
           ...(image ? { ambient_image: image } : {}),
         },
       } as NodeResponse);
@@ -323,7 +337,7 @@ function deriveJourneyBeats(
         parentId: parent.id,
         parentTitle: parent.title,
         index: dayIndex,
-        total: children.length,
+        total: daySpan,
       });
     });
   }

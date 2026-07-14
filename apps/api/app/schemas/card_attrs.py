@@ -373,6 +373,13 @@ class HotelCardAttrs(_CardBase):
     walking_to: list[WalkingDistance] = Field(default_factory=list)
     profile_prefs_honored: list[str] = Field(default_factory=list)
     neighborhood_blurb: str | None = None
+    # Hotel class, 1–5 stars (SerpApi/Google Hotels `extracted_hotel_class`).
+    # Ratehawk hotels leave it None; scraped hotels render it as a star row.
+    stars: int | None = Field(default=None, ge=1, le=5)
+    # Crowd rating / review count / website / map link — the same POI block
+    # meals + experiences render. Populated for scraped (SerpApi) hotels that
+    # carry a Google rating; None for suppliers that don't (Ratehawk).
+    place: PlaceFacts | None = None
     snapshot: CardSnapshot | None = None
     # Renderer hint: lodging spans the night, draw the day-bar with a
     # softer night band. Distinct from ``time_of_day`` (which marks meals

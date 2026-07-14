@@ -21,6 +21,7 @@ from app.inventory.providers.google_places import GooglePlacesProvider
 from app.inventory.providers.mock import MockProvider
 from app.inventory.providers.ov import OVProvider
 from app.inventory.providers.ratehawk import RatehawkProvider
+from app.inventory.providers.serp import SerpHotelProvider
 from app.inventory.registry import get_registry
 from app.observability import (
     RequestContextMiddleware,
@@ -96,6 +97,9 @@ async def lifespan(_app: FastAPI) -> "AsyncIterator[None]":
         elif name == "mock":
             registry.register(MockProvider())
             registered.append("mock")
+        elif name == "serp":
+            registry.register(SerpHotelProvider())
+            registered.append("serp")
         elif name == "duffel":
             registry.register(DuffelProvider(settings=settings))
             registered.append("duffel")

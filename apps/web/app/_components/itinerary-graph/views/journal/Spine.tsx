@@ -268,12 +268,16 @@ export function NightSegment({ title }: { title?: string | undefined }) {
       style={{ "--spine-col": `${SPINE_COL_PX}px` } as React.CSSProperties}
     >
       {/* The wash spans the whole gutter width (a fading sky), blurred at its
-          edges so it never reads as a crisp bar. The ☾ tick rides the top. */}
+          edges so it never reads as a crisp bar. The ☾ tick rides the top. It
+          sits BEHIND the timeline lines (`-z-10`) so the spine and a packaged
+          journey's thread read unbroken THROUGH the night — atmosphere behind
+          the line, never a break across it. The day section isolates its
+          stacking context, so this negative layer stays above the page. */}
       <div className="relative flex justify-center py-1">
         <span
           aria-hidden
           data-testid="journal-night-wash"
-          className="relative z-10 flex h-14 w-full items-start justify-center rounded-md pt-1"
+          className="relative -z-10 flex h-14 w-full items-start justify-center rounded-md pt-1"
           style={{
             backgroundImage: wash,
             opacity: 0.5,

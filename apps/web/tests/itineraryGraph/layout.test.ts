@@ -72,6 +72,85 @@ describe("computeHorizontalLayout per-node timezone", () => {
   });
 });
 
+function subChild(
+  id: string,
+  parentId: string,
+  index: number,
+  opts: { start?: string; hours?: number } = {},
+): NodeResponse {
+  return {
+    id,
+    itinerary_id: "it-1",
+    parent_subgraph_id: parentId,
+    type: "experience",
+    status: "approved",
+    title: `Day ${index} — ${id}`,
+    source: null,
+    source_id: null,
+    metadata: {
+      subgraph_day: { index, ...(opts.hours ? { hours: opts.hours } : {}) },
+      ...(opts.start ? { start_time: opts.start } : {}),
+    },
+  } as NodeResponse;
+}
+
+describe("computeHorizontalLayout subgraph beats", () => {
+  const days = [
+    { date: "2026-09-14", label: "Day 1" },
+    { date: "2026-09-15", label: "Day 2" },
+    { date: "2026-09-16", label: "Day 3" },
+    { date: "2026-09-17", label: "Day 4" },
+    { date: "2026-09-18", label: "Day 5" },
+    { date: "2026-09-19", label: "Day 6" },
+  ];
+
+  test("unscheduled children ride the parent's line as day-derived beats (day 1 is the parent card)", () => {
+    // A 6-day packaged experience anchored 09:00 on Day 1, with one child per
+    // day carrying only a subgraph_day.index.
+    const parent = node("olympus", "2026-09-14T09:00:00Z", 6 * 1440);
+    const kids = [1, 2, 3, 4, 5, 6].map((i) =>
+      subChild(`leg${i}`, "olympus", i, i === 2 ? { hours: 7 } : {}),
+    );
+    const layout = computeHorizontalLayout({
+      nodes: [parent, ...kids],
+      edges: [],
+      pxPerMinute: 1.2,
+      tzOffsetHours: 0,
+      daysMeta: days,
+    });
+    // Children never take a card/lane of their own.
+    for (const k of kids) expect(layout.positions.has(k.id)).toBe(false);
+    // Day 1 is the parent card — no beat; days 2..6 each get one.
+    const beatIds = layout.subgraphBeats.map((b) => b.childId);
+    expect(beatIds).not.toContain("leg1");
+    expect(layout.subgraphBeats).toHaveLength(5);
+    const b2 = layout.subgraphBeats.find((b) => b.childId === "leg2")!;
+    expect(b2.dayKey).toBe("2026-09-15");
+    expect(b2.scheduled).toBe(false);
+    expect(b2.hours).toBe(7);
+    expect(b2.title).toBe("Day 2 — leg2");
+  });
+
+  test("a scheduled child sits at its own real day/time, not its day-index", () => {
+    // Child index says "day 5" but it carries a real start on Day 2 08:00 — the
+    // real time wins.
+    const parent = node("exp", "2026-09-14T09:00:00Z", 3 * 1440);
+    const kid = subChild("legB", "exp", 5, { start: "2026-09-15T08:00:00Z" });
+    const layout = computeHorizontalLayout({
+      nodes: [parent, kid],
+      edges: [],
+      pxPerMinute: 1.2,
+      tzOffsetHours: 0,
+      daysMeta: days,
+    });
+    expect(layout.positions.has("legB")).toBe(false);
+    const b = layout.subgraphBeats.find((x) => x.childId === "legB")!;
+    expect(b.scheduled).toBe(true);
+    expect(b.dayKey).toBe("2026-09-15");
+    expect(b.startMin).toBe(8 * 60);
+  });
+});
+
 describe("computeHorizontalLayout daytime is never elided", () => {
   // A sparse day with a big empty afternoon between two cards must keep that
   // gap as real, droppable time — otherwise an advisor can't place anything in

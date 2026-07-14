@@ -746,6 +746,11 @@ function ResultCard({ item }: { item: InventoryItem }) {
         ) : null}
         <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 font-sans text-[11px] text-paper/50">
           {item.location?.label ? <span>{item.location.label}</span> : null}
+          {item.kind === "hotel" && item.stars ? (
+            <span className="tracking-[0.1em] text-brand" aria-label={`${item.stars}-star hotel`}>
+              {"★".repeat(Math.min(5, item.stars))}
+            </span>
+          ) : null}
           {item.rating != null ? (
             <span>
               ★ {item.rating}

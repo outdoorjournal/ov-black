@@ -202,6 +202,35 @@ def _hotel_snapshot(item: HotelItem, summary: dict[str, Any]) -> CardSnapshot:
     )
 
 
+def _hotel_place_facts(item: HotelItem) -> PlaceFacts | None:
+    """Rating / contact / map block for a hotel that carries POI enrichment.
+
+    SerpApi (Google Hotels) hotels come with a crowd rating, review count, and a
+    website; Ratehawk hotels don't. Reusing the same :class:`PlaceFacts` block
+    meals + experiences render means a scraped hotel shows its rating and a map
+    link with zero new frontend. No ``photo_token`` (serp photos are direct URLs,
+    already on ``ambient_image`` / the snapshot cover) and no ``place_id`` on the
+    map link (a serp ``source_id`` is a Google *property* token, not a Places id),
+    so the link is a plain coordinate/label search. ``None`` when nothing to show.
+    """
+    loc = item.location
+    maps_url: str | None = None
+    if loc is not None and loc.lat is not None and loc.lng is not None:
+        maps_url = f"https://www.google.com/maps/search/?api=1&query={quote(f'{loc.lat},{loc.lng}')}"
+    elif loc is not None and loc.label:
+        maps_url = f"https://www.google.com/maps/search/?api=1&query={quote(loc.label)}"
+    facts = PlaceFacts(
+        rating=item.rating,
+        rating_count=item.rating_count,
+        website=item.website,
+        phone=item.phone,
+        maps_url=maps_url,
+    )
+    if facts.model_dump(exclude_none=True, exclude_defaults=True):
+        return facts
+    return None
+
+
 def hotel_item_to_card_attrs(
     item: HotelItem,
     *,
@@ -235,6 +264,8 @@ def hotel_item_to_card_attrs(
         ambient_image=item.photos[0] if item.photos else None,
         description=item.description,
         night_bar=True,
+        stars=item.stars,
+        place=_hotel_place_facts(item),
         snapshot=_hotel_snapshot(item, s),
     )
 

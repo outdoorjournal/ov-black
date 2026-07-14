@@ -38,6 +38,7 @@ import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeContro
 
 import { inferCardKind, statusToKind } from "../../shared/cards/CardBody";
 import { TYPE_TOKENS } from "../../shared/cards/tokens";
+import { subgraphDaySpan } from "../../shared/subgraph";
 import type { NodeResponse } from "../../model/types";
 import { NodeCard } from "../horizontal/NodeCard";
 import {
@@ -49,7 +50,7 @@ import {
 import { journalDragId } from "./journalEditing";
 import { SpineNoteCard } from "./JournalNotes";
 import type { JournalProblem } from "./problems";
-import { DurationBar, JOURNEY_INDENT_PX, SPINE_COL_PX, SpineCircle } from "./Spine";
+import { DurationBar, SPINE_COL_PX, SpineCircle } from "./Spine";
 import { durationMinOf, type GroupedRole, type JourneyBeat } from "./toJournal";
 import type { JournalNodeDiff } from "./toJournalDiff";
 
@@ -166,10 +167,10 @@ export function JournalNode({
       ].join(" ")}
       style={{
         ...spineColStyle,
-        // A journey beat's whole row shifts right onto the journey thread —
-        // circle and duration bar ride the thread (the sub-journey's own
-        // rail), and the card indents under its parent.
-        ...(journey ? { marginLeft: JOURNEY_INDENT_PX } : {}),
+        // A journey beat sits on the SAME spine as its parent — the parent's
+        // accent-colored journey line runs the whole way down through these
+        // beats, so they ride the parent's rail rather than a separate indented
+        // one (the membership chip names which day of the package they are).
         ...WINDOWED_STYLE,
       }}
     >
@@ -191,8 +192,12 @@ export function JournalNode({
           problem={problem !== null}
         />
         {/* The duration bar — the card's color extending down the timeline,
-            length = how long it runs. Notes carry no duration. */}
-        {!isNote ? (
+            length = how long it runs. Notes carry no duration. A subgraph
+            parent (a multi-day package) shows NO bar: its span is carried by
+            the accent-colored journey thread that runs the whole way down
+            through its beats, so a short capped stub here would read as the
+            trip's line "stopping" at the first beat. */}
+        {!isNote && subgraphChildren.length === 0 ? (
           <DurationBar
             kind={kind}
             minutes={durationMinutes}
@@ -303,7 +308,8 @@ export function JournalNode({
             data-testid="journal-journey-span"
             className="mt-1 pl-1 font-serif text-[11px] italic text-ink/45"
           >
-            a {subgraphChildren.length}-day journey — the days ahead carry it
+            a {subgraphDaySpan(subgraphChildren)}-day journey — the days ahead
+            carry it
           </p>
         ) : null}
         {/* The journey-beat chip — this card is day k of N of its parent's

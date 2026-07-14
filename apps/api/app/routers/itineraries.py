@@ -1598,7 +1598,9 @@ def _itinerary_requested_nights(itinerary: Itinerary) -> int | None:
 
 def _itinerary_trip_start(itinerary: Itinerary) -> datetime:
     """Anchor datetime the spine offsets from — the itinerary's ``date_start`` at
-    local midnight, or ~30 days out if the trip has no dates yet.
+    local midnight, or ~30 days out if the trip has no dates yet. The no-dates
+    fallback is only a provisional ``days_anchor`` (the spine instantiates
+    UNPINNED then); it never becomes the trip's dates.
     """
     start = getattr(itinerary, "date_start", None)
     if start is not None:
@@ -1685,9 +1687,7 @@ async def campaign_kickoff_endpoint(
     # nodes, a re-fire (double dashboard mount, retry) must NOT stack a second
     # skeleton — return the no-op shape so the agent narrates without rebuilding.
     existing = (
-        await session.execute(
-            select(Node.id).where(Node.itinerary_id == itinerary_id).limit(1)
-        )
+        await session.execute(select(Node.id).where(Node.itinerary_id == itinerary_id).limit(1))
     ).scalar_one_or_none()
     if existing is not None:
         return CampaignKickoffResponse(
@@ -1708,8 +1708,13 @@ async def campaign_kickoff_endpoint(
         raise HTTPException(status_code=409, detail="campaign_has_no_spine")
 
     trip_start_at = _itinerary_trip_start(itinerary)
+    # Pin the trip only when the traveler actually chose exact dates. A
+    # flexible/window intake (or no intake) lays the spine out as stable
+    # "Day N" slots off a provisional days_anchor — the kickoff must not
+    # invent calendar dates the traveler never gave.
+    pin = itinerary.timing_kind == ItineraryTimingKind.exact and itinerary.date_start is not None
     node_count, edge_count = await instantiate_into(
-        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at
+        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at, pin=pin
     )
 
     # Return the freshly-created nodes so the agent turn can stream them onto the

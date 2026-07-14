@@ -3,7 +3,8 @@
 Composes each shipped spine (5 / 7 / 14 nights) from three parts rather than
 slicing one hand-authored day-list (see :mod:`app.seed_data.olympus_itinerary`):
 
-1. **Arrival** — the inbound flight + a Litochoro base (a night-bar lane).
+1. **Arrival** — a Litochoro base (a night-bar lane). No inbound flight: we
+   don't know the traveler's origin, so flights are proposed in conversation.
 2. **The cornerstone** — a single anchor card for the real OV adventure, carrying
    its cover/gallery/price enrichment AND its day-by-day itinerary as a SUBGRAPH.
    The subgraph children lay across the mountain days as the trip's experiences
@@ -37,11 +38,10 @@ from app.seed_data.olympus_cornerstones import (
 )
 from app.seed_data.olympus_itinerary import (
     ARRIVAL_ITEMS,
-    CORNERSTONE_ANCHOR_HHMM,
     EXTENSION_DAYS,
     TRIP_ANCHOR,
 )
-from app.services.subgraph import day_subgraph_metadata
+from app.services.subgraph import beat_subgraph_metadata, day_subgraph_metadata
 from app.services.templates import (
     add_template_edge,
     add_template_node,
@@ -91,22 +91,26 @@ async def _build_cornerstone_subgraph(
     """Add the cornerstone's day-by-day itinerary as ``parent_id``'s children.
 
     Mirrors :func:`app.services.subgraph.materialize_day_subgraph` in template
-    space: one ``experience`` child per OV day (``Day N — title``, unscheduled,
-    ``day_subgraph_metadata`` shape) chained by ``follows`` edges. Returns
-    ``(node_count, edge_count)`` added. No-op (0, 0) when the cornerstone ships
-    no baked days.
+    space, chained by ``follows`` edges. A day that ships authored ``beats``
+    lands one ``experience`` child PER BEAT (its own title, an ``hhmm`` clock
+    time within the day, a duration — the inferred sub-moments of the vendor's
+    day prose); a beat-less day falls back to the single ``Day N — title``
+    child the inventory-born path produces. Returns ``(node_count,
+    edge_count)`` added. No-op (0, 0) when the cornerstone ships no baked days.
     """
     node_count = 0
     edge_count = 0
     previous: uuid.UUID | None = None
-    for day in cornerstone.itinerary_days():
+
+    async def add_child(title: str, metadata: dict[str, Any]) -> None:
+        nonlocal node_count, edge_count, previous
         child = await add_template_node(
             session,
             template_id=template_id,
             type=NodeType.experience,
-            title=f"Day {day.day} — {day.title}",
+            title=title,
             parent_id=parent_id,
-            metadata=day_subgraph_metadata(day),
+            metadata=metadata,
         )
         node_count += 1
         if previous is not None:
@@ -120,6 +124,23 @@ async def _build_cornerstone_subgraph(
             )
             edge_count += 1
         previous = child.id
+
+    for corner_day in cornerstone.days:
+        day = corner_day.as_itinerary_day()
+        if corner_day.beats:
+            for beat in corner_day.beats:
+                await add_child(
+                    beat.title,
+                    beat_subgraph_metadata(
+                        day,
+                        title=beat.title,
+                        hhmm=beat.hhmm,
+                        duration_minutes=beat.duration_minutes,
+                        description=beat.description,
+                    ),
+                )
+        else:
+            await add_child(f"Day {day.day} — {day.title}", day_subgraph_metadata(day))
     return node_count, edge_count
 
 
@@ -204,7 +225,8 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
             prev_spine = tnode.id
         return tnode.id
 
-    # 1. Arrival — flight + Litochoro base (the base is a night-bar, off-chain).
+    # 1. Arrival — the Litochoro base (a night-bar, off-chain). No flight is
+    # seeded; the traveler's origin is unknown until they tell us.
     for item in ARRIVAL_ITEMS:
         await add_node_from(
             type_=_node_type_for(item),
@@ -217,9 +239,10 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
 
     # 2. The cornerstone anchor — one experience card that IS the guided OV trip:
     # its cover/gallery/price enrich it, and its day-by-day itinerary hangs off it
-    # as a subgraph whose beats lay across the mountain days (day 1 rides this
-    # card's start, later days step forward morning by morning on the frontend).
-    hh, mm = (int(part) for part in CORNERSTONE_ANCHOR_HHMM.split(":", 1))
+    # as a subgraph whose beats lay across the mountain days at their authored
+    # clock times (the anchor's own start comes from the cornerstone — the full
+    # ascent begins with a mid-afternoon pickup, the 2-day push meets at 10:00).
+    hh, mm = (int(part) for part in cornerstone.anchor_hhmm.split(":", 1))
     anchor_metadata: dict[str, Any] = {
         "category": "mountaineering",
         "difficulty": "strenuous",

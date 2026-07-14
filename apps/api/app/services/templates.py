@@ -231,17 +231,21 @@ async def instantiate_into(
     template: CardTemplate,
     itinerary: Itinerary,
     trip_start_at: datetime,
+    pin: bool = True,
 ) -> tuple[int, int]:
     """Clone ``template``'s subgraph into an EXISTING itinerary at ``trip_start_at``.
 
     Unlike :func:`instantiate_template` (which spins up a brand-new itinerary),
     this lands the template's nodes + edges onto an itinerary that already
-    exists — the campaign spine dropping onto the traveler's working fork once
-    intake has chosen the dates. Timing fields are re-stamped to the
-    materialized span. Returns ``(node_count, edge_count)``.
+    exists — the campaign spine dropping onto the traveler's working fork.
+    With ``pin=True`` the itinerary's timing is re-stamped to the materialized
+    span (exact dates); ``pin=False`` keeps the traveler's timing_kind/dates
+    untouched and only stamps ``days_anchor``, so a trip whose dates were never
+    chosen stays unpinned and renders "Day N" labels. Returns
+    ``(node_count, edge_count)``.
     """
     node_count, edge_count = await _materialize_template_into(
-        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at
+        session, template=template, itinerary=itinerary, trip_start_at=trip_start_at, pin=pin
     )
     await session.commit()
     logger.info(
@@ -265,6 +269,7 @@ async def _materialize_template_into(
     template: CardTemplate,
     itinerary: Itinerary,
     trip_start_at: datetime,
+    pin: bool = True,
 ) -> tuple[int, int]:
     """Clone a template subgraph into ``itinerary`` at ``trip_start_at``.
 
@@ -277,10 +282,12 @@ async def _materialize_template_into(
        the lookup built in pass (1).
 
     Each new node receives ``template_id`` + ``template_node_id`` +
-    ``template_version`` snapshots for later drift checks. Stamps the
-    itinerary's timing to the materialized span (born PINNED, Wave E). Does NOT
-    commit — the caller owns the transaction boundary. Returns
-    ``(node_count, edge_count)``.
+    ``template_version`` snapshots for later drift checks. With ``pin=True``,
+    stamps the itinerary's timing to the materialized span (born PINNED,
+    Wave E); with ``pin=False``, only ``days_anchor`` is stamped — the trip's
+    timing_kind/dates stay whatever intake recorded, so cards lay out as stable
+    "Day N" slots without inventing calendar dates. Does NOT commit — the
+    caller owns the transaction boundary. Returns ``(node_count, edge_count)``.
     """
     # Load every template_node + edge in one round-trip each.
     template_nodes = (
@@ -422,17 +429,21 @@ async def _materialize_template_into(
         raise
 
     # The template materializes offsets into concrete calendar dates from
-    # ``trip_start_at``, so the itinerary is born PINNED (Wave E): exact timing
-    # makes it bookable (booking gates on pinned dates, ADV-17) and renders real
-    # dates. The span covers the latest materialized start.
-    max_offset = max(
-        (tn.starts_at_offset_minutes for tn in template_nodes if tn.starts_at_offset_minutes),
-        default=0,
-    )
+    # ``trip_start_at``. When ``pin`` is set the itinerary is born PINNED
+    # (Wave E): exact timing makes it bookable (booking gates on pinned dates,
+    # ADV-17) and renders real dates; the span covers the latest materialized
+    # start. When it isn't (the traveler never chose dates), only days_anchor
+    # is stamped so "Day N" labels are stable — pinning stays a later,
+    # deliberate gesture (retime).
     trip_start_date = trip_start_at.date()
-    itinerary.timing_kind = ItineraryTimingKind.exact
-    itinerary.date_start = trip_start_date
-    itinerary.date_end = (trip_start_at + timedelta(minutes=max_offset)).date()
+    if pin:
+        max_offset = max(
+            (tn.starts_at_offset_minutes for tn in template_nodes if tn.starts_at_offset_minutes),
+            default=0,
+        )
+        itinerary.timing_kind = ItineraryTimingKind.exact
+        itinerary.date_start = trip_start_date
+        itinerary.date_end = (trip_start_at + timedelta(minutes=max_offset)).date()
     itinerary.days_anchor = trip_start_date
 
     _ = by_id  # silence: kept for future debug paths

@@ -63,7 +63,7 @@ async def _delete_olympus_templates() -> None:
 @integration
 @pytest.mark.asyncio
 async def test_cornerstone_lands_as_subgraph_in_template() -> None:
-    """The summit anchor gets one child template_node per cornerstone day."""
+    """The summit anchor gets one child template_node per cornerstone BEAT."""
     await _delete_olympus_templates()
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
@@ -82,21 +82,35 @@ async def test_cornerstone_lands_as_subgraph_in_template() -> None:
                 .scalars()
                 .all()
             )
-            # Exactly the cornerstone's days are nested (parent_id set); every
-            # other node is top-level spine.
+            # Exactly the cornerstone's beats are nested (parent_id set) — one
+            # child per authored beat, a day-child fallback for beat-less days;
+            # every other node is top-level spine.
             children = [n for n in rows if n.parent_id is not None]
-            assert len(children) == len(cornerstone.days)
+            expected = sum(len(day.beats) or 1 for day in cornerstone.days)
+            assert len(children) == expected
 
             parent_ids = {n.parent_id for n in children}
-            assert len(parent_ids) == 1, "all day children hang off the single anchor"
+            assert len(parent_ids) == 1, "all beat children hang off the single anchor"
             anchor = next(n for n in rows if n.id == next(iter(parent_ids)))
             assert anchor.parent_id is None, "the anchor itself is top-level spine"
 
             # Children are unscheduled (the anchor owns the time slot) and carry
-            # the shared subgraph_day metadata the journey view reads.
+            # the shared subgraph_day metadata the journey view reads; every
+            # cornerstone day is covered, and authored beats carry their
+            # inferred clock time + duration.
+            day_indexes: set[int] = set()
             for child in children:
                 assert child.starts_at_offset_minutes is None
-                assert child.metadata_.get("subgraph_day"), "child carries subgraph_day meta"
+                subgraph_day = child.metadata_.get("subgraph_day")
+                assert subgraph_day, "child carries subgraph_day meta"
+                day_indexes.add(subgraph_day["index"])
+            assert day_indexes == {day.day for day in cornerstone.days}
+            beat_children = [n for n in children if "hhmm" in n.metadata_["subgraph_day"]]
+            assert len(beat_children) == sum(len(day.beats) for day in cornerstone.days)
+            for child in beat_children:
+                meta = child.metadata_["subgraph_day"]
+                assert isinstance(meta.get("duration_minutes"), int)
+                assert child.metadata_["snapshot"]["title"] == child.title
     finally:
         await engine.dispose()
         await _delete_olympus_templates()

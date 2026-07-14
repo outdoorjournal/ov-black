@@ -5,8 +5,7 @@ composed at build time (:mod:`app.services.olympus_template`) from three parts s
 the mountain is told ONCE — by the real OV cornerstone trip — and never
 double-booked by hand-authored cards:
 
-1. **Arrival** — the inbound flight (the airport transfer is added live by the
-   agent). Day 1.
+1. **Arrival** — the Litochoro base only. Day 1.
 2. **The cornerstone** — the real, bookable OV adventure (Path to Symbolism for
    the long spine, the 2-Day Summit push for the short ones). Its day-by-day
    itinerary is materialized as a SUBGRAPH whose children lay across the mountain
@@ -18,14 +17,15 @@ double-booked by hand-authored cards:
    by the cornerstone's span at build time, then prefix-sliced to fill whatever
    nights remain. Any prefix is a coherent extension.
 
-So a 14-night trip = a 6-day guided ascent (6 beats) + an 8-day grand tour; a
-7-night = a 2-day summit push (2 beats) + a 5-day tour; a 5-night = the push + a
-3-day tour. The mountain days carry the cornerstone's beats and only the beats.
+So a 14-night trip = a 6-day guided ascent + an 8-day grand tour; a 7-night = a
+2-day summit push + a 5-day tour; a 5-night = the push + a 3-day tour. The
+mountain days carry the cornerstone's beats and only the beats.
 
 Every item is a Pydantic ``CardAttributes`` model, so a schema violation fails
 the import — the fixture is its own smoke test, exactly like the Japan seed.
-Return flights and the airport ground-transfer are intentionally NOT here: the
-agent adds those live (the transfer via the real Google-Routes ``add_transfer``
+Flights (inbound and return) and the airport ground-transfer are intentionally
+NOT here: we don't know the traveler's origin, so the agent proposes those live
+in conversation (the transfer via the real Google-Routes ``add_transfer``
 capability), which is part of the demo.
 """
 
@@ -36,12 +36,10 @@ from datetime import datetime, timedelta, timezone
 from app.schemas.card_attrs import (
     CardSnapshot,
     ExperienceCardAttrs,
-    FlightCardAttrs,
     FreeTimeCardAttrs,
     GalleryImage,
     GeoPoint,
     HotelCardAttrs,
-    TrainCardAttrs,
 )
 from app.seed_data.japan_itinerary import FixtureDay, FixtureItem
 
@@ -70,6 +68,7 @@ def _at(date_iso: str, hhmm: str) -> datetime:
 # ── Shared geo points ─────────────────────────────────────────────────
 
 SKG = GeoPoint(lat=40.5197, lng=22.9709, label="Thessaloniki Airport (SKG)")
+THESSALONIKI = GeoPoint(lat=40.6293, lng=22.9464, label="Thessaloniki")
 LITOCHORO = GeoPoint(lat=40.1008, lng=22.5011, label="Litochoro")
 RIVIERA = GeoPoint(lat=40.1667, lng=22.5833, label="Olympian Riviera")
 DION = GeoPoint(lat=40.1731, lng=22.4931, label="Dion Archaeological Park")
@@ -83,10 +82,6 @@ NAOUSSA = GeoPoint(lat=40.6289, lng=22.0678, label="Naoussa wine country")
 # shifted by the cornerstone's span at build time.
 TRIP_ANCHOR = datetime(2026, 9, 14, 0, 0, tzinfo=EEST)
 
-#: The cornerstone anchor card starts here on day 1 — after the inbound flight
-#: lands (13:30), so its first beat ("airport pickup → Litochoro") reads forward.
-CORNERSTONE_ANCHOR_HHMM = "15:00"
-
 
 def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
     return HotelCardAttrs(
@@ -95,19 +90,12 @@ def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
 
 
 # ── Part 1: arrival (day 1) ────────────────────────────────────────────
-# The inbound flight + a Litochoro base for the mountain days. The base is the
-# night-bar lane (it never collides with the cornerstone's experience beats); the
-# refuge nights are told by the beats themselves.
+# A Litochoro base for the mountain days — the night-bar lane (it never collides
+# with the cornerstone's experience beats); the refuge nights are told by the
+# beats themselves. Deliberately NO inbound flight: we don't know where the
+# traveler flies from, so flights are proposed in conversation, never seeded.
 
 ARRIVAL_ITEMS: list[FixtureItem] = [
-    FixtureItem(
-        id_hint="d01-arrive",
-        title="Arrive Thessaloniki (SKG)",
-        starts_at=_at("2026-09-14", "13:30"),
-        duration_minutes=45,
-        status="confirmed",
-        attrs=FlightCardAttrs(iata_to="SKG", to_location=SKG, location=SKG),
-    ),
     FixtureItem(
         id_hint="d01-base",
         title="Litochoro base — Villa Drosos",
@@ -382,30 +370,41 @@ EXTENSION_DAYS: list[FixtureDay] = [
             ),
         ],
     ),
-    # Ext day 8 — back north toward Thessaloniki.
+    # Ext day 8 — the grand tour closes in Thessaloniki, the north's capital.
+    # Deliberately NO train / airport run / "fly home" framing: we don't know
+    # when or how the traveler departs, so that leg is proposed live in
+    # conversation, never seeded (same rule as the missing inbound flight).
     FixtureDay(
         date="2026-09-21",
-        weather_emoji="🚉",
+        weather_emoji="🌆",
         items=[
             FixtureItem(
-                id_hint="ext-north",
-                title="North to Thessaloniki",
-                starts_at=_at("2026-09-21", "10:00"),
-                duration_minutes=180,
+                id_hint="ext-thessaloniki",
+                title="Thessaloniki — the northern capital",
+                starts_at=_at("2026-09-21", "12:00"),
+                duration_minutes=300,
                 status="pending",
-                attrs=TrainCardAttrs(
-                    from_location=PELION,
-                    to_location=SKG,
+                attrs=ExperienceCardAttrs(
+                    category="culture",
+                    difficulty="easy",
+                    energy_required=1,
+                    location=THESSALONIKI,
                     ambient_image=_img("photo-1766261010715-f5c230be72f7"),
                     description=(
-                        "Back to the north and the sea. A scenic run to Thessaloniki — the White "
-                        "Tower, the waterfront promenade, and one last night of the city's "
-                        "celebrated food before you fly home."
+                        "The grand tour closes in the north's capital — the White Tower, the "
+                        "waterfront promenade, Byzantine walls above the old town, and an "
+                        "evening given over to the city's celebrated food."
+                    ),
+                    snapshot=CardSnapshot(
+                        title="Thessaloniki",
+                        cover_image=_img("photo-1766261010715-f5c230be72f7"),
+                        location="Thessaloniki, Macedonia",
+                        difficulty="Easy",
                     ),
                 ),
             ),
             FixtureItem(
-                id_hint="ext-north-hotel",
+                id_hint="ext-thessaloniki-hotel",
                 title="Check in — Thessaloniki waterfront",
                 starts_at=_at("2026-09-21", "16:00"),
                 duration_minutes=60,
@@ -413,8 +412,8 @@ EXTENSION_DAYS: list[FixtureDay] = [
                 attrs=_hotel(
                     "Excelsior Thessaloniki",
                     1,
-                    SKG,
-                    "A last night on the waterfront before you fly home.",
+                    THESSALONIKI,
+                    "Seafront rooms on the Thermaic Gulf, the White Tower a stroll away.",
                 ),
             ),
         ],
@@ -424,7 +423,6 @@ EXTENSION_DAYS: list[FixtureDay] = [
 
 __all__ = [
     "ARRIVAL_ITEMS",
-    "CORNERSTONE_ANCHOR_HHMM",
     "EXTENSION_DAYS",
     "TRIP_ANCHOR",
 ]

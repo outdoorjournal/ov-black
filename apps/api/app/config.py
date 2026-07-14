@@ -312,14 +312,27 @@ class Settings(BaseSettings):
         ),
     )
 
+    serp_api_key: str = Field(
+        default="",
+        description=(
+            "SerpApi key for the Google Hotels engine. Used by "
+            "scripts/scrape_serp_hotels.py to harvest a region's hotels into "
+            "app/inventory/data/serp_hotels.json, which the 'serp' provider "
+            "serves with local haversine geo-search. Not called at request "
+            "time (the scrape is offline), so an empty value only disables the "
+            "scraper, not the provider."
+        ),
+        repr=False,
+    )
+
     inventory_providers_enabled: str = Field(
-        default="ov,mock",
+        default="ov,mock,serp",
         description=(
             "Comma-separated list of inventory provider sources to register at "
-            "startup. Known values: 'ov', 'mock', 'duffel' (flights), "
-            "'duffel_stays' (hotels), 'ratehawk' (hotels), 'google_places', "
-            "'bokun'. Unknown names are skipped with a warning so a typo "
-            "doesn't crash the boot."
+            "startup. Known values: 'ov', 'mock', 'serp' (scraped hotels), "
+            "'duffel' (flights), 'duffel_stays' (hotels), 'ratehawk' (hotels), "
+            "'google_places', 'bokun'. Unknown names are skipped with a "
+            "warning so a typo doesn't crash the boot."
         ),
     )
 

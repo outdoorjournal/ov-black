@@ -14,13 +14,18 @@ import type { NodeResponse } from "../model/horizontalTypes";
  * cornerstone); both feed these same read helpers.
  */
 
-/** Structured per-day fields the from-inventory materialization stores. */
+/** Structured per-day fields the from-inventory materialization stores. A
+ *  campaign-authored BEAT child (an inferred sub-moment — several share one
+ *  day) additionally carries `hhmm` (its local clock time within the day) and
+ *  `duration_minutes`. */
 export type SubgraphDayMeta = {
   index?: number;
   hours?: number;
   lat?: number;
   lng?: number;
   description_html?: string;
+  hhmm?: string;
+  duration_minutes?: number;
 };
 
 export function isSubgraphChild(node: NodeResponse): boolean {
@@ -49,13 +54,32 @@ export function subgraphChildrenByParent(
     else map.set(parent, [n]);
   }
   for (const children of map.values()) {
-    children.sort(
-      (a, b) =>
-        (subgraphDayMeta(a).index ?? Number.MAX_SAFE_INTEGER) -
-        (subgraphDayMeta(b).index ?? Number.MAX_SAFE_INTEGER),
-    );
+    children.sort((a, b) => {
+      const ma = subgraphDayMeta(a);
+      const mb = subgraphDayMeta(b);
+      const byDay =
+        (ma.index ?? Number.MAX_SAFE_INTEGER) -
+        (mb.index ?? Number.MAX_SAFE_INTEGER);
+      if (byDay !== 0) return byDay;
+      // Beats within one day order by their clock time ("HH:MM" sorts
+      // lexically); the stable sort keeps creation order on a tie.
+      return (ma.hhmm ?? "").localeCompare(mb.hhmm ?? "");
+    });
   }
   return map;
+}
+
+/**
+ * How many calendar days a subgraph spans — distinct day indexes, since a day
+ * may hold several beat children. Drives "a N-day journey" / "day k of N".
+ */
+export function subgraphDaySpan(children: NodeResponse[]): number {
+  const indexes = new Set<number>();
+  for (const child of children) {
+    const index = subgraphDayMeta(child).index;
+    if (typeof index === "number") indexes.add(index);
+  }
+  return indexes.size > 0 ? indexes.size : children.length;
 }
 
 /** Vendor descriptions arrive as HTML; the Journal renders text only. */

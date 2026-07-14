@@ -302,8 +302,8 @@ describe("journey beats", () => {
     expect(chips).toHaveLength(4);
     expect(chips[1]?.textContent).toContain("day 2 of 4");
 
-    // Beat rows indent right onto the journey thread; the parent stays on
-    // the main spine.
+    // Beats ride the parent's rail (no indent — the accent journey thread
+    // carries the membership); the parent stays a plain spine row.
     const parentRow = screen
       .getAllByTestId("journal-node")
       .find((el) => el.getAttribute("data-node-id") === "p1");
@@ -315,7 +315,7 @@ describe("journey beats", () => {
       .find((el) => el.getAttribute("data-node-id") === "d3");
     expect(beatRow).toBeDefined();
     expect(beatRow?.getAttribute("data-journey-beat")).toBe("true");
-    expect(beatRow?.style.marginLeft).toBe("12px");
+    expect(beatRow?.style.marginLeft).toBe("");
     // The card button — not the duration bar's scroll-back button, which can
     // precede it in the gutter on a long (multi-hour) beat.
     const cardButton = Array.from(
@@ -393,6 +393,77 @@ describe("journey beats", () => {
     expect(ambientOf.get("d2")).toBe("https://img.test/g2.jpg");
     expect(ambientOf.get("d3")).toBe("https://img.test/g1.jpg");
     expect(ambientOf.get("d4")).toBe("https://img.test/g2.jpg");
+  });
+
+  test("beat children place at their authored clock time within the day", () => {
+    // Campaign-authored beats: several sub-moments share one day, each with
+    // an inferred hhmm + duration; "day k of N" counts DAYS, not children.
+    const parent = makeNode("p1", {
+      title: "Path to Symbolism",
+      metadata: {
+        start_time: "2024-06-21T15:00:00+03:00",
+        duration_minutes: 2 * 24 * 60,
+      },
+    });
+    const beat = (
+      id: string,
+      index: number,
+      hhmm: string,
+      duration: number,
+    ): NodeResponse =>
+      makeNode(id, {
+        parent_subgraph_id: "p1",
+        title: id,
+        metadata: {
+          snapshot: { title: id },
+          subgraph_day: { index, hhmm, duration_minutes: duration },
+        },
+      });
+    const children = [
+      beat("d1-pickup", 1, "15:00", 90),
+      beat("d1-dinner", 1, "19:30", 120),
+      beat("d2-coffee", 2, "07:30", 60),
+      beat("d2-tomb", 2, "11:00", 150),
+    ];
+    const journal = toJournal({
+      nodes: [parent, ...children],
+      edges: [],
+      days: DAYS,
+      timezoneOffsetHours: 3,
+    });
+
+    // Day 1 (the parent's day): parent card, then both beats at their times.
+    const day1 = daySection(journal, "2024-06-21");
+    const day1Nodes = (day1?.entries ?? []).filter((e) => e.kind === "node");
+    expect(day1Nodes.map((e) => (e.kind === "node" ? e.node.id : ""))).toEqual([
+      "p1",
+      "d1-pickup",
+      "d1-dinner",
+    ]);
+    const dinner = day1Nodes[2];
+    if (dinner?.kind !== "node") throw new Error("expected node entry");
+    expect((dinner.node.metadata as { start_time?: string }).start_time).toBe(
+      "2024-06-21T19:30:00+03:00",
+    );
+    expect(
+      (dinner.node.metadata as { duration_minutes?: number }).duration_minutes,
+    ).toBe(120);
+    // Both day-1 beats say "day 1 of 2" — the journey spans 2 days.
+    expect(dinner.journey).toMatchObject({ index: 1, total: 2 });
+
+    // Day 2 beats land the next calendar day at their own clock times.
+    const day2 = daySection(journal, "2024-06-22");
+    const day2Nodes = (day2?.entries ?? []).filter((e) => e.kind === "node");
+    expect(day2Nodes.map((e) => (e.kind === "node" ? e.node.id : ""))).toEqual([
+      "d2-coffee",
+      "d2-tomb",
+    ]);
+    const coffee = day2Nodes[0];
+    if (coffee?.kind !== "node") throw new Error("expected node entry");
+    expect((coffee.node.metadata as { start_time?: string }).start_time).toBe(
+      "2024-06-22T07:30:00+03:00",
+    );
+    expect(coffee.journey).toMatchObject({ index: 2, total: 2 });
   });
 
   test("a raw child never lands on the spine at its own claimed time", () => {

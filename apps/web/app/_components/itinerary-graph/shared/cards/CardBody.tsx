@@ -317,6 +317,8 @@ function HotelBody({
   const snap = meta.snapshot;
   const cover = snap?.cover_image ?? meta.ambient_image;
   const location = snap?.location ?? meta.location?.label;
+  const stars = typeof meta.stars === "number" ? Math.min(5, meta.stars) : 0;
+  const rating = typeof meta.place?.rating === "number" ? meta.place.rating.toFixed(1) : null;
   return (
     <div className="mt-1.5 flex gap-3">
       <ImageStub
@@ -329,6 +331,23 @@ function HotelBody({
           {snap?.title ?? node.title}
         </h3>
         {location ? <Sub>{location}</Sub> : null}
+        {stars > 0 || rating ? (
+          <div className="mt-1 flex items-center gap-2 text-[11px] text-ink/65">
+            {stars > 0 ? (
+              <span className="tracking-[0.1em] text-brand" aria-label={`${stars}-star hotel`}>
+                {"★".repeat(stars)}
+              </span>
+            ) : null}
+            {rating ? (
+              <span>
+                ★ {rating}
+                {typeof meta.place?.rating_count === "number"
+                  ? ` · ${compactCount(meta.place.rating_count)}`
+                  : ""}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {snap?.activities && snap.activities.length > 0 ? (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {snap.activities.slice(0, 2).map((a) => (

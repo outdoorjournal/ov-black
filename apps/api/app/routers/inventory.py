@@ -168,21 +168,25 @@ async def search_inventory_endpoint(
         ge=-90.0,
         le=90.0,
         description=(
-            "Google Places location-bias latitude (paired with near_lng). "
-            "Optional — biases meal/experience results toward this point."
+            "Geo-search latitude (paired with near_lng). Drives the serp HOTEL "
+            "search (nearest-first within radius) and biases Google Places "
+            "meal/experience results toward this point."
         ),
     ),
     near_lng: float | None = Query(
         default=None,
         ge=-180.0,
         le=180.0,
-        description="Google Places location-bias longitude (paired with near_lat).",
+        description="Geo-search longitude (paired with near_lat).",
     ),
     radius_m: int | None = Query(
         default=None,
         ge=1,
         le=50_000,
-        description="Google Places location-bias radius in metres (default 5km).",
+        description=(
+            "Geo-search radius in metres (serp hotels default 40km; Google "
+            "Places bias default 5km)."
+        ),
     ),
     regions: list[str] | None = Query(
         default=None,
@@ -207,12 +211,24 @@ async def search_inventory_endpoint(
     min_price: int | None = Query(
         default=None,
         ge=0,
-        description="Adventure minimum price, USD major units (OV).",
+        description=(
+            "Minimum price. OV: adventure price, USD major units. serp: hotel "
+            "nightly rate in the snapshot currency (EUR for the Olympus set)."
+        ),
     ),
     max_price: int | None = Query(
         default=None,
         ge=0,
-        description="Adventure maximum price, USD major units (OV, upstream cap 5000).",
+        description=(
+            "Maximum price. OV: adventure price, USD major units (upstream cap "
+            "5000). serp: hotel nightly rate in the snapshot currency (EUR)."
+        ),
+    ),
+    min_stars: int | None = Query(
+        default=None,
+        ge=1,
+        le=5,
+        description="Minimum hotel class, 1–5 stars (serp). Unrated hotels are excluded.",
     ),
     min_difficulty: int | None = Query(
         default=None,
@@ -288,6 +304,8 @@ async def search_inventory_endpoint(
         filters["min_price"] = min_price
     if max_price is not None:
         filters["max_price"] = max_price
+    if min_stars is not None:
+        filters["min_stars"] = min_stars
     if min_difficulty is not None:
         filters["min_difficulty"] = min_difficulty
     if max_difficulty is not None:

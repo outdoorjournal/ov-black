@@ -37,6 +37,8 @@ export interface NodeMeta {
   depart_at?: string;
   arrive_at?: string;
   nights?: number;
+  // Hotel class, 1–5 stars (scraped SerpApi/Google Hotels hotels).
+  stars?: number;
   mode?: string;
   time_of_day?: "morning" | "lunch" | "afternoon" | "evening" | "night";
   body?: string;

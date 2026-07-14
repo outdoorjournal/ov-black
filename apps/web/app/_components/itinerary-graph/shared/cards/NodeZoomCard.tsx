@@ -161,6 +161,7 @@ interface ZoomMeta {
   // hotel
   name?: string;
   room_type?: string;
+  stars?: number;
   nights?: number;
   check_in?: string;
   check_out?: string;
@@ -585,6 +586,11 @@ function HotelZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: numbe
         <ImageHero src={cover} fallbackTint="#5e6e5d" tall />
         <div className="min-w-0">
           <Title>{m.name ?? m.snapshot?.title ?? node.title}</Title>
+          {typeof m.stars === "number" && m.stars > 0 ? (
+            <div className="mt-0.5 text-[13px] tracking-[0.15em] text-brand" aria-label={`${m.stars}-star hotel`}>
+              {"★".repeat(Math.min(5, m.stars))}
+            </div>
+          ) : null}
           <p className="text-[12px] text-ink/65">
             {joinDot([m.snapshot?.location ?? m.location?.label, m.room_type])}
           </p>
@@ -602,6 +608,8 @@ function HotelZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: numbe
           />
         </div>
       </div>
+
+      <PlaceInfo place={m.place} tint={t.tint} />
 
       {walking.length > 0 || m.neighborhood_blurb ? (
         <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -33,6 +33,11 @@ import {
   offsetHoursOr,
   tzDayKey,
 } from "../../model/horizontalTime";
+import {
+  isSubgraphChild,
+  subgraphChildrenByParent,
+  subgraphDayMeta,
+} from "../../shared/subgraph";
 
 export const TIME_GUTTER = 96;
 // PAD_X reserves space for the first day's duration-bar gutter; otherwise the
@@ -79,6 +84,10 @@ const ELIDE_BAND_PX = 56;
 // real, droppable time; genuinely late/overnight dead air is what compresses.
 const DAY_START_MIN = 7 * 60;
 const DAY_END_MIN = 21 * 60;
+
+// Where a day-derived subgraph beat (an unscheduled "day k" leg) lands on its
+// morning — matches the Journal's `BEAT_START_TIME` so the two views agree.
+const BEAT_MORNING_MIN = 9 * 60;
 
 export interface TimelineSegment {
   type: "live" | "elide";
@@ -137,6 +146,31 @@ export interface ContinuationSpan {
   spanDays: number;
 }
 
+// A subgraph child (a "day k of N" leg of a packaged multi-day experience,
+// carrying `parent_subgraph_id`) laid onto the timeline as a beat that rides
+// its PARENT's start-finish line — never a card of its own. Placed at the
+// child's real local time when it carries a `starts_at`, else derived from its
+// `subgraph_day.index` (day 1 rides the parent's start; later days step forward
+// morning by morning), mirroring the Journal's journey beats.
+export interface SubgraphBeat {
+  parentId: string;
+  childId: string;
+  title: string;
+  dayKey: string;
+  dayIndex: number;
+  // Lane-0 x of the day column (same coordinate space as PositionedHNode.x) —
+  // the beat sits on the parent's bar, which lives in this column's gutter.
+  x: number;
+  w: number;
+  y: number;
+  startMin: number;
+  // Active hours the leg runs, when the vendor states them — feeds the chip's
+  // sublabel ("~7h").
+  hours?: number;
+  // True when the beat sits at a real scheduled time (vs. a day-derived one).
+  scheduled: boolean;
+}
+
 export interface TimeMarker {
   y: number;
   label: string;
@@ -145,6 +179,7 @@ export interface TimeMarker {
 export interface HLayoutResult {
   positions: Map<string, PositionedHNode>;
   continuations: ContinuationSpan[];
+  subgraphBeats: SubgraphBeat[];
   segments: TimelineSegment[];
   days: DayLayout[];
   totalWidth: number;
@@ -266,6 +301,11 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   const items: Item[] = [];
   for (const n of nodes) {
     const m = getHMeta(n);
+    // Subgraph children never take a card/lane of their own — they ride the
+    // parent's start-finish line as beats (built below), even when they carry
+    // a real `starts_at`. Skip them here so a scheduled leg doesn't render as
+    // an independent timeline card competing for lanes.
+    if (isSubgraphChild(n)) continue;
     if (!m.start_time) continue;
     // Synthesized placements are Collection items, not timeline cards — the
     // rail renders them. Skip so they don't double-render onto the timeline.
@@ -605,6 +645,61 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     }
   }
 
+  // Subgraph beats: each packaged experience's day-by-day children laid onto
+  // the timeline as chips that ride the parent's start-finish line (its own
+  // duration bar on day 1, its continuation bars on later days). A scheduled
+  // child (carries `starts_at`) sits at its real local time and day; an
+  // unscheduled one is derived from `subgraph_day.index` — day 1 rides the
+  // parent's start (represented by the parent card, so it's skipped), later
+  // days step forward to the morning. Never a card/lane of its own.
+  const childrenByParent = subgraphChildrenByParent(nodes);
+  const subgraphBeats: SubgraphBeat[] = [];
+  for (const item of items) {
+    if (item.isNightBar) continue;
+    const kids = childrenByParent.get(item.node.id);
+    if (!kids || kids.length === 0) continue;
+    kids.forEach((child, i) => {
+      const cm = getHMeta(child);
+      const dm = subgraphDayMeta(child);
+      let beatDayIndex: number;
+      let beatMin: number;
+      let scheduled: boolean;
+      if (cm.start_time) {
+        // Scheduled leg — place at its own local wall-clock (the trip spans
+        // tzs, so resolve the offset from the child's own string).
+        const ctz = offsetHoursOr(cm.start_time, tzOffsetHours);
+        const cDayIndex = dayIndexByDate.get(tzDayKey(cm.start_time, ctz));
+        if (cDayIndex === undefined) return; // outside the trip window
+        beatDayIndex = cDayIndex;
+        beatMin = snapMinute(localMinuteOfDay(cm.start_time, ctz));
+        scheduled = true;
+      } else {
+        const idx = dm.index ?? i + 1;
+        // Day 1 is the parent card itself — no separate beat for it.
+        if (idx <= 1) return;
+        beatDayIndex = item.dayIndex + (idx - 1);
+        beatMin = BEAT_MORNING_MIN;
+        scheduled = false;
+      }
+      const dayLayout = days[beatDayIndex];
+      if (!dayLayout) return; // runs past the trip window — nothing to paint
+      const hours = dm.hours;
+      subgraphBeats.push({
+        parentId: item.node.id,
+        childId: child.id,
+        title: child.title,
+        dayKey: dayLayout.date,
+        dayIndex: beatDayIndex,
+        x: dayLayout.columnX,
+        w: laneWidth,
+        y: mapMinuteToY(beatMin, segments),
+        startMin: beatMin,
+        ...(typeof hours === "number" && hours > 0 ? { hours } : {}),
+        scheduled,
+      });
+    });
+  }
+
   // Total height: max bottom across segments and cards.
   let segHeight = segments.reduce((m, s) => Math.max(m, s.yEnd), 0);
   for (const p of positions.values()) {
@@ -648,6 +743,7 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
   return {
     positions,
     continuations,
+    subgraphBeats,
     segments,
     days,
     totalWidth,

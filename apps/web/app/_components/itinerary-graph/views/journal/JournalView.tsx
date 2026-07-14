@@ -57,6 +57,8 @@ import {
 import { useRouter } from "next/navigation";
 
 import type { NodeResponse } from "../../model/types";
+import { inferCardKind } from "../../shared/cards/CardBody";
+import { TYPE_TOKENS } from "../../shared/cards/tokens";
 import { subgraphChildrenByParent } from "../../shared/subgraph";
 import { itineraryGraphStore } from "../../store/itineraryGraphStore";
 import { useTimelineData } from "../../TimelineDataContext";
@@ -85,7 +87,7 @@ import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
 import { useIs2xl } from "./useIs2xl";
 import { CardDetailView } from "@/app/itinerary/[id]/_shell/CardDetailView";
-import { JOURNEY_INDENT_PX, NightSegment, SPINE_COL_PX } from "./Spine";
+import { JOURNAL_BAR_WIDTH_PX, NightSegment, SPINE_COL_PX } from "./Spine";
 import { toJournal, type JournalDaySection } from "./toJournal";
 import {
   isGhostId,
@@ -243,6 +245,31 @@ export function JournalView({
           ),
       ),
     [journal, subgraphChildren],
+  );
+  // The journey thread wears the PARENT experience's own accent, so a packaged
+  // multi-day trip reads as one continuous colored line running from the parent
+  // card down through every derived beat and night — the parent's presence, the
+  // whole way — rather than the parent's short (capped) duration bar petering
+  // out at the first beat. Per section: the accent of whichever subgraph parent
+  // this day carries (the parent card itself on its day, or a beat's parent on
+  // the days ahead). Null on non-journey days.
+  const journeyAccents = useMemo(
+    () =>
+      journal.sections.map((s) => {
+        if (s.kind !== "day") return null;
+        for (const e of s.entries) {
+          if (e.kind !== "node") continue;
+          if ((subgraphChildren.get(e.node.id)?.length ?? 0) > 0) {
+            return TYPE_TOKENS[inferCardKind(e.node)].accent;
+          }
+          if (e.journey) {
+            const parent = nodes.find((n) => n.id === e.journey?.parentId);
+            if (parent) return TYPE_TOKENS[inferCardKind(parent)].accent;
+          }
+        }
+        return null;
+      }),
+    [journal, subgraphChildren, nodes],
   );
   const pinned = datesPinned(timeline.itinerary);
 
@@ -428,6 +455,7 @@ export function JournalView({
                         ? {
                             fromPrev: journeyDays[idx - 1] === true,
                             toNext: journeyDays[idx + 1] === true,
+                            accent: journeyAccents[idx] ?? null,
                           }
                         : null
                     }
@@ -586,7 +614,9 @@ function DaySection({
    *  into the next one, so it bridges headers, nights, and section gaps
    *  (computed over the WHOLE journal in JournalView — adjacency is not a
    *  per-day fact). Null = no journey through this day. */
-  journeyThread?: { fromPrev: boolean; toNext: boolean } | null;
+  journeyThread?:
+    | { fromPrev: boolean; toNext: boolean; accent: string | null }
+    | null;
   problems: Map<string, JournalProblem>;
   onActivate: (nodeId: string) => void;
   observe: ReturnType<typeof useScrollActive>;
@@ -729,15 +759,40 @@ function DaySection({
       data-to-next={journeyThread.toNext ? "true" : undefined}
       title="Part of a packaged journey"
       className={[
-        "absolute top-0 w-0 border-l-2 border-ink/15",
+        // A packaged journey's line runs down the MAIN spine — the rail the
+        // parent card's own circle sits on — in the parent experience's accent
+        // (set inline below), so it reads as that trip's presence extending the
+        // whole way; a neutral hairline when the parent's kind is unknown.
+        "absolute rounded-full",
+        // On a CONTINUING day it spans the full section (behind the day rule,
+        // like the spine); on the day it BEGINS it opens at the parent's circle
+        // (top set inline) instead of the top of the day.
+        journeyThread.fromPrev ? "top-0" : "",
         journeyThread.toNext ? "-bottom-2" : "bottom-0",
+        journeyThread.accent ? "" : "bg-ink/20",
       ].join(" ")}
-      style={{ left: SPINE_COL_PX / 2 + JOURNEY_INDENT_PX }}
+      style={{
+        // Match the beats' own duration-bar width and centre it on the spine,
+        // so beat bars and the connecting line read as one uniform rail.
+        width: JOURNAL_BAR_WIDTH_PX,
+        left: SPINE_COL_PX / 2 - JOURNAL_BAR_WIDTH_PX / 2,
+        // Start at the parent circle's centre on the opening day: the content
+        // column's py-3 (12) + the circle column's pt-3 (12) + the circle's
+        // radius (14) = 38px below the section's content top.
+        ...(journeyThread.fromPrev ? {} : { top: 38 }),
+        ...(journeyThread.accent
+          ? { backgroundColor: journeyThread.accent, opacity: 0.5 }
+          : {}),
+      }}
     />
   ) : null;
 
   return (
-    <section data-testid="journal-day" data-date={section.date} className="relative">
+    <section
+      data-testid="journal-day"
+      data-date={section.date}
+      className="relative isolate"
+    >
       {/* Alternate days wear a whisper of a wash — a reading aid, keyed to the
           scaffold index so the alternation tracks calendar days even across
           elisions. Painted as an overhanging layer so the grid stays put. */}

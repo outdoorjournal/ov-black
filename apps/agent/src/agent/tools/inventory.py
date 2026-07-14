@@ -34,6 +34,7 @@ async def search_inventory(
     activities: list[str] | None = None,
     min_price: int | None = None,
     max_price: int | None = None,
+    min_stars: int | None = None,
     min_difficulty: int | None = None,
     max_difficulty: int | None = None,
     page: int | None = None,
@@ -46,8 +47,8 @@ async def search_inventory(
         kinds: Filter by ``InventoryItem.kind`` (e.g. ``experience``,
             ``hotel``, ``flight``). Repeatable.
         source: Scope to one provider (``ov``, ``mock``, ``duffel`` for
-            flights, ``duffel_stays`` or ``ratehawk`` for hotels). Omit to fan
-            out across every enabled provider.
+            flights, ``serp`` for hotels). Omit to fan out across every enabled
+            provider.
         limit: Maximum items to return. Capped at 50 server-side.
         origin: Flight origin IATA code (e.g. ``LHR``). For a flight search
             pass origin + destination + departure_date together.
@@ -57,20 +58,21 @@ async def search_inventory(
         cabin_class: Flight cabin — ``economy`` | ``premium_economy`` |
             ``business`` | ``first``.
         adults: Adult count — flight passengers or hotel guests (default 1).
-        region_id: Ratehawk region id for a hotel search. Pass with checkin +
-            checkout; alternative to latitude + longitude.
-        latitude: Hotel-search latitude (paired with longitude) for a geo search.
+        region_id: (Unused for hotels now — kept for API compatibility.)
+        latitude: Hotel-search latitude (paired with longitude) — an alias for
+            ``near_lat`` accepted by the ``serp`` hotel provider.
         longitude: Hotel-search longitude (paired with latitude).
-        checkin: Hotel check-in date, ``YYYY-MM-DD``.
-        checkout: Hotel check-out date, ``YYYY-MM-DD``.
+        checkin: (Optional — the ``serp`` hotel catalog is not date-gated, so
+            you do NOT need check-in/out to search hotels.)
+        checkout: (Optional — see ``checkin``.)
         residency: Hotel guest residency, ISO-3166 alpha-2 lowercase (e.g. ``us``).
-        currency: Hotel display currency, ISO 4217 (e.g. ``USD``). Pass the
-            traveler's preferred currency (from the Traveler logistics block)
-            so quotes come back in it rather than the supplier's local currency.
-        near_lat: Google Places location-bias latitude (paired with near_lng).
-            Optional — biases meal/experience results toward this point.
-        near_lng: Google Places location-bias longitude (paired with near_lat).
-        radius_m: Google Places location-bias radius in metres (default 5km).
+        currency: Hotel display currency, ISO 4217 (e.g. ``USD``).
+        near_lat: Geo-search latitude (paired with near_lng). Drives the
+            ``serp`` HOTEL search (nearest-first within radius) and biases
+            meal/experience (Google Places) results toward this point.
+        near_lng: Geo-search longitude (paired with near_lat).
+        radius_m: Geo-search radius in metres (serp hotels default 40km; Google
+            Places bias default 5km).
         regions: Adventure-trip continent filter (OV). One or more of
             ``Europe`` | ``Asia`` | ``Africa`` | ``North America`` |
             ``South America`` | ``Oceania``.
@@ -79,8 +81,13 @@ async def search_inventory(
         activities: OV activity-name filter, e.g. ``Hiking``, ``Trekking``,
             ``Rafting``, ``Kayaking``, ``Surfing``, ``Safari``, ``Climbing``,
             ``Skiing & Snowsports``, ``Hot Air Ballooning``.
-        min_price: Adventure minimum price, USD major units (OV).
-        max_price: Adventure maximum price, USD major units (OV, cap 5000).
+        min_price: Minimum price. For hotels (serp): nightly rate in EUR. For
+            adventures (OV): USD major units.
+        max_price: Maximum price. For hotels (serp): nightly rate in EUR (e.g.
+            ``max_price=300`` for "under €300/night"). For adventures (OV): USD
+            major units (cap 5000).
+        min_stars: Minimum HOTEL class, 1–5 stars (serp). Unrated hotels are
+            excluded, so pass it only when the traveler asks for a star tier.
         min_difficulty: Adventure minimum difficulty, 1 (easy) – 10 (extreme).
         max_difficulty: Adventure maximum difficulty, 1–10.
         page: Adventure result page (9 per page). Usually omit — set a
@@ -89,9 +96,13 @@ async def search_inventory(
 
     For flights, set ``source='duffel'`` (or ``kinds=['flight']``) and supply
     the route + date params; ``keyword`` does not drive flight search. For
-    hotels, set ``kinds=['hotel']`` (or pick a source: ``duffel_stays`` needs
-    latitude+longitude, ``ratehawk`` takes region_id | latitude+longitude) and
-    supply checkin + checkout; ``keyword`` does not drive hotel search. For
+    hotels, use ``source='serp'`` (or ``kinds=['hotel']``) with
+    ``near_lat`` + ``near_lng`` (optionally ``radius_m``) to find accommodations
+    nearest a point — a curated catalog searched by proximity, returned
+    nearest-first with star class, crowd rating, photos, and nightly price. No
+    check-in/out dates are needed and ``keyword`` does not drive hotel search;
+    anchor a hotel search on the coordinates of where the traveler is staying
+    that night. For
     restaurants / things to do, set
     ``kinds=['meal']`` and/or ``kinds=['experience']`` (Google Places) with a
     descriptive ``keyword`` (which drives the search, e.g. "omakase sushi in
@@ -158,6 +169,8 @@ async def search_inventory(
         params["min_price"] = min_price
     if max_price is not None:
         params["max_price"] = max_price
+    if min_stars is not None:
+        params["min_stars"] = min_stars
     if min_difficulty is not None:
         params["min_difficulty"] = min_difficulty
     if max_difficulty is not None:

@@ -56,6 +56,15 @@ function durationBarColor(type: NodeType): string {
   return DURATION_BAR_TYPE_COLOR[type] ?? "#8a8a8a";
 }
 
+// Compact "~7h" / "~3h 30m" label for a subgraph beat's active hours.
+function formatHoursLabel(hours: number): string {
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  if (m === 0) return `~${h}h`;
+  if (h === 0) return `~${m}m`;
+  return `~${h}h ${m}m`;
+}
+
 const DURATION_BAR_WIDTH = 16;
 
 interface HorizontalCanvasProps {
@@ -148,6 +157,13 @@ export function HorizontalCanvas({
   const proposalIds = useMemo(
     () => new Set(pendingProposals.map((p) => p.id)),
     [pendingProposals],
+  );
+  // Parents whose subgraph children ride their line as beats (below): their
+  // generic per-day continuation chip is replaced by the beats, so suppress it
+  // (the continuation BAR still draws — it's the line the beats sit on).
+  const beatParentIds = useMemo(
+    () => new Set(layout.subgraphBeats.map((b) => b.parentId)),
+    [layout.subgraphBeats],
   );
 
   // Subtle horizontal time grid: a hair-line at every hour boundary, plus
@@ -437,6 +453,9 @@ export function HorizontalCanvas({
             // is the item itself, so nothing else lives there). Covered
             // middle days: chip at the top of the column.
             const chipTop = c.isFinal ? Math.max(c.y + 4, c.y + c.barH - 30) : c.y + 6;
+            // Parents whose children ride the line as beats: draw only the bar
+            // (the line), letting the per-child beat chips speak for the days.
+            const suppressChip = beatParentIds.has(c.node.id);
             return (
               <div key={`cont-${c.node.id}-${c.dayKey}`}>
                 <div
@@ -451,6 +470,7 @@ export function HorizontalCanvas({
                     opacity: 0.55,
                   }}
                 />
+                {suppressChip ? null : (
                 <button
                   type="button"
                   data-testid="continuation-chip"
@@ -476,7 +496,57 @@ export function HorizontalCanvas({
                     {spanLabel}
                   </span>
                 </button>
+                )}
               </div>
+            );
+          })}
+
+        {/* Subgraph beats — each day of a packaged multi-day experience laid
+            onto the timeline as a chip that rides the parent's start-finish
+            line (its duration bar on day 1, its continuation bars on later
+            days). Scheduled legs sit at their real time; unscheduled ones step
+            forward morning by morning. Clicking a beat opens the parent's
+            detail (the whole packaged journey). */}
+        {layout.subgraphBeats
+          .filter((b) => b.parentId !== ghostId)
+          .map((b) => {
+            const left = b.x - axisWidth;
+            const color = durationBarColor("experience");
+            const hoursLabel =
+              typeof b.hours === "number" && b.hours > 0
+                ? formatHoursLabel(b.hours)
+                : b.scheduled
+                  ? formatMinuteOfDay(b.startMin)
+                  : "";
+            return (
+              <button
+                key={`beat-${b.childId}`}
+                type="button"
+                data-testid="subgraph-beat"
+                data-node-id={b.parentId}
+                data-child-id={b.childId}
+                data-day={b.dayKey}
+                onClick={() => onCardClick(b.parentId)}
+                onMouseEnter={() => onCardHover(b.parentId)}
+                onMouseLeave={() => onCardHover(null)}
+                title={b.title}
+                className="absolute z-10 flex max-w-full items-center gap-1.5 truncate rounded-md border border-ink/15 bg-paper/90 px-2 py-1 text-left shadow-xs backdrop-blur-xs transition-colors hover:border-ink/35"
+                style={{ top: b.y, left, maxWidth: b.w }}
+              >
+                <span
+                  aria-hidden
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: color }}
+                />
+                <span className="truncate font-serif text-[11px] leading-tight text-ink/80">
+                  {b.title}
+                </span>
+                {hoursLabel ? (
+                  <span className="shrink-0 font-sans text-[9px] uppercase tracking-[0.14em] text-ink/50">
+                    {hoursLabel}
+                  </span>
+                ) : null}
+              </button>
             );
           })}
 

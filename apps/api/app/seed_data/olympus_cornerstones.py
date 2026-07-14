@@ -28,7 +28,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.inventory.schemas import ItineraryDay
+from app.inventory.schemas import ItineraryDay, Location
+
+
+@dataclass(frozen=True)
+class CornerstoneBeat:
+    """One inferred moment within a cornerstone day — a virtual sub-node.
+
+    The vendor writes each day as one prose paragraph; the beats break that
+    paragraph into the moments it actually narrates (morning coffee, the royal
+    tomb, the hot bath, dinner at the guesthouse) so the day reads as a lived
+    sequence on the calendar instead of a single flat card. Times and durations
+    are INFERRED at authoring time — editorial scheduling, not vendor data.
+    """
+
+    #: Local start time within the day, ``"HH:MM"`` (EEST — the trip's zone).
+    hhmm: str
+    title: str
+    duration_minutes: int = 60
+    #: Short editorial description, derived from the vendor's day prose.
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +58,9 @@ class CornerstoneDay:
     the same source the live from-inventory path reads. These become the summit
     node's subgraph children so the anchor card reads as the real multi-day OV
     adventure it is — an expandable day-by-day journey, not a single photo card.
+    When a day ships ``beats``, each beat becomes its OWN child laid onto the
+    day at its inferred time; a beat-less day falls back to the single
+    day-child the inventory-born path produces.
     """
 
     #: 1-based day index within the trip.
@@ -48,6 +70,28 @@ class CornerstoneDay:
     hours: float | None = None
     #: Plain-text day description (vendor HTML stripped at authoring time).
     description: str | None = None
+    #: Day geo point from the OV payload's ``days[].location`` (lat/lng).
+    lat: float | None = None
+    lng: float | None = None
+    #: Human place label for the day (authored; OV's ``place`` is empty).
+    location_label: str | None = None
+    #: The day's inferred sub-moments, in chronological order.
+    beats: tuple[CornerstoneBeat, ...] = field(default_factory=tuple)
+
+    def as_itinerary_day(self) -> ItineraryDay:
+        """This day as :class:`ItineraryDay` — the provider-shaped view."""
+        location = (
+            Location(lat=self.lat, lng=self.lng, label=self.location_label)
+            if self.lat is not None or self.lng is not None or self.location_label
+            else None
+        )
+        return ItineraryDay(
+            day=self.day,
+            title=self.title,
+            description=self.description,
+            hours=self.hours,
+            location=location,
+        )
 
 
 @dataclass(frozen=True)
@@ -71,6 +115,10 @@ class OlympusCornerstone:
     #: Human difficulty label (OV ``difficulty`` on a 1–10 scale).
     difficulty: str
     location_label: str
+    #: Local start time of the anchor card on day 1 (``"HH:MM"``, EEST) — the
+    #: full ascent starts mid-afternoon (day 1 is the airport pickup); the
+    #: 2-day push meets at Litochoro's parking lot at 10:00 sharp.
+    anchor_hhmm: str = "15:00"
     #: The trip's internal day-by-day itinerary — baked from OV, materialized as
     #: the summit node's subgraph children (see :func:`itinerary_days`).
     days: tuple[CornerstoneDay, ...] = field(default_factory=tuple)
@@ -81,19 +129,10 @@ class OlympusCornerstone:
         Same shape the OV provider emits from a live detail fetch, so the
         template builder can feed these through the shared subgraph-metadata
         builder and the children render identically to an inventory-born
-        multi-day card. No per-day geo (OV doesn't expose it here), so
-        ``location`` is left unset.
+        multi-day card. Day geo comes from the OV payload's per-day
+        ``location`` (baked at authoring time).
         """
-        return [
-            ItineraryDay(
-                day=d.day,
-                title=d.title,
-                description=d.description,
-                hours=d.hours,
-                location=None,
-            )
-            for d in self.days
-        ]
+        return [d.as_itinerary_day() for d in self.days]
 
     def enrichment(self) -> dict[str, Any]:
         """Card-attrs fragment merged onto the spine's summit experience node.
@@ -164,15 +203,52 @@ SYMBOLISM = OlympusCornerstone(
         CornerstoneDay(
             day=1,
             title="Pick up from Thessaloniki airport",
+            lat=40.63928,
+            lng=22.94242,
+            location_label="Thessaloniki → Litochoro",
             description=(
                 "Pick up from Thessaloniki airport and transfer to your hotel in "
                 "Litochoro village just in time for dinner. Dinner and overnight "
                 "in Litochoro."
             ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="15:00",
+                    title="Private pickup — Thessaloniki airport",
+                    duration_minutes=90,
+                    description=(
+                        "Your guide meets you at arrivals and the mountain takes over "
+                        "from there — an easy drive south along the coast, Olympus "
+                        "growing in the windscreen."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="17:00",
+                    title="Settle into Litochoro",
+                    duration_minutes=60,
+                    description=(
+                        "The stone village at the foot of the gods' massif — plane "
+                        "trees, mountain water in the lanes, and the Enipeas gorge "
+                        "opening straight above the rooftops."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="19:30",
+                    title="Welcome dinner in the village",
+                    duration_minutes=120,
+                    description=(
+                        "A long table, local wine, and the plan for the days ahead. "
+                        "Overnight in Litochoro — tomorrow the mountain begins."
+                    ),
+                ),
+            ),
         ),
         CornerstoneDay(
             day=2,
             title="National Park museum and Enipeas River",
+            lat=40.10264,
+            lng=22.50236,
+            location_label="Litochoro & the Enipeas gorge",
             description=(
                 "We visit the National Park museum for a virtual ascent from the "
                 "foothills to the top of the mountain, learning the history, flora, "
@@ -182,10 +258,55 @@ SYMBOLISM = OlympusCornerstone(
                 "The day ends at the old monastery of Saint Dionysios and the cave "
                 "where he lived as a hermit. Dinner and overnight in Litochoro."
             ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="08:00",
+                    title="Breakfast in Litochoro",
+                    duration_minutes=60,
+                    description="Village bakery breakfast before an easy first day.",
+                ),
+                CornerstoneBeat(
+                    hhmm="09:30",
+                    title="National Park museum — the mountain in miniature",
+                    duration_minutes=90,
+                    description=(
+                        "A virtual ascent from the foothills to the summits: the "
+                        "history, flora, and fauna of Olympus before you walk into it."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="11:30",
+                    title="Enipeas gorge — myths and a brave swim",
+                    duration_minutes=150,
+                    description=(
+                        "The place where the cause of the Trojan war began, local "
+                        "myths and tales — and for the brave, a dive into the "
+                        "crystal-clear, freezing pools of the Enipeas."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="15:00",
+                    title="Monastery of Saint Dionysios & the hermit's cave",
+                    duration_minutes=120,
+                    description=(
+                        "The old monastery deep in the gorge, and the cave where "
+                        "the saint lived out his hermit years."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="19:30",
+                    title="Dinner & overnight — Litochoro",
+                    duration_minutes=120,
+                    description="Last village comforts before the refuges.",
+                ),
+            ),
         ),
         CornerstoneDay(
             day=3,
             title="Apostolidis refuge",
+            lat=40.09492,
+            lng=22.36144,
+            location_label="Muses Plateau",
             description=(
                 "Our goal is the Muses Plateau. We pass the Ithakisios cave, where "
                 "the great painter lived for more than 15 years, and the old "
@@ -194,10 +315,60 @@ SYMBOLISM = OlympusCornerstone(
                 "before the Throne of Zeus. Dinner and overnight in Apostolidis "
                 "Refuge."
             ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="07:30",
+                    title="Breakfast & pack for the refuges",
+                    duration_minutes=60,
+                    description="Bags down to essentials — two nights on the mountain.",
+                ),
+                CornerstoneBeat(
+                    hhmm="09:00",
+                    title="Up the mountain — Ithakisios cave",
+                    duration_minutes=210,
+                    description=(
+                        "Through the forest past the cave where the painter "
+                        "Ithakisios lived for fifteen years, and the old shepherds' "
+                        "settlement above it."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="12:30",
+                    title="Light lunch — Petrostrouga refuge",
+                    duration_minutes=60,
+                    description="Recharge under the Bosnian pines.",
+                ),
+                CornerstoneBeat(
+                    hhmm="13:30",
+                    title="The climb to the Muses Plateau",
+                    duration_minutes=180,
+                    description=(
+                        "Three more hours up, out of the trees and into the alpine light."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="16:30",
+                    title="Before the Throne of Zeus",
+                    duration_minutes=60,
+                    description=(
+                        "Standing at last on the plateau of the Muses, the summit "
+                        "wall rising ahead."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="19:00",
+                    title="Dinner & overnight — Apostolidis refuge",
+                    duration_minutes=120,
+                    description="Refuge supper, alpine night, an early alarm.",
+                ),
+            ),
         ),
         CornerstoneDay(
             day=4,
             title="Mytikas summit & Petrostrouga Refuge",
+            lat=40.10942,
+            lng=22.41329,
+            location_label="Mytikas summit",
             description=(
                 "Today we climb to the Mytikas summit, for those who want and can. "
                 "The whole group can visit Profitis Ilias summit and its chapel — "
@@ -205,10 +376,56 @@ SYMBOLISM = OlympusCornerstone(
                 "descent before sunset to Petrostrouga Refuge. Dinner and overnight "
                 "in Petrostrouga Refuge."
             ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="06:30",
+                    title="Alpine breakfast on the plateau",
+                    duration_minutes=60,
+                    description="First light on the Aegean, coffee at altitude.",
+                ),
+                CornerstoneBeat(
+                    hhmm="07:30",
+                    title="Summit morning — Mytikas",
+                    duration_minutes=270,
+                    description=(
+                        "The climb to the throne of Zeus, for those who want and "
+                        "can — the highest point in Greece."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="12:30",
+                    title="Profitis Ilias — the highest chapel in the Balkans",
+                    duration_minutes=90,
+                    description=(
+                        "The whole group can stand at the tiny stone chapel on its own summit."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="14:30",
+                    title="Free hours on the roof of Greece",
+                    duration_minutes=120,
+                    description="Unhurried time among the peaks before the descent.",
+                ),
+                CornerstoneBeat(
+                    hhmm="16:30",
+                    title="Descent to Petrostrouga before sunset",
+                    duration_minutes=150,
+                    description="Down through the golden hour to the treeline refuge.",
+                ),
+                CornerstoneBeat(
+                    hhmm="19:30",
+                    title="Dinner & overnight — Petrostrouga refuge",
+                    duration_minutes=120,
+                    description="Summit stories over a refuge table.",
+                ),
+            ),
         ),
         CornerstoneDay(
             day=5,
             title="Vergina and Aridea",
+            lat=40.49126,
+            lng=22.31272,
+            location_label="Vergina & Aridaia",
             description=(
                 "We wake to coffee on the finest balcony of Mount Olympus, with "
                 "panoramic views over the Thermaikos gulf and the Pieria Riviera. "
@@ -217,13 +434,77 @@ SYMBOLISM = OlympusCornerstone(
                 "outdoor hot bath in the Aridaia region. Dinner and overnight in a "
                 "guesthouse."
             ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="07:30",
+                    title="Coffee on the balcony of Olympus",
+                    duration_minutes=60,
+                    description=(
+                        "Morning coffee on the finest balcony of the mountain — "
+                        "panoramic views over the Thermaikos gulf and the whole "
+                        "Pieria Riviera."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="09:00",
+                    title="Down the mountain to Gortsia",
+                    duration_minutes=90,
+                    description="The last descent — trailhead, boots off, wheels on.",
+                ),
+                CornerstoneBeat(
+                    hhmm="11:00",
+                    title="Vergina — the royal tomb of Philip II",
+                    duration_minutes=150,
+                    description=(
+                        "The tomb of the great king of the Macedonians, father of "
+                        "Alexander the Great — gold larnax, oak-leaf crown, and the "
+                        "burial mound entire."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="15:30",
+                    title="Outdoor hot baths — Aridaia",
+                    duration_minutes=150,
+                    description=(
+                        "The end of the day finds you soaking in an outdoor thermal "
+                        "bath in the Aridaia region — five days of mountain worked "
+                        "out of the shoulders."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="20:00",
+                    title="Dinner & overnight — a countryside guesthouse",
+                    duration_minutes=120,
+                    description="A guesthouse table in the spa country.",
+                ),
+            ),
         ),
         CornerstoneDay(
             day=6,
             title="Thessaloniki Airport",
+            lat=40.52012,
+            lng=22.97207,
+            location_label="Thessaloniki Airport",
             description=(
                 "Depending on your departure time we adapt the schedule (a final "
                 "visit and so on) and then take you back to Thessaloniki Airport."
+            ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="09:00",
+                    title="A last morning, shaped to your departure",
+                    duration_minutes=120,
+                    description=(
+                        "The schedule adapts to your flight — a final visit, a slow "
+                        "breakfast, one more look at the mountain."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="11:30",
+                    title="Return transfer — Thessaloniki airport",
+                    duration_minutes=90,
+                    description="Back along the coast to departures.",
+                ),
             ),
         ),
     ),
@@ -272,11 +553,16 @@ GUIDED_2DAY = OlympusCornerstone(
     price_label="from €210",
     difficulty="7/10 — strenuous",
     location_label="Mount Olympus, Greece",
+    #: The vendor's own meet time — day 1 begins at Litochoro's parking lot.
+    anchor_hhmm="10:00",
     days=(
         CornerstoneDay(
             day=1,
             title="Litochoro – Prionia – Spilios Agapitos Hut",
             hours=4.0,
+            lat=40.08108,
+            lng=22.35256,
+            location_label="Prionia → Spilios Agapitos refuge",
             description=(
                 "We meet around 10:00 at Litochoro's central parking lot for an "
                 "equipment check and briefing, then drive to the Prionia trailhead "
@@ -286,11 +572,46 @@ GUIDED_2DAY = OlympusCornerstone(
                 "(2,100 m): about 5.5 km and +1,000 m over roughly 3–3.5 hours. At "
                 "the hut we enjoy a warm meal, rest, and prepare for summit day."
             ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="10:00",
+                    title="Meet in Litochoro — gear check & briefing",
+                    duration_minutes=45,
+                    description=(
+                        "The central parking lot: equipment check, trip briefing, "
+                        "and the guide's read on the mountain's weather."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="11:00",
+                    title="Drive up to Prionia (1,100 m)",
+                    duration_minutes=30,
+                    description="Twenty winding minutes to the trailhead.",
+                ),
+                CornerstoneBeat(
+                    hhmm="11:30",
+                    title="Forest ascent to Spilios Agapitos (2,100 m)",
+                    duration_minutes=210,
+                    description=(
+                        "The E4 trail through shady forest and towering Bosnian "
+                        "pines — 5.5 km and a thousand metres up over 3–3.5 hours."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="18:00",
+                    title="Refuge evening — warm meal & early night",
+                    duration_minutes=150,
+                    description=("A warm meal at the hut, kit laid out for the alpine start."),
+                ),
+            ),
         ),
         CornerstoneDay(
             day=2,
             title="Summit Day",
             hours=7.0,
+            lat=40.08108,
+            lng=22.35256,
+            location_label="Mytikas summit",
             description=(
                 "We start before dawn with headlamps to catch sunrise on the way "
                 "up. The E4 trail leads out of the forest into the alpine zone; "
@@ -300,6 +621,46 @@ GUIDED_2DAY = OlympusCornerstone(
                 "highest point in Greece. After photos and rest we descend to the "
                 "refuge for a light lunch, then continue down to Prionia and drive "
                 "back to Litochoro. Around 1,000 m of gain and loss, ~6 hours."
+            ),
+            beats=(
+                CornerstoneBeat(
+                    hhmm="05:30",
+                    title="Headlamp start — sunrise on the trail",
+                    duration_minutes=120,
+                    description=(
+                        "Out of the forest and into the alpine zone before dawn, "
+                        "sunrise breaking on the way up."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="07:30",
+                    title="Skala peak (2,866 m) — helmets & harnesses",
+                    duration_minutes=90,
+                    description="Gear on at the shoulder of the summit ridge.",
+                ),
+                CornerstoneBeat(
+                    hhmm="09:00",
+                    title="Kakoskala ridge to Mytikas (2,918 m)",
+                    duration_minutes=90,
+                    description=(
+                        "Roped to the guide along the ridge scramble to the summit "
+                        "of Mytikas — the highest point in Greece."
+                    ),
+                ),
+                CornerstoneBeat(
+                    hhmm="10:30",
+                    title="Descend to the refuge — light lunch",
+                    duration_minutes=180,
+                    description="Photos, rest, then back down to Spilios Agapitos.",
+                ),
+                CornerstoneBeat(
+                    hhmm="13:30",
+                    title="Down to Prionia & drive to Litochoro",
+                    duration_minutes=180,
+                    description=(
+                        "The last of ~1,000 m of descent, then the drive back to the village."
+                    ),
+                ),
             ),
         ),
     ),
@@ -318,6 +679,8 @@ def cornerstone_for_nights(nights: int, *, longest: int) -> OlympusCornerstone:
 __all__ = [
     "GUIDED_2DAY",
     "SYMBOLISM",
+    "CornerstoneBeat",
+    "CornerstoneDay",
     "OlympusCornerstone",
     "cornerstone_for_nights",
 ]
