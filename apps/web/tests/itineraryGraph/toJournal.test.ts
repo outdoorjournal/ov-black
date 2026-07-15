@@ -193,11 +193,11 @@ describe("toJournal · gap buckets", () => {
 
 // ── Night treatment ───────────────────────────────────────────────────────────
 describe("toJournal · nights", () => {
-  test("a night_bar node leaves the card flow and names the day's night", () => {
+  test("a non-hotel night_bar node leaves the card flow and names the day's night", () => {
     const result = journal([
       node("exp", "2024-06-20T09:00:00+09:00"),
-      node("hotel-night", "2024-06-20T22:00:00+09:00", {
-        type: "hotel",
+      node("overnight-boat", "2024-06-20T22:00:00+09:00", {
+        type: "boat",
         metadata: {
           start_time: "2024-06-20T22:00:00+09:00",
           duration_minutes: 540,
@@ -209,11 +209,38 @@ describe("toJournal · nights", () => {
     const day1 = daySection(result, 0);
     // The night bar is NOT a card entry…
     expect(
-      day1.entries.some((e) => e.kind === "node" && e.node.id === "hotel-night"),
+      day1.entries.some(
+        (e) => e.kind === "node" && e.node.id === "overnight-boat",
+      ),
     ).toBe(false);
     // …it is the day's night.
-    expect(day1.night?.node?.id).toBe("hotel-night");
+    expect(day1.night?.node?.id).toBe("overnight-boat");
     expect(result.nodeCount).toBe(2);
+  });
+
+  test("a hotel is ALWAYS a spine card, even when marked night_bar", () => {
+    const result = journal([
+      node("exp", "2024-06-20T09:00:00+09:00"),
+      node("hotel-checkin", "2024-06-20T16:00:00+09:00", {
+        type: "hotel",
+        metadata: {
+          start_time: "2024-06-20T16:00:00+09:00",
+          duration_minutes: 60,
+          night_bar: true,
+        },
+      }),
+      node("exp2", "2024-06-21T10:00:00+09:00"),
+    ]);
+    const day1 = daySection(result, 0);
+    // The hotel is a card on the spine — a traveler must see where they sleep.
+    expect(
+      day1.entries.some(
+        (e) => e.kind === "node" && e.node.id === "hotel-checkin",
+      ),
+    ).toBe(true);
+    // …and it is NOT demoted to the night wash.
+    expect(day1.night?.node?.id).not.toBe("hotel-checkin");
+    expect(result.nodeCount).toBe(3);
   });
 
   test("a day followed by another day gets a generic night; the last day none", () => {
@@ -378,7 +405,7 @@ describe("toJournal · empty days and elision", () => {
       [
         node("a", "2024-06-20T09:00:00+09:00"),
         node("night2", "2024-06-21T22:00:00+09:00", {
-          type: "hotel",
+          type: "boat",
           metadata: {
             start_time: "2024-06-21T22:00:00+09:00",
             duration_minutes: 540,
@@ -386,7 +413,7 @@ describe("toJournal · empty days and elision", () => {
           },
         }),
         node("night3", "2024-06-22T22:00:00+09:00", {
-          type: "hotel",
+          type: "boat",
           metadata: {
             start_time: "2024-06-22T22:00:00+09:00",
             duration_minutes: 540,

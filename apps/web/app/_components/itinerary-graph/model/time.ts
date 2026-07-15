@@ -77,6 +77,15 @@ export function hourOfDay(iso: string, tzOffsetHours: number): number {
   return d.getUTCHours() + d.getUTCMinutes() / 60;
 }
 
+// Local calendar-day index (days since the epoch in the given offset's wall
+// time). Subtract two of these to count date boundaries crossed between two
+// instants — e.g. a red-eye departing 22:00 and arriving 04:34 the next morning
+// yields a delta of 1. Each end reads its OWN offset (a leg spans zones), so the
+// count reflects wall-clock dates on each side, not raw elapsed hours.
+export function localDayIndex(iso: string, tzOffsetHours: number): number {
+  return Math.floor((parseIso(iso) + tzOffsetHours * 3600 * 1000) / 86_400_000);
+}
+
 // ── Wave E (ADV-16): strictly Day-N until pinned ─────────────────────────────
 // On an unpinned trip (timing_kind ≠ "exact") a card's absolute date is a
 // provisional coordinate, not a fact — rendering "Wed, Sep 24" would be a

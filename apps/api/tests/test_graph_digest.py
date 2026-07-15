@@ -11,6 +11,7 @@ something to say, and an empty plan degrades gracefully.
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.models import InvoiceStatus, NodeStatus, NodeType
@@ -216,15 +217,24 @@ class _FakeRange:
         self.lower = lower
 
 
-class _FakeDatetime:
-    def strftime(self, fmt: str) -> str:
-        return "2026-09-14 15:00"
+def test_viewing_when_pinned_shows_real_date() -> None:
+    lower = datetime(2026, 9, 14, 15, 0)
+    assert _viewing_when(_FakeRange(lower), pinned=True, anchor=None) == "2026-09-14 15:00"
 
 
-def test_viewing_when_reads_range_lower() -> None:
-    assert _viewing_when(_FakeRange(_FakeDatetime())) == "2026-09-14 15:00"
+def test_viewing_when_unpinned_shows_day_ordinal() -> None:
+    # Unpinned: the stamped calendar date is provisional — render the honest
+    # "Day N" ordinal off the anchor, never the fabricated date.
+    lower = datetime(2026, 9, 16, 15, 0)
+    anchor = date(2026, 9, 14)
+    assert _viewing_when(_FakeRange(lower), pinned=False, anchor=anchor) == "Day 3 · 15:00"
+
+
+def test_viewing_when_unpinned_without_anchor_omits_when() -> None:
+    lower = datetime(2026, 9, 14, 15, 0)
+    assert _viewing_when(_FakeRange(lower), pinned=False, anchor=None) is None
 
 
 def test_viewing_when_none_for_missing_or_open_lower() -> None:
-    assert _viewing_when(None) is None
-    assert _viewing_when(_FakeRange(None)) is None
+    assert _viewing_when(None, pinned=True, anchor=None) is None
+    assert _viewing_when(_FakeRange(None), pinned=False, anchor=None) is None

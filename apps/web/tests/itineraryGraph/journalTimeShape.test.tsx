@@ -191,6 +191,59 @@ describe("duration bars", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
+  test("an overnight flight's bar runs into the next day (destination-anchored ticks)", () => {
+    // DTW 10:03 (−04:00) → SKG 04:34 next morning (+03:00): departure-local it
+    // never leaves the day (10a + 11h31 = 9:34p), but the bar's ruler is the
+    // ARRIVAL wall-clock, so its hour ticks cross midnight (…10p · 12a · 2a · 4a).
+    renderJournal(
+      [
+        mkNode("redeye", "2024-06-20T10:03:00-04:00", {
+          type: "flight",
+          duration_minutes: 691,
+          metadata: {
+            kind: "flight",
+            start_time: "2024-06-20T10:03:00-04:00",
+            depart_at: "2024-06-20T10:03:00-04:00",
+            arrive_at: "2024-06-21T04:34:00+03:00",
+            duration_minutes: 691,
+          },
+        }),
+      ],
+      2,
+    );
+    const labels = screen
+      .getAllByTestId("journal-hour-tick")
+      .map((t) => t.textContent);
+    // Post-midnight ticks prove the ruler crossed into the next day; the
+    // midnight tick itself is subsumed by the date rule (below), so it's absent.
+    expect(labels.join(" ")).toContain("2a");
+    expect(labels.join(" ")).not.toContain("12a");
+    // …and the date rule names the day it enters, so the wrap isn't confusing.
+    const daybreak = screen.getByTestId("journal-bar-daybreak");
+    expect(daybreak).toHaveTextContent("Day 2");
+  });
+
+  test("a same-day flight's bar carries no date rule", () => {
+    // LAX→SFO 09:00→10:20 (both −07:00): never leaves the day → no day-break.
+    renderJournal(
+      [
+        mkNode("hop", "2024-06-20T09:00:00-07:00", {
+          type: "flight",
+          duration_minutes: 80,
+          metadata: {
+            kind: "flight",
+            start_time: "2024-06-20T09:00:00-07:00",
+            depart_at: "2024-06-20T09:00:00-07:00",
+            arrive_at: "2024-06-20T10:20:00-07:00",
+            duration_minutes: 80,
+          },
+        }),
+      ],
+      2,
+    );
+    expect(screen.queryByTestId("journal-bar-daybreak")).toBeNull();
+  });
+
   test("zooming changes the bar's drawn height", () => {
     renderJournal([
       mkNode("a", "2024-06-20T09:00:00+09:00", { duration_minutes: 120 }),

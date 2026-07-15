@@ -747,24 +747,13 @@ function RailEditPanel({ node, tz }: { node: NodeResponse; tz: number }) {
       className="flex flex-col gap-2.5 rounded-md border border-ink/10 bg-white/60 p-3"
     >
       <p className="font-sans text-[9px] uppercase tracking-[0.22em] text-ink/40">
-        Your version — tap to edit
+        Your version
       </p>
       <InlineField
         label="Title"
         value={node.title}
         testid="journal-rail-edit-title"
         onSave={(v) => storeApi.getState().editNodeField(node.id, "title", v)}
-      />
-      <InlineField
-        label="Note"
-        value={description}
-        placeholder="Add a note to this card…"
-        multiline
-        allowEmpty
-        testid="journal-rail-edit-description"
-        onSave={(v) =>
-          storeApi.getState().updateCardDetails(node.id, { description: v })
-        }
       />
       {start ? (
         isSchedulePinned(node) ? (

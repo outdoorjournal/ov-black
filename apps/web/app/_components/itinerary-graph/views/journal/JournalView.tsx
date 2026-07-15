@@ -461,6 +461,7 @@ export function JournalView({
                     section={section}
                     tz={tz}
                     pinned={pinned}
+                    nextDayLabel={timeline.days[section.index + 1]?.label ?? null}
                     focusedNodeId={focusedNodeId}
                     subgraphChildren={subgraphChildren}
                     journeyThread={
@@ -615,10 +616,15 @@ function DaySection({
   diffActive = false,
   diverged = false,
   ghostCaption = "not in your version",
+  nextDayLabel = null,
 }: {
   section: JournalDaySection;
   tz: number;
   pinned: boolean;
+  /** Ordinal label of the following scaffold day ("Day 2") — stamped on an
+   *  overnight leg's duration bar where it crosses midnight. Null on the last
+   *  day (nothing to cross into). */
+  nextDayLabel?: string | null;
   focusedNodeId: string | null;
   /** Embedded subgraphs — a multi-day card's day children, by parent id. */
   subgraphChildren: Map<string, NodeResponse[]>;
@@ -774,6 +780,7 @@ function DaySection({
             bracket={entry.groupedWith ?? null}
             diff={diffs?.get(entry.node.id) ?? null}
             journey={entry.journey ?? null}
+            nextDayLabel={nextDayLabel}
           />,
         );
         break;

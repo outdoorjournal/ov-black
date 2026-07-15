@@ -15,6 +15,7 @@ import { ChevronRight } from "lucide-react";
 import {
   formatClock,
   formatDuration,
+  localDayIndex,
   offsetHoursOr,
 } from "../../model/horizontalTime";
 import type { HorizontalNodeMeta, NodeResponse } from "../../model/horizontalTypes";
@@ -191,6 +192,15 @@ function FlightBody({
   const arrive = meta.arrive_at
     ? formatClock(meta.arrive_at, offsetHoursOr(meta.arrive_at, tzOffsetHours))
     : null;
+  // Boarding-pass "+N": a red-eye departs one local date and lands on a later
+  // one, but the timing strip only shows wall-clock HH:MM — so 04:34 reads as
+  // the SAME day it departed. Count local date boundaries crossed (each end in
+  // its own offset) and mark the arrival with a "+1"/"+2" the way airlines do.
+  const arriveDayDelta =
+    meta.depart_at && meta.arrive_at
+      ? localDayIndex(meta.arrive_at, offsetHoursOr(meta.arrive_at, tzOffsetHours)) -
+        localDayIndex(meta.depart_at, offsetHoursOr(meta.depart_at, tzOffsetHours))
+      : 0;
   const cabin = cabinLabel(meta.cabin);
 
   return (
@@ -230,7 +240,14 @@ function FlightBody({
           {dur ? (
             <span className="text-[10px] tracking-wide text-ink/40">{dur}</span>
           ) : null}
-          <span>{arrive ?? "—"}</span>
+          <span>
+            {arrive ?? "—"}
+            {arrive && arriveDayDelta > 0 ? (
+              <sup className="ml-0.5 text-[8px] font-medium text-ink/45">
+                +{arriveDayDelta}
+              </sup>
+            ) : null}
+          </span>
         </div>
       ) : null}
 

@@ -56,6 +56,10 @@ def _typed_core_lines(dossier: Dossier | None) -> list[str]:
     return bits
 
 
+def _nights_phrase(duration_nights: int) -> str:
+    return f"about {duration_nights} night{'s' if duration_nights != 1 else ''}"
+
+
 def _format_when(
     timing_kind: str | None,
     date_start: str | None,
@@ -66,6 +70,13 @@ def _format_when(
 
     ``timing_kind`` governs how the dates read: ``exact`` = the trip; ``window``
     = outer bounds with a target length inside; ``flexible`` = no dates yet.
+
+    A known ``duration_nights`` is surfaced in EVERY case, not just ``window``:
+    the campaign kickoff persists the snapped/default length (e.g. Olympus'
+    14 nights) without touching ``timing_kind``, so a trip can carry a settled
+    length while still reading ``flexible``/unset. If we dropped it, the agent
+    would see no length, think it unsettled, and re-ask "how many nights?" —
+    the exact bug this guards against.
     """
     if timing_kind == "exact":
         if date_start and date_end:
@@ -84,19 +95,41 @@ def _format_when(
         else:
             base = None
         if duration_nights:
-            dur = f"about {duration_nights} night{'s' if duration_nights != 1 else ''}"
+            dur = _nights_phrase(duration_nights)
             return f"{base}, {dur}" if base else dur
         return base
 
     if timing_kind == "flexible":
-        return "flexible — no fixed dates yet"
+        # No calendar dates — the collection directive in ``format_trip_brief``
+        # speaks for the missing dates, so don't emit a passive "no dates" line.
+        # A settled length still surfaces (the length is a fact even when the
+        # dates aren't) so the agent doesn't re-ask it.
+        if duration_nights:
+            return _nights_phrase(duration_nights)
+        return None
 
-    # No discriminator recorded — fall back to whatever dates exist.
+    # No discriminator recorded — fall back to whatever dates exist, then to a
+    # known length (kickoff persists ``duration_nights`` with a null timing_kind).
     if date_start and date_end:
         return f"{date_start} to {date_end}"
     if date_start:
         return f"from {date_start}"
+    if duration_nights:
+        return _nights_phrase(duration_nights)
     return None
+
+
+_NO_DATES_DIRECTIVE = (
+    "Travel dates: NOT SET — the traveler has not told us when they're "
+    "travelling. This itinerary needs a start and an end date from them before "
+    "it can be finalized (until then the plan lays out as provisional Day 1, "
+    "Day 2… slots, not calendar dates). Dates are a hard prerequisite for "
+    "anything date-bound: you cannot search or price flights, quote real-time "
+    "availability, or move toward booking until the traveler gives their dates, "
+    "so treat settling the dates as an early priority. Work them into the "
+    "conversation naturally, and never invent, assume, or state specific dates "
+    "the traveler hasn't given."
+)
 
 
 def format_trip_brief(
@@ -123,6 +156,12 @@ def format_trip_brief(
         lines.append(f"When: {when}")
     if timing_note and timing_note.strip():
         lines.append(f"Constraints: {timing_note.strip()}")
+    # No calendar anchor at all → the trip has no dates yet. Make the model own
+    # collecting them: an itinerary can't be finalized without a start and end,
+    # and the campaign scaffold lays out as provisional "Day N" slots until the
+    # traveler picks real dates. Never let the model invent or assume dates.
+    if not date_start and not date_end:
+        lines.append(_NO_DATES_DIRECTIVE)
     if not lines:
         return None
     return (

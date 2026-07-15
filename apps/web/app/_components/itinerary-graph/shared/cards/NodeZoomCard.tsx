@@ -12,6 +12,10 @@
 
 import type { ReactNode } from "react";
 
+import { formatDistance } from "@/app/_components/concierge/surfaces/RouteSurface";
+import { SurfaceMap } from "@/app/_components/concierge/surfaces/SurfaceMap";
+import { decodePolyline, type LngLat } from "@/lib/chat/polyline";
+
 import { formatClock, formatDuration, offsetHoursOr } from "../../model/horizontalTime";
 import type { NodeResponse } from "../../model/horizontalTypes";
 import { placePhotoUrl } from "../../model/placePhoto";
@@ -151,6 +155,8 @@ interface ZoomMeta {
   driver?: Driver;
   bag_capacity?: number;
   distance_m?: number;
+  distance_meters?: number;
+  route_polyline?: string;
   surface_notes?: string[];
   pois_along?: Geo[];
   dock_from?: string;
@@ -458,18 +464,49 @@ function SubwayZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
   );
 }
 
+// Decode a drive card's stored route into Mapbox-ready geometry: the polyline
+// as the drawn line, and the from/to GeoPoints as endpoint markers (falling
+// back to the polyline's own ends when a card predates stored coordinates).
+function driveRouteGeometry(m: ZoomMeta): { line: LngLat[]; markers: LngLat[] } {
+  const line = m.route_polyline ? decodePolyline(m.route_polyline) : [];
+  const markers: LngLat[] = [];
+  const from = m.from_location;
+  const to = m.to_location;
+  if (from?.lng !== undefined && from.lat !== undefined) markers.push([from.lng, from.lat]);
+  if (to?.lng !== undefined && to.lat !== undefined) markers.push([to.lng, to.lat]);
+  if (markers.length === 0 && line.length > 1) {
+    const first = line[0];
+    const last = line[line.length - 1];
+    if (first) markers.push(first);
+    if (last) markers.push(last);
+  }
+  return { line, markers };
+}
+
 function DriveZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
   const t = TYPE_TOKENS.drive;
   const eta = m.eta_minutes ?? m.duration_minutes;
+  const meters = m.distance_meters ?? m.distance_m;
+  const facts = joinDot([
+    typeof eta === "number" ? formatDuration(eta) : null,
+    typeof meters === "number" && meters > 0 ? formatDistance(meters) : null,
+  ]);
+  const { line, markers } = driveRouteGeometry(m);
   return (
     <>
       <div className="flex items-baseline justify-between gap-3">
         <Title>{node.title}</Title>
-        {typeof eta === "number" ? (
-          <span className="font-mono text-[12px] text-ink/65">{formatDuration(eta)}</span>
-        ) : null}
+        {facts ? <span className="font-mono text-[12px] text-ink/65">{facts}</span> : null}
       </div>
       <p className="text-[12px] text-ink/65">{joinDot([m.vehicle?.make, "Private transfer"])}</p>
+
+      {line.length > 1 || markers.length > 0 ? (
+        <SurfaceMap
+          markers={markers}
+          {...(line.length > 1 ? { line } : {})}
+          className="mt-3 h-44 rounded border border-ink/10"
+        />
+      ) : null}
 
       {m.driver?.name ? (
         <div className="mt-3 flex items-center gap-3">

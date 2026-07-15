@@ -16,6 +16,7 @@ export {
   tzDayKey,
   startOfDayIso,
   hourOfDay,
+  localDayIndex,
   formatDayTile,
   offsetHoursOf,
   offsetHoursOr,

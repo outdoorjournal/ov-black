@@ -16,6 +16,11 @@ export type { CardSnapshot, MoodId } from "./baseTypes";
 export interface VerticalNodeMeta extends NodeMeta {
   start_time?: string;
   duration_minutes?: number;
+  // A flight's own depart/arrive wall-clock (each an offset-bearing ISO in its
+  // OWN timezone — a leg crosses zones). The journal's duration-bar ruler reads
+  // these so an overnight leg's ticks run in DESTINATION time and cross midnight.
+  depart_at?: string;
+  arrive_at?: string;
   location?: { lat: number; lng: number; label?: string };
   // Optional explicit endpoints for travel cards (flights). When set, the map
   // draws a great-circle arc between them. Trains/transit can omit these and

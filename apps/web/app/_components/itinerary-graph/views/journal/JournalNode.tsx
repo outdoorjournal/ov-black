@@ -82,6 +82,7 @@ export function JournalNode({
   bracket = null,
   diff = null,
   journey = null,
+  nextDayLabel = null,
 }: {
   node: NodeResponse;
   tzOffsetHours: number;
@@ -109,6 +110,9 @@ export function JournalNode({
   /** Diff-mode annotation (added / changed / moved) — stitches and dots only;
    *  removed rows render as JournalGhostNode instead. Null = versions agree. */
   diff?: JournalNodeDiff | null;
+  /** Label of the NEXT scaffold day — stamped on the duration bar's date rule
+   *  when this card is an overnight leg that crosses midnight. Null otherwise. */
+  nextDayLabel?: string | null;
 }) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
@@ -121,10 +125,33 @@ export function JournalNode({
   // The card's local start hour (its OWN offset — a trip spans timezones), so
   // the duration bar can carry hour ticks that continue the day's ruler THROUGH
   // the card instead of only in the gaps. Null when the node carries no time.
-  const startIso = getVerticalMeta(node).start_time;
+  const vmeta = getVerticalMeta(node);
+  const startIso = vmeta.start_time;
+  // A flight's duration bar is a ruler in DESTINATION wall-clock: same elapsed
+  // minutes, but the hour ticks read the ARRIVAL timezone. Anchoring the ruler
+  // at the departure instant expressed in the arrival offset makes it end
+  // exactly on the landing clock — so a red-eye's bar runs past midnight into
+  // the early-morning hours it truly lands in (…10p · 12a · 2a · 4a). Every
+  // other card (and a flight missing arrive_at) reads its own local offset.
+  const rulerAnchor =
+    node.type === "flight" && vmeta.depart_at && vmeta.arrive_at
+      ? { iso: vmeta.depart_at, offset: offsetHoursOr(vmeta.arrive_at, tzOffsetHours) }
+      : startIso
+        ? { iso: startIso, offset: offsetHoursOr(startIso, tzOffsetHours) }
+        : null;
   const startHour =
-    !isNote && startIso
-      ? hourOfDay(startIso, offsetHoursOr(startIso, tzOffsetHours))
+    !isNote && rulerAnchor ? hourOfDay(rulerAnchor.iso, rulerAnchor.offset) : null;
+  // Where (if anywhere) the bar crosses midnight, and the day it enters. The
+  // ruler is destination-anchored, so a flight's crossing sits at the frac of
+  // its length where the clock passes 24:00 — labeled with the next scaffold
+  // day so the post-midnight ticks read as that day, not an unexplained wrap.
+  const dayBreak =
+    node.type === "flight" && startHour !== null && nextDayLabel
+      ? (() => {
+          const durH = durationMinutes / 60;
+          if (startHour + durH <= 24) return null;
+          return { frac: (24 - startHour) / durH, label: nextDayLabel };
+        })()
       : null;
   // A flight's time is pinned to its booking (offer depart_at), so it's never
   // re-timable by anyone — the timeline slot is derived, not placed.
@@ -215,6 +242,7 @@ export function JournalNode({
             nodeId={node.id}
             discarded={status === "discarded"}
             startHour={startHour}
+            dayBreak={dayBreak}
           />
         ) : null}
         {/* The change DOT on the circle — a quiet "this differs" marker; the

@@ -241,13 +241,51 @@ def test_format_trip_brief_flexible_with_constraints() -> None:
         timing_note="not August; back by a Sunday",
     )
     assert out is not None
-    assert "flexible — no fixed dates yet" in out
+    # No calendar dates → the model is told to collect them (not a passive line).
+    assert "NOT SET" in out
+    assert "start and an end date" in out
     assert "Constraints: not August; back by a Sunday" in out
 
 
-def test_format_trip_brief_empty_is_none() -> None:
-    assert format_trip_brief(brief=None) is None
-    assert format_trip_brief(brief="   ", timing_kind=None) is None
+def test_format_trip_brief_surfaces_length_without_window() -> None:
+    # The campaign kickoff persists a snapped/default ``duration_nights`` (Olympus:
+    # 14) WITHOUT setting ``timing_kind`` to ``window`` — the trip still reads
+    # unset/flexible. The length is a settled fact and must reach the prompt so the
+    # agent doesn't re-ask "how many nights?" (the bug this guards).
+    for kind in (None, "flexible"):
+        out = format_trip_brief(
+            brief="A guided ascent of Olympus",
+            timing_kind=kind,
+            duration_nights=14,
+        )
+        assert out is not None
+        assert "When: about 14 nights" in out
+        # Dates are still open, so the collection directive still fires.
+        assert "NOT SET" in out
+
+
+def test_format_trip_brief_no_dates_prompts_collection() -> None:
+    # An itinerary with nothing pinned still has something to say: the agent must
+    # ask the traveler for dates before the trip can be finalized.
+    out = format_trip_brief(brief=None)
+    assert out is not None
+    assert "NOT SET" in out
+
+    out2 = format_trip_brief(brief="   ", timing_kind=None)
+    assert out2 is not None
+    assert "NOT SET" in out2
+
+
+def test_format_trip_brief_pinned_dates_no_directive() -> None:
+    # With real dates the collection directive stays silent.
+    out = format_trip_brief(
+        brief="Sailing in Greece",
+        timing_kind="exact",
+        date_start="2027-03-18",
+        date_end="2027-03-25",
+    )
+    assert out is not None
+    assert "NOT SET" not in out
 
 
 def test_assemble_includes_trip_brief_after_client_before_dossier() -> None:

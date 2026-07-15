@@ -575,7 +575,16 @@ function TimingInline({
   const [timing, setTiming] = useState<TimingValue>(() => timingValueFrom());
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  // Portals need a browser; gate on mount so SSR/hydration render nothing.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  // The popover is portalled to <body> so it escapes the hero's `isolate`
+  // stacking context and `overflow-hidden` clip (which otherwise let the
+  // journal view below paint over it) — anchored to the trigger via a
+  // viewport-fixed box, recomputed on scroll/resize (mirrors HeroParty).
+  const [box, setBox] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const label = formatTiming(itinerary);
 
@@ -592,17 +601,39 @@ function TimingInline({
     setOpen(true);
   };
 
-  // A popover, not a page takeover: Escape and click-outside dismiss.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const btn = btnRef.current;
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      const width = Math.min(window.innerWidth * 0.88, 416); // 26rem cap
+      const left = Math.max(16, Math.min(rect.left, window.innerWidth - 16 - width));
+      setBox({ top: rect.bottom + 12, left, width });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [open]);
+
+  // A popover, not a page takeover: Escape and click-outside dismiss. The
+  // popover lives in a portal, so "outside" must spare both the trigger and
+  // the portalled panel.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
+      const t = e.target;
       if (
-        popoverRef.current &&
-        e.target instanceof Node &&
-        !popoverRef.current.contains(e.target)
+        t instanceof Node &&
+        (btnRef.current?.contains(t) || popoverRef.current?.contains(t))
       ) {
-        setOpen(false);
+        return;
       }
+      setOpen(false);
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -633,9 +664,10 @@ function TimingInline({
   }
 
   return (
-    <div className="relative" ref={popoverRef}>
+    <div className="relative">
       <p className="font-sans text-[11px] uppercase tracking-[0.28em] text-white/70">
         <button
+          ref={btnRef}
           type="button"
           data-testid="hero-timing"
           aria-label="Edit the trip timing"
@@ -648,48 +680,54 @@ function TimingInline({
         </button>
       </p>
 
-      {open ? (
-        <div
-          data-testid="hero-timing-popover"
-          className="absolute left-0 top-full z-30 mt-3 w-[min(88vw,26rem)] rounded-lg border border-ink/10 bg-paper p-4 text-ink shadow-xl"
-        >
-          <p className="mb-3 font-sans text-[10px] uppercase tracking-[0.2em] text-ink/45">
-            When?
-          </p>
-          <TimingFields value={timing} onChange={setTiming} />
-          <label className="mt-3 block space-y-1">
-            <span className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/45">
-              Anything to work around? <span className="text-ink/30">(optional)</span>
-            </span>
-            <input
-              type="text"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Can’t travel in August · back by a Sunday…"
-              data-testid="hero-timing-note"
-              className="w-full rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink placeholder:text-ink/30 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
-            />
-          </label>
-          <div className="mt-4 flex items-center justify-end gap-4">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/45 transition-colors hover:text-ink"
+      {mounted && open && box
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              data-testid="hero-timing-popover"
+              style={{ top: box.top, left: box.left, width: box.width }}
+              className="fixed z-50 rounded-lg border border-ink/10 bg-paper p-4 text-ink shadow-xl"
             >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={commit}
-              disabled={saving || timingDatesReversed(timing)}
-              data-testid="hero-timing-save"
-              className="rounded-full bg-ink px-4 py-1.5 font-sans text-[11px] uppercase tracking-[0.16em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
-      ) : null}
+              <p className="mb-3 font-sans text-[10px] uppercase tracking-[0.2em] text-ink/45">
+                When?
+              </p>
+              <TimingFields value={timing} onChange={setTiming} />
+              <label className="mt-3 block space-y-1">
+                <span className="font-sans text-[11px] uppercase tracking-[0.18em] text-ink/45">
+                  Anything to work around?{" "}
+                  <span className="text-ink/30">(optional)</span>
+                </span>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Can’t travel in August · back by a Sunday…"
+                  data-testid="hero-timing-note"
+                  className="w-full rounded-sm border border-ink/15 bg-white px-3 py-2 font-sans text-sm text-ink placeholder:text-ink/30 focus:border-brand focus:outline-hidden focus:ring-2 focus:ring-brand/25"
+                />
+              </label>
+              <div className="mt-4 flex items-center justify-end gap-4">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/45 transition-colors hover:text-ink"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={commit}
+                  disabled={saving || timingDatesReversed(timing)}
+                  data-testid="hero-timing-save"
+                  className="rounded-full bg-ink px-4 py-1.5 font-sans text-[11px] uppercase tracking-[0.16em] text-paper transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

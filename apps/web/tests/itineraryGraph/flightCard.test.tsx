@@ -61,6 +61,52 @@ describe("flight Node card", () => {
     expect(screen.getByText("15:40")).toBeInTheDocument();
   });
 
+  test("marks a red-eye arrival with a boarding-pass +1 (lands next local day)", () => {
+    // Default fixture departs 07-10 and arrives 07-11 (both +09:00) — the arrival
+    // wall-clock alone (15:40) reads as same-day, so the strip carries a "+1".
+    render(<NodeCard node={flightNode()} tzOffsetHours={9} />);
+    expect(screen.getByText("15:40")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument();
+  });
+
+  test("crossing two local dates (DTW→SKG red-eye) yields the arrival clock only once", () => {
+    // Real Olympus case: depart Detroit 10:03 (−04:00), arrive Thessaloniki
+    // 04:34 the NEXT morning (+03:00). One date boundary crossed → "+1".
+    const node = flightNode({
+      title: "DTW → SKG · British Airways",
+      metadata: {
+        kind: "flight",
+        iata_from: "DTW",
+        iata_to: "SKG",
+        depart_at: "2026-08-14T10:03:00-04:00",
+        arrive_at: "2026-08-15T04:34:00+03:00",
+        start_time: "2026-08-14T10:03:00-04:00",
+        duration_minutes: 691,
+      },
+    });
+    render(<NodeCard node={node} tzOffsetHours={3} />);
+    expect(screen.getByText("10:03")).toBeInTheDocument();
+    expect(screen.getByText("04:34")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument();
+  });
+
+  test("a same-day flight carries no +N marker", () => {
+    const node = flightNode({
+      metadata: {
+        kind: "flight",
+        iata_from: "LAX",
+        iata_to: "SFO",
+        depart_at: "2026-07-10T09:00:00-07:00",
+        arrive_at: "2026-07-10T10:20:00-07:00",
+        start_time: "2026-07-10T09:00:00-07:00",
+        duration_minutes: 80,
+      },
+    });
+    render(<NodeCard node={node} tzOffsetHours={-7} />);
+    expect(screen.getByText("10:20")).toBeInTheDocument();
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+  });
+
   test("falls back to node start when the flight carries no depart_at", () => {
     const node = flightNode({
       metadata: {

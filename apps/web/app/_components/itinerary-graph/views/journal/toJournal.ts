@@ -3,7 +3,8 @@
 // (the adapter's day scaffold + resolved nodes) into the event-proportional
 // sequence the Journal renders — day groups, bucketed gaps (short gap = plain
 // spine segment; long gap = a virtual "quiet moment" node), night treatment
-// (driven by `night_bar` metadata), multi-day empty spans collapsed into
+// (driven by `night_bar` metadata on NON-hotel nodes — hotels always render as
+// spine cards so the traveler can see where they sleep), multi-day empty spans collapsed into
 // elision markers, and alternative-group awareness (grouping data only; the
 // fork-in-the-spine rendering is a later phase).
 //
@@ -81,8 +82,8 @@ export type JournalEntry =
     };
 
 export type JournalNight = {
-  /** The `night_bar` node bracketing this night (e.g. the hotel stay), when
-   *  the graph models one; null renders the generic night treatment. */
+  /** A non-hotel `night_bar` node bracketing this night, when the graph models
+   *  one (hotels are spine cards, never nights); null = generic night wash. */
   node: NodeResponse | null;
 };
 
@@ -349,10 +350,16 @@ export function toJournal(input: ToJournalInput): Journal {
   const { nodes, edges, days, timezoneOffsetHours: tz } = input;
 
   const visible = nodes.filter(isJournalVisible);
-  const nightBars = visible.filter((n) => getVerticalMeta(n).night_bar === true);
-  const scheduledCards = visible.filter(
-    (n) => getVerticalMeta(n).night_bar !== true,
-  );
+  // A hotel is a CARD on the spine — always. A traveler has to be able to see
+  // (and name) where they're sleeping, so a hotel is never demoted to the night
+  // wash even when the graph marks it `night_bar` (that flag still drives the
+  // horizontal planner's lodging lane; here it's ignored for hotels). The
+  // `night_bar` night treatment stays available for any genuinely card-less
+  // overnight marker.
+  const isNightBar = (n: NodeResponse): boolean =>
+    getVerticalMeta(n).night_bar === true && n.type !== "hotel";
+  const nightBars = visible.filter(isNightBar);
+  const scheduledCards = visible.filter((n) => !isNightBar(n));
   // Embedded subgraphs: lay each scheduled parent's day children onto their
   // calendar days as derived journey beats (see deriveJourneyBeats above).
   const { beats, info: journeyInfo } = deriveJourneyBeats(scheduledCards, nodes, tz);

@@ -96,19 +96,19 @@ def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
 # traveler flies from, so flights are proposed in conversation, never seeded.
 
 ARRIVAL_ITEMS: list[FixtureItem] = [
-    FixtureItem(
-        id_hint="d01-base",
-        title="Litochoro base — Villa Drosos",
-        starts_at=_at("2026-09-14", "18:00"),
-        duration_minutes=60,
-        status="booked",
-        attrs=_hotel(
-            "Villa Drosos",
-            2,
-            LITOCHORO,
-            "Stone rooms at the mountain's foot, olive terrace, Mytikas on the skyline.",
-        ),
-    ),
+    # FixtureItem(
+    #     id_hint="d01-base",
+    #     title="Litochoro base — Villa Drosos",
+    #     starts_at=_at("2026-09-14", "18:00"),
+    #     duration_minutes=60,
+    #     status="booked",
+    #     attrs=_hotel(
+    #         "Villa Drosos",
+    #         2,
+    #         LITOCHORO,
+    #         "Stone rooms at the mountain's foot, olive terrace, Mytikas on the skyline.",
+    #     ),
+    # ),
 ]
 
 

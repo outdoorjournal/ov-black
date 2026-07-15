@@ -25,6 +25,7 @@ Still, follow the house rule: never log the rendered text.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -36,6 +37,7 @@ from app.models import (
     AnalysisStatus,
     FindingSeverity,
     Itinerary,
+    ItineraryTimingKind,
     Node,
     NodeStatus,
 )
@@ -179,17 +181,29 @@ async def _latest_completed_analysis_counts(
     )
 
 
-def _viewing_when(starts_at: object) -> str | None:
+def _viewing_when(starts_at: object, *, pinned: bool, anchor: date | None) -> str | None:
     """Human day/time from a node's TSTZRANGE lower bound, or None.
 
-    asyncpg hands back a ``Range`` with a ``.lower`` datetime; we only need a
-    coarse "when" for the ambient cue, so the day plus HH:MM is plenty.
+    asyncpg hands back a ``Range`` with a ``.lower`` datetime. Honors the
+    Day-N-until-pinned rule (Wave E): a card's absolute date is only a fact on a
+    PINNED trip (exact dates the traveler chose). On an unpinned trip the stamped
+    ``starts_at`` is a provisional layout coordinate — surfacing it as
+    "2026-08-13" would feed the model a date the traveler never gave, so we
+    render the honest "Day N · HH:MM" ordinal (from ``anchor``) instead, or omit
+    the when entirely when nothing anchors even that.
     """
     lower = getattr(starts_at, "lower", None)
     if lower is None:
         return None
     try:
-        return str(lower.strftime("%Y-%m-%d %H:%M"))
+        clock = lower.strftime("%H:%M")
+        if pinned:
+            return str(lower.strftime("%Y-%m-%d %H:%M"))
+        if anchor is not None:
+            day_n = (lower.date() - anchor).days + 1
+            if day_n >= 1:
+                return f"Day {day_n} · {clock}"
+        return None
     except (AttributeError, ValueError):
         return None
 
@@ -236,14 +250,29 @@ async def viewing_context_for_node(
         return None
     title, node_type, status, starts_at, cost_amount, cost_currency = row
 
-    cost = (
-        f"{cost_amount} {cost_currency}" if cost_amount is not None and cost_currency else None
-    )
+    # Resolve the trip's timing so the "when" honors the Day-N-until-pinned rule
+    # (a card's calendar date is only real once the traveler pins exact dates).
+    timing = (
+        await session.execute(
+            select(Itinerary.timing_kind, Itinerary.date_start, Itinerary.days_anchor).where(
+                Itinerary.id == itinerary_id
+            )
+        )
+    ).first()
+    pinned = False
+    anchor: date | None = None
+    if timing is not None:
+        timing_kind, date_start, days_anchor = timing
+        pinned = timing_kind == ItineraryTimingKind.exact and date_start is not None
+        # Day-1 anchor for the honest "Day N" ordinal on an unpinned trip.
+        anchor = days_anchor or date_start
+
+    cost = f"{cost_amount} {cost_currency}" if cost_amount is not None and cost_currency else None
     return render_viewing_context(
         title=title,
         node_type=node_type.value if hasattr(node_type, "value") else str(node_type),
         status=status.value if hasattr(status, "value") else str(status),
-        when=_viewing_when(starts_at),
+        when=_viewing_when(starts_at, pinned=pinned, anchor=anchor),
         cost=cost,
     )
 

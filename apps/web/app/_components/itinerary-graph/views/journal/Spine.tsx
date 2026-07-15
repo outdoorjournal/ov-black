@@ -100,6 +100,27 @@ export function HourTickMark({ hour, top }: { hour: number; top: string }) {
   );
 }
 
+/** The midnight rule a long bar crosses — a hairline through the bar plus the
+ *  ordinal of the day it enters ("Day 2"). It reads like a miniature day
+ *  header sitting on the timeline, so an overnight leg's bar visibly changes
+ *  date at the point it does, not just at an unexplained "12a" tick. Centred on
+ *  the spine (the dash straddles the line); the label sits just past it. */
+export function DayBreakMark({ label, top }: { label: string; top: string }) {
+  return (
+    <span
+      aria-hidden
+      data-testid="journal-bar-daybreak"
+      className="pointer-events-none absolute flex items-center gap-1"
+      style={{ left: "calc(50% - 10px)", top }}
+    >
+      <span className="h-px w-5 bg-ink/45" />
+      <span className="whitespace-nowrap rounded-sm bg-paper/90 px-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/55">
+        {label}
+      </span>
+    </span>
+  );
+}
+
 // Status → the circle's ring, mirroring the card-status vocabulary without
 // relying on color alone (each non-pending status also wears its glyph badge):
 //   pending    soft hairline ring
@@ -198,6 +219,7 @@ export function DurationBar({
   nodeId,
   discarded = false,
   startHour = null,
+  dayBreak = null,
 }: {
   kind: CardKind;
   minutes: number;
@@ -209,6 +231,10 @@ export function DurationBar({
    *  THROUGH the card (the same ruler the gaps wear), so every hour marks
    *  once, wherever it falls. Null when the node carries no time. */
   startHour?: number | null;
+  /** A calendar boundary the bar crosses (an overnight leg): `frac` is its
+   *  position along the drawn length, `label` the day it enters ("Day 2").
+   *  Null when the bar stays within one day. */
+  dayBreak?: { frac: number; label: string } | null;
 }) {
   const accent = TYPE_TOKENS[kind].accent;
   const height = journalBarHeight(minutes, pxPerMinute);
@@ -216,9 +242,12 @@ export function DurationBar({
   const showScrollBack = Boolean(nodeId) && height >= JOURNAL_BAR_SCROLLBACK_PX;
   // Hour ticks along the bar — but never on a bar too short to seat a label
   // (they'd pile onto the circle), and never past the drawn (possibly capped)
-  // length. The gaps carry the ticks those short bars skip.
-  const ticks =
-    startHour !== null && height >= 24 ? hourTicks(startHour, minutes) : [];
+  // length. The gaps carry the ticks those short bars skip. A midnight tick is
+  // dropped when a day-break rule sits there (they share the frac) — the "Day N"
+  // rule already marks that moment, and reads it better than a bare "12a".
+  const ticks = (
+    startHour !== null && height >= 24 ? hourTicks(startHour, minutes) : []
+  ).filter((t) => !(dayBreak && t.hour % 24 === 0));
 
   const scrollBack = () => {
     if (typeof document === "undefined" || !nodeId) return;
@@ -270,6 +299,12 @@ export function DurationBar({
       {ticks.map((t) => (
         <HourTickMark key={t.hour} hour={t.hour} top={`${t.frac * 100}%`} />
       ))}
+      {/* The date rule where an overnight leg crosses midnight — names the day
+          it enters, so the post-midnight ticks read as the NEXT day, not a
+          confusing wrap within this one. */}
+      {dayBreak ? (
+        <DayBreakMark label={dayBreak.label} top={`${dayBreak.frac * 100}%`} />
+      ) : null}
       {/* Scroll back up to the card — for bars long enough that the card has
           left the screen (a multi-day span). */}
       {showScrollBack ? (
@@ -325,7 +360,8 @@ export function QuietCircle() {
  * the gutter (the same sun palette the horizontal axis samples, evening→night
  * hours) with a whispered ☾ tick and caption beside it — atmosphere, not a
  * shape that competes with the duration bars. When the graph models the night
- * (a `night_bar` node, usually the hotel stay) its title names the stop.
+ * with a (non-hotel) `night_bar` node its title names the stop; hotels are
+ * spine cards now, so they never appear here.
  */
 export function NightSegment({ title }: { title?: string | undefined }) {
   // Dusk (~19:00) melting into deep night (~23:30) — sampled from the shared
