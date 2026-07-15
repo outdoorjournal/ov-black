@@ -65,15 +65,19 @@ def beat_subgraph_metadata(
     hhmm: str,
     duration_minutes: int | None = None,
     description: str | None = None,
+    image: str | None = None,
 ) -> dict[str, Any]:
     """Node ``metadata`` for one BEAT — an inferred sub-moment within a day.
 
     Same envelope as :func:`day_subgraph_metadata` (a ``snapshot`` + a
     ``subgraph_day``), so beat children ride the existing journey-beat read
     path unchanged. The extras: ``hhmm`` places the beat at a local clock time
-    within its day (instead of the generic morning start), and
-    ``duration_minutes`` sizes it. ``index``/geo still come from the day the
-    beat belongs to — several beats share one day.
+    within its day (instead of the generic morning start), ``duration_minutes``
+    sizes it, ``description`` lands as the card's own description (top-level,
+    the card-attrs socket every card view reads), and ``image`` gives the beat
+    its own hero (``ambient_image`` + ``snapshot.cover_image`` — without one
+    the journey view falls back to the parent's gallery rotation). ``index``/geo
+    still come from the day the beat belongs to — several beats share one day.
     """
     metadata = day_subgraph_metadata(day)
     metadata["snapshot"]["title"] = title
@@ -82,10 +86,14 @@ def beat_subgraph_metadata(
     if duration_minutes is not None:
         subgraph_day["duration_minutes"] = duration_minutes
     if description:
+        metadata["description"] = description
         subgraph_day["description_html"] = description
     elif "description_html" in subgraph_day:
         # A beat tells its own moment; never inherit the whole day's prose.
         del subgraph_day["description_html"]
+    if image:
+        metadata["ambient_image"] = image
+        metadata["snapshot"]["cover_image"] = image
     return metadata
 
 

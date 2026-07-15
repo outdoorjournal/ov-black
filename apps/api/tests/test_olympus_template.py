@@ -16,7 +16,12 @@ import socket
 
 import pytest
 from app.models import TemplateNode
-from app.seed_data.olympus_cornerstones import cornerstone_for_nights
+from app.seed_data.olympus_cornerstones import (
+    BEAT_STOCK,
+    GUIDED_2DAY,
+    SYMBOLISM,
+    cornerstone_for_nights,
+)
 from app.services.olympus_template import (
     OLYMPUS_SPINE_SLUGS,
     build_olympus_template,
@@ -58,6 +63,26 @@ async def _delete_olympus_templates() -> None:
             )
     finally:
         await engine.dispose()
+
+
+def test_beats_are_fully_authored() -> None:
+    """Offline contract: every beat carries a description and a valid stock key.
+
+    The stock sets are the beats' imagery (BEAT_STOCK, 3–5 vetted shots per
+    kind of moment); a typo'd key would KeyError at template build, and a
+    description-less beat renders a bare title card — both caught here without
+    a DB.
+    """
+    for cornerstone in (SYMBOLISM, GUIDED_2DAY):
+        for day in cornerstone.days:
+            for beat in day.beats:
+                assert beat.description, f"beat {beat.title!r} has no description"
+                assert beat.stock in BEAT_STOCK, (
+                    f"beat {beat.title!r} has unknown stock {beat.stock!r}"
+                )
+    for category, pool in BEAT_STOCK.items():
+        assert 3 <= len(pool) <= 5, f"stock set {category!r} should ship 3-5 images"
+        assert all(url.startswith("https://images.unsplash.com/photo-") for url in pool)
 
 
 @integration
@@ -111,6 +136,17 @@ async def test_cornerstone_lands_as_subgraph_in_template() -> None:
                 meta = child.metadata_["subgraph_day"]
                 assert isinstance(meta.get("duration_minutes"), int)
                 assert child.metadata_["snapshot"]["title"] == child.title
+                # Every beat wears its own stock hero + card description.
+                ambient = child.metadata_.get("ambient_image")
+                assert isinstance(ambient, str) and ambient.startswith(
+                    "https://images.unsplash.com/photo-"
+                )
+                assert child.metadata_["snapshot"]["cover_image"] == ambient
+                assert child.metadata_.get("description"), "beat carries a card description"
+            # Rotation: beats of one category get DIFFERENT images until the
+            # set wraps — e.g. the three dinners must not share a shot.
+            ambients = [c.metadata_["ambient_image"] for c in beat_children]
+            assert len(set(ambients)) > len(BEAT_STOCK) // 2, "stock rotation looks broken"
     finally:
         await engine.dispose()
         await _delete_olympus_templates()

@@ -20,9 +20,10 @@ import { prefersReducedMotion, scrollBehaviorFor } from "./motion";
 export const SPINE_COL_PX = 44;
 
 /** How far a journey beat's whole row (circle, bar, card) shifts right of the
- *  main spine — the offset puts the beat circles ON the journey thread, so the
- *  thread reads as the sub-journey's own rail. The thread shares this value. */
-export const JOURNEY_INDENT_PX = 12;
+ *  main spine — the offset puts the beat circles ON the child journey line, a
+ *  sub-rail sitting to the right of the parent experience's own (colored) line.
+ *  The child line shares this value. */
+export const JOURNEY_INDENT_PX = 16;
 
 // ── Duration bars (traveler-journal) ──────────────────────────────────
 // Each activity hangs a colored bar off its spine circle, stretching down the
@@ -43,6 +44,60 @@ export const JOURNAL_BAR_SCROLLBACK_PX = 200;
 export function journalBarHeight(minutes: number, pxPerMinute: number): number {
   const raw = Math.max(0, minutes) * pxPerMinute;
   return Math.min(JOURNAL_BAR_MAX_PX, Math.max(JOURNAL_BAR_MIN_PX, raw));
+}
+
+// ── Hour ticks ────────────────────────────────────────────────────────────
+// The day's ruler — a faint mark + tiny label at each integer hour. Shared by
+// the gap lanes (VirtualNode) and the duration bars, so a single continuous
+// ruler runs down the WHOLE day: every hour gets its tick wherever that moment
+// falls, whether that's an empty stretch or the middle of a card's duration.
+
+/** Compact 12-hour clock label for an hour tick ("9a", "12p", "10p"). */
+export function formatHourTick(hour: number): string {
+  const h = ((Math.round(hour) % 24) + 24) % 24;
+  const ampm = h < 12 ? "a" : "p";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}${ampm}`;
+}
+
+export interface HourTick {
+  hour: number;
+  frac: number;
+}
+
+/** Integer-hour ticks that fall inside a span, positioned by fraction of its
+ *  drawn length. Thinned to ~6 max so a long span shows "occasional" ticks,
+ *  never a crowded ruler. */
+export function hourTicks(startHour: number, minutes: number): HourTick[] {
+  const durH = minutes / 60;
+  if (durH <= 0) return [];
+  const end = startHour + durH;
+  const step = durH <= 6 ? 1 : Math.ceil(durH / 6);
+  const ticks: HourTick[] = [];
+  for (let h = Math.ceil(startHour + 1e-6); h < end - 1e-6; h += step) {
+    ticks.push({ hour: h, frac: (h - startHour) / durH });
+  }
+  return ticks;
+}
+
+/** The hour-tick furniture — a faint dash + tiny mono label, positioned by a
+ *  parent that sets its `top`. Sits just right of the spine line: `50%` of the
+ *  parent is the line in both contexts (the gap cell and the duration bar are
+ *  each centred on it), so bars and gaps read as one continuous ruler. */
+export function HourTickMark({ hour, top }: { hour: number; top: string }) {
+  return (
+    <span
+      aria-hidden
+      data-testid="journal-hour-tick"
+      className="pointer-events-none absolute flex items-center gap-1"
+      style={{ left: "calc(50% + 3px)", top }}
+    >
+      <span className="h-px w-2 bg-ink/25" />
+      <span className="font-mono text-[8px] leading-none text-ink/35">
+        {formatHourTick(hour)}
+      </span>
+    </span>
+  );
 }
 
 // Status → the circle's ring, mirroring the card-status vocabulary without
@@ -142,6 +197,7 @@ export function DurationBar({
   pxPerMinute,
   nodeId,
   discarded = false,
+  startHour = null,
 }: {
   kind: CardKind;
   minutes: number;
@@ -149,11 +205,20 @@ export function DurationBar({
   /** The card this bar belongs to — the scroll-back target on long bars. */
   nodeId?: string;
   discarded?: boolean;
+  /** Local clock hour the card starts on — carries the day's hour ticks
+   *  THROUGH the card (the same ruler the gaps wear), so every hour marks
+   *  once, wherever it falls. Null when the node carries no time. */
+  startHour?: number | null;
 }) {
   const accent = TYPE_TOKENS[kind].accent;
   const height = journalBarHeight(minutes, pxPerMinute);
   const capped = minutes * pxPerMinute > JOURNAL_BAR_MAX_PX;
   const showScrollBack = Boolean(nodeId) && height >= JOURNAL_BAR_SCROLLBACK_PX;
+  // Hour ticks along the bar — but never on a bar too short to seat a label
+  // (they'd pile onto the circle), and never past the drawn (possibly capped)
+  // length. The gaps carry the ticks those short bars skip.
+  const ticks =
+    startHour !== null && height >= 24 ? hourTicks(startHour, minutes) : [];
 
   const scrollBack = () => {
     if (typeof document === "undefined" || !nodeId) return;
@@ -200,6 +265,11 @@ export function DurationBar({
             : {}),
         }}
       />
+      {/* The day's hour ticks, carried through the card — the same ruler the
+          gap lanes wear, so an hour marks once wherever it lands. */}
+      {ticks.map((t) => (
+        <HourTickMark key={t.hour} hour={t.hour} top={`${t.frac * 100}%`} />
+      ))}
       {/* Scroll back up to the card — for bars long enough that the card has
           left the screen (a multi-day span). */}
       {showScrollBack ? (

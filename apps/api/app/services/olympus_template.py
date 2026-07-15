@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import CardTemplate, EdgeType, NodeStatus, NodeType
 from app.seed_data.japan_itinerary import FixtureItem
 from app.seed_data.olympus_cornerstones import (
+    BEAT_STOCK,
     OlympusCornerstone,
     cornerstone_for_nights,
 )
@@ -93,14 +94,25 @@ async def _build_cornerstone_subgraph(
     Mirrors :func:`app.services.subgraph.materialize_day_subgraph` in template
     space, chained by ``follows`` edges. A day that ships authored ``beats``
     lands one ``experience`` child PER BEAT (its own title, an ``hhmm`` clock
-    time within the day, a duration — the inferred sub-moments of the vendor's
-    day prose); a beat-less day falls back to the single ``Day N — title``
-    child the inventory-born path produces. Returns ``(node_count,
-    edge_count)`` added. No-op (0, 0) when the cornerstone ships no baked days.
+    time within the day, a duration, a description, and a hero image drawn
+    from :data:`BEAT_STOCK` — repeats of a category rotate through its set so
+    three dinners get three different shots); a beat-less day falls back to
+    the single ``Day N — title`` child the inventory-born path produces.
+    Returns ``(node_count, edge_count)`` added. No-op (0, 0) when the
+    cornerstone ships no baked days.
     """
     node_count = 0
     edge_count = 0
     previous: uuid.UUID | None = None
+    stock_used: dict[str, int] = {}
+
+    def next_stock_image(category: str | None) -> str | None:
+        if category is None:
+            return None
+        pool = BEAT_STOCK[category]
+        index = stock_used.get(category, 0)
+        stock_used[category] = index + 1
+        return pool[index % len(pool)]
 
     async def add_child(title: str, metadata: dict[str, Any]) -> None:
         nonlocal node_count, edge_count, previous
@@ -137,6 +149,7 @@ async def _build_cornerstone_subgraph(
                         hhmm=beat.hhmm,
                         duration_minutes=beat.duration_minutes,
                         description=beat.description,
+                        image=next_stock_image(beat.stock),
                     ),
                 )
         else:

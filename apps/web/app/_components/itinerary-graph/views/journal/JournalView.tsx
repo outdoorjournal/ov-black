@@ -49,12 +49,20 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type RefObject,
 } from "react";
 import { useRouter } from "next/navigation";
+
+// Measure-before-paint on the client, no-op-safe on the server (this is a
+// "use client" tree, but SSR still runs the first pass) — avoids the anchored
+// journey line flashing at its fallback offset before it's measured.
+const useIsoLayoutEffect =
+  typeof document !== "undefined" ? useLayoutEffect : useEffect;
 
 import type { NodeResponse } from "../../model/types";
 import { inferCardKind } from "../../shared/cards/CardBody";
@@ -87,7 +95,12 @@ import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
 import { useIs2xl } from "./useIs2xl";
 import { CardDetailView } from "@/app/itinerary/[id]/_shell/CardDetailView";
-import { JOURNAL_BAR_WIDTH_PX, NightSegment, SPINE_COL_PX } from "./Spine";
+import {
+  JOURNAL_BAR_WIDTH_PX,
+  JOURNEY_INDENT_PX,
+  NightSegment,
+  SPINE_COL_PX,
+} from "./Spine";
 import { toJournal, type JournalDaySection } from "./toJournal";
 import {
   isGhostId,
@@ -643,6 +656,45 @@ function DaySection({
     [section.entries, tz],
   );
 
+  // Where the parent line OPENS on the day a journey begins: at the parent
+  // card's own circle, wherever it falls in the day (its derived beats can be
+  // scheduled BEFORE it, so the parent is not always the first row). Measured,
+  // because the offset depends on the heights of whatever precedes it.
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [journeyParentTop, setJourneyParentTop] = useState<number | null>(null);
+  const journeyParentId = useMemo(() => {
+    if (!journeyThread || journeyThread.fromPrev) return null;
+    for (const e of section.entries) {
+      if (e.kind === "node" && (subgraphChildren.get(e.node.id)?.length ?? 0) > 0) {
+        return e.node.id;
+      }
+    }
+    return null;
+  }, [journeyThread, section.entries, subgraphChildren]);
+  useIsoLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!journeyParentId || !content) {
+      setJourneyParentTop(null);
+      return;
+    }
+    const measure = () => {
+      const el = content.querySelector(`[data-node-id="${journeyParentId}"]`);
+      const circle = el?.querySelector('[data-testid="journal-spine-circle"]');
+      const anchor = circle ?? el;
+      if (!anchor) return;
+      const cTop = content.getBoundingClientRect().top;
+      const aRect = anchor.getBoundingClientRect();
+      // Circle centre (fallback ~26px = the row's pt-3 + the circle radius).
+      const top = aRect.top + (circle ? aRect.height / 2 : 26) - cTop;
+      setJourneyParentTop(Math.max(0, Math.round(top)));
+    };
+    measure();
+    // Re-measure when the rows above the parent change height (zoom, etc.).
+    const ro = new ResizeObserver(measure);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [journeyParentId, section.entries]);
+
   const rows: ReactNode[] = [];
   let cardIdx = 0;
   for (const [i, entry] of section.entries.entries()) {
@@ -751,40 +803,63 @@ function DaySection({
   // continuing day it spans the full section (behind the day rule, like the
   // spine), and while the journey goes on it reaches through the section gap
   // to meet the next day's thread — through the night, never restarting.
+  // A packaged journey draws TWO parallel rails: the PARENT line — the parent
+  // experience's own accent running down the main spine (the rail its circle
+  // sits on), the whole way through its days — and, ~16px to its right, the
+  // thin CHILD line the derived beats indent onto (their circles/bars ride it),
+  // so the package reads as a parent spine with its days branching off the side.
+  // On a CONTINUING day both span the full section (top-0, behind the day
+  // rule, like the spine). On the day the journey BEGINS, the PARENT line opens
+  // at the parent card's measured circle (it may sit well down the day), while
+  // the CHILD line opens near the day's top (~38px) so the beats scheduled
+  // ahead of the parent still ride a rail.
+  const journeyParentStartTop = journeyThread?.fromPrev
+    ? undefined
+    : (journeyParentTop ?? 38);
+  const journeyChildStartTop = journeyThread?.fromPrev ? undefined : 38;
   const journeyThreadEl = journeyThread ? (
-    <span
-      aria-hidden
-      data-testid="journal-journey-thread"
-      data-from-prev={journeyThread.fromPrev ? "true" : undefined}
-      data-to-next={journeyThread.toNext ? "true" : undefined}
-      title="Part of a packaged journey"
-      className={[
-        // A packaged journey's line runs down the MAIN spine — the rail the
-        // parent card's own circle sits on — in the parent experience's accent
-        // (set inline below), so it reads as that trip's presence extending the
-        // whole way; a neutral hairline when the parent's kind is unknown.
-        "absolute rounded-full",
-        // On a CONTINUING day it spans the full section (behind the day rule,
-        // like the spine); on the day it BEGINS it opens at the parent's circle
-        // (top set inline) instead of the top of the day.
-        journeyThread.fromPrev ? "top-0" : "",
-        journeyThread.toNext ? "-bottom-2" : "bottom-0",
-        journeyThread.accent ? "" : "bg-ink/20",
-      ].join(" ")}
-      style={{
-        // Match the beats' own duration-bar width and centre it on the spine,
-        // so beat bars and the connecting line read as one uniform rail.
-        width: JOURNAL_BAR_WIDTH_PX,
-        left: SPINE_COL_PX / 2 - JOURNAL_BAR_WIDTH_PX / 2,
-        // Start at the parent circle's centre on the opening day: the content
-        // column's py-3 (12) + the circle column's pt-3 (12) + the circle's
-        // radius (14) = 38px below the section's content top.
-        ...(journeyThread.fromPrev ? {} : { top: 38 }),
-        ...(journeyThread.accent
-          ? { backgroundColor: journeyThread.accent, opacity: 0.5 }
-          : {}),
-      }}
-    />
+    <>
+      <span
+        aria-hidden
+        data-testid="journal-journey-thread"
+        data-from-prev={journeyThread.fromPrev ? "true" : undefined}
+        data-to-next={journeyThread.toNext ? "true" : undefined}
+        title="Part of a packaged journey"
+        className={[
+          "absolute rounded-full",
+          journeyThread.fromPrev ? "top-0" : "",
+          journeyThread.toNext ? "-bottom-2" : "bottom-0",
+          journeyThread.accent ? "" : "bg-ink/20",
+        ].join(" ")}
+        style={{
+          // Match the beats' own duration-bar width and centre it on the spine,
+          // so the parent line and the beat bars read as one uniform rail.
+          width: JOURNAL_BAR_WIDTH_PX,
+          left: SPINE_COL_PX / 2 - JOURNAL_BAR_WIDTH_PX / 2,
+          ...(journeyParentStartTop !== undefined
+            ? { top: journeyParentStartTop }
+            : {}),
+          ...(journeyThread.accent
+            ? { backgroundColor: journeyThread.accent, opacity: 0.5 }
+            : {}),
+        }}
+      />
+      <span
+        aria-hidden
+        data-testid="journal-journey-child"
+        className={[
+          "absolute w-[2px] rounded-full bg-ink/20",
+          journeyThread.fromPrev ? "top-0" : "",
+          journeyThread.toNext ? "-bottom-2" : "bottom-0",
+        ].join(" ")}
+        style={{
+          left: SPINE_COL_PX / 2 + JOURNEY_INDENT_PX - 1,
+          ...(journeyChildStartTop !== undefined
+            ? { top: journeyChildStartTop }
+            : {}),
+        }}
+      />
+    </>
   ) : null;
 
   return (
@@ -816,7 +891,11 @@ function DaySection({
           previous section's overhang without a break. */}
       {journeyThread?.fromPrev ? journeyThreadEl : null}
       <DayHeader label={section.label} date={section.date} datesPinned={pinned} />
-      <div className="relative flex flex-col gap-2 py-3" style={spineColStyle}>
+      <div
+        ref={contentRef}
+        className="relative flex flex-col gap-2 py-3"
+        style={spineColStyle}
+      >
         {/* Diff mode's diverged-region cue: a second, dashed thread running
             alongside the spine through this day. */}
         {hasDivergence ? (

@@ -302,8 +302,8 @@ describe("journey beats", () => {
     expect(chips).toHaveLength(4);
     expect(chips[1]?.textContent).toContain("day 2 of 4");
 
-    // Beats ride the parent's rail (no indent — the accent journey thread
-    // carries the membership); the parent stays a plain spine row.
+    // Beat rows are marked as beats; the parent stays a plain spine row.
+    // (The exact indent is a design knob — not pinned here.)
     const parentRow = screen
       .getAllByTestId("journal-node")
       .find((el) => el.getAttribute("data-node-id") === "p1");
@@ -315,7 +315,6 @@ describe("journey beats", () => {
       .find((el) => el.getAttribute("data-node-id") === "d3");
     expect(beatRow).toBeDefined();
     expect(beatRow?.getAttribute("data-journey-beat")).toBe("true");
-    expect(beatRow?.style.marginLeft).toBe("");
     // The card button — not the duration bar's scroll-back button, which can
     // precede it in the gutter on a long (multi-hour) beat.
     const cardButton = Array.from(

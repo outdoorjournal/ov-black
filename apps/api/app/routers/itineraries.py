@@ -1707,6 +1707,16 @@ async def campaign_kickoff_endpoint(
     else:  # pragma: no cover - guarded by the registry today
         raise HTTPException(status_code=409, detail="campaign_has_no_spine")
 
+    # Intake settled no length at all → we're laying down the length-snapped
+    # DEFAULT spine (Olympus: the full 14 nights). Persist that length onto the
+    # itinerary so the trip brief carries it and the agent stops re-asking "how
+    # many days?" on the next turn. Guarded on ``requested_nights is None``: an
+    # explicit duration or pinned exact dates already imply the length via
+    # ``_itinerary_requested_nights``, so we don't clobber a real choice (nor a
+    # date span, which could disagree with the snapped length).
+    if requested_nights is None:
+        itinerary.duration_nights = snapped
+
     trip_start_at = _itinerary_trip_start(itinerary)
     # Pin the trip only when the traveler actually chose exact dates. A
     # flexible/window intake (or no intake) lays the spine out as stable

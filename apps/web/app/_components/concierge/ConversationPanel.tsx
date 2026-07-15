@@ -316,6 +316,37 @@ function FlightProposalBody({ meta }: { meta: { [key: string]: unknown } }) {
   );
 }
 
+// The "still streaming" placeholder shown between token deltas (or before the
+// first one lands): three ink dots gently rising and fading in sequence, in
+// place of the old blunt caret rectangle. `withText` bumps it onto its own line
+// once some reply text has arrived so it reads as a continuation, not a caret.
+function TypingDots({ withText }: { withText: boolean }) {
+  return (
+    <span
+      role="status"
+      aria-label="Concierge is typing…"
+      className={[
+        "items-center gap-1 align-middle",
+        withText ? "mt-1 flex" : "inline-flex",
+      ].join(" ")}
+    >
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className="inline-block h-[5px] w-[5px] rounded-full bg-current opacity-60"
+          animate={{ y: [0, -3, 0], opacity: [0.3, 0.85, 0.3] }}
+          transition={{
+            duration: 1.1,
+            repeat: Infinity,
+            ease: "easeInOut",
+            delay: i * 0.18,
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function MessageBubble({
   message,
   working = false,
@@ -378,7 +409,7 @@ function MessageBubble({
             <MapCompassIndicator />
           </span>
         ) : (
-          <span className="ml-0.5 inline-block h-3 w-[6px] translate-y-px bg-current align-middle opacity-70" />
+          <TypingDots withText={Boolean(message.text)} />
         )
       ) : null}
     </motion.div>

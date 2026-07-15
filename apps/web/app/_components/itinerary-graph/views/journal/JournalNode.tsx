@@ -39,7 +39,8 @@ import { useConciergeControl } from "@/app/itinerary/[id]/_shell/ConciergeContro
 import { inferCardKind, statusToKind } from "../../shared/cards/CardBody";
 import { TYPE_TOKENS } from "../../shared/cards/tokens";
 import { subgraphDaySpan } from "../../shared/subgraph";
-import type { NodeResponse } from "../../model/types";
+import { getVerticalMeta, type NodeResponse } from "../../model/types";
+import { hourOfDay, offsetHoursOr } from "../../model/time";
 import { NodeCard } from "../horizontal/NodeCard";
 import {
   isSchedulePinned,
@@ -50,7 +51,7 @@ import {
 import { journalDragId } from "./journalEditing";
 import { SpineNoteCard } from "./JournalNotes";
 import type { JournalProblem } from "./problems";
-import { DurationBar, SPINE_COL_PX, SpineCircle } from "./Spine";
+import { DurationBar, JOURNEY_INDENT_PX, SPINE_COL_PX, SpineCircle } from "./Spine";
 import { durationMinOf, type GroupedRole, type JourneyBeat } from "./toJournal";
 import type { JournalNodeDiff } from "./toJournalDiff";
 
@@ -117,6 +118,14 @@ export function JournalNode({
   // A free-standing day note is a node ON the spine, but it reads as a margin
   // artifact, not an itinerary card — small, yellow, editable in place.
   const isNote = node.type === "note";
+  // The card's local start hour (its OWN offset — a trip spans timezones), so
+  // the duration bar can carry hour ticks that continue the day's ruler THROUGH
+  // the card instead of only in the gaps. Null when the node carries no time.
+  const startIso = getVerticalMeta(node).start_time;
+  const startHour =
+    !isNote && startIso
+      ? hourOfDay(startIso, offsetHoursOr(startIso, tzOffsetHours))
+      : null;
   // A flight's time is pinned to its booking (offer depart_at), so it's never
   // re-timable by anyone — the timeline slot is derived, not placed.
   const pinned = isSchedulePinned(node);
@@ -167,10 +176,11 @@ export function JournalNode({
       ].join(" ")}
       style={{
         ...spineColStyle,
-        // A journey beat sits on the SAME spine as its parent — the parent's
-        // accent-colored journey line runs the whole way down through these
-        // beats, so they ride the parent's rail rather than a separate indented
-        // one (the membership chip names which day of the package they are).
+        // A journey beat's whole row shifts right onto the CHILD journey line —
+        // a sub-rail sitting just right of the parent experience's own colored
+        // line, so the package reads as a parent spine with its days branching
+        // off to the side.
+        ...(journey ? { marginLeft: JOURNEY_INDENT_PX } : {}),
         ...WINDOWED_STYLE,
       }}
     >
@@ -204,6 +214,7 @@ export function JournalNode({
             pxPerMinute={journalPxPerMinute}
             nodeId={node.id}
             discarded={status === "discarded"}
+            startHour={startHour}
           />
         ) : null}
         {/* The change DOT on the circle — a quiet "this differs" marker; the

@@ -19,7 +19,7 @@ import { formatDuration } from "../../model/time";
 import { itineraryGraphStore } from "../../store/itineraryGraphStore";
 import { elisionExpandSeconds, prefersReducedMotion, scrollBehaviorFor } from "./motion";
 import type { JournalElision } from "./toJournal";
-import { QuietCircle, SPINE_COL_PX } from "./Spine";
+import { HourTickMark, hourTicks, QuietCircle, SPINE_COL_PX } from "./Spine";
 
 const spineColStyle = {
   "--spine-col": `${SPINE_COL_PX}px`,
@@ -36,34 +36,6 @@ function gapLaneHeight(minutes: number, pxPerMinute: number): number {
     GAP_LANE_MAX_PX,
     Math.max(GAP_LANE_MIN_PX, minutes * pxPerMinute),
   );
-}
-
-/** Compact 12-hour clock label for an hour tick ("9a", "12p", "10p"). */
-function formatHourTick(hour: number): string {
-  const h = ((Math.round(hour) % 24) + 24) % 24;
-  const ampm = h < 12 ? "a" : "p";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}${ampm}`;
-}
-
-interface HourTick {
-  hour: number;
-  frac: number;
-}
-
-/** Integer-hour ticks that fall inside a gap span, positioned by fraction of
- *  the lane. Thinned to ~6 max so a long span shows "occasional" ticks, never a
- *  crowded ruler. */
-function hourTicks(startHour: number, minutes: number): HourTick[] {
-  const durH = minutes / 60;
-  if (durH <= 0) return [];
-  const end = startHour + durH;
-  const step = durH <= 6 ? 1 : Math.ceil(durH / 6);
-  const ticks: HourTick[] = [];
-  for (let h = Math.ceil(startHour + 1e-6); h < end - 1e-6; h += step) {
-    ticks.push({ hour: h, frac: (h - startHour) / durH });
-  }
-  return ticks;
 }
 
 /** True when a gap spans into evening / night (≥18:00 or before 06:00) —
@@ -127,23 +99,10 @@ function GapLane({
           />
         ) : null}
         {/* Occasional hour ticks — a faint mark + tiny label right of the
-            spine, so a measure of time reads without a full ruler. */}
+            spine, the same ruler the duration bars wear so gaps and cards read
+            as one continuous measure of the day. */}
         {ticks.map((t) => (
-          <span
-            key={t.hour}
-            aria-hidden
-            data-testid="journal-hour-tick"
-            className="pointer-events-none absolute flex items-center gap-1"
-            style={{
-              top: `${t.frac * 100}%`,
-              left: SPINE_COL_PX / 2 + 3,
-            }}
-          >
-            <span className="h-px w-2 bg-ink/25" />
-            <span className="font-mono text-[8px] leading-none text-ink/35">
-              {formatHourTick(t.hour)}
-            </span>
-          </span>
+          <HourTickMark key={t.hour} hour={t.hour} top={`${t.frac * 100}%`} />
         ))}
       </div>
       {children ? (

@@ -48,6 +48,10 @@ class CornerstoneBeat:
     duration_minutes: int = 60
     #: Short editorial description, derived from the vendor's day prose.
     description: str | None = None
+    #: :data:`BEAT_STOCK` category this beat's imagery comes from. Repeated
+    #: categories within one cornerstone rotate through the set, so three
+    #: dinners get three different shots. None → the parent's gallery rotation.
+    stock: str | None = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +163,138 @@ class OlympusCornerstone:
 _OV_CDN = "https://cdn-pub.prod.outdoorvoyage.com"
 
 
+def _stock_img(photo_id: str) -> str:
+    """An Unsplash CDN url for a bare ``photo-…`` id (host allowlisted in
+    ``next.config.ts``) — same convention as the Olympus extension fixture."""
+    return f"https://images.unsplash.com/{photo_id}?w=1600&q=80&auto=format&fit=crop"
+
+
+#: Curated stock imagery for beat sub-cards, keyed by the kind of moment. Every
+#: id was pulled from an Unsplash search at authoring time and visually vetted
+#: (2026-07). Sets are ordered best-fit-first: the template builder walks a
+#: cornerstone's beats and rotates through a category's set in this order, so
+#: the first beat of a kind gets the set's strongest match and repeats stay
+#: varied. 3–5 images per set.
+BEAT_STOCK: dict[str, tuple[str, ...]] = {
+    # Coffee with a view — alpine mug first (day-4 plateau breakfast), then
+    # the valley-balcony shots (day-5 "balcony of Olympus").
+    "coffee-view": (
+        _stock_img("photo-1760197161667-bb3b063ef63b"),
+        _stock_img("photo-1577885215340-742f4551d417"),
+        _stock_img("photo-1677490240383-c98c6b5f5732"),
+        _stock_img("photo-1782139186009-6fcc4f2326ea"),
+        _stock_img("photo-1768347440174-5bd817400f0f"),
+    ),
+    "breakfast": (
+        _stock_img("photo-1647797658735-a33e305946ec"),
+        _stock_img("photo-1780403919362-90a8a0b8527d"),
+        _stock_img("photo-1731013449350-6f5d8f31d3e1"),
+    ),
+    "taverna": (
+        _stock_img("photo-1602591546738-ceab3d349681"),
+        _stock_img("photo-1602008394120-5cc61b4f6ada"),
+        _stock_img("photo-1602348143971-0c5c97d23367"),
+        _stock_img("photo-1658742758848-e9496d31a8b6"),
+        _stock_img("photo-1469532954151-60b475900aa2"),
+    ),
+    "refuge": (
+        _stock_img("photo-1652451489139-e160b7dff1b4"),
+        _stock_img("photo-1781095249833-b484c67f9832"),
+        _stock_img("photo-1724170856329-3bc5c57c6ab6"),
+        _stock_img("photo-1604092815195-db1759a549b4"),
+        _stock_img("photo-1775122739880-228d8fd86304"),
+    ),
+    "headlamp": (
+        _stock_img("photo-1761566704064-796a21037500"),
+        _stock_img("photo-1770793624380-a33a5ac8875d"),
+        _stock_img("photo-1758300245541-a2804f1b3f3d"),
+        _stock_img("photo-1704801467339-8a00f9e1712c"),
+    ),
+    "scramble": (
+        _stock_img("photo-1765338023080-ee6b3abf8044"),
+        _stock_img("photo-1764014936889-9be94965694d"),
+        _stock_img("photo-1777205001357-92022f02a3cd"),
+    ),
+    # Meadow-under-the-peak first (the climb), the rock towers second (the
+    # Throne of Zeus), then the gentler plateau moods.
+    "plateau": (
+        _stock_img("photo-1582694976769-2f1986650549"),
+        _stock_img("photo-1494625927555-6ec4433b1571"),
+        _stock_img("photo-1690022344181-b147209ecc84"),
+        _stock_img("photo-1764093141154-1a85db6e7c63"),
+    ),
+    "chapel": (
+        _stock_img("photo-1773869910347-f1fd6a08b704"),
+        _stock_img("photo-1766500030507-b3968cb95f19"),
+        _stock_img("photo-1647243032440-ae6f32720273"),
+        _stock_img("photo-1658728480944-961aa28aae94"),
+    ),
+    "monastery": (
+        _stock_img("photo-1769034323392-35a8308aa7e9"),
+        _stock_img("photo-1759668559362-6892d06b90c3"),
+        _stock_img("photo-1769034313410-4a96f1fe4d26"),
+    ),
+    "gorge": (
+        _stock_img("photo-1775549197189-c8629e1a5e79"),
+        _stock_img("photo-1698837245593-542584dc727d"),
+        _stock_img("photo-1761420723548-63998866767c"),
+        _stock_img("photo-1783611066000-721ec4b32254"),
+        _stock_img("photo-1762279993578-5c214b969360"),
+    ),
+    "museum": (
+        _stock_img("photo-1762140079845-786817904a53"),
+        _stock_img("photo-1775057194807-f97e2080c797"),
+        _stock_img("photo-1782466357373-515da25d313e"),
+        _stock_img("photo-1775057194819-762ad1503709"),
+        _stock_img("photo-1776799733252-e918015c662b"),
+    ),
+    "gold": (
+        _stock_img("photo-1643893246704-2859bebfa6a9"),
+        _stock_img("photo-1737478914352-feb9265dcf7c"),
+        _stock_img("photo-1643893267404-74bbdb694c5c"),
+        _stock_img("photo-1697851791965-584a7df40b54"),
+    ),
+    "thermal": (
+        _stock_img("photo-1781458650999-78d7f722c187"),
+        _stock_img("photo-1519320993082-43a535317ddc"),
+        _stock_img("photo-1508869184489-1b42faa950b0"),
+    ),
+    # Real Litochoro / Enipeas-mouth photography.
+    "village": (
+        _stock_img("photo-1754606492081-4eccdd842dcf"),
+        _stock_img("photo-1698837245535-aa9eb6fd9678"),
+        _stock_img("photo-1754324114044-dd25fceae288"),
+        _stock_img("photo-1698837246144-916cd738fbd0"),
+    ),
+    "drive": (
+        _stock_img("photo-1594025598467-4b9941e5f420"),
+        _stock_img("photo-1536420100273-cabfa8e5b67a"),
+        _stock_img("photo-1635965453398-121ed3ea7c24"),
+        _stock_img("photo-1775649136027-eec8b7c2eb71"),
+        _stock_img("photo-1623784569334-26770407d2a4"),
+    ),
+    "gear": (
+        _stock_img("photo-1485809052957-5113b0ff51af"),
+        _stock_img("photo-1499803270242-467f7311582d"),
+        _stock_img("photo-1476979735039-2fdea9e9e407"),
+        _stock_img("photo-1592388748465-8c4dca8dd703"),
+    ),
+    "sunset": (
+        _stock_img("photo-1697222564092-f4dab603efa8"),
+        _stock_img("photo-1551384745-01b8c3f3fd41"),
+        _stock_img("photo-1697222564085-6c3a135d0b46"),
+        _stock_img("photo-1697222564107-2ea14363f70d"),
+        _stock_img("photo-1726853550443-20b90f727b9b"),
+    ),
+    "forest": (
+        _stock_img("photo-1780887079131-15ee680f2d2d"),
+        _stock_img("photo-1763202366900-7c52f71d9cdb"),
+        _stock_img("photo-1600818596647-9d5318c20a8a"),
+        _stock_img("photo-1766005193305-aec0d7f3e74e"),
+    ),
+}
+
+
 # ── The longest spine's cornerstone: the full guided ascent ────────────
 SYMBOLISM = OlympusCornerstone(
     trip_id="018f39f5-7050-7b2c-a1c4-0c689797f113",
@@ -202,29 +338,20 @@ SYMBOLISM = OlympusCornerstone(
     days=(
         CornerstoneDay(
             day=1,
-            title="Pick up from Thessaloniki airport",
+            title="Meet your guide",
             lat=40.63928,
             lng=22.94242,
-            location_label="Thessaloniki → Litochoro",
+            location_label="Litochoro",
             description=(
-                "Pick up from Thessaloniki airport and transfer to your hotel in "
-                "Litochoro village just in time for dinner. Dinner and overnight "
-                "in Litochoro."
+                "Your guide meets you at arrivals and the mountain takes over "
+                "from there — an easy drive south along the coast, Olympus "
+                "growing on the horizon."
             ),
             beats=(
                 CornerstoneBeat(
-                    hhmm="15:00",
-                    title="Private pickup — Thessaloniki airport",
-                    duration_minutes=90,
-                    description=(
-                        "Your guide meets you at arrivals and the mountain takes over "
-                        "from there — an easy drive south along the coast, Olympus "
-                        "growing in the windscreen."
-                    ),
-                ),
-                CornerstoneBeat(
                     hhmm="17:00",
                     title="Settle into Litochoro",
+                    stock="village",
                     duration_minutes=60,
                     description=(
                         "The stone village at the foot of the gods' massif — plane "
@@ -235,6 +362,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:30",
                     title="Welcome dinner in the village",
+                    stock="taverna",
                     duration_minutes=120,
                     description=(
                         "A long table, local wine, and the plan for the days ahead. "
@@ -262,12 +390,14 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="08:00",
                     title="Breakfast in Litochoro",
+                    stock="breakfast",
                     duration_minutes=60,
                     description="Village bakery breakfast before an easy first day.",
                 ),
                 CornerstoneBeat(
                     hhmm="09:30",
                     title="National Park museum — the mountain in miniature",
+                    stock="museum",
                     duration_minutes=90,
                     description=(
                         "A virtual ascent from the foothills to the summits: the "
@@ -277,6 +407,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="11:30",
                     title="Enipeas gorge — myths and a brave swim",
+                    stock="gorge",
                     duration_minutes=150,
                     description=(
                         "The place where the cause of the Trojan war began, local "
@@ -287,6 +418,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="15:00",
                     title="Monastery of Saint Dionysios & the hermit's cave",
+                    stock="monastery",
                     duration_minutes=120,
                     description=(
                         "The old monastery deep in the gorge, and the cave where "
@@ -296,6 +428,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:30",
                     title="Dinner & overnight — Litochoro",
+                    stock="taverna",
                     duration_minutes=120,
                     description="Last village comforts before the refuges.",
                 ),
@@ -319,12 +452,14 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="07:30",
                     title="Breakfast & pack for the refuges",
+                    stock="gear",
                     duration_minutes=60,
                     description="Bags down to essentials — two nights on the mountain.",
                 ),
                 CornerstoneBeat(
                     hhmm="09:00",
                     title="Up the mountain — Ithakisios cave",
+                    stock="forest",
                     duration_minutes=210,
                     description=(
                         "Through the forest past the cave where the painter "
@@ -335,12 +470,14 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="12:30",
                     title="Light lunch — Petrostrouga refuge",
+                    stock="refuge",
                     duration_minutes=60,
                     description="Recharge under the Bosnian pines.",
                 ),
                 CornerstoneBeat(
                     hhmm="13:30",
                     title="The climb to the Muses Plateau",
+                    stock="plateau",
                     duration_minutes=180,
                     description=(
                         "Three more hours up, out of the trees and into the alpine light."
@@ -349,6 +486,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="16:30",
                     title="Before the Throne of Zeus",
+                    stock="plateau",
                     duration_minutes=60,
                     description=(
                         "Standing at last on the plateau of the Muses, the summit "
@@ -358,6 +496,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:00",
                     title="Dinner & overnight — Apostolidis refuge",
+                    stock="refuge",
                     duration_minutes=120,
                     description="Refuge supper, alpine night, an early alarm.",
                 ),
@@ -380,12 +519,14 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="06:30",
                     title="Alpine breakfast on the plateau",
+                    stock="coffee-view",
                     duration_minutes=60,
                     description="First light on the Aegean, coffee at altitude.",
                 ),
                 CornerstoneBeat(
                     hhmm="07:30",
                     title="Summit morning — Mytikas",
+                    stock="scramble",
                     duration_minutes=270,
                     description=(
                         "The climb to the throne of Zeus, for those who want and "
@@ -395,6 +536,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="12:30",
                     title="Profitis Ilias — the highest chapel in the Balkans",
+                    stock="chapel",
                     duration_minutes=90,
                     description=(
                         "The whole group can stand at the tiny stone chapel on its own summit."
@@ -403,18 +545,21 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="14:30",
                     title="Free hours on the roof of Greece",
+                    stock="plateau",
                     duration_minutes=120,
                     description="Unhurried time among the peaks before the descent.",
                 ),
                 CornerstoneBeat(
                     hhmm="16:30",
                     title="Descent to Petrostrouga before sunset",
+                    stock="sunset",
                     duration_minutes=150,
                     description="Down through the golden hour to the treeline refuge.",
                 ),
                 CornerstoneBeat(
                     hhmm="19:30",
                     title="Dinner & overnight — Petrostrouga refuge",
+                    stock="refuge",
                     duration_minutes=120,
                     description="Summit stories over a refuge table.",
                 ),
@@ -438,6 +583,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="07:30",
                     title="Coffee on the balcony of Olympus",
+                    stock="coffee-view",
                     duration_minutes=60,
                     description=(
                         "Morning coffee on the finest balcony of the mountain — "
@@ -448,12 +594,14 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="09:00",
                     title="Down the mountain to Gortsia",
+                    stock="forest",
                     duration_minutes=90,
                     description="The last descent — trailhead, boots off, wheels on.",
                 ),
                 CornerstoneBeat(
                     hhmm="11:00",
                     title="Vergina — the royal tomb of Philip II",
+                    stock="gold",
                     duration_minutes=150,
                     description=(
                         "The tomb of the great king of the Macedonians, father of "
@@ -464,6 +612,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="15:30",
                     title="Outdoor hot baths — Aridaia",
+                    stock="thermal",
                     duration_minutes=150,
                     description=(
                         "The end of the day finds you soaking in an outdoor thermal "
@@ -474,6 +623,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="20:00",
                     title="Dinner & overnight — a countryside guesthouse",
+                    stock="taverna",
                     duration_minutes=120,
                     description="A guesthouse table in the spa country.",
                 ),
@@ -493,6 +643,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="09:00",
                     title="A last morning, shaped to your departure",
+                    stock="breakfast",
                     duration_minutes=120,
                     description=(
                         "The schedule adapts to your flight — a final visit, a slow "
@@ -502,6 +653,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="11:30",
                     title="Return transfer — Thessaloniki airport",
+                    stock="drive",
                     duration_minutes=90,
                     description="Back along the coast to departures.",
                 ),
@@ -576,6 +728,7 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="10:00",
                     title="Meet in Litochoro — gear check & briefing",
+                    stock="gear",
                     duration_minutes=45,
                     description=(
                         "The central parking lot: equipment check, trip briefing, "
@@ -585,12 +738,14 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="11:00",
                     title="Drive up to Prionia (1,100 m)",
+                    stock="drive",
                     duration_minutes=30,
                     description="Twenty winding minutes to the trailhead.",
                 ),
                 CornerstoneBeat(
                     hhmm="11:30",
                     title="Forest ascent to Spilios Agapitos (2,100 m)",
+                    stock="forest",
                     duration_minutes=210,
                     description=(
                         "The E4 trail through shady forest and towering Bosnian "
@@ -600,6 +755,7 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="18:00",
                     title="Refuge evening — warm meal & early night",
+                    stock="refuge",
                     duration_minutes=150,
                     description=("A warm meal at the hut, kit laid out for the alpine start."),
                 ),
@@ -626,6 +782,7 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="05:30",
                     title="Headlamp start — sunrise on the trail",
+                    stock="headlamp",
                     duration_minutes=120,
                     description=(
                         "Out of the forest and into the alpine zone before dawn, "
@@ -635,12 +792,14 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="07:30",
                     title="Skala peak (2,866 m) — helmets & harnesses",
+                    stock="scramble",
                     duration_minutes=90,
                     description="Gear on at the shoulder of the summit ridge.",
                 ),
                 CornerstoneBeat(
                     hhmm="09:00",
                     title="Kakoskala ridge to Mytikas (2,918 m)",
+                    stock="scramble",
                     duration_minutes=90,
                     description=(
                         "Roped to the guide along the ridge scramble to the summit "
@@ -650,12 +809,14 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="10:30",
                     title="Descend to the refuge — light lunch",
+                    stock="refuge",
                     duration_minutes=180,
                     description="Photos, rest, then back down to Spilios Agapitos.",
                 ),
                 CornerstoneBeat(
                     hhmm="13:30",
                     title="Down to Prionia & drive to Litochoro",
+                    stock="sunset",
                     duration_minutes=180,
                     description=(
                         "The last of ~1,000 m of descent, then the drive back to the village."
@@ -677,6 +838,7 @@ def cornerstone_for_nights(nights: int, *, longest: int) -> OlympusCornerstone:
 
 
 __all__ = [
+    "BEAT_STOCK",
     "GUIDED_2DAY",
     "SYMBOLISM",
     "CornerstoneBeat",
