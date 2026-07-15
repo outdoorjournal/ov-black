@@ -85,6 +85,76 @@ class AdvisorItineraryClient(BaseModel):
     email: Annotated[EmailStr, Field(title='Email')]
 
 
+class FieldModel(StrEnum):
+    home_airport = 'home_airport'
+    home_address = 'home_address'
+    preferred_currency = 'preferred_currency'
+
+
+class AgentLogisticsConflict(BaseModel):
+    """
+    One field the write declined to overwrite without confirmation.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    field: Annotated[FieldModel, Field(title='Field')]
+    existing: Annotated[str, Field(title='Existing')]
+    proposed: Annotated[str, Field(title='Proposed')]
+
+
+class HomeAirport(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            max_length=3, min_length=3, pattern='^[A-Za-z]{3}$', title='Home Airport'
+        ),
+    ]
+
+
+class HomeAddress(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, title='Home Address')]
+
+
+class PreferredCurrency(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            max_length=3,
+            min_length=3,
+            pattern='^[A-Za-z]{3}$',
+            title='Preferred Currency',
+        ),
+    ]
+
+
+class AgentRecordTravelLogisticsRequest(BaseModel):
+    """
+    Body for ``PATCH /agent/logistics`` (agent-only).
+
+    Lets the agent persist client-level logistics it learned in conversation —
+    the home airport (default flight origin), home address, and preferred
+    currency. All fields optional; pass only what was learned this turn.
+
+    Overwrite discipline: the endpoint fills a field only when it is currently
+    unset (or the new value matches). An existing, *different* value is left
+    untouched and reported back as a conflict unless ``confirm_overwrite`` is
+    true — so the agent confirms a correction with the traveler before clobbering
+    something staff or the traveler set earlier.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    home_airport: Annotated[HomeAirport | None, Field(title='Home Airport')] = None
+    home_address: Annotated[HomeAddress | None, Field(title='Home Address')] = None
+    preferred_currency: Annotated[
+        PreferredCurrency | None, Field(title='Preferred Currency')
+    ] = None
+    confirm_overwrite: Annotated[bool | None, Field(title='Confirm Overwrite')] = False
+
+
 class AgentThreadMessageRequest(BaseModel):
     """
     Body of ``POST /agent/thread-message`` (agent-only, AGT-4).
@@ -97,6 +167,26 @@ class AgentThreadMessageRequest(BaseModel):
         extra='forbid',
     )
     content: Annotated[str, Field(max_length=8000, min_length=1, title='Content')]
+
+
+class AgentTravelLogisticsResult(BaseModel):
+    """
+    Response of ``PATCH /agent/logistics``.
+
+    Echoes the logistics after the write and lists any fields skipped because
+    they already held a different value (and ``confirm_overwrite`` was false),
+    each with the ``existing`` value so the agent can ask before overwriting.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    home_airport: Annotated[str | None, Field(title='Home Airport')] = None
+    home_address: Annotated[str | None, Field(title='Home Address')] = None
+    preferred_currency: Annotated[str | None, Field(title='Preferred Currency')] = None
+    skipped: Annotated[list[AgentLogisticsConflict] | None, Field(title='Skipped')] = (
+        None
+    )
 
 
 class AnalysisDepth(StrEnum):
@@ -385,18 +475,6 @@ class FavoriteAirport(RootModel[str]):
     ]
 
 
-class PreferredCurrency(RootModel[str]):
-    root: Annotated[
-        str,
-        Field(
-            max_length=3,
-            min_length=3,
-            pattern='^[A-Za-z]{3}$',
-            title='Preferred Currency',
-        ),
-    ]
-
-
 class ClientCreateResponse(BaseModel):
     """
     Response for ``POST /clients`` on the successful path.
@@ -629,6 +707,7 @@ class CreateNodeFromRouteRequest(BaseModel):
     service_class: Annotated[ServiceClass | None, Field(title='Service Class')] = (
         'chauffeur_black'
     )
+    starts_at: Annotated[str | None, Field(title='Starts At')] = None
 
 
 class CostAmount(RootModel[str]):
@@ -1298,6 +1377,7 @@ class MyItinerarySummary(BaseModel):
     duration_nights: Annotated[int | None, Field(title='Duration Nights')] = None
     cover_image: Annotated[str | None, Field(title='Cover Image')] = None
     cover_photo_token: Annotated[str | None, Field(title='Cover Photo Token')] = None
+    hero_image: Annotated[str | None, Field(title='Hero Image')] = None
 
 
 class MyOnboardingSessionResponse(BaseModel):
@@ -1813,6 +1893,33 @@ class Range(BaseModel):
     max: Annotated[float | None, Field(title='Max')] = None
 
 
+class ReadingListAddRequest(BaseModel):
+    """
+    An article the traveler is saving to their reading list from a flyout.
+
+    All fields come from a reading-catalog suggestion the agent already
+    surfaced, so we trust them verbatim — no re-fetch of the source page.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: Annotated[str, Field(title='Title')]
+    url: Annotated[str, Field(title='Url')]
+    publication: Annotated[str | None, Field(title='Publication')] = None
+    og_image: Annotated[str | None, Field(title='Og Image')] = None
+    excerpt: Annotated[str | None, Field(title='Excerpt')] = None
+
+
+class ReadingListAddResponse(BaseModel):
+    """
+    The persisted reading-list article node + the container it landed in.
+    """
+
+    node_id: Annotated[UUID, Field(title='Node Id')]
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+
+
 class ReconcileDecisionPayload(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -2302,6 +2409,10 @@ class Title2(RootModel[str]):
     root: Annotated[str, Field(max_length=512, title='Title')]
 
 
+class HeroImage(RootModel[str]):
+    root: Annotated[str, Field(max_length=2048, title='Hero Image')]
+
+
 class UpdateItineraryRequest(BaseModel):
     """
     Partial update of an itinerary's title + brief + timing.
@@ -2325,6 +2436,7 @@ class UpdateItineraryRequest(BaseModel):
         DurationNights | None, Field(title='Duration Nights')
     ] = None
     timing_note: Annotated[TimingNote | None, Field(title='Timing Note')] = None
+    hero_image: Annotated[HeroImage | None, Field(title='Hero Image')] = None
 
 
 class UpdateNodeRequest(BaseModel):
@@ -3070,6 +3182,7 @@ class ItineraryResponse(BaseModel):
     days_anchor: Annotated[date_aliased | None, Field(title='Days Anchor')] = None
     campaign_id: Annotated[str | None, Field(title='Campaign Id')] = None
     mood: Annotated[str | None, Field(title='Mood')] = None
+    hero_image: Annotated[str | None, Field(title='Hero Image')] = None
 
 
 class MealItem(BaseModel):
@@ -3423,6 +3536,9 @@ class AgentContext(BaseModel):
     )
     client_id: Annotated[UUID, Field(title='Client Id')]
     client_full_name: Annotated[str, Field(title='Client Full Name')]
+    home_airport: Annotated[str | None, Field(title='Home Airport')] = None
+    home_address: Annotated[str | None, Field(title='Home Address')] = None
+    preferred_currency: Annotated[str | None, Field(title='Preferred Currency')] = None
     trip_brief: Annotated[str | None, Field(title='Trip Brief')] = None
     graph_digest: Annotated[str | None, Field(title='Graph Digest')] = None
     dossier: DossierDetail | None

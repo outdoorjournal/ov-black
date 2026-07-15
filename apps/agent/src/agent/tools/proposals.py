@@ -9,11 +9,15 @@ is the single source of truth for every write.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from strands import tool
 
-from agent.backend import BackendError, pin_ctx, post_json
+from agent.backend import BackendError, delete_json, get_json, pin_ctx, post_json
+from agent.flight_timing import flight_conflicts
+
+logger = logging.getLogger(__name__)
 
 
 @tool
@@ -91,9 +95,71 @@ async def propose_flight(source: str, source_id: str) -> dict:
             raise BackendError(status=None, reason="itinerary_create_failed")
         pin_ctx.set({**pin, "itinerary_id": itinerary_id})
 
-    return await post_json(
+    result = await post_json(
         f"/itinerary/{itinerary_id}/nodes/from-inventory",
         json={"source": source, "source_id": source_id},
+    )
+    await _guard_flight_timing(itinerary_id, result)
+    return result
+
+
+def _created_node_ids(result: dict) -> set[str]:
+    """Every node id this write persisted — the primary plus any siblings.
+
+    A round-trip Duffel offer lands as an outbound + return pair carried on
+    ``additional_nodes``; both must roll back together if either leg is
+    infeasible.
+    """
+    ids: set[str] = set()
+    primary = result.get("id")
+    if isinstance(primary, str):
+        ids.add(primary)
+    for extra in result.get("additional_nodes") or []:
+        extra_id = (extra or {}).get("id")
+        if isinstance(extra_id, str):
+            ids.add(extra_id)
+    return ids
+
+
+def _is_flight(result: dict) -> bool:
+    if result.get("type") == "flight":
+        return True
+    return any((extra or {}).get("type") == "flight" for extra in result.get("additional_nodes") or [])
+
+
+async def _guard_flight_timing(itinerary_id: str, result: dict) -> None:
+    """Reject a flight that can't physically make the plan, and roll it back.
+
+    A prose rule already told the model to land before the first item; it once
+    narrated its way past it and booked an arrival a day late (a flight in the
+    middle of day 1). This is the hard floor: after the write, re-read the graph
+    and, if the just-placed leg arrives after the first commitment (or a return
+    departs before the last one ends), delete it and raise so the model must
+    choose a feasible offer instead. Fail-open on any guard error — a guard bug
+    must never swallow a real proposal.
+    """
+    if not _is_flight(result):
+        return
+    created = _created_node_ids(result)
+    if not created:
+        return
+    try:
+        graph = await get_json(f"/itinerary/{itinerary_id}")
+        conflicts = flight_conflicts(graph.get("nodes") or [])
+    except Exception:  # noqa: BLE001 — guard must not mask a successful write
+        logger.warning("propose_flight.timing_guard_failed", exc_info=True)
+        return
+    blocking = [c for c in conflicts if c.severity == "block" and c.node_id in created]
+    if not blocking:
+        return
+    for node_id in created:
+        try:
+            await delete_json(f"/itinerary/{itinerary_id}/nodes/{node_id}")
+        except BackendError:
+            logger.warning("propose_flight.rollback_failed", extra={"node_id": node_id})
+    raise BackendError(
+        status=None,
+        reason="flight_schedule_conflict: " + " ".join(c.detail for c in blocking),
     )
 
 

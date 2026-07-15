@@ -1011,21 +1011,51 @@ export const itineraryGraphStore = createStoreContext<
             };
             return { pendingProposals: [...s.pendingProposals, asNode] };
           }),
-        acceptProposal: (id) =>
-          set((s) => {
-            const proposal = s.pendingProposals.find((p) => p.id === id);
-            if (!proposal) return s;
-            const approved: NodeResponse = { ...proposal, status: "approved" };
-            return {
-              pendingProposals: s.pendingProposals.filter((p) => p.id !== id),
-              nodes: [...s.nodes, approved],
-              flashNodeId: approved.id,
-            };
-          }),
-        dismissProposal: (id) =>
-          set((s) => ({
+        // Accept a proposed card. The proposal already IS a real `pending`
+        // node server-side (propose_card/propose_flight persisted it before
+        // the `card_proposed` frame), so "accept" is purely a client move:
+        // take the card out of the proposal tray and onto the plan, KEEPING
+        // its `pending` status. It is NOT an approval — approving is the
+        // traveler's separate, deliberate lock (`approveNode`); merely adding
+        // a suggestion must not lock the card. No server write is needed (the
+        // node is already pending in the DB), so a `router.refresh()` re-reads
+        // it in the same state.
+        acceptProposal: (id) => {
+          const s = get();
+          const proposal = s.pendingProposals.find((p) => p.id === id);
+          if (!proposal) return;
+          // Idempotent: a mid-turn reload may have already seeded this node
+          // from the DB into `nodes`; never double-insert.
+          const alreadyOnPlan = s.nodes.some((n) => n.id === id);
+          set({
             pendingProposals: s.pendingProposals.filter((p) => p.id !== id),
-          })),
+            nodes: alreadyOnPlan ? s.nodes : [...s.nodes, proposal],
+            flashNodeId: proposal.id,
+          });
+        },
+        // Decline a proposed card: soft-remove it (`discarded`) server-side so
+        // the pending node the agent persisted doesn't linger on the plan. Also
+        // a direct graph op — the agent is not told.
+        dismissProposal: (id) => {
+          const s = get();
+          const proposal = s.pendingProposals.find((p) => p.id === id);
+          if (!proposal) return;
+          const c = client();
+          if (!c) return;
+          set({
+            pendingProposals: s.pendingProposals.filter((p) => p.id !== id),
+          });
+          void updateNodeStatus(c, {
+            itineraryId: s.itineraryId,
+            nodeId: id,
+            status: "discarded",
+          }).then((result) => {
+            if (!result.ok)
+              set((cur) => ({
+                pendingProposals: [...cur.pendingProposals, proposal],
+              }));
+          });
+        },
         insertCreatedNode: (node) =>
           set((s) => {
             // Idempotent: a mid-turn reveal can race a page reload that already

@@ -171,6 +171,15 @@ class OlympusCornerstone:
                 "difficulty": self.difficulty,
             },
             "gallery": [{"url": url} for url in self.gallery_urls],
+            # The vetted operator behind every Olympus cornerstone. Rendered as
+            # the detail card's "specially vetted" seal, linking to the operator
+            # profile page under the web app's public/ tree.
+            "operator": {
+                "name": "Trekking Hellas",
+                "logo_url": "/operators/trekking-hellas/logo-header.svg",
+                "profile_url": "/operators/trekking-hellas",
+                "vetted": True,
+            },
         }
 
 

@@ -470,14 +470,16 @@ export function ConciergeChat({
     [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],
   );
 
-  // Accept a proposed card. Three things have to happen without a reload: the
-  // card lands on the plan (optimistic — it survives the refresh below), it's
-  // SELECTED (the rail/ambient layer follow `focusedNodeId`) and REVEALED on the
-  // spine. The day scaffold is server-rendered (see TimelineDataContext), so the
-  // node's own date may not have a day section until the RSC re-runs — hence the
-  // `router.refresh()` + a retrying scroll that waits for the card to mount.
-  // Finally we tell the concierge, which drives the next turn: it approves the
-  // card server-side and proposes the next one (one card at a time).
+  // Accept a proposed card. This just moves the (already-`pending`) node from
+  // the proposal tray onto the plan — it is NOT an approval/lock (the store
+  // keeps it `pending`), and it's no chat turn, so the agent is not confused
+  // by a second pending card still on screen. Three things happen without a
+  // reload: the card lands on the plan (optimistic — it survives the
+  // refresh below), it's SELECTED (the rail/ambient layer follow
+  // `focusedNodeId`) and REVEALED on the spine. The day scaffold is
+  // server-rendered (see TimelineDataContext), so the node's own date may not
+  // have a day section until the RSC re-runs — hence the `router.refresh()` + a
+  // retrying scroll that waits for the card to mount.
   const acceptProposal = useCallback(
     (id: string) => {
       const st = storeApi.getState();
@@ -485,19 +487,18 @@ export function ConciergeChat({
       st.focusNode(id, "click");
       router.refresh();
       scrollNodeIntoView(id, revealTimersRef);
-      handleSubmit("I accepted this suggestion");
     },
-    [storeApi, router, handleSubmit],
+    [storeApi, router],
   );
 
-  // Dismiss a proposal: drop the card and tell the concierge so it takes another
-  // turn — offering a different option instead of leaving the card hanging.
+  // Dismiss a proposal: soft-remove the card (the store persists it as
+  // `discarded`) and refresh the server-rendered timeline so it drops off.
   const dismissProposal = useCallback(
     (id: string) => {
       storeApi.getState().dismissProposal(id);
-      handleSubmit("I did not accept this suggestion");
+      router.refresh();
     },
-    [storeApi, handleSubmit],
+    [storeApi, router],
   );
 
   // Campaign dashboard kickoff (fires at most once). Two phases:

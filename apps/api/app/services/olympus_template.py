@@ -71,7 +71,7 @@ OLYMPUS_SPINE_SLUGS: dict[int, str] = {5: "olympus-5d", 7: "olympus-7d", 14: "ol
 #: composition, different metadata shape) — folds into the content hash so those
 #: changes also mint a fresh template. Seed-data edits need no bump; they change
 #: the hash on their own.
-_BUILD_VERSION = 1
+_BUILD_VERSION = 2
 
 
 def _canonical(obj: Any) -> Any:

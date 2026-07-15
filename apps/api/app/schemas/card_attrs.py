@@ -90,6 +90,25 @@ class GalleryImage(BaseModel):
     credit: str | None = None
 
 
+class Operator(BaseModel):
+    """A vetted third-party operator standing behind an experience.
+
+    Surfaced on the detail card as a "specially vetted" seal — the operator's
+    name and logo, next to a mark that links out to their Outdoor Voyage
+    profile page. Populated for cornerstone experiences whose operator we
+    present directly (e.g. the Mt Olympus ascent → Trekking Hellas). ``logo_url``
+    and ``profile_url`` are same-origin paths (``/operators/…``) served from the
+    web app's ``public/`` tree, so the client links/loads them directly.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    logo_url: str | None = None
+    profile_url: str | None = None
+    vetted: bool = False
+
+
 class PlaceFacts(BaseModel):
     """Point-of-interest facts (Google Places et al.) surfaced on experience /
     meal cards: crowd rating, opening hours, contact details, an external map
@@ -405,6 +424,9 @@ class ExperienceCardAttrs(_CardBase):
     # Editorial "moments" gallery (OV ``images[]``) — supporting photos beyond
     # the hero, rendered as a captioned thumbnail strip on the detail zoom.
     gallery: list[GalleryImage] = Field(default_factory=list)
+    # The vetted operator behind this experience — rendered as a "specially
+    # vetted" seal (name + logo) linking to their OV profile page.
+    operator: Operator | None = None
 
 
 class MealCardAttrs(_CardBase):
@@ -548,6 +570,7 @@ __all__ = [
     "HotelCardAttrs",
     "MealCardAttrs",
     "NoteCardAttrs",
+    "Operator",
     "Phrase",
     "PlaceFacts",
     "SceneryCallout",

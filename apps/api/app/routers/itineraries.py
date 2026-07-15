@@ -1519,6 +1519,7 @@ class CreateNodeFromRouteRequest(BaseModel):
     waypoints: list[str] = Field(default_factory=list)
     party_size: int = Field(default=1, ge=1)
     service_class: Literal["chauffeur_black", "first_class", "standard_taxi"] = "chauffeur_black"
+    starts_at: str | None = None
 
 
 @router.post(
@@ -1568,6 +1569,10 @@ async def create_node_from_route_endpoint(
     title, attrs, price = build_transfer_card(
         route=route, service_class=payload.service_class, party_size=payload.party_size
     )
+    # The route's real drive time spans the card on the timeline; a caller-supplied
+    # ``starts_at`` lands it ON the plan (an airport pickup, a driver between two
+    # cards) instead of dateless in the Collection. Duration rides even when
+    # unscheduled, so the card carries its true length wherever it's placed later.
     result = await add_node(
         session,
         actor,
@@ -1577,6 +1582,8 @@ async def create_node_from_route_endpoint(
         source="route",
         source_id=f"{payload.origin}→{payload.destination}:{payload.mode}:{payload.service_class}",
         metadata=attrs.model_dump(mode="json", exclude_none=True),
+        starts_at=payload.starts_at,
+        duration_minutes=attrs.eta_minutes,
         cost_amount=price,
         cost_currency="EUR",
         cost_kind=CostKind.total,

@@ -143,6 +143,15 @@ async def patch_json(path: str, *, json: dict | None = None) -> Any:
     return _unwrap(resp)
 
 
+async def delete_json(path: str) -> Any:
+    """DELETE a path, return decoded JSON (or ``None`` on 204), raise on failure."""
+    try:
+        resp = await _client().delete(path, headers=_auth_headers())
+    except httpx.HTTPError as exc:
+        raise BackendError(status=None, reason=exc.__class__.__name__) from exc
+    return _unwrap(resp)
+
+
 async def agent_get_json(path: str, *, params: dict | None = None) -> Any:
     """GET against an ``/agent/*`` route using the per-session agent token."""
     try:

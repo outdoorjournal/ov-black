@@ -402,7 +402,7 @@ function RailBigCard({
         className="group cursor-pointer rounded-2xl outline-none transition focus-visible:ring-2 focus-visible:ring-ink/25"
       >
         <div className="transition-transform duration-200 group-hover:-translate-y-0.5">
-          <NodeZoomCard node={node} tzOffsetHours={tz} />
+          <NodeZoomCard node={node} tzOffsetHours={tz} variant="rail" />
         </div>
       </div>
 

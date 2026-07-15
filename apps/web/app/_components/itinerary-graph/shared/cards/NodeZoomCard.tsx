@@ -104,6 +104,12 @@ interface GalleryImage {
   caption?: string;
   credit?: string;
 }
+interface Operator {
+  name?: string;
+  logo_url?: string;
+  profile_url?: string;
+  vetted?: boolean;
+}
 
 interface ZoomMeta {
   description?: string;
@@ -191,6 +197,7 @@ interface ZoomMeta {
   language_support?: string;
   group_size?: string;
   gallery?: GalleryImage[];
+  operator?: Operator;
   // meal
   cuisine_class?: string;
   seating_at?: string;
@@ -231,12 +238,20 @@ function statusToKind(status: NodeResponse["status"]): StatusKind {
 
 // ── Public component ───────────────────────────────────────────────────
 
+/** Where this zoom card is rendered. The full-detail `"modal"` (default) shows
+ *  everything; the `"rail"` LARGE form on the journal spine is a preview into
+ *  that modal, so it trades secondary richness (the moments gallery) for a
+ *  cleaner read — the gallery is one tap away in the modal it opens. */
+export type ZoomVariant = "modal" | "rail";
+
 export function NodeZoomCard({
   node,
   tzOffsetHours,
+  variant = "modal",
 }: {
   node: NodeResponse;
   tzOffsetHours: number;
+  variant?: ZoomVariant;
 }) {
   const kind = inferCardKind(node);
   const status = statusToKind(node.status);
@@ -261,7 +276,7 @@ export function NodeZoomCard({
       {...(serial ? { serial } : {})}
       {...(statusDate ? { statusDate } : {})}
     >
-      <ZoomBody node={node} kind={kind} meta={m} tz={tzOffsetHours} />
+      <ZoomBody node={node} kind={kind} meta={m} tz={tzOffsetHours} variant={variant} />
     </CardShell>
   );
 }
@@ -271,11 +286,13 @@ function ZoomBody({
   kind,
   meta,
   tz,
+  variant,
 }: {
   node: NodeResponse;
   kind: CardKind;
   meta: ZoomMeta;
   tz: number;
+  variant: ZoomVariant;
 }) {
   switch (kind) {
     case "flight":
@@ -294,7 +311,7 @@ function ZoomBody({
       return <HotelZoom node={node} m={meta} tz={tz} />;
     case "experience":
     case "destination":
-      return <ExperienceZoom node={node} m={meta} />;
+      return <ExperienceZoom node={node} m={meta} variant={variant} />;
     case "meal":
       return <MealZoom node={node} m={meta} tz={tz} />;
     case "free_time":
@@ -314,6 +331,10 @@ function FlightZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: numb
   const t = TYPE_TOKENS.flight;
   const depart = m.depart_at ? formatClock(m.depart_at, offsetHoursOr(m.depart_at, tz)) : null;
   const arrive = m.arrive_at ? formatClock(m.arrive_at, offsetHoursOr(m.arrive_at, tz)) : null;
+  const departDate = m.depart_at ? formatDayStamp(m.depart_at, offsetHoursOr(m.depart_at, tz)) : null;
+  const arriveDate = m.arrive_at ? formatDayStamp(m.arrive_at, offsetHoursOr(m.arrive_at, tz)) : null;
+  // Only flag the arrival date when it lands on a different calendar day (red-eye / date-line crossings).
+  const arriveDateShown = arriveDate && arriveDate !== departDate ? arriveDate : null;
   const dur = typeof m.duration_minutes === "number" ? formatDuration(m.duration_minutes) : null;
   return (
     <>
@@ -327,9 +348,9 @@ function FlightZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: numb
       ) : null}
 
       <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
-        <Endpoint code={m.iata_from} city={cityOnly(m.from_location?.label)} time={depart} />
+        <Endpoint code={m.iata_from} city={cityOnly(m.from_location?.label)} time={depart} date={departDate} />
         <FlightArcLarge accent={t.accent} duration={dur} miles={m.miles ? `${m.miles.toLocaleString()} mi` : null} />
-        <Endpoint code={m.iata_to} city={cityOnly(m.to_location?.label)} time={arrive} align="right" />
+        <Endpoint code={m.iata_to} city={cityOnly(m.to_location?.label)} time={arrive} date={arriveDateShown} align="right" />
       </div>
 
       <DetailGrid
@@ -679,7 +700,15 @@ function HotelZoom({ node, m, tz }: { node: NodeResponse; m: ZoomMeta; tz: numbe
   );
 }
 
-function ExperienceZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
+function ExperienceZoom({
+  node,
+  m,
+  variant,
+}: {
+  node: NodeResponse;
+  m: ZoomMeta;
+  variant: ZoomVariant;
+}) {
   const t = TYPE_TOKENS.experience;
   const cover = placePhotoUrl(m.place?.photo_token) ?? m.snapshot?.cover_image ?? m.ambient_image;
   const dur = typeof m.duration_minutes === "number" ? formatDuration(m.duration_minutes) : null;
@@ -691,11 +720,17 @@ function ExperienceZoom({ node, m }: { node: NodeResponse; m: ZoomMeta }) {
       <p className="text-[12px] text-ink/65">
         {joinDot([m.location?.label ?? m.snapshot?.location, prettify(m.category), dur])}
       </p>
+
+      <OperatorSeal operator={m.operator} />
+
       {m.description ? (
         <p className="mt-3 text-[12px] leading-relaxed text-ink/85">{m.description}</p>
       ) : null}
 
-      <MomentsGallery images={m.gallery} />
+      {/* The moments gallery is secondary richness — shown in the full-detail
+          modal, dropped from the LARGE rail preview it opens (keeps the rail
+          card a clean read; the gallery is one tap away). */}
+      {variant === "modal" ? <MomentsGallery images={m.gallery} /> : null}
 
       <PlaceInfo place={m.place} tint={t.tint} />
 
@@ -904,11 +939,13 @@ function Endpoint({
   code,
   city,
   time,
+  date,
   align = "left",
 }: {
   code: string | undefined;
   city: string | null;
   time: string | null;
+  date?: string | null;
   align?: "left" | "right";
 }) {
   const a = align === "right" ? "text-right" : "text-left";
@@ -917,6 +954,9 @@ function Endpoint({
       <p className="font-mono text-[22px] leading-none tracking-widest text-ink">{code ?? "—"}</p>
       {city ? <p className="mt-1 text-[11px] text-ink/65">{city}</p> : null}
       {time ? <p className="mt-2 font-mono text-[14px] text-ink/85">{time}</p> : null}
+      {date ? (
+        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink/55">{date}</p>
+      ) : null}
     </div>
   );
 }
@@ -1123,6 +1163,78 @@ function MomentsGallery({ images }: { images?: GalleryImage[] | undefined }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// The vetted-operator seal — the operator's logo + name beside a "specially
+// vetted" mark, the whole row a link out to their OV profile page (new tab).
+// Rendered on both the modal and the LARGE rail form. Renders nothing when the
+// card carries no operator (the vast majority of cards).
+function OperatorSeal({ operator }: { operator?: Operator | undefined }) {
+  if (!operator?.name) return null;
+  const href = operator.profile_url;
+  const body = (
+    <>
+      {operator.logo_url ? (
+        <span className="flex h-9 shrink-0 items-center rounded-sm bg-paper px-2 shadow-[0_1px_3px_rgba(10,10,10,0.08)] ring-1 ring-ink/10">
+          {/* eslint-disable-next-line @next/next/no-img-element -- same-origin /public SVG; next/image loaders unneeded. */}
+          <img src={operator.logo_url} alt={operator.name} className="h-5 w-auto" />
+        </span>
+      ) : null}
+      <span className="min-w-0">
+        <span className="block font-serif text-[13px] leading-tight text-ink">
+          {operator.name}
+        </span>
+        {operator.vetted ? (
+          <span className="mt-0.5 flex items-center gap-1 text-[9px] uppercase tracking-[0.16em] text-brand">
+            <VettedSeal /> Specially vetted
+          </span>
+        ) : null}
+      </span>
+      {href ? (
+        <span className="ml-auto shrink-0 self-center text-[10px] uppercase tracking-[0.16em] text-ink/45 transition-colors group-hover/seal:text-brand">
+          Operator ↗
+        </span>
+      ) : null}
+    </>
+  );
+  const cls =
+    "group/seal mt-4 flex items-center gap-3 rounded-lg border border-ink/12 bg-paper/70 px-3 py-2.5";
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="card-operator-seal"
+      className={`${cls} transition-colors hover:border-brand/40 hover:bg-brand/[0.04]`}
+    >
+      {body}
+    </a>
+  ) : (
+    <div data-testid="card-operator-seal" className={cls}>
+      {body}
+    </div>
+  );
+}
+
+// The little rosette that marks the operator as OV-vetted — a scalloped seal
+// with a check, drawn in the brand accent (orange as punctuation, not paint).
+function VettedSeal() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden className="text-brand">
+      <path
+        fill="currentColor"
+        d="M12 1.5l2.35 1.86 2.98-.34 1.02 2.82 2.82 1.02-.34 2.98L22.5 12l-1.86 2.35.34 2.98-2.82 1.02-1.02 2.82-2.98-.34L12 22.5l-2.35-1.86-2.98.34-1.02-2.82-2.82-1.02.34-2.98L1.5 12l1.86-2.35-.34-2.98 2.82-1.02 1.02-2.82 2.98.34z"
+      />
+      <path
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8.5 12.2l2.4 2.4 4.6-4.9"
+      />
+    </svg>
   );
 }
 
