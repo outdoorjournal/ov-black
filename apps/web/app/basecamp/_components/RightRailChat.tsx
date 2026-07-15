@@ -79,6 +79,16 @@ function asMoodId(value: string): MoodId | null {
   return MOOD_ID_VALUES.has(value) ? (value as MoodId) : null;
 }
 
+// The concierge's opening line on a fresh basecamp — shown as a leading
+// assistant bubble whenever the traveler lands on the null-itinerary chat with
+// no prior turns, so the rail is never a blank void. Display-only (not persisted
+// as a turn): it stays pinned above whatever the traveler types this session,
+// and a returning traveler with real history opens on that history instead.
+// "Artemis" is the name the traveler already sees on this channel (PeopleCircles).
+const BASECAMP_GREETING =
+  "Hello — I'm Artemis, your concierge. Tell me about a place you've been " +
+  "dreaming of, or ask me anything at all. We'll begin wherever you like.";
+
 export type RightRailChatProps = {
   clientId: string;
   accessToken: string;
@@ -115,6 +125,11 @@ function RightRailChatInner({
 }: RightRailChatProps) {
   const turns = basecampChatStore.useStore((s) => s.turns);
   const streaming = basecampChatStore.useStore((s) => s.streaming);
+  // How many turns loaded from the server at mount. Zero → a fresh basecamp with
+  // no history, so Artemis leads with a greeting (below).
+  const initialTurnsCount = basecampChatStore.useStore(
+    (s) => s.initialTurnsCount,
+  );
   const storeApi = basecampChatStore.useStoreApi();
 
   // PS7 unify: the basecamp rail carries both channels — Artemis (this AI
@@ -278,11 +293,24 @@ function RightRailChatInner({
   // AgentTurnView.role is a superset of ConversationRole (they share
   // user/assistant/system/tool/error/milestone), so roles pass straight
   // through; the in-flight buffer becomes a trailing streaming bubble.
-  const messages: ConversationMessage[] = turns.map((t) => ({
-    id: t.id,
-    role: t.role,
-    text: t.content,
-  }));
+  const messages: ConversationMessage[] = [];
+  // No history → open with Artemis' greeting, pinned above anything the traveler
+  // sends this session (gated on the server's mount-time count, not live turns,
+  // so it doesn't vanish the moment they reply).
+  if (initialTurnsCount === 0) {
+    messages.push({
+      id: "basecamp-greeting",
+      role: "assistant",
+      text: BASECAMP_GREETING,
+    });
+  }
+  messages.push(
+    ...turns.map((t) => ({
+      id: t.id,
+      role: t.role,
+      text: t.content,
+    })),
+  );
   if (streaming) {
     messages.push({
       id: `streaming-${streaming.turnIndex}`,

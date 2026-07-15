@@ -777,6 +777,29 @@ async def update_itinerary_details(
             detail="booked_dates_locked",
         )
 
+    # Settling exact dates under an already-scheduled spine is a uniform retime,
+    # not a bare re-label. When the anchor moves, the cards must move with it —
+    # else Day 1 splits from date_start: a spine laid at a PROVISIONAL anchor
+    # (the kickoff lays it before dates are known) stays stranded at the old
+    # dates while the trip now claims the new ones, so the timeline still shows
+    # the old Day 1. Capture the whole-day delta from the OLD anchor now — the
+    # field loop below overwrites date_start. Booked cards pin the calendar
+    # (their dates are supplier commitments), so a real shift refuses the same
+    # way `retime_itinerary` does.
+    retime_delta_days = 0
+    if (
+        new_kind is ItineraryTimingKind.exact
+        and new_start is not None
+        and itinerary.days_anchor is not None
+        and new_start != itinerary.date_start
+    ):
+        retime_delta_days = (new_start - itinerary.days_anchor).days
+        if retime_delta_days != 0 and await _has_booked_nodes(session, itinerary.id):
+            return ItineraryError(
+                outcome=ItineraryOutcome.CONFLICT,
+                detail="booked_dates_locked",
+            )
+
     changed: list[str] = []
     for key, value in updates.items():
         if key == "title" and value is None:
@@ -786,15 +809,22 @@ async def update_itinerary_details(
             changed.append(key)
 
     # On a pinned (exact) trip `date_start` IS Day 1, so the stamped anchor must
-    # follow it — otherwise a `days_anchor` stamped earlier (e.g. against a
-    # scratch note added before dates were set) leaves Day-N numbering counting
-    # from a phantom start and mis-shifts a later retime. `retime_itinerary`
-    # re-stamps on its own path; this is the raw window-edit path's equivalent.
+    # follow it. When the anchor actually moved under already-scheduled cards,
+    # shift them by the same whole-day delta first (retime's contract) so their
+    # Day-N positions survive; then re-stamp. With nothing scheduled — or a
+    # stale anchor the caller isn't moving off (e.g. a `days_anchor` stamped
+    # against a scratch note before dates were set) — the delta is zero, the
+    # shift is a no-op, and only the label is corrected.
+    shifted_node_ids: list[uuid.UUID] = []
     if (
         itinerary.timing_kind is ItineraryTimingKind.exact
         and itinerary.date_start is not None
         and itinerary.days_anchor != itinerary.date_start
     ):
+        if retime_delta_days != 0:
+            shifted_node_ids = await _shift_scheduled_nodes(
+                session, actor, itinerary.id, delta_days=retime_delta_days
+            )
         itinerary.days_anchor = itinerary.date_start
         if "days_anchor" not in changed:
             changed.append("days_anchor")
@@ -810,6 +840,7 @@ async def update_itinerary_details(
             "actor_id": actor.actor_id,
             # Field NAMES only — never the free-text brief / note values.
             "fields": ",".join(sorted(changed)),
+            "shifted_nodes": len(shifted_node_ids),
         },
     )
     return itinerary
@@ -890,6 +921,92 @@ class RetimeResult:
     shifted_node_ids: tuple[uuid.UUID, ...]
 
 
+async def _shift_scheduled_nodes(
+    session: AsyncSession,
+    actor: ActorContext,
+    itinerary_id: uuid.UUID,
+    *,
+    delta_days: int,
+) -> list[uuid.UUID]:
+    """Shift every scheduled node by ``delta_days`` whole days, wall-clock kept.
+
+    The shared core of a uniform trip retime: each node's ``starts_at`` /
+    ``metadata.start_time`` moves by ``delta_days`` days while its wall-clock
+    time and tz offset are preserved (a 09:00 breakfast stays a 09:00
+    breakfast), and each moved node gets a ``node_history`` row. Both the
+    explicit retime gesture (:func:`retime_itinerary`) and the intake
+    date-settle path (:func:`update_itinerary_details`, when an exact trip's
+    anchor moves under already-scheduled cards) shift through here so a card's
+    Day-N position survives the anchor move. A zero delta is a no-op.
+    """
+    if delta_days == 0:
+        return []
+    nodes = (
+        (
+            await session.execute(
+                select(Node).where(
+                    Node.itinerary_id == itinerary_id,
+                    Node.starts_at.isnot(None),
+                    Node.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    delta = timedelta(days=delta_days)
+    shifted: list[uuid.UUID] = []
+    for node in nodes:
+        before = _snapshot_node(node)
+        meta = node.metadata_ if isinstance(node.metadata_, dict) else {}
+        iso = meta.get("start_time")
+        new_range: Range[datetime] | None = None
+        if isinstance(iso, str) and iso:
+            # Shift the mirrored wall-clock and rebuild the column from it — the
+            # same metadata-first contract as update_node's schedule sync. A
+            # fixed-offset datetime + N days keeps the wall-clock.
+            try:
+                new_local = datetime.fromisoformat(iso) + delta
+            except ValueError:
+                new_local = None
+            if new_local is not None:
+                lower = getattr(node.starts_at, "lower", None)
+                upper = getattr(node.starts_at, "upper", None)
+                dur = (
+                    round((upper - lower).total_seconds() / 60)
+                    if isinstance(lower, datetime) and isinstance(upper, datetime)
+                    else None
+                )
+                new_iso = new_local.isoformat()
+                new_range = _build_starts_at(new_iso, dur)
+                if new_range is not None:
+                    node.metadata_ = {**meta, "start_time": new_iso}
+        if new_range is None:
+            # No (parseable) mirror — shift the raw UTC bounds; whole-day deltas
+            # preserve the wall-clock in any fixed-offset zone.
+            lower = getattr(node.starts_at, "lower", None)
+            upper = getattr(node.starts_at, "upper", None)
+            if not isinstance(lower, datetime):
+                continue
+            new_range = Range(
+                lower + delta,
+                upper + delta if isinstance(upper, datetime) else None,
+                bounds="[)",
+            )
+        node.starts_at = new_range
+        await _write_node_history(
+            session,
+            node_id=node.id,
+            itinerary_id=itinerary_id,
+            op="update",
+            actor=actor,
+            before=before,
+            after=_snapshot_node(node),
+        )
+        shifted.append(node.id)
+    return shifted
+
+
 async def retime_itinerary(
     session: AsyncSession,
     actor: ActorContext,
@@ -959,57 +1076,9 @@ async def retime_itinerary(
             detail="booked_dates_locked",
         )
 
-    shifted: list[uuid.UUID] = []
-    if delta_days != 0:
-        delta = timedelta(days=delta_days)
-        for node in nodes:
-            before = _snapshot_node(node)
-            meta = node.metadata_ if isinstance(node.metadata_, dict) else {}
-            iso = meta.get("start_time")
-            new_range: Range[datetime] | None = None
-            if isinstance(iso, str) and iso:
-                # Shift the mirrored wall-clock and rebuild the column from it —
-                # the same metadata-first contract as update_node's schedule
-                # sync. A fixed-offset datetime + N days keeps the wall-clock.
-                try:
-                    new_local = datetime.fromisoformat(iso) + delta
-                except ValueError:
-                    new_local = None
-                if new_local is not None:
-                    lower = getattr(node.starts_at, "lower", None)
-                    upper = getattr(node.starts_at, "upper", None)
-                    dur = (
-                        round((upper - lower).total_seconds() / 60)
-                        if isinstance(lower, datetime) and isinstance(upper, datetime)
-                        else None
-                    )
-                    new_iso = new_local.isoformat()
-                    new_range = _build_starts_at(new_iso, dur)
-                    if new_range is not None:
-                        node.metadata_ = {**meta, "start_time": new_iso}
-            if new_range is None:
-                # No (parseable) mirror — shift the raw UTC bounds; whole-day
-                # deltas preserve the wall-clock in any fixed-offset zone.
-                lower = getattr(node.starts_at, "lower", None)
-                upper = getattr(node.starts_at, "upper", None)
-                if not isinstance(lower, datetime):
-                    continue
-                new_range = Range(
-                    lower + delta,
-                    upper + delta if isinstance(upper, datetime) else None,
-                    bounds="[)",
-                )
-            node.starts_at = new_range
-            await _write_node_history(
-                session,
-                node_id=node.id,
-                itinerary_id=itinerary.id,
-                op="update",
-                actor=actor,
-                before=before,
-                after=_snapshot_node(node),
-            )
-            shifted.append(node.id)
+    # Shift every scheduled card by the whole-day delta (wall-clock preserved,
+    # node_history written). Shares its core with the intake date-settle path.
+    shifted = await _shift_scheduled_nodes(session, actor, itinerary.id, delta_days=delta_days)
 
     old_start, old_end = itinerary.date_start, itinerary.date_end
     resolved_end = date_end

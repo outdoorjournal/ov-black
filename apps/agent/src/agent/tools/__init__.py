@@ -178,6 +178,16 @@ _TOOLS_QA = [
 ]
 
 
+# Campaign kickoff is a PROSE-ONLY greeting: the spine + reading list are already
+# on the canvas (seeded deterministically by /campaign/kickoff), so the model has
+# nothing to build or read this turn. Handing it an empty toolset is the point —
+# with no tools it cannot fire silent get_traveler_context / get_itinerary reads
+# (each a round-trip + re-invocation + interleaved thinking) before the first
+# token, which is what made the opener sit dark for a minute or two. The KICKOFF
+# directive in the system prompt carries everything the greeting needs.
+_TOOLS_KICKOFF: list = []
+
+
 def tools_for(mode: Mode) -> list:
     if mode is Mode.onboarding:
         return list(_TOOLS_ONBOARDING)
@@ -185,6 +195,8 @@ def tools_for(mode: Mode) -> list:
         return list(_TOOLS_INTAKE)
     if mode is Mode.planning:
         return list(_TOOLS_PLANNING)
+    if mode is Mode.kickoff:
+        return list(_TOOLS_KICKOFF)
     return list(_TOOLS_QA)
 
 

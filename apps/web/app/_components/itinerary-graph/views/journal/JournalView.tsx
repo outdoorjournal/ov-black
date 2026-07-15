@@ -94,7 +94,6 @@ import { MoreBelowCue } from "./MoreBelow";
 import { journalProblems, type JournalProblem } from "./problems";
 import { RightRail } from "./RightRail";
 import { useIs2xl } from "./useIs2xl";
-import { CardDetailView } from "@/app/itinerary/[id]/_shell/CardDetailView";
 import {
   JOURNAL_BAR_WIDTH_PX,
   JOURNEY_INDENT_PX,
@@ -139,7 +138,6 @@ export function JournalView({
   const edges = itineraryGraphStore.useStore((s) => s.edges);
   const findings = itineraryGraphStore.useStore((s) => s.findings);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
-  const focusSource = itineraryGraphStore.useStore((s) => s.focusSource);
   const focusNode = itineraryGraphStore.useStore((s) => s.focusNode);
   const awaitingProposal = itineraryGraphStore.useStore((s) => s.awaitingProposal);
   const viewerOpenForkId = itineraryGraphStore.useStore((s) => s.viewerOpenForkId);
@@ -152,10 +150,11 @@ export function JournalView({
   // fork on the trunk, nothing at all otherwise (no drag affordance).
   const dropMode = itineraryGraphStore.useStore(journalDropMode);
   const storeApi = itineraryGraphStore.useStoreApi();
-  // The very-large tier (≥1536): the right region promotes from the cockpit
-  // rail to the full detail inline — selection IS the open, no modal, no second
-  // click (rail redesign, phase 4). Diff mode stays on the cockpit (its
-  // accept/keep decisions live there), so inline-detail is normal-reading only.
+  // The very-large tier (≥1536): the right region trades the compact cockpit
+  // for the active card's full NodeZoomCard at the top of the rail (click →
+  // the intercepting detail modal), with the notes thread beneath it. Diff mode
+  // stays on the cockpit (its accept/keep decisions live there), so the big-card
+  // tier is normal-reading only.
   const is2xl = useIs2xl();
 
   const tz = timeline.timezoneOffsetHours;
@@ -163,40 +162,9 @@ export function JournalView({
   // this version against its baseline). The gesture gates flip as soon as the
   // toggle is on; the annotated sequence lands when the diff response does.
   const diffActive = diffMode && Boolean(timeline.itinerary.forked_from_id);
-  const inlineDetail = is2xl && !diffActive;
-  // Only a real interaction (scroll/click) drives the inline detail — the
-  // store's seeded default focus keeps the idle glance until the reader moves.
-  // A diff-mode ghost (trunk-only, synthesized) has no detail page, so it never
-  // opens the inline detail.
-  const inlineDetailNodeId =
-    inlineDetail &&
-    focusSource !== null &&
-    focusedNodeId &&
-    !isGhostId(focusedNodeId)
-      ? focusedNodeId
-      : null;
-  // Expand-to-lock (2xl): the region defaults to the cheap cockpit (follows the
-  // scroll-active card); "Open full" EXPANDS the full detail in place and hard-
-  // locks focus so scrolling can't swap it, until dismissed. A change of active
-  // card (clicking another, or the detail clearing) drops the expansion + lock.
-  const [inlineExpanded, setInlineExpanded] = useState(false);
-  useEffect(() => {
-    setInlineExpanded(false);
-    storeApi.getState().setFocusLocked(false);
-  }, [inlineDetailNodeId, storeApi]);
-  const expandInlineDetail = useCallback(() => {
-    setInlineExpanded(true);
-    storeApi.getState().setFocusLocked(true);
-  }, [storeApi]);
-  const collapseInlineDetail = useCallback(() => {
-    setInlineExpanded(false);
-    storeApi.getState().setFocusLocked(false);
-  }, [storeApi]);
-  const showInlineFull = Boolean(inlineDetailNodeId) && inlineExpanded;
-  const toggleInlineDetail = useCallback(() => {
-    if (inlineExpanded) collapseInlineDetail();
-    else expandInlineDetail();
-  }, [inlineExpanded, expandInlineDetail, collapseInlineDetail]);
+  // The 2xl big-card tier: the active card's NodeZoomCard leads the rail (click
+  // → modal), notes beneath. Diff mode keeps the cockpit, so it's off there.
+  const bigCard = is2xl && !diffActive;
   const diffView = useMemo<JournalDiffViewOrNull>(() => {
     if (!diffActive) return null;
     const base = {
@@ -503,40 +471,26 @@ export function JournalView({
             /item/[nodeId] instead) — same screen, responsive. Cinema fades it
             out with the rest of the chrome.
               · <2xl: the fixed 340px COCKPIT rail (medium tier); its "Open
-                full" handle opens the modal.
-              · 2xl+ : the cockpit still leads (following the scroll-active card
-                cheaply); "Open full" EXPANDS the full CardDetailView BENEATH the
-                cockpit and hard-locks focus until dismissed. The expanded stack
-                flows into the page (not sticky), so it scrolls to the bottom
-                normally — the lock keeps the card from swapping while you do. */}
+                full" handle opens the intercepting detail modal.
+              · 2xl+ : a wider rail leading with the active card's full
+                NodeZoomCard (click → the same modal) over the notes thread. */}
         <aside
           data-testid="journal-rail"
           className={[
-            "w-full transition-opacity duration-500 lg:order-3 lg:w-[340px] lg:shrink-0",
+            "w-full transition-[width,opacity] duration-500 lg:order-3 lg:shrink-0",
+            bigCard ? "lg:w-[560px]" : "lg:w-[340px]",
             cinemaMode ? "pointer-events-none opacity-0" : "opacity-100",
           ].join(" ")}
         >
-          <div className={showInlineFull ? "flex flex-col gap-3" : "lg:sticky lg:top-4"}>
-            <RightRail
-              idle={railIdle}
-              diffView={diffView}
-              onToggleFull={inlineDetail ? toggleInlineDetail : null}
-              fullOpen={showInlineFull}
-            />
-            {showInlineFull && inlineDetailNodeId ? (
-              <div data-testid="journal-inline-detail">
-                {/* Key by node so the detail's in-place editors (schedule day/
-                    time, edit fields) reset per card — the panel instance
-                    persists as the active node changes otherwise. Mirrors the
-                    cockpit's `RailEditPanel key={active.id}`. */}
-                <CardDetailView
-                  key={inlineDetailNodeId}
-                  nodeId={inlineDetailNodeId}
-                  embedded
-                  onDismiss={collapseInlineDetail}
-                />
-              </div>
-            ) : null}
+          {/* Sticky so the reactive margin stays in view as the story scrolls;
+              the big card can outgrow the viewport, so it scrolls internally. */}
+          <div
+            className={[
+              "lg:sticky lg:top-4",
+              bigCard ? "lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto" : "",
+            ].join(" ")}
+          >
+            <RightRail idle={railIdle} diffView={diffView} bigCard={bigCard} />
           </div>
         </aside>
       </div>

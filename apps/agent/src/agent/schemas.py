@@ -27,6 +27,11 @@ class Mode(str, enum.Enum):
     intake = "intake"
     planning = "planning"
     qa = "qa"
+    # Campaign dashboard opener. The curated spine + reading list are already on
+    # the canvas (laid down deterministically by /campaign/kickoff), so this turn
+    # is a pure PROSE greeting — no tools, so the model can't stall on silent
+    # reads before the first token streams. See _TOOLS_KICKOFF / build_kickoff_prompt.
+    kickoff = "kickoff"
 
 
 class PriorTurn(BaseModel):

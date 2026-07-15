@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import socket
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -342,7 +342,8 @@ async def test_pinning_via_details_restamps_anchor_to_date_start(
     """
     itin = await _windowed_itinerary(db_session, title="pin-via-details")
     try:
-        await _scheduled_node(db_session, itin.id, starts_at="2027-06-03T09:00:00+02:00")
+        # A Day-3 card (window start 2027-06-01 = Day 1).
+        card = await _scheduled_node(db_session, itin.id, starts_at="2027-06-03T09:00:00+02:00")
         await db_session.refresh(itin)
         assert itin.days_anchor == date(2027, 6, 1)  # window start, stamped early
 
@@ -361,6 +362,129 @@ async def test_pinning_via_details_restamps_anchor_to_date_start(
         # The anchor follows date_start — Day 1 is the pinned start, not the
         # stale 2027-06-01 that would push the trip nine days out.
         assert itin.days_anchor == date(2027, 6, 10)
+        # And the scheduled card moves WITH the anchor (+9 days), so it stays
+        # Day 3 (2027-06-12) instead of being stranded before the new Day 1 —
+        # the split-anchor bug the bare re-stamp used to leave behind.
+        await db_session.refresh(card)
+        assert card.metadata_["start_time"] == "2027-06-12T09:00:00+02:00"
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_settling_exact_dates_shifts_provisional_anchor_spine(
+    db_session: AsyncSession,
+) -> None:
+    """Settling exact dates retimes a spine laid at a provisional anchor.
+
+    Regression (the Olympus split-anchor): a campaign spine is instantiated
+    UNPINNED against a provisional ``days_anchor`` before the traveler settles
+    dates. When intake then calls ``update_itinerary_details`` to pin exact
+    dates, the already-scheduled cards must shift onto the new anchor — not just
+    the anchor label. Otherwise the spine stays stranded at the provisional
+    dates and the timeline renders Day 1 three days early.
+    """
+    itin = await create_itinerary(
+        db_session,
+        _actor(),
+        title="settle-provisional-spine",
+        timing_kind=ItineraryTimingKind.flexible,
+    )
+    try:
+        # Spine laid before dates are known: the first card stamps a provisional
+        # anchor (today, on a flexible trip). Simulate the kickoff's Day 1 + Day 4.
+        anchor = datetime.now(UTC).date()
+        day1 = await _scheduled_node(
+            db_session,
+            itin.id,
+            starts_at=f"{anchor.isoformat()}T15:00:00+03:00",
+            title="Ascent begins",
+        )
+        day4 = await _scheduled_node(
+            db_session,
+            itin.id,
+            starts_at=f"{(anchor + timedelta(days=3)).isoformat()}T11:00:00+03:00",
+            title="Recovery day",
+        )
+        await db_session.refresh(itin)
+        assert itin.days_anchor == anchor
+
+        # Intake settles exact dates three days out from the provisional anchor.
+        new_start = anchor + timedelta(days=3)
+        settled = await update_itinerary_details(
+            db_session,
+            _actor(),
+            itin,
+            fields={
+                "timing_kind": ItineraryTimingKind.exact,
+                "date_start": new_start,
+                "date_end": new_start + timedelta(days=14),
+            },
+        )
+        assert not isinstance(settled, ItineraryError)
+        await db_session.refresh(itin)
+        assert itin.days_anchor == new_start
+        assert itin.date_start == new_start
+
+        # Both cards shifted +3 days, wall-clock preserved: Day 1 lands on the
+        # settled start, Day 4 stays three days in.
+        await db_session.refresh(day1)
+        await db_session.refresh(day4)
+        assert day1.metadata_["start_time"] == f"{new_start.isoformat()}T15:00:00+03:00"
+        assert (
+            day4.metadata_["start_time"]
+            == f"{(new_start + timedelta(days=3)).isoformat()}T11:00:00+03:00"
+        )
+        # The move is audited, same as a retime.
+        ops = (
+            (
+                await db_session.execute(
+                    select(NodeHistory.node_id).where(
+                        NodeHistory.itinerary_id == itin.id, NodeHistory.op == "update"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {day1.id, day4.id} <= set(ops)
+    finally:
+        await _cleanup(itin.id)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_settling_exact_dates_shift_refused_while_booked(
+    db_session: AsyncSession,
+) -> None:
+    """A date-settle that would shift cards refuses while booked cards exist."""
+    itin = await create_itinerary(
+        db_session,
+        _actor(),
+        title="settle-booked",
+        timing_kind=ItineraryTimingKind.flexible,
+    )
+    try:
+        anchor = datetime.now(UTC).date()
+        node = await _scheduled_node(
+            db_session, itin.id, starts_at=f"{anchor.isoformat()}T09:00:00+03:00"
+        )
+        node.status = NodeStatus.booked
+        await db_session.commit()
+
+        refused = await update_itinerary_details(
+            db_session,
+            _actor(),
+            itin,
+            fields={
+                "timing_kind": ItineraryTimingKind.exact,
+                "date_start": anchor + timedelta(days=5),
+                "date_end": anchor + timedelta(days=12),
+            },
+        )
+        assert isinstance(refused, ItineraryError)
+        assert refused.detail == "booked_dates_locked"
     finally:
         await _cleanup(itin.id)
 

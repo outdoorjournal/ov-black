@@ -714,14 +714,15 @@ def _campaign_kickoff_directive(
 ) -> str:
     """The dashboard-kickoff instruction: greet the laid-out spine, then gather.
 
-    Appended to the traveler context on a ``surface="kickoff"`` turn (planning
-    mode). The curated skeleton is ALREADY on the canvas by the time this turn
+    Appended to the traveler context on a ``surface="kickoff"`` turn (the
+    tool-less ``kickoff`` mode). The curated skeleton is ALREADY on the canvas
+    by the time this turn
     runs — the dashboard lays it down deterministically on arrival (the
     ``/campaign/kickoff`` endpoint), so the cards are already staggering in as
     the traveler watches. Your job here is NOT to build; it's to open the
     conversation warmly and settle the handful of things the spine can't guess:
-    the dates, who's coming, and the way in. Keep this turn to PROSE and at most
-    a read — no long tool chains, no silent stalls. The offers below become real
+    the dates, who's coming, and the way in. The turn runs tool-less, so it is
+    PROSE only — no tool chains, no silent stalls. The offers below become real
     actions on the NEXT turns, once the traveler answers.
     """
     # The way in — a real flight + chauffeured transfer — is campaign data (this
@@ -773,8 +774,7 @@ def _campaign_kickoff_directive(
         "  · WHEN + HOW LONG: if the dates or night-count aren't settled, ask — "
         "and say you'll resize the ascent around whatever they choose.\n"
         "  · WHO'S COMING: confirm the party so rooms, transfers, and per-person "
-        "costs size correctly (you may glance at ``get_traveler_context`` for "
-        "family already on file — but don't seat anyone this turn; just ask).\n"
+        "costs size correctly — just ask; you'll seat anyone on a later turn.\n"
         + arrival
         + "Close by inviting them to look the ascent over, and end on ONE genuine "
         "question you want answered (dates is usually the one that unlocks the "
@@ -1446,8 +1446,10 @@ async def stream_turn(
             viewing=viewing,
             today=datetime.now(UTC).date().isoformat(),
         )
-        # Campaign dashboard kickoff: the agent speaks first and builds the
-        # skeleton. Append the build directive so this planning turn acts.
+        # Campaign dashboard kickoff: the spine + reading list are already on the
+        # canvas (laid down deterministically by /campaign/kickoff), so the agent
+        # only speaks. Append the kickoff directive with the reading-list chips to
+        # echo; the turn itself runs tool-less (mode="kickoff", below).
         if surface == "kickoff" and campaign is not None:
             reading_chips = await _campaign_reading_chips(db, agent_session.itinerary_id)
             traveler_ctx = (
@@ -1469,10 +1471,14 @@ async def stream_turn(
         # escalate anything.
         if surface == "intake" and pinned_itinerary_id is not None and actor.actor_kind == "user":
             mode = "intake"
-        # The campaign dashboard kickoff needs the full planning toolkit
-        # (spine, transfer, articles). Traveler-only; pin it explicitly.
+        # The campaign dashboard kickoff is a PROSE-ONLY greeting — the spine and
+        # reading list are already on the canvas, so this turn needs NO tools. The
+        # tool-less `kickoff` mode is the point: it stops the model from firing
+        # silent get_traveler_context / get_itinerary reads (each a round-trip +
+        # re-invocation) before the first token, which is what made the opener sit
+        # dark for a minute or two. Traveler-only; pin it explicitly.
         if surface == "kickoff" and pinned_itinerary_id is not None and actor.actor_kind == "user":
-            mode = "planning"
+            mode = "kickoff"
         prior_turns = await _load_prior_turns(db, session_id=session_id)
 
         # The campaign kickoff is AGENT-FIRST: its trigger ("Let's build it out.")

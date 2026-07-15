@@ -1,20 +1,23 @@
-// The Journal's phase-4 tier: the 2xl (≥1536px) INLINE DETAIL. Where the
-// medium tier drives a compact cockpit rail and hides the full detail behind a
-// second click (the "Open full →" modal), the very-large tier promotes the
-// right region to the full CardDetailView, permanent — selection IS the open.
+// The Journal's 2xl (≥1536px) BIG-CARD tier. Where the medium tier drives a
+// compact cockpit rail and hides the full detail behind a second-click modal,
+// the very-large tier leads the rail with the active card's full NodeZoomCard —
+// clicking it opens the same intercepting detail modal — over the notes thread.
 // These pin the responsive switch:
-//   · <2xl → the cockpit rail (RightRail), no inline detail;
-//   · ≥2xl → activating a card renders the full detail inline, and the cockpit
-//     (with its second-click "Open full →" handle) is gone;
+//   · <2xl → the cockpit rail (RightRail), "Open full →" is the modal deep link;
+//   · ≥2xl → activating a card renders the big card (→ modal on click) + notes,
+//     not the compact cockpit;
 //   · ≥2xl idle → the resting glance, until a real interaction focuses a card;
+//   · a subgraph child leads with a parent breadcrumb that scrolls the spine
+//     back to the parent;
 //   · diff mode stays on the cockpit even at 2xl (its accept/keep lives there).
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: vi.fn(), refresh: vi.fn() }),
   useParams: () => ({ id: "it-1" }),
   usePathname: () => "/itinerary/it-1/dashboard",
 }));
@@ -35,18 +38,12 @@ vi.mock("next/link", () => ({
 }));
 
 const getNodeChargesMock = vi.fn();
-const updateNodeMock = vi.fn();
-const deleteNodeMock = vi.fn();
-const updateNodeStatusMock = vi.fn();
 vi.mock("@ov-black/api-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@ov-black/api-client")>();
   return {
     ...actual,
     createApiClient: vi.fn(() => ({})),
     getNodeCharges: (...args: unknown[]) => getNodeChargesMock(...args),
-    updateNode: (...args: unknown[]) => updateNodeMock(...args),
-    deleteNode: (...args: unknown[]) => deleteNodeMock(...args),
-    updateNodeStatus: (...args: unknown[]) => updateNodeStatusMock(...args),
   };
 });
 
@@ -110,13 +107,6 @@ const HOST = mkNode("n1", {
   metadata: { start_time: "2024-06-20T09:00:00+09:00", duration_minutes: 60 },
 });
 
-const FORK: ItineraryResponse = {
-  ...TRUNK,
-  id: "it-fork",
-  forked_from_id: "it-1",
-  display_status: "in_studio",
-};
-
 function timeline(
   itinerary: ItineraryResponse,
   nodes: NodeResponse[],
@@ -168,12 +158,6 @@ function renderJournal({
   );
 }
 
-/** Focus a card, then press the cockpit's "Open full" to expand + lock. */
-function expandCard(title: string) {
-  fireEvent.click(screen.getByText(title));
-  fireEvent.click(screen.getByTestId("journal-rail-open-detail"));
-}
-
 beforeEach(() => {
   storeApi = null;
   vi.clearAllMocks();
@@ -201,132 +185,103 @@ afterEach(() => {
   delete window.matchMedia;
 });
 
-// ── ≥2xl: cockpit leads, "Open full" expands + locks ──────────────────────────
-describe("the 2xl inline-detail tier", () => {
-  test("idle shows the resting glance, no cockpit detail, no inline detail", () => {
+// ── ≥2xl: the big card leads (→ modal), notes beneath ─────────────────────────
+describe("the 2xl big-card tier", () => {
+  test("idle shows the resting glance, no card detail", () => {
     renderJournal();
     expect(screen.getByTestId("stub-idle")).toBeInTheDocument();
     expect(screen.queryByTestId("journal-rail-detail")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("journal-inline-detail")).not.toBeInTheDocument();
   });
 
-  test("activating a card leads with the cockpit, not the heavy inline detail", () => {
+  test("activating a card leads with the big card + notes, not the cockpit", () => {
     renderJournal();
     fireEvent.click(screen.getByText("Tea ceremony"));
 
-    // The cheap cockpit drives (follows the scroll-active card)…
-    expect(screen.getByTestId("journal-rail-detail")).toBeInTheDocument();
-    // …with an "Open full" EXPANDER (a button, not the modal deep link)…
+    const detail = screen.getByTestId("journal-rail-detail");
+    expect(detail).toHaveAttribute("data-tier", "big-card");
+    // The compact cockpit zones are gone at this tier…
+    expect(screen.queryByTestId("journal-rail-zone1")).not.toBeInTheDocument();
+    // …and the notes thread rides beneath the card.
+    expect(within(detail).getByTestId("journal-rail-notes")).toBeInTheDocument();
+  });
+
+  test("the big card is a click-to-open handle (not a deep-link anchor)", () => {
+    renderJournal();
+    fireEvent.click(screen.getByText("Tea ceremony"));
+
     const handle = screen.getByTestId("journal-rail-open-detail");
-    expect(handle.tagName).toBe("BUTTON");
-    // …and the full detail is not mounted until asked for.
-    expect(screen.queryByTestId("journal-inline-detail")).not.toBeInTheDocument();
-    expect(storeApi!.getState().focusLocked).toBe(false);
+    // A role=button div — NodeZoomCard renders its own <a>s, so it can't be a
+    // nested anchor. Clicking it soft-navigates to the modal URL.
+    expect(handle.tagName).toBe("DIV");
+    expect(handle).toHaveAttribute("role", "button");
+    fireEvent.click(handle);
+    expect(pushMock).toHaveBeenCalledWith("/itinerary/it-1/item/n1");
   });
 
-  test("'Open full' expands the detail BENEATH the cockpit and HARD-LOCKS focus", () => {
+  test("Enter on the big card opens the modal too", () => {
     renderJournal();
-    expandCard("Tea ceremony");
-
-    const inline = screen.getByTestId("journal-inline-detail");
-    const detail = within(inline).getByTestId("card-detail");
-    expect(detail).toHaveAttribute("data-node-id", "n1");
-    expect(detail).toHaveAttribute("data-embedded", "true");
-    // The cockpit STAYS on top (the detail expands underneath it)…
-    expect(screen.getByTestId("journal-rail-detail")).toBeInTheDocument();
-    // …the toggle flips to "Hide"…
-    expect(screen.getByTestId("journal-rail-open-detail")).toHaveTextContent(
-      "Hide full detail",
-    );
-    // …and focus is hard-locked so scrolling can't swap the card.
-    expect(storeApi!.getState().focusLocked).toBe(true);
-  });
-
-  test("the expand toggle collapses again (and releases the lock)", () => {
-    renderJournal();
-    expandCard("Tea ceremony");
-    // Press the same toggle (now "Hide full detail") to collapse.
-    fireEvent.click(screen.getByTestId("journal-rail-open-detail"));
-    expect(screen.queryByTestId("journal-inline-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("journal-rail-open-detail")).toHaveTextContent(
-      "Open full detail",
-    );
-    expect(storeApi!.getState().focusLocked).toBe(false);
-  });
-
-  test("dismiss collapses back to the following cockpit and releases the lock", () => {
-    renderJournal();
-    expandCard("Tea ceremony");
-    fireEvent.click(screen.getByTestId("card-detail-dismiss"));
-
-    expect(screen.queryByTestId("journal-inline-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("journal-rail-detail")).toBeInTheDocument();
-    expect(storeApi!.getState().focusLocked).toBe(false);
-  });
-
-  test("focusing another card drops the expansion + lock (back to its cockpit)", () => {
-    const MOSS = mkNode("n2", {
-      title: "Moss garden walk",
-      metadata: { start_time: "2024-06-20T14:00:00+09:00", duration_minutes: 60 },
+    fireEvent.click(screen.getByText("Tea ceremony"));
+    fireEvent.keyDown(screen.getByTestId("journal-rail-open-detail"), {
+      key: "Enter",
     });
-    renderJournal({ nodes: [HOST, MOSS] });
-    expandCard("Tea ceremony");
-    expect(storeApi!.getState().focusLocked).toBe(true);
-
-    fireEvent.click(screen.getByText("Moss garden walk"));
-    // A deliberate move to another card wins: collapse + unlock, cockpit on n2.
-    expect(screen.queryByTestId("journal-inline-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("journal-rail-detail")).toBeInTheDocument();
-    expect(storeApi!.getState().focusLocked).toBe(false);
-    expect(storeApi!.getState().focusedNodeId).toBe("n2");
+    expect(pushMock).toHaveBeenCalledWith("/itinerary/it-1/item/n1");
   });
 });
 
-// ── The expanded detail re-seeds its in-place editors per card ────────────────
-describe("the expanded detail is keyed per node", () => {
-  const MOSS = mkNode("n2", {
-    title: "Moss garden walk",
-    itinerary_id: "it-fork",
-    metadata: { start_time: "2024-06-20T14:00:00+09:00", duration_minutes: 60 },
+// ── A subgraph child leads with the parent breadcrumb ─────────────────────────
+describe("a child card's parent breadcrumb", () => {
+  const PARENT = mkNode("pkg", {
+    title: "Nakasendo Way",
+    type: "experience",
+    metadata: { start_time: "2024-06-20T08:00:00+09:00", duration_minutes: 120 },
   });
-  const TEA_FORK = mkNode("n1", {
-    title: "Tea ceremony",
-    itinerary_id: "it-fork",
-    metadata: { start_time: "2024-06-20T09:00:00+09:00", duration_minutes: 60 },
+  const CHILD = mkNode("beat", {
+    title: "Magome to Tsumago",
+    parent_subgraph_id: "pkg",
+    metadata: {
+      start_time: "2024-06-20T10:00:00+09:00",
+      duration_minutes: 90,
+      subgraph_day: { index: 1 },
+    },
   });
 
-  test("the schedule facet's time follows the expanded card, not the first one", () => {
-    // A fork so the editable ScheduleFacet renders (its time is seeded state —
-    // the bug this pins is the panel instance persisting across a card change).
-    renderJournal({ itinerary: FORK, nodes: [TEA_FORK, MOSS] });
+  test("shows day X of Y · parent, and back scrolls + focuses the parent", () => {
+    const scrollSpy = vi.fn();
+    // jsdom stubs scrollIntoView as undefined by default; install a spy.
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollSpy,
+    });
 
-    expandCard("Tea ceremony");
-    expect(screen.getByTestId("card-detail-time")).toHaveValue("09:00");
+    renderJournal({ nodes: [PARENT, CHILD] });
+    fireEvent.click(screen.getByText("Magome to Tsumago"));
 
-    // Switch cards (collapses + unlocks), then expand the second one.
-    expandCard("Moss garden walk");
-    // Without the per-node key the input would still read 09:00 (stale state).
-    expect(screen.getByTestId("card-detail-time")).toHaveValue("14:00");
-    expect(screen.getByTestId("card-detail")).toHaveAttribute(
-      "data-node-id",
-      "n2",
-    );
+    const crumb = screen.getByTestId("journal-rail-journey-breadcrumb");
+    expect(crumb).toHaveTextContent("Nakasendo Way");
+
+    fireEvent.click(screen.getByTestId("journal-rail-journey-back"));
+    expect(storeApi!.getState().focusedNodeId).toBe("pkg");
+    expect(scrollSpy).toHaveBeenCalled();
+
+    // @ts-expect-error — remove the stub.
+    delete HTMLElement.prototype.scrollIntoView;
   });
 });
 
 // ── <2xl: the cockpit tier keeps the modal deep link ──────────────────────────
 describe("below 2xl the cockpit rail keeps the modal handle", () => {
   test("activating a card drives the cockpit; 'Open full' is the modal link", () => {
-    viewportWidth = 1280; // mdpi: ≥lg (desktop) but <2xl
+    viewportWidth = 1280; // ≥lg (desktop) but <2xl
     installMatchMedia();
     renderJournal();
     fireEvent.click(screen.getByText("Tea ceremony"));
 
-    expect(screen.getByTestId("journal-rail-detail")).toBeInTheDocument();
-    // A deep-link anchor (opens the intercepting modal), not the expander.
+    const detail = screen.getByTestId("journal-rail-detail");
+    expect(detail).not.toHaveAttribute("data-tier", "big-card");
+    expect(screen.getByTestId("journal-rail-zone1")).toBeInTheDocument();
+    // A deep-link anchor (opens the intercepting modal), not a click handle.
     const handle = screen.getByTestId("journal-rail-open-detail");
     expect(handle.tagName).toBe("A");
     expect(handle).toHaveAttribute("href", "/itinerary/it-1/item/n1");
-    expect(screen.queryByTestId("journal-inline-detail")).not.toBeInTheDocument();
   });
 });

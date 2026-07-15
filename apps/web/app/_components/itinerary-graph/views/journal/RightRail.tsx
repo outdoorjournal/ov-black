@@ -49,7 +49,10 @@ import { PartOfJourney } from "../../shared/PartOfJourney";
 import { NotesPanel } from "../../shared/NotesPanel";
 import { attachedNotesByHost } from "../../shared/attachedNotes";
 import { inferCardKind } from "../../shared/cards/CardBody";
+import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { TYPE_TOKENS } from "../../shared/cards/tokens";
+import { subgraphDayMeta } from "../../shared/subgraph";
+import { prefersReducedMotion, scrollBehaviorFor } from "./motion";
 import { resolveNodeAffordances, type NodeAffordances } from "./affordances";
 import {
   formatClock,
@@ -80,19 +83,18 @@ import {
 export function RightRail({
   idle,
   diffView = null,
-  onToggleFull = null,
-  fullOpen = false,
+  bigCard = false,
 }: {
   idle: React.ReactNode;
   /** Diff mode's derived view (annotations + ghosts) — null when reading
    *  normally. Presence flips the rail into compare register. */
   diffView?: JournalDiffView | null;
-  /** 2xl inline tier: "Open full" TOGGLES the full detail open beneath the
-   *  cockpit (and locks focus), instead of soft-navigating to the modal. When
-   *  null (≤2xl) the handle stays the modal deep link. */
-  onToggleFull?: (() => void) | null;
-  /** Whether the full detail is currently expanded beneath (flips the label). */
-  fullOpen?: boolean;
+  /** 2xl tier (normal reading): the active node's detail renders as the full
+   *  NodeZoomCard at the top of the rail — click it to open the full-detail
+   *  modal — with the notes thread beneath it, instead of the compact cockpit.
+   *  Diff mode keeps the cockpit (its accept/keep decisions live there), so
+   *  this is always false while diffing. */
+  bigCard?: boolean;
 }) {
   const { timeline } = useTimelineData();
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
@@ -179,7 +181,33 @@ export function RightRail({
         ) : null}
         {diffView ? <RailDiffSummary diffView={diffView} /> : idle}
       </div>
-      {active && affordances ? (
+      {active && affordances && bigCard && !activeIsGhost ? (
+        // ── 2xl tier: the full card up top (→ modal), notes beneath ──────────
+        <div
+          data-testid="journal-rail-detail"
+          data-tier="big-card"
+          className="hidden flex-col gap-5 lg:flex"
+        >
+          <RailBigCard
+            node={active}
+            parent={activeParent}
+            siblingCount={activeSiblingCount}
+            itineraryId={itineraryId}
+            tz={timeline.timezoneOffsetHours}
+            notes={activeNotes}
+            canAdd={hasCreds}
+            isAdvisor={role === "advisor"}
+            onAddNote={(text) =>
+              storeApi.getState().addAttachedNote(active.id, text)
+            }
+            onDeleteNote={
+              hasCreds
+                ? (noteId) => storeApi.getState().removeNode(noteId)
+                : undefined
+            }
+          />
+        </div>
+      ) : active && affordances ? (
         <div
           data-testid="journal-rail-detail"
           className="hidden flex-col gap-5 lg:flex"
@@ -195,28 +223,13 @@ export function RightRail({
             />
             <RailApprove node={active} />
             {!activeIsGhost ? (
-              onToggleFull ? (
-                // 2xl: a prominent toggle that expands the full detail BENEATH
-                // the cockpit (locks focus) rather than opening the modal.
-                <button
-                  type="button"
-                  onClick={onToggleFull}
-                  data-testid="journal-rail-open-detail"
-                  aria-expanded={fullOpen}
-                  className="inline-flex items-center gap-1.5 self-start rounded-full border border-ink/20 bg-ink/[0.04] px-3.5 py-1.5 font-sans text-[11px] uppercase tracking-[0.16em] text-ink/70 transition-colors hover:border-ink/40 hover:bg-ink/[0.08] hover:text-ink"
-                >
-                  {fullOpen ? "Hide full detail" : "Open full detail"}
-                  <span aria-hidden>{fullOpen ? "▴" : "▾"}</span>
-                </button>
-              ) : (
-                <Link
-                  href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
-                  data-testid="journal-rail-open-detail"
-                  className="self-start font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
-                >
-                  Open full detail →
-                </Link>
-              )
+              <Link
+                href={`/itinerary/${itineraryId}/item/${active.id}` as Route}
+                data-testid="journal-rail-open-detail"
+                className="self-start font-sans text-[11px] uppercase tracking-[0.16em] text-ink/50 underline-offset-4 transition-colors hover:text-ink hover:underline"
+              >
+                Open full detail →
+              </Link>
             ) : null}
           </div>
 
@@ -304,6 +317,163 @@ export function RightRail({
         </div>
       ) : null}
     </>
+  );
+}
+
+// ── 2xl big-card detail: the full card (→ modal) + notes ─────────────────────
+// The very-large tier trades the compact cockpit for the actual NodeZoomCard —
+// the same rich sheet the full-detail surface renders — sitting at the top of
+// the rail. Clicking anywhere on it (bar its own inner links) soft-navigates to
+// /item/[nodeId], which the shell's intercepting route renders as the dismissible
+// modal. Everything else about a card (schedule, edit, money, actions) lives in
+// that modal now; the rail keeps only the always-margin bits: the primary
+// approve ask and the notes thread. A subgraph child leads with a slim
+// parent breadcrumb (day X of Y · parent) that scrolls the spine back to it.
+function RailBigCard({
+  node,
+  parent,
+  siblingCount,
+  itineraryId,
+  tz,
+  notes,
+  canAdd,
+  isAdvisor,
+  onAddNote,
+  onDeleteNote,
+}: {
+  node: NodeResponse;
+  parent: NodeResponse | null;
+  siblingCount: number;
+  itineraryId: string | null;
+  tz: number;
+  notes: NodeResponse[];
+  canAdd: boolean;
+  isAdvisor: boolean;
+  onAddNote: (text: string) => void;
+  onDeleteNote?: ((noteId: string) => void) | undefined;
+}) {
+  const router = useRouter();
+  const storeApi = itineraryGraphStore.useStoreApi();
+  const openModal = () =>
+    router.push(`/itinerary/${itineraryId}/item/${node.id}` as Route);
+
+  return (
+    <>
+      {parent ? (
+        <RailJourneyBreadcrumb
+          parent={parent}
+          child={node}
+          siblingCount={siblingCount}
+          onOpenParent={() => {
+            // Scroll the spine to the parent card and let the rail follow it.
+            storeApi.getState().focusNode(parent.id, "click");
+            if (typeof document !== "undefined") {
+              const el = document.querySelector<HTMLElement>(
+                `[data-node-id="${parent.id}"]`,
+              );
+              el?.scrollIntoView?.({
+                behavior: scrollBehaviorFor(prefersReducedMotion()),
+                block: "start",
+              });
+            }
+          }}
+        />
+      ) : null}
+
+      {/* The big card — the rich sheet; clicking it (not its inner links) opens
+          the full-detail modal. A div (not a Link) because NodeZoomCard renders
+          its own anchors, and nesting <a> inside <a> is invalid. */}
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid="journal-rail-open-detail"
+        aria-label={`Open full detail for ${node.title}`}
+        onClick={(e) => {
+          // Let the card's own links (maps, website, gallery) win their clicks.
+          if ((e.target as HTMLElement).closest("a")) return;
+          openModal();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openModal();
+          }
+        }}
+        className="group cursor-pointer rounded-2xl outline-none transition focus-visible:ring-2 focus-visible:ring-ink/25"
+      >
+        <div className="transition-transform duration-200 group-hover:-translate-y-0.5">
+          <NodeZoomCard node={node} tzOffsetHours={tz} />
+        </div>
+      </div>
+
+      <RailApprove node={node} />
+
+      {node.type !== "note" ? (
+        <div data-testid="journal-rail-notes">
+          <NotesPanel
+            notes={notes}
+            canAdd={canAdd}
+            collapseAfter={3}
+            viewerActorKind={isAdvisor ? "advisor" : "client"}
+            onAddNote={onAddNote}
+            onDeleteNote={onDeleteNote}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+// The slim parent breadcrumb above a child card's big detail: a back handle
+// (scrolls the spine to the parent), the parent's own type token, and
+// "day X of Y · Parent title".
+function RailJourneyBreadcrumb({
+  parent,
+  child,
+  siblingCount,
+  onOpenParent,
+}: {
+  parent: NodeResponse;
+  child: NodeResponse;
+  siblingCount: number;
+  onOpenParent: () => void;
+}) {
+  const token = TYPE_TOKENS[inferCardKind(parent)];
+  const index = subgraphDayMeta(child).index;
+  const dayLabel =
+    typeof index === "number" && siblingCount > 0
+      ? `Day ${index} of ${siblingCount}`
+      : null;
+  return (
+    <div
+      data-testid="journal-rail-journey-breadcrumb"
+      className="flex items-center gap-2"
+    >
+      <button
+        type="button"
+        onClick={onOpenParent}
+        data-testid="journal-rail-journey-back"
+        aria-label={`Back to ${parent.title}`}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink/15 text-ink/55 transition-colors hover:border-ink/40 hover:bg-ink/5 hover:text-ink"
+      >
+        <span aria-hidden>←</span>
+      </button>
+      <span
+        aria-hidden
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: token.tint, color: token.accent }}
+      >
+        <token.Icon size={12} strokeWidth={1.8} />
+      </span>
+      <p className="min-w-0 truncate text-[13px]">
+        {dayLabel ? (
+          <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-ink/45">
+            {dayLabel} ·{" "}
+          </span>
+        ) : null}
+        <span className="font-serif text-ink/80">{parent.title}</span>
+      </p>
+    </div>
   );
 }
 
