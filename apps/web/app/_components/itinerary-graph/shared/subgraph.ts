@@ -23,6 +23,7 @@ export type SubgraphDayMeta = {
   hours?: number;
   lat?: number;
   lng?: number;
+  location_label?: string;
   description_html?: string;
   hhmm?: string;
   duration_minutes?: number;

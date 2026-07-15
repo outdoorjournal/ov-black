@@ -24,10 +24,16 @@ onto their fork with :func:`app.services.templates.instantiate_into`.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 import logging
 import uuid
+from datetime import datetime
+from enum import Enum
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CardTemplate, EdgeType, NodeStatus, NodeType
@@ -56,8 +62,59 @@ _MINUTES_PER_DAY = 24 * 60
 #: EEST (+03:00) — the fixture's zone; stamped so cards read in local time.
 _EEST_OFFSET_MINUTES = 180
 
-#: nights → template slug, mirrored by app.campaigns.registry OLYMPUS.
+#: nights → template slug BASE, mirrored by app.campaigns.registry OLYMPUS.
+#: The STORED slug is this base plus a ``-<hash>`` suffix (see
+#: :func:`_seed_content_hash`) so a seed edit lands as a fresh template.
 OLYMPUS_SPINE_SLUGS: dict[int, str] = {5: "olympus-5d", 7: "olympus-7d", 14: "olympus-14d"}
+
+#: Bump when the build LOGIC changes in a way the seed data can't express (new
+#: composition, different metadata shape) — folds into the content hash so those
+#: changes also mint a fresh template. Seed-data edits need no bump; they change
+#: the hash on their own.
+_BUILD_VERSION = 1
+
+
+def _canonical(obj: Any) -> Any:
+    """A stable, JSON-serializable projection of a seed object for hashing.
+
+    Walks the seed's dataclasses / pydantic models / datetimes / enums into
+    plain dicts + lists so two structurally-equal seeds hash identically and
+    any content change (a coordinate, a description, a stock image) flips it.
+    """
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {f.name: _canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, Enum):
+        return obj.value
+    if isinstance(obj, (list, tuple)):
+        return [_canonical(x) for x in obj]
+    if isinstance(obj, dict):
+        return {str(k): _canonical(v) for k, v in obj.items()}
+    return obj
+
+
+def _seed_content_hash(nights: int) -> str:
+    """Short digest of every seed input that shapes the ``nights`` spine.
+
+    Folds the cornerstone, the arrival lane, the extension days, the beat
+    imagery pool, and the trip anchor (plus ``_BUILD_VERSION``) into one sha256.
+    Over-inclusive on purpose — a change to a shared pool (BEAT_STOCK, the full
+    EXTENSION_DAYS list) bumps every length, never fewer. Over-invalidation only
+    costs an unnecessary rebuild; under-invalidation would serve stale content.
+    """
+    payload = {
+        "build_version": _BUILD_VERSION,
+        "cornerstone": _canonical(cornerstone_for_nights(nights, longest=max(OLYMPUS_SPINE_SLUGS))),
+        "arrival_items": _canonical(ARRIVAL_ITEMS),
+        "extension_days": _canonical(EXTENSION_DAYS),
+        "beat_stock": _canonical(BEAT_STOCK),
+        "trip_anchor": _canonical(TRIP_ANCHOR),
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()[:8]
 
 
 def _item_offset_minutes(item: FixtureItem) -> int:
@@ -93,7 +150,9 @@ async def _build_cornerstone_subgraph(
 
     Mirrors :func:`app.services.subgraph.materialize_day_subgraph` in template
     space, chained by ``follows`` edges. A day that ships authored ``beats``
-    lands one ``experience`` child PER BEAT (its own title, an ``hhmm`` clock
+    lands one child PER BEAT, each carrying the beat's own kind (``meal`` for a
+    dinner, ``drive`` for a transfer, ``free_time`` for an open morning —
+    defaulting to ``experience``), its own title, an ``hhmm`` clock
     time within the day, a duration, a description, and a hero image drawn
     from :data:`BEAT_STOCK` — repeats of a category rotate through its set so
     three dinners get three different shots); a beat-less day falls back to
@@ -114,12 +173,14 @@ async def _build_cornerstone_subgraph(
         stock_used[category] = index + 1
         return pool[index % len(pool)]
 
-    async def add_child(title: str, metadata: dict[str, Any]) -> None:
+    async def add_child(
+        title: str, metadata: dict[str, Any], node_type: NodeType = NodeType.experience
+    ) -> None:
         nonlocal node_count, edge_count, previous
         child = await add_template_node(
             session,
             template_id=template_id,
-            type=NodeType.experience,
+            type=node_type,
             title=title,
             parent_id=parent_id,
             metadata=metadata,
@@ -150,7 +211,11 @@ async def _build_cornerstone_subgraph(
                         duration_minutes=beat.duration_minutes,
                         description=beat.description,
                         image=next_stock_image(beat.stock),
+                        lat=beat.lat,
+                        lng=beat.lng,
+                        location_label=beat.location_label,
                     ),
+                    beat.node_type,
                 )
         else:
             await add_child(f"Day {day.day} — {day.title}", day_subgraph_metadata(day))
@@ -165,9 +230,18 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
     extension, so the guided ascent owns the mountain days and the grand tour owns
     the days after it.
     """
-    slug = OLYMPUS_SPINE_SLUGS.get(nights)
-    if slug is None:
+    slug_base = OLYMPUS_SPINE_SLUGS.get(nights)
+    if slug_base is None:
         raise ValueError(f"unsupported Olympus spine length: {nights}")
+
+    # The seed data ([app.seed_data.olympus_cornerstones] + the arrival/extension
+    # fixtures) is the source of truth: fold a content hash of it into the stored
+    # slug so an edit mints a FRESH template rather than reusing the cached one.
+    # New itineraries kicked off after the edit instantiate the new content;
+    # itineraries already built keep their own snapshot (they copied metadata at
+    # instantiation and never read the template again), so nothing retro-mutates.
+    content_hash = _seed_content_hash(nights)
+    slug = f"{slug_base}-{content_hash}"
 
     # Real OV trip this spine is built around — the longest spine anchors on the
     # full "Path to Symbolism" ascent, the shorter ones on the 2-day summit push.
@@ -190,6 +264,8 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
             "campaign_id": "olympus",
             "nights": nights,
             "cornerstone_span_days": span_days,
+            "spine_base_slug": slug_base,
+            "seed_hash": content_hash,
         },
     )
     if not created and await has_subgraph(session, template_id=template.id):

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -168,6 +168,13 @@ class AgentContext(BaseModel):
 
     client_id: uuid.UUID
     client_full_name: str
+    # Traveler logistics (0048), client-level and non-private: the home airport
+    # (IATA — the DEFAULT departure origin for flights, so the agent never has to
+    # guess one), the home base address, and the currency to quote prices in. Any
+    # may be None when not yet on file — the agent should ask rather than assume.
+    home_airport: str | None = None
+    home_address: str | None = None
+    preferred_currency: str | None = None
     # The pinned itinerary's first-class brief + timing (0033), pre-rendered for
     # the prompt: the goal + when the traveler set at intake. Non-private — the
     # agent grounds suggestions in it and may reference it naturally. None when
@@ -221,3 +228,59 @@ class AgentRecordDossierInferenceRequest(BaseModel):
     kind: DossierFactKind
     text: str = Field(min_length=1, max_length=4000)
     source_turn_id: uuid.UUID | None = None
+
+
+# Validated field types for the traveler-logistics write (0048). Defined here
+# (not imported from schemas.clients) because clients.py imports from this
+# module — pulling the other way would be a circular import. The patterns match
+# the DB CHECKs: IATA / ISO 4217 are three letters, stored upper-cased.
+_AgentIataAirport = Annotated[str, Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")]
+_AgentIso4217Currency = Annotated[str, Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")]
+
+
+class AgentRecordTravelLogisticsRequest(BaseModel):
+    """Body for ``PATCH /agent/logistics`` (agent-only).
+
+    Lets the agent persist client-level logistics it learned in conversation —
+    the home airport (default flight origin), home address, and preferred
+    currency. All fields optional; pass only what was learned this turn.
+
+    Overwrite discipline: the endpoint fills a field only when it is currently
+    unset (or the new value matches). An existing, *different* value is left
+    untouched and reported back as a conflict unless ``confirm_overwrite`` is
+    true — so the agent confirms a correction with the traveler before clobbering
+    something staff or the traveler set earlier.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    home_airport: _AgentIataAirport | None = None
+    home_address: str | None = Field(default=None, max_length=2000)
+    preferred_currency: _AgentIso4217Currency | None = None
+    confirm_overwrite: bool = False
+
+
+class AgentLogisticsConflict(BaseModel):
+    """One field the write declined to overwrite without confirmation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: Literal["home_airport", "home_address", "preferred_currency"]
+    existing: str
+    proposed: str
+
+
+class AgentTravelLogisticsResult(BaseModel):
+    """Response of ``PATCH /agent/logistics``.
+
+    Echoes the logistics after the write and lists any fields skipped because
+    they already held a different value (and ``confirm_overwrite`` was false),
+    each with the ``existing`` value so the agent can ask before overwriting.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    home_airport: str | None = None
+    home_address: str | None = None
+    preferred_currency: str | None = None
+    skipped: list[AgentLogisticsConflict] = Field(default_factory=list)

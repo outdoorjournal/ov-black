@@ -49,6 +49,7 @@ from app.services import itineraries as itineraries_service
 from app.services.agent import (
     ActorContext,
     SessionOutcome,
+    _campaign_kickoff_directive,
     open_or_reuse_session,
     stream_turn,
 )
@@ -552,6 +553,39 @@ async def test_stream_turn_happy_path_yields_frames_and_writes_two_turns(
     assert assistant_turn.retried == 0
     assert assistant_turn.first_token_ms is not None
     assert assistant_turn.model == "ab123xyz"
+
+
+async def test_kickoff_turn_persists_no_user_turn(
+    factory: FakeFactory,
+    advisor_actor: ActorContext,
+    agent_session: AgentSession,
+    settings: Settings,
+) -> None:
+    """The campaign kickoff is agent-first: its trigger is a machine seed, so the
+    turn leaves ONLY the assistant greeting behind — never a user turn (which
+    would replay as the traveler "saying" a line they never typed)."""
+    runtime = MockAgentRuntimeClient(
+        [{"type": "delta", "text": "Welcome to the mountain."}, {"type": "done"}]
+    )
+
+    await _collect(
+        stream_turn(
+            factory,  # type: ignore[arg-type]
+            runtime,
+            actor=advisor_actor,
+            session_id=agent_session.id,
+            content="Let's build it out.",
+            settings=settings,
+            surface="kickoff",
+        )
+    )
+
+    turn_rows = [row for row in factory.turns if isinstance(row, AgentTurn)]
+    assert len(turn_rows) == 1
+    assert turn_rows[0].role is TurnRole.assistant
+    assert turn_rows[0].content == "Welcome to the mountain."
+    # The machine trigger is nowhere in the persisted transcript.
+    assert all(r.content != "Let's build it out." for r in turn_rows)
 
 
 async def test_stream_turn_retries_once_on_upstream_error_before_first_byte(
@@ -1848,3 +1882,29 @@ async def test_intake_surface_ignored_for_unpinned_or_advisor(
         )
     )
     assert runtime.calls[0]["payload"]["mode"] != "intake"
+
+
+def test_kickoff_directive_embeds_reading_chips() -> None:
+    """Given the seeded reads, the kickoff directive tells the agent to greet
+    the reading list and echo tappable ``article:`` chips verbatim."""
+    from app.campaigns.registry import OLYMPUS
+
+    chips = [
+        ("Mt. Olympus: Hiking Up the Mountain of the Gods", "11111111-1111-1111-1111-111111111111"),
+        ("Going Greek on Kalymnos", "22222222-2222-2222-2222-222222222222"),
+    ]
+    directive = _campaign_kickoff_directive(OLYMPUS, chips)
+
+    assert "reading list" in directive.lower()
+    # Each read is emitted as a verbatim article chip the client resolves.
+    for title, node_id in chips:
+        assert f"[{title}](article:{node_id})" in directive
+
+
+def test_kickoff_directive_omits_reading_when_no_reads() -> None:
+    """No seeded reads → no reading clause at all (no dangling instruction)."""
+    from app.campaigns.registry import OLYMPUS
+
+    directive = _campaign_kickoff_directive(OLYMPUS, [])
+    assert "article:" not in directive
+    assert "reading list" not in directive.lower()

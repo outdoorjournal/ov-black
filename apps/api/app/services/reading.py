@@ -12,12 +12,14 @@ most recent articles so the agent always has something to offer.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.campaigns.registry import ArticleSeed
 from app.models import Itinerary, Node, NodeStatus, NodeType
 from app.models.reading import ReadingArticle
 from app.services.itineraries import (
@@ -83,9 +85,7 @@ async def search_reading_catalog(
 
     # Blank query or nothing matched — most recent, so there's always an offer.
     fallback = (
-        select(ReadingArticle)
-        .order_by(ReadingArticle.published_at.desc().nullslast())
-        .limit(n)
+        select(ReadingArticle).order_by(ReadingArticle.published_at.desc().nullslast()).limit(n)
     )
     return [_to_hit(r) for r in (await session.execute(fallback)).scalars().all()]
 
@@ -124,6 +124,74 @@ async def _reading_target_itinerary(
     return await create_itinerary(session, actor, title="", client_id=client_id)
 
 
+def _article_metadata(
+    *,
+    title: str,
+    url: str,
+    publication: str | None,
+    og_image: str | None,
+    excerpt: str | None,
+) -> dict[str, Any]:
+    """The ``article`` node metadata shape shared by every save path.
+
+    Mirrors the pasted-link/from-catalog card (``snapshot`` + ``url`` +
+    ``publication``) so both the Collection card (``ArticleBody``) and the
+    Reading destination (``toReadingItem``) — and the concierge's article
+    flyout — render it identically.
+    """
+    snapshot: dict[str, Any] = {"title": title, "url": url}
+    if og_image:
+        snapshot["cover_image"] = og_image
+    if excerpt:
+        snapshot["description"] = excerpt
+    metadata: dict[str, Any] = {"snapshot": snapshot, "url": url}
+    if publication:
+        metadata["publication"] = publication
+    return metadata
+
+
+async def seed_campaign_reading_list(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    itinerary_id: uuid.UUID,
+    seeds: Sequence[ArticleSeed],
+) -> list[Node]:
+    """Drop a campaign's curated reads onto ``itinerary_id`` as article nodes.
+
+    Called from the dashboard kickoff, in the same fresh-itinerary breath as the
+    spine (see :func:`campaign_kickoff_endpoint`), so the traveler's reading list
+    is stocked deterministically rather than gated on the model choosing to call
+    ``suggest_reading``. Each seed becomes an unscheduled ``article`` node
+    carrying the curated metadata verbatim (no OG re-fetch of the auth-walled
+    source). Returns the created nodes so the caller can stream them onto the
+    canvas and reference them as chips. A seed that fails to persist is skipped
+    rather than sinking the whole kickoff.
+    """
+    created: list[Node] = []
+    for seed in seeds:
+        result = await add_node(
+            session,
+            actor,
+            itinerary_id=itinerary_id,
+            type=NodeType.article,
+            status=NodeStatus.pending,
+            title=seed.title,
+            source="reading_catalog",
+            source_id=seed.url,
+            metadata=_article_metadata(
+                title=seed.title,
+                url=seed.url,
+                publication=seed.publication,
+                og_image=seed.og_image,
+                excerpt=seed.excerpt,
+            ),
+        )
+        if isinstance(result, Node):
+            created.append(result)
+    return created
+
+
 async def add_article_to_reading_list(
     session: AsyncSession,
     actor: ActorContext,
@@ -146,15 +214,6 @@ async def add_article_to_reading_list(
     """
     itinerary = await _reading_target_itinerary(session, actor, client_id=client_id)
 
-    snapshot: dict[str, Any] = {"title": title, "url": url}
-    if og_image:
-        snapshot["cover_image"] = og_image
-    if excerpt:
-        snapshot["description"] = excerpt
-    metadata: dict[str, Any] = {"snapshot": snapshot, "url": url}
-    if publication:
-        metadata["publication"] = publication
-
     return await add_node(
         session,
         actor,
@@ -164,5 +223,11 @@ async def add_article_to_reading_list(
         title=title,
         source="reading_catalog",
         source_id=url,
-        metadata=metadata,
+        metadata=_article_metadata(
+            title=title,
+            url=url,
+            publication=publication,
+            og_image=og_image,
+            excerpt=excerpt,
+        ),
     )

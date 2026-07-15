@@ -50,7 +50,12 @@ async def search_inventory(
             flights, ``serp`` for hotels). Omit to fan out across every enabled
             provider.
         limit: Maximum items to return. Capped at 50 server-side.
-        origin: Flight origin IATA code (e.g. ``LHR``). For a flight search
+        origin: Flight origin IATA code (e.g. ``LHR``). Default it to the
+            traveller's ``home_airport`` from ``get_traveler_context`` — that is
+            their home departure point. NEVER invent or assume a home airport: if
+            ``home_airport`` is unset and they haven't named an origin, ASK where
+            they're flying from (and persist the answer with
+            ``record_travel_logistics``) before searching. For a flight search
             pass origin + destination + departure_date together.
         destination: Flight destination IATA code (e.g. ``JFK``).
         departure_date: Flight departure date, ``YYYY-MM-DD``.

@@ -66,6 +66,13 @@ async def get_traveler_context() -> dict:
 
     Returns these sections plus the dossier typed core:
 
+    * ``home_airport`` — the traveller's home airport (IATA), the DEFAULT
+      departure origin for any flight you search. ``home_address`` — their home
+      base. ``preferred_currency`` — what to quote prices in. All non-private:
+      reference them naturally. Any may be null when not yet on file — when you
+      need one that is missing (e.g. an origin for a flight), ASK; never invent a
+      home city or airport. Learned a value? Persist it with
+      :func:`record_travel_logistics`.
     * ``trip_brief`` — the goal + timing the traveller set for THIS itinerary
       ("Sailing in Greece with my family"; a window; constraints like "not
       August"). Non-private: ground every suggestion in it and reference it
@@ -298,3 +305,46 @@ async def record_dossier_inference(
     if source_turn_id is not None:
         body["source_turn_id"] = source_turn_id
     return await agent_post_json("/agent/dossier/facts", json=body)
+
+
+@tool
+async def record_travel_logistics(
+    *,
+    home_airport: str | None = None,
+    home_address: str | None = None,
+    preferred_currency: str | None = None,
+    confirm_overwrite: bool = False,
+) -> dict:
+    """Persist client-level travel logistics you learned from the traveller.
+
+    These are durable, non-private facts remembered across every trip:
+
+    * ``home_airport`` — the traveller's home airport as a 3-letter IATA code
+      (e.g. ``ASE``). This becomes the DEFAULT departure origin for flight
+      searches, so recording it once means you never have to ask — or guess —
+      an origin again.
+    * ``home_address`` — where they live / depart from (free text).
+    * ``preferred_currency`` — ISO 4217 code (e.g. ``USD``) to quote prices in.
+
+    Pass only what you actually learned this turn; omit the rest.
+
+    BE VERY WARY OF OVERWRITING. Record a value only when the traveller stated
+    it — never a guess. If a field is ALREADY on file with a DIFFERENT value
+    (check ``home_airport`` / ``home_address`` / ``preferred_currency`` from
+    :func:`get_traveler_context` first), this call will NOT overwrite it: it
+    returns that field under ``skipped`` with the ``existing`` value instead. In
+    that case, confirm the change with the traveller in conversation, and only
+    then call again with ``confirm_overwrite=True`` to replace it. Filling a
+    field that was previously empty is always safe and needs no confirmation.
+
+    Returns the logistics after the write plus a ``skipped`` list of any fields
+    left unchanged (each with its ``existing`` and ``proposed`` value).
+    """
+    body: dict = {"confirm_overwrite": confirm_overwrite}
+    if home_airport is not None:
+        body["home_airport"] = home_airport
+    if home_address is not None:
+        body["home_address"] = home_address
+    if preferred_currency is not None:
+        body["preferred_currency"] = preferred_currency
+    return await agent_patch_json("/agent/logistics", json=body)

@@ -20,10 +20,15 @@ export type ArticleSurfaceProps = {
   article: ArticleSurfaceView;
   /** Persist the article into the Collection; resolves true on success. */
   onAdd: (article: ArticleSurfaceView) => Promise<boolean>;
+  /** The piece is already saved (a chip-opened read the kickoff pre-added) —
+   *  open showing "Added" instead of an Add button. */
+  alreadySaved?: boolean;
 };
 
-export function ArticleSurface({ article, onAdd }: ArticleSurfaceProps) {
-  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+export function ArticleSurface({ article, onAdd, alreadySaved = false }: ArticleSurfaceProps) {
+  const [state, setState] = useState<"idle" | "saving" | "saved">(
+    alreadySaved ? "saved" : "idle",
+  );
 
   const add = async () => {
     if (state !== "idle") return;

@@ -18,7 +18,12 @@ import { beforeEach, expect, test, vi } from "vitest";
 // a real `done` frame would — otherwise the composer would stay disabled and a
 // follow-up turn couldn't be sent.
 const { sendTurnMock, lastConfigRef } = vi.hoisted(() => {
-  const lastConfigRef = { current: null as null | { onDone?: () => void } };
+  const lastConfigRef = {
+    current: null as null | {
+      onDone?: () => void;
+      onDelta?: (frame: { text: string }) => void;
+    },
+  };
   const sendTurnMock = vi.fn(async () => {
     lastConfigRef.current?.onDone?.();
   });
@@ -29,6 +34,7 @@ vi.mock("@ov-black/api-client", () => ({
   createApiClient: vi.fn(() => ({})),
   createSessionEndpoint: vi.fn(),
   listTurns: vi.fn(),
+  campaignKickoff: vi.fn(),
 }));
 
 vi.mock("@/lib/agentStream", () => ({
@@ -54,6 +60,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  campaignKickoff,
   createSessionEndpoint,
   listTurns,
   type AgentTurnSummary,
@@ -169,6 +176,19 @@ beforeEach(() => {
     seeded_opener: null,
   });
   vi.mocked(listTurns).mockResolvedValue({ ok: true, turns: [] });
+  vi.mocked(campaignKickoff).mockResolvedValue({
+    ok: true,
+    kickoff: {
+      itinerary_id: "it-1",
+      campaign_id: "olympus",
+      requested_nights: null,
+      snapped_length: 14,
+      reason: "",
+      node_count: 0,
+      edge_count: 0,
+      created_nodes: [],
+    },
+  });
 });
 
 // ── lazy open + audience plumbing ────────────────────────────────────────────
@@ -312,4 +332,44 @@ test("is inert without a full chat context (missing token): composer disabled, n
 
   expect(createSessionEndpoint).not.toHaveBeenCalled();
   expect(sendTurnMock).not.toHaveBeenCalled();
+});
+
+// ── campaign kickoff greeting must survive history hydration ─────────────────
+
+test("campaign kickoff greeting is not clobbered by history hydration on the same mount", async () => {
+  // The dashboard resumes the intake session (hydrateHistory) AND fires the
+  // agent kickoff (autoKickoff) on ONE mount. listTurns resolves well before the
+  // LLM greeting finishes, so the hydrate replace must preserve the streaming
+  // greeting bubble — otherwise the reading-list line + article chips silently
+  // vanish and the traveler sees only the replayed intake opener.
+  vi.mocked(listTurns).mockResolvedValue({
+    ok: true,
+    turns: [turn("t-open", "assistant", "Mount Olympus has been waiting for you.")],
+  });
+  // The kickoff turn streams a greeting delta, then completes.
+  sendTurnMock.mockImplementationOnce(async () => {
+    lastConfigRef.current?.onDelta?.({
+      text: "I've also dropped a few reads into your reading list.",
+    });
+    lastConfigRef.current?.onDone?.();
+  });
+
+  renderConcierge({
+    audience: "traveler",
+    hydrateHistory: true,
+    autoKickoff: true,
+  });
+
+  // The deterministic spine is laid, then the agent opener fires (surface=kickoff).
+  await waitFor(() => expect(campaignKickoff).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(sendTurnMock).toHaveBeenCalledWith("Let's build it out.", { surface: "kickoff" }),
+  );
+
+  // BOTH the replayed intake opener AND the freshly-streamed greeting are on
+  // screen — the greeting survived the hydrate replace.
+  await waitFor(() => {
+    expect(screen.getByText("Mount Olympus has been waiting for you.")).toBeInTheDocument();
+    expect(screen.getByText(/dropped a few reads into your reading list/i)).toBeInTheDocument();
+  });
 });

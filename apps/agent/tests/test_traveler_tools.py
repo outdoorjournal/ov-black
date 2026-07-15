@@ -74,3 +74,35 @@ async def test_record_party_member_omits_absent_date_of_birth(
     assert "date_of_birth" not in captured["body"]
     assert captured["body"]["full_name"] == "Quinn"
     assert captured["body"]["relationship_to_primary"] == "son"
+
+
+def test_record_travel_logistics_on_gathering_bundles() -> None:
+    # The learn-your-airport tool rides with the other gathering writes wherever
+    # the traveller might volunteer where they fly from — not on read-mostly Q&A.
+    for mode in (Mode.intake, Mode.onboarding, Mode.planning):
+        assert "record_travel_logistics" in _names(mode)
+    assert "record_travel_logistics" not in _names(Mode.qa)
+
+
+async def test_record_travel_logistics_sends_only_learned_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def _patch(path: str, *, json: dict | None = None) -> Any:
+        captured["path"] = path
+        captured["body"] = json
+        return {"home_airport": "ASE", "skipped": []}
+
+    monkeypatch.setattr(traveler_mod, "agent_patch_json", _patch)
+
+    # Only the home airport was learned this turn — address/currency are omitted,
+    # and confirm_overwrite defaults to False so an existing value is never clobbered.
+    await traveler_mod.record_travel_logistics._tool_func(home_airport="ASE")
+
+    assert captured["path"] == "/agent/logistics"
+    body = captured["body"]
+    assert body["home_airport"] == "ASE"
+    assert body["confirm_overwrite"] is False
+    assert "home_address" not in body
+    assert "preferred_currency" not in body

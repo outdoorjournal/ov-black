@@ -23,7 +23,7 @@ export const SPINE_COL_PX = 44;
  *  main spine — the offset puts the beat circles ON the child journey line, a
  *  sub-rail sitting to the right of the parent experience's own (colored) line.
  *  The child line shares this value. */
-export const JOURNEY_INDENT_PX = 16;
+export const JOURNEY_INDENT_PX = 32;
 
 // ── Duration bars (traveler-journal) ──────────────────────────────────
 // Each activity hangs a colored bar off its spine circle, stretching down the

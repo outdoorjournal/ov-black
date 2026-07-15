@@ -22,12 +22,21 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class ArticleSeed:
     """One reading-list entry — a link to one of the campaign's editorial
-    properties. The agent saves it to the Collection via the from-link path,
-    which fetches the OpenGraph preview into an ``article`` card.
+    properties. The dashboard kickoff seeds these onto the traveler's itinerary
+    as ``article`` reading-list nodes (deterministically, alongside the spine),
+    and the concierge's opener drops a tappable chip per read into its greeting.
+
+    ``title`` is load-bearing — it's the chip label and the flyout headline — so
+    it's required. The rest enriches the flyout (hero image, dek, reading time)
+    when we have it; missing pieces degrade gracefully to a placeholder.
     """
 
     url: str
     publication: str
+    title: str
+    og_image: str | None = None
+    excerpt: str | None = None
+    reading_time_minutes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -120,14 +129,35 @@ OLYMPUS = Campaign(
         ArticleSeed(
             url="https://www.backpacker.com/trips/adventure-travel/mt-olympus-hiking-up-the-mountain-of-the-gods/",
             publication="Backpacker",
+            title="Mt. Olympus: Hiking Up the Mountain of the Gods",
+            excerpt=(
+                "A trail-by-trail guide to the classic Litochoro-to-Mytikas "
+                "ascent — the refuges, the ridgeline, and what the throne of "
+                "Zeus asks of your legs."
+            ),
+            reading_time_minutes=9,
         ),
         ArticleSeed(
             url="https://www.climbing.com/places/this-way-to-paradise-andmdash-going-greek-on-the-island-of-kalymnos/",
             publication="Climbing",
+            title="This Way to Paradise: Going Greek on the Island of Kalymnos",
+            excerpt=(
+                "Why the little Aegean island became one of the world's great "
+                "sport-climbing pilgrimages — sea-cliff tufas, taverna nights, "
+                "and endless limestone."
+            ),
+            reading_time_minutes=7,
         ),
         ArticleSeed(
             url="https://www.outsideonline.com/adventure-travel/destinations/europe/tiny-church-hidden-high-mountain-samos-greece/",
             publication="Outside",
+            title="The Tiny Church Hidden High in the Mountains of Samos, Greece",
+            excerpt=(
+                "A pilgrimage on foot to a chapel wedged into a Greek "
+                "mountainside — the kind of quiet detour that turns a hike into "
+                "a story."
+            ),
+            reading_time_minutes=6,
         ),
     ),
 )

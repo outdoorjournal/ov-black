@@ -35,6 +35,7 @@ from app.services.analyze_runners.common import GraphNode
 from app.services.fill import (
     GapWindow,
     _build_proposal,
+    _gap_is_occupied,
     _node_types_to_inventory_kinds,
     _party_eval,
     _search_radius_m,
@@ -157,6 +158,42 @@ def _graph_node(node_type: NodeType, lat: float, lng: float) -> GraphNode:
         cost_amount=None,
         metadata={},
     )
+
+
+def _spanning_node(lower: datetime, upper: datetime) -> GraphNode:
+    return GraphNode(
+        node_id=uuid.uuid4(),
+        type=NodeType.hotel,
+        status=NodeStatus.approved,
+        title="stay",
+        starts_lower=lower,
+        starts_upper=upper,
+        lat=_PRIOR[0],
+        lng=_PRIOR[1],
+        cost_amount=None,
+        metadata={},
+    )
+
+
+def test_gap_is_occupied_detects_a_spanning_node() -> None:
+    # A stay running 10:00–20:00 swallows the 12:00–18:00 window.
+    node = _spanning_node(_at(10), _at(20))
+    assert _gap_is_occupied([node], _GAP) is True
+
+
+def test_gap_is_occupied_ignores_edge_touching_neighbors() -> None:
+    # Ends exactly at the gap start / starts exactly at the gap end — adjacent,
+    # not overlapping (half-open).
+    before = _spanning_node(_at(8), _at(12))
+    after = _spanning_node(_at(18), _at(22))
+    assert _gap_is_occupied([before, after], _GAP) is False
+
+
+def test_gap_is_occupied_ignores_zero_duration_points() -> None:
+    # A free-standing note dropped inside the gap (upper == lower) is a request
+    # to fill, not occupancy — Fill must still run.
+    point = _spanning_node(_at(14), _at(14))
+    assert _gap_is_occupied([point], _GAP) is False
 
 
 def test_party_eval_meal_allergen_is_a_hard_block() -> None:
@@ -530,6 +567,52 @@ async def test_fill_marks_unknown_when_no_located_anchors(db_session: AsyncSessi
     assert p.fits_in_gap is False
     assert p.drive_time_in_min is None
     assert p.score == 0.5
+
+
+@integration
+async def test_fill_returns_nothing_when_gap_overlaps_a_multiday_node(
+    db_session: AsyncSession,
+) -> None:
+    iid = await insert_itinerary(db_session)
+    # A three-night stay spanning the whole window the agent asks to "fill".
+    await insert_node(
+        db_session,
+        itinerary_id=iid,
+        type="hotel",
+        title="Lodge — 3 nights",
+        status="approved",
+        starts_lower=datetime(2026, 9, 11, 15, tzinfo=UTC),
+        starts_upper=datetime(2026, 9, 14, 11, tzinfo=UTC),
+        lat=_PRIOR[0],
+        lng=_PRIOR[1],
+    )
+    # A window that lands squarely inside the multi-night stay.
+    result = await fill_gap(
+        db_session,
+        registry=_registry([_meal("m-tokyo", 35.67, 139.73), _exp("e-tokyo", 35.68, 139.76)]),
+        itinerary_id=iid,
+        gap=GapWindow(
+            start=datetime(2026, 9, 12, 12, tzinfo=UTC),
+            end=datetime(2026, 9, 12, 18, tzinfo=UTC),
+        ),
+    )
+    assert result.proposals == []  # the stay already covers this window — not a gap
+
+
+@integration
+async def test_fill_still_works_for_a_gap_that_only_touches_node_edges(
+    db_session: AsyncSession,
+) -> None:
+    # Morning ends at 12:00, Evening starts at 18:00; the 12–18 gap merely butts
+    # each edge (half-open), so it is not "occupied" and Fill runs normally.
+    iid = await _seed_gap_trip(db_session)
+    result = await fill_gap(
+        db_session,
+        registry=_registry([_meal("m-tokyo", 35.67, 139.73)]),
+        itinerary_id=iid,
+        gap=_GAP,
+    )
+    assert any(p.inventory_id == "m-tokyo" for p in result.proposals)
 
 
 @integration

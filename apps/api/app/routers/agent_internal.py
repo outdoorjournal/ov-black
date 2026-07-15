@@ -37,8 +37,11 @@ from app.models import AgentSession, Itinerary, PartyMemberActor
 from app.schemas.dossier import DossierDetail
 from app.schemas.facts import (
     AgentContext,
+    AgentLogisticsConflict,
     AgentRecordDossierInferenceRequest,
     AgentRecordProfileFactRequest,
+    AgentRecordTravelLogisticsRequest,
+    AgentTravelLogisticsResult,
     DossierFactDetail,
     OsintFactDetail,
     ProfileFactDetail,
@@ -60,6 +63,7 @@ from app.services.facts import (
     load_agent_context,
     record_agent_dossier_inference,
     record_agent_profile_fact,
+    record_agent_travel_logistics,
 )
 from app.services.graph_digest import graph_digest_for_itinerary
 from app.services.messaging import MessagingOutcome, post_agent_thread_message
@@ -213,6 +217,9 @@ async def get_agent_context_endpoint(
     return AgentContext(
         client_id=ctx.client.id,
         client_full_name=ctx.client.full_name,
+        home_airport=ctx.client.favorite_airport,
+        home_address=ctx.client.address,
+        preferred_currency=ctx.client.preferred_currency,
         trip_brief=trip_brief,
         graph_digest=graph_digest,
         is_alternative=is_alternative,
@@ -278,6 +285,44 @@ async def record_dossier_inference_endpoint(
         source_turn_id=payload.source_turn_id,
     )
     return DossierFactDetail.model_validate(fact, from_attributes=True)
+
+
+@router.patch(
+    "/logistics",
+    response_model=AgentTravelLogisticsResult,
+    summary="Persist client-level logistics the agent learned (home airport / address / currency).",
+)
+async def record_travel_logistics_endpoint(
+    payload: AgentRecordTravelLogisticsRequest,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> AgentTravelLogisticsResult:
+    """Store the home airport / address / preferred currency (0048).
+
+    Overwrite-wary: fields already holding a different value are left untouched
+    and returned in ``skipped`` (with the existing value) unless the caller sets
+    ``confirm_overwrite`` — the agent uses that to confirm a correction with the
+    traveler before clobbering something already on file.
+    """
+    outcome = await record_agent_travel_logistics(
+        session,
+        client_id=claims.client_id,
+        home_airport=payload.home_airport,
+        home_address=payload.home_address,
+        preferred_currency=payload.preferred_currency,
+        confirm_overwrite=payload.confirm_overwrite,
+    )
+    if outcome is None:
+        raise HTTPException(status_code=404, detail="client_not_found")
+    return AgentTravelLogisticsResult(
+        home_airport=outcome.client.favorite_airport,
+        home_address=outcome.client.address,
+        preferred_currency=outcome.client.preferred_currency,
+        skipped=[
+            AgentLogisticsConflict(field=c.field, existing=c.existing, proposed=c.proposed)
+            for c in outcome.skipped
+        ],
+    )
 
 
 @router.post(

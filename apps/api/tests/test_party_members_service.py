@@ -20,7 +20,7 @@ from app.schemas.party_members import (
     PartyMemberCreate,
     PartyMemberUpdate,
 )
-from app.services.facts import load_agent_context
+from app.services.facts import load_agent_context, record_agent_travel_logistics
 from app.services.party_members import (
     archive_party_member,
     attach_member_to_itinerary,
@@ -313,3 +313,76 @@ async def test_agent_context_surfaces_active_roster_only(
     names = {m.full_name for m in ctx.party_members}
     assert names == {"On The Trip"}
     assert ctx.party_members[0].created_by_actor is PartyMemberActor.agent
+
+
+# ── traveler logistics (0048): learn, but never clobber ───────────────────
+
+
+async def test_record_logistics_fills_empty_fields_and_upper_cases(
+    session: AsyncSession, household: _Household
+) -> None:
+    outcome = await record_agent_travel_logistics(
+        session,
+        client_id=household.client_id,
+        home_airport="ase",
+        home_address="Aspen, CO",
+        preferred_currency="usd",
+        confirm_overwrite=False,
+    )
+    assert outcome is not None
+    assert outcome.skipped == []
+    # Codes are upper-cased to match the column CHECKs; address is stored as-is.
+    assert outcome.client.favorite_airport == "ASE"
+    assert outcome.client.address == "Aspen, CO"
+    assert outcome.client.preferred_currency == "USD"
+
+
+async def test_record_logistics_refuses_to_overwrite_without_confirm(
+    session: AsyncSession, household: _Household
+) -> None:
+    await record_agent_travel_logistics(
+        session,
+        client_id=household.client_id,
+        home_airport="DEN",
+        home_address=None,
+        preferred_currency=None,
+        confirm_overwrite=False,
+    )
+    outcome = await record_agent_travel_logistics(
+        session,
+        client_id=household.client_id,
+        home_airport="ASE",
+        home_address=None,
+        preferred_currency=None,
+        confirm_overwrite=False,
+    )
+    assert outcome is not None
+    # The existing airport stands; the conflict is reported for the agent to confirm.
+    assert outcome.client.favorite_airport == "DEN"
+    assert [(c.field, c.existing, c.proposed) for c in outcome.skipped] == [
+        ("home_airport", "DEN", "ASE")
+    ]
+
+
+async def test_record_logistics_overwrites_when_confirmed(
+    session: AsyncSession, household: _Household
+) -> None:
+    await record_agent_travel_logistics(
+        session,
+        client_id=household.client_id,
+        home_airport="DEN",
+        home_address=None,
+        preferred_currency=None,
+        confirm_overwrite=False,
+    )
+    outcome = await record_agent_travel_logistics(
+        session,
+        client_id=household.client_id,
+        home_airport="ASE",
+        home_address=None,
+        preferred_currency=None,
+        confirm_overwrite=True,
+    )
+    assert outcome is not None
+    assert outcome.skipped == []
+    assert outcome.client.favorite_airport == "ASE"

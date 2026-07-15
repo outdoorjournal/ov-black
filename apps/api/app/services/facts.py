@@ -492,6 +492,95 @@ async def record_agent_dossier_inference(
     return fact
 
 
+@dataclass(frozen=True, slots=True)
+class LogisticsConflict:
+    """A field the agent asked to change that already held a different value."""
+
+    field: str
+    existing: str
+    proposed: str
+
+
+@dataclass(frozen=True, slots=True)
+class TravelLogisticsOutcome:
+    """Result of :func:`record_agent_travel_logistics` — the client row after
+    the write plus any fields skipped for lack of overwrite confirmation."""
+
+    client: Client
+    skipped: list[LogisticsConflict]
+
+
+async def record_agent_travel_logistics(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    home_airport: str | None,
+    home_address: str | None,
+    preferred_currency: str | None,
+    confirm_overwrite: bool,
+) -> TravelLogisticsOutcome | None:
+    """Persist client-level logistics the agent learned in conversation (0048).
+
+    Overwrite-wary by design: a field is written only when it is currently unset
+    or the new value matches the stored one. An existing, *different* value is
+    left untouched and returned in ``skipped`` unless ``confirm_overwrite`` is
+    true — so a correction is a deliberate act, never an accidental clobber of
+    something staff or the traveler set earlier. IATA / ISO codes are upper-cased
+    to match the column CHECKs. Returns ``None`` if the client row is missing.
+    """
+    client = (
+        await session.execute(select(Client).where(Client.id == client_id))
+    ).scalar_one_or_none()
+    if client is None:
+        return None
+
+    # (field name, incoming value, whether it's a code that stores upper-cased)
+    updates: list[tuple[str, str | None, bool]] = [
+        ("favorite_airport", home_airport, True),
+        ("address", home_address, False),
+        ("preferred_currency", preferred_currency, True),
+    ]
+    # Map the DB column names back to the agent-facing field names for reporting.
+    _agent_field = {
+        "favorite_airport": "home_airport",
+        "address": "home_address",
+        "preferred_currency": "preferred_currency",
+    }
+
+    skipped: list[LogisticsConflict] = []
+    changed = False
+    for column, raw, is_code in updates:
+        if raw is None:
+            continue
+        value = raw.upper() if is_code else raw.strip()
+        if not value:
+            continue
+        current = getattr(client, column)
+        if current == value:
+            continue
+        if current is not None and not confirm_overwrite:
+            skipped.append(
+                LogisticsConflict(field=_agent_field[column], existing=current, proposed=value)
+            )
+            continue
+        setattr(client, column, value)
+        changed = True
+
+    if changed:
+        await session.commit()
+        await session.refresh(client)
+
+    logger.info(
+        "facts.logistics.agent_record.ok",
+        extra={
+            "client_id": str(client_id),
+            "changed": changed,
+            "skipped": [c.field for c in skipped],
+        },
+    )
+    return TravelLogisticsOutcome(client=client, skipped=skipped)
+
+
 # ── Read aggregation ─────────────────────────────────────────────────────
 
 

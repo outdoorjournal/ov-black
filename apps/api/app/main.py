@@ -240,6 +240,7 @@ app.add_middleware(
         "/agent/context",
         "/agent/profile/facts",
         "/agent/dossier/facts",
+        "/agent/logistics",
         "/agent/party-members",
         "/agent/trip-travelers",
         "/agent/thread-message",

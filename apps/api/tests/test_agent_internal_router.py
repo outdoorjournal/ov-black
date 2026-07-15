@@ -56,6 +56,10 @@ def _stub_load_agent_context(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, cid: uuid.UUID) -> None:
             self.id = cid
             self.full_name = "Test Traveler"
+            # Traveler logistics (0048) — the context endpoint reads these.
+            self.favorite_airport: str | None = None
+            self.address: str | None = None
+            self.preferred_currency: str | None = None
 
     class _DummyCtx:
         def __init__(self, cid: uuid.UUID) -> None:
@@ -698,6 +702,125 @@ def test_get_context_graph_digest_defaults_none(client: TestClient) -> None:
     resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
     assert resp.status_code == 200
     assert resp.json()["graph_digest"] is None
+
+
+# ── traveler logistics in GET /agent/context (0048) ───────────────────────
+
+
+def test_get_context_logistics_default_none(client: TestClient) -> None:
+    """Unset logistics surface as null — the agent must ask, not assume."""
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["home_airport"] is None
+    assert body["home_address"] is None
+    assert body["preferred_currency"] is None
+
+
+def test_get_context_surfaces_logistics(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0048: home airport / address / currency flow into the payload."""
+
+    def _load_with_logistics(_session: Any, *, client_id: uuid.UUID, **_kwargs: Any) -> Any:
+        client = SimpleNamespace(
+            id=client_id,
+            full_name="Test Traveler",
+            favorite_airport="ASE",
+            address="Aspen, CO",
+            preferred_currency="USD",
+        )
+        return SimpleNamespace(
+            client=client,
+            dossier=None,
+            dossier_facts=[],
+            profile_facts=[],
+            osint_facts=[],
+            party_members=[],
+        )
+
+    async def _fake_load(_session: Any, *, client_id: uuid.UUID, **kwargs: Any) -> Any:
+        return _load_with_logistics(_session, client_id=client_id, **kwargs)
+
+    monkeypatch.setattr(agent_internal_module, "load_agent_context", _fake_load)
+    resp = client.get("/agent/context", headers={"Authorization": f"Bearer {_good_token()}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["home_airport"] == "ASE"
+    assert body["home_address"] == "Aspen, CO"
+    assert body["preferred_currency"] == "USD"
+
+
+# ── PATCH /agent/logistics (0048) ─────────────────────────────────────────
+
+
+def test_patch_logistics_persists_and_echoes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A learned home airport is stored and echoed back, no conflicts."""
+
+    async def _fake_record(*_args: Any, **kwargs: Any) -> Any:
+        stored = SimpleNamespace(
+            favorite_airport=kwargs["home_airport"],
+            address=kwargs["home_address"],
+            preferred_currency=kwargs["preferred_currency"],
+        )
+        return SimpleNamespace(client=stored, skipped=[])
+
+    monkeypatch.setattr(agent_internal_module, "record_agent_travel_logistics", _fake_record)
+    resp = client.patch(
+        "/agent/logistics",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"home_airport": "ase"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["home_airport"] == "ase"  # (upper-casing happens in the service, stubbed here)
+    assert body["skipped"] == []
+
+
+def test_patch_logistics_reports_overwrite_conflict(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing, different value is left untouched and surfaced as a conflict."""
+    from app.services.facts import LogisticsConflict
+
+    async def _fake_record(*_args: Any, **kwargs: Any) -> Any:
+        stored = SimpleNamespace(
+            favorite_airport="DEN", address=None, preferred_currency=None
+        )
+        return SimpleNamespace(
+            client=stored,
+            skipped=[LogisticsConflict(field="home_airport", existing="DEN", proposed="ASE")],
+        )
+
+    monkeypatch.setattr(agent_internal_module, "record_agent_travel_logistics", _fake_record)
+    resp = client.patch(
+        "/agent/logistics",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"home_airport": "ASE"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["home_airport"] == "DEN"  # unchanged — no clobber without confirm
+    assert body["skipped"] == [
+        {"field": "home_airport", "existing": "DEN", "proposed": "ASE"}
+    ]
+
+
+def test_patch_logistics_rejects_bad_iata(client: TestClient) -> None:
+    """A non-3-letter airport is a 422 at the schema boundary."""
+    resp = client.patch(
+        "/agent/logistics",
+        headers={"Authorization": f"Bearer {_good_token()}"},
+        json={"home_airport": "Denver"},
+    )
+    assert resp.status_code == 422
+
+
+def test_patch_logistics_without_token_returns_401(client: TestClient) -> None:
+    resp = client.patch("/agent/logistics", json={"home_airport": "ASE"})
+    assert resp.status_code == 401
 
 
 # ── POST /agent/thread-message (AGT-4) ────────────────────────────────────

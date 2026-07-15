@@ -695,6 +695,52 @@ function DaySection({
     return () => ro.disconnect();
   }, [journeyParentId, section.entries]);
 
+  // Where the journey ENDS on the day it terminates (toNext === false): the
+  // parent/child rails should stop at the last beat's tail, not run on to the
+  // bottom of the day (past any later, non-journey cards, the insert line, and
+  // the night). Measured — the bottom of the last derived beat's duration bar,
+  // plus content's own offset so the fromPrev rail (which lives in the section,
+  // spanning behind the header) can cap in the same coordinate space.
+  const [journeyEnd, setJourneyEnd] = useState<{
+    bottom: number;
+    contentTop: number;
+  } | null>(null);
+  const journeyEndsHere = Boolean(journeyThread && !journeyThread.toNext);
+  useIsoLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!journeyEndsHere || !content) {
+      setJourneyEnd(null);
+      return;
+    }
+    const measure = () => {
+      const beats = content.querySelectorAll<HTMLElement>(
+        '[data-journey-beat="true"]',
+      );
+      const last = beats[beats.length - 1];
+      const bar =
+        last?.querySelector<HTMLElement>(
+          '[data-testid="journal-duration-bar"]',
+        ) ??
+        last ??
+        null;
+      if (!bar) {
+        setJourneyEnd(null);
+        return;
+      }
+      const cTop = content.getBoundingClientRect().top;
+      const bottom = bar.getBoundingClientRect().bottom - cTop;
+      setJourneyEnd({
+        bottom: Math.max(0, Math.round(bottom)),
+        contentTop: content.offsetTop,
+      });
+    };
+    measure();
+    // Re-measure when the beats' heights change (zoom) or rows reflow.
+    const ro = new ResizeObserver(measure);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [journeyEndsHere, section.entries]);
+
   const rows: ReactNode[] = [];
   let cardIdx = 0;
   for (const [i, entry] of section.entries.entries()) {
@@ -817,6 +863,25 @@ function DaySection({
     ? undefined
     : (journeyParentTop ?? 38);
   const journeyChildStartTop = journeyThread?.fromPrev ? undefined : 38;
+  // On the terminal day, cap both rails at the measured last-beat tail instead
+  // of the `bottom-0` run to the section floor. The fromPrev rail lives in the
+  // SECTION (top 0, behind the header), so its cap adds content's offset; the
+  // starting-day rail lives in CONTENT, so it caps from the content top. Each
+  // rail's top differs (parent opens at its circle, child near the day top), so
+  // the height subtracts the rail's own start.
+  const capJourney = journeyEndsHere && journeyEnd !== null;
+  const journeyEndInContainer = capJourney
+    ? (journeyThread?.fromPrev ? journeyEnd.contentTop : 0) + journeyEnd.bottom
+    : 0;
+  const parentThreadHeight = capJourney
+    ? Math.max(
+        0,
+        journeyEndInContainer - (journeyThread?.fromPrev ? 0 : (journeyParentTop ?? 38)),
+      )
+    : null;
+  const childThreadHeight = capJourney
+    ? Math.max(0, journeyEndInContainer - (journeyThread?.fromPrev ? 0 : 38))
+    : null;
   const journeyThreadEl = journeyThread ? (
     <>
       <span
@@ -828,7 +893,7 @@ function DaySection({
         className={[
           "absolute rounded-full",
           journeyThread.fromPrev ? "top-0" : "",
-          journeyThread.toNext ? "-bottom-2" : "bottom-0",
+          capJourney ? "" : journeyThread.toNext ? "-bottom-2" : "bottom-0",
           journeyThread.accent ? "" : "bg-ink/20",
         ].join(" ")}
         style={{
@@ -839,6 +904,7 @@ function DaySection({
           ...(journeyParentStartTop !== undefined
             ? { top: journeyParentStartTop }
             : {}),
+          ...(parentThreadHeight !== null ? { height: parentThreadHeight } : {}),
           ...(journeyThread.accent
             ? { backgroundColor: journeyThread.accent, opacity: 0.5 }
             : {}),
@@ -850,13 +916,14 @@ function DaySection({
         className={[
           "absolute w-[2px] rounded-full bg-ink/20",
           journeyThread.fromPrev ? "top-0" : "",
-          journeyThread.toNext ? "-bottom-2" : "bottom-0",
+          capJourney ? "" : journeyThread.toNext ? "-bottom-2" : "bottom-0",
         ].join(" ")}
         style={{
           left: SPINE_COL_PX / 2 + JOURNEY_INDENT_PX - 1,
           ...(journeyChildStartTop !== undefined
             ? { top: journeyChildStartTop }
             : {}),
+          ...(childThreadHeight !== null ? { height: childThreadHeight } : {}),
         }}
       />
     </>

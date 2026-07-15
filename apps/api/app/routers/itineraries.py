@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
@@ -38,6 +38,7 @@ from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
 from app.inventory.schemas import ExperienceItem, FlightItem
 from app.models import (
+    CardTemplate,
     Client,
     CostKind,
     EdgeType,
@@ -108,6 +109,7 @@ from app.services.node_cost import (
 from app.services.node_kinds import is_schedulable
 from app.services.olympus_template import build_olympus_template
 from app.services.pagination import clamp_limit, require_cursor
+from app.services.reading import seed_campaign_reading_list
 from app.services.route_plan import RoutePlanError, compute_route
 from app.services.subgraph import SubgraphMaterializeError, materialize_day_subgraph
 from app.services.templates import instantiate_into
@@ -1596,17 +1598,40 @@ def _itinerary_requested_nights(itinerary: Itinerary) -> int | None:
     return None
 
 
-def _itinerary_trip_start(itinerary: Itinerary) -> datetime:
+def _template_tz(template: CardTemplate) -> timezone:
+    """The zone a template's offsets were authored in, from ``trip_anchor_iso``.
+
+    Template offsets are wall-clock minutes from the fixture's ``TRIP_ANCHOR``
+    (midnight in the trip's local zone), so instantiation must anchor at local
+    midnight in that SAME zone — a UTC-midnight anchor lands every card late by
+    the trip's UTC offset (an Olympus card authored 15:00 EEST persisted as
+    15:00 UTC and displayed 18:00). Falls back to UTC for templates that don't
+    record an anchor.
+    """
+    metadata = template.metadata_ if isinstance(template.metadata_, dict) else {}
+    raw = metadata.get("trip_anchor_iso")
+    if isinstance(raw, str):
+        try:
+            offset = datetime.fromisoformat(raw).utcoffset()
+        except ValueError:
+            offset = None
+        if offset is not None:
+            return timezone(offset)
+    return UTC
+
+
+def _itinerary_trip_start(itinerary: Itinerary, tz: timezone) -> datetime:
     """Anchor datetime the spine offsets from — the itinerary's ``date_start`` at
-    local midnight, or ~30 days out if the trip has no dates yet. The no-dates
-    fallback is only a provisional ``days_anchor`` (the spine instantiates
-    UNPINNED then); it never becomes the trip's dates.
+    midnight in ``tz`` (the template's authoring zone, see :func:`_template_tz`),
+    or ~30 days out if the trip has no dates yet. The no-dates fallback is only a
+    provisional ``days_anchor`` (the spine instantiates UNPINNED then); it never
+    becomes the trip's dates.
     """
     start = getattr(itinerary, "date_start", None)
     if start is not None:
-        return datetime(start.year, start.month, start.day, tzinfo=UTC)
+        return datetime(start.year, start.month, start.day, tzinfo=tz)
     now = datetime.now(UTC)
-    return datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=30)
+    return datetime(now.year, now.month, now.day, tzinfo=tz) + timedelta(days=30)
 
 
 class CampaignKickoffResponse(BaseModel):
@@ -1717,20 +1742,34 @@ async def campaign_kickoff_endpoint(
     if requested_nights is None:
         itinerary.duration_nights = snapped
 
-    trip_start_at = _itinerary_trip_start(itinerary)
+    trip_start_at = _itinerary_trip_start(itinerary, _template_tz(template))
     # Pin the trip only when the traveler actually chose exact dates. A
     # flexible/window intake (or no intake) lays the spine out as stable
     # "Day N" slots off a provisional days_anchor — the kickoff must not
     # invent calendar dates the traveler never gave.
     pin = itinerary.timing_kind == ItineraryTimingKind.exact and itinerary.date_start is not None
-    node_count, edge_count = await instantiate_into(
+    # Only the edge count is taken from the spine clone; the node total is
+    # recomputed below to include the reading-list reads seeded next.
+    _, edge_count = await instantiate_into(
         session, template=template, itinerary=itinerary, trip_start_at=trip_start_at, pin=pin
     )
 
+    # Stock the reading list in the same deterministic breath as the spine: the
+    # campaign's curated reads land as unscheduled ``article`` nodes on this
+    # itinerary, so the concierge's opener can greet them as chips (and the
+    # Reading destination shows a stocked rack) without gating on the model
+    # calling ``suggest_reading``. They ride the ``created_nodes`` reveal below.
+    if campaign.reading_list:
+        actor = await _resolve_actor(session, user)
+        await seed_campaign_reading_list(
+            session, actor, itinerary_id=itinerary.id, seeds=campaign.reading_list
+        )
+
     # Return the freshly-created nodes so the agent turn can stream them onto the
     # canvas live (as ``node_created`` frames). The itinerary was empty before
-    # this call (guarded above), so every node here is spine. Order by start so
-    # the staggered reveal reads front-to-back through the trip.
+    # this call (guarded above), so every node here was created by this kickoff —
+    # the scheduled spine plus the unscheduled reading-list reads. Order by start
+    # so the staggered reveal reads front-to-back (the unscheduled reads last).
     created_rows = (
         (await session.execute(select(Node).where(Node.itinerary_id == itinerary_id)))
         .scalars()
@@ -1747,7 +1786,10 @@ async def campaign_kickoff_endpoint(
         requested_nights=requested_nights,
         snapped_length=snapped,
         reason=reason,
-        node_count=node_count,
+        # Everything the kickoff laid down — spine + reading list — so callers
+        # can reconcile against ``created_nodes`` (``instantiate_into`` alone
+        # counts only the spine it cloned).
+        node_count=len(created_nodes),
         edge_count=edge_count,
         created_nodes=created_nodes,
     )

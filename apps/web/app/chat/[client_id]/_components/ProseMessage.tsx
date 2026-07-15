@@ -24,10 +24,12 @@ import remarkGfm from "remark-gfm";
 
 import { cn } from "@/lib/utils";
 
+import { ArticleChip } from "./ArticleChip";
 import { PlaceChip } from "./PlaceChip";
 import { Timeline, parseTimeline } from "./Timeline";
 
 const PLACE_SCHEMES = ["place:", "ovplace:"] as const;
+const ARTICLE_SCHEME = "article:";
 
 function placeQuery(href: string | undefined): string | null {
   if (!href) return null;
@@ -35,6 +37,12 @@ function placeQuery(href: string | undefined): string | null {
     if (href.startsWith(scheme)) return href.slice(scheme.length);
   }
   return null;
+}
+
+// `article:<nodeId>` marks a saved read the concierge dropped into its greeting.
+function articleNodeId(href: string | undefined): string | null {
+  if (!href) return null;
+  return href.startsWith(ARTICLE_SCHEME) ? href.slice(ARTICLE_SCHEME.length) : null;
 }
 
 // Flatten link/code children to text. In practice these are single string
@@ -49,7 +57,9 @@ function childrenToText(children: unknown): string {
 // Preserve our custom place: scheme through react-markdown's URL sanitiser;
 // defer to the safe default for everything else (http/https/mailto/tel/relative).
 function urlTransform(url: string): string {
-  return placeQuery(url) !== null ? url : defaultUrlTransform(url);
+  return placeQuery(url) !== null || articleNodeId(url) !== null
+    ? url
+    : defaultUrlTransform(url);
 }
 
 const COMPONENTS: Components = {
@@ -90,6 +100,10 @@ const COMPONENTS: Components = {
     const query = placeQuery(href);
     if (query !== null) {
       return <PlaceChip label={childrenToText(children)} query={query} />;
+    }
+    const nodeId = articleNodeId(href);
+    if (nodeId !== null) {
+      return <ArticleChip nodeId={nodeId} label={childrenToText(children)} />;
     }
     return (
       <a

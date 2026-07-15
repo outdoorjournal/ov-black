@@ -82,15 +82,23 @@ async def test_olympus_campaign_demo(advisor: Ovb, harness: Harness) -> None:
     hotels = _nodes_of_type(graph_after, "hotel")
     assert hotels, "the spine should include lodging"
 
-    # 4. Reading list — an article card, non-schedulable, in the Collection.
+    # 4. Reading list — the kickoff already stocked it: the campaign's curated
+    #    reads land as non-schedulable ``article`` nodes alongside the spine, so
+    #    the concierge can greet them as chips. Confirm they're present first.
+    graph_seeded = await advisor.get_graph(itin)
+    seeded_reads = _nodes_of_type(graph_seeded, "article")
+    assert len(seeded_reads) >= 1, "kickoff should seed the campaign's reading list"
+    assert all(a.schedulable is False for a in seeded_reads)
+
+    # A traveler can still save one more read by hand (the flyout path).
     art = await advisor.save_article(itin, url=_ARTICLE_URL)
     assert str(art.type) == "article"
     assert art.schedulable is False
     assert art.starts_at is None
     graph_art = await advisor.get_graph(itin)
     articles = _nodes_of_type(graph_art, "article")
-    assert len(articles) == 1
-    assert articles[0].schedulable is False
+    assert len(articles) == len(seeded_reads) + 1
+    assert all(a.schedulable is False for a in articles)
 
     # 5. A real, tier-aware airport transfer (Google Routes). Self-skip if the
     #    target has no routing key wired.

@@ -195,6 +195,7 @@ export function AgentSurface({
               ) : surface.kind === "article" ? (
                 <ArticleSurface
                   article={surface.article}
+                  alreadySaved={surface.alreadySaved ?? false}
                   onAdd={
                     onAddToReadingList ??
                     (async () => false)

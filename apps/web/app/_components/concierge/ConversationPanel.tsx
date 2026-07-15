@@ -11,10 +11,16 @@
 // cards, "show on timeline") are optional, so a surface with none just omits
 // them.
 
+import type { NodeResponse } from "@ov-black/api-client";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
 import { MapCompassIndicator } from "@/app/_components/MapCompassIndicator";
+import {
+  CardBody,
+  inferCardKind,
+} from "@/app/_components/itinerary-graph/shared/cards/CardBody";
+import { CardShell } from "@/app/_components/itinerary-graph/shared/cards/CardShell";
 import { CRAFTED_FALLBACK_COPY } from "@/app/chat/[client_id]/_components/ConversationStream";
 import { OnboardingMilestoneCard } from "@/app/chat/[client_id]/_components/OnboardingMilestoneCard";
 import { ProseMessage } from "@/app/chat/[client_id]/_components/ProseMessage";
@@ -135,57 +141,51 @@ export function ConversationPanel({
             {messages.map((m) => (
               <MessageBubble key={m.id} message={m} working={working} />
             ))}
-            {proposals.map((p) => (
-              <motion.div
-                key={`inline-${p.id}`}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                className="rounded-md border border-dashed border-ink/25 bg-paper p-2.5 text-[12px]"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="text-[10px] uppercase tracking-[0.18em] text-ink/55">
-                    Proposed · {p.type}
-                  </div>
-                  {onScrollToNode ? (
-                    <button
-                      type="button"
-                      onClick={() => onScrollToNode(p.id)}
-                      title="Show on timeline"
-                      aria-label="Show on timeline"
-                      className="shrink-0 rounded-md border border-ink/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-ink/65 hover:border-ink/40 hover:text-ink"
-                    >
-                      Show ↗
-                    </button>
-                  ) : null}
-                </div>
-                {/* A typed proposal renders as its own card; everything else keeps
-                  the bare title. Flights read their FlightCardAttrs metadata. */}
-                {p.type === "flight" && p.metadata ? (
-                  <FlightProposalBody meta={p.metadata} />
-                ) : (
-                  <div className="mt-0.5 font-serif text-[15px] text-ink">
-                    {p.title}
-                  </div>
-                )}
-                <div className="mt-2 flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => onAccept?.(p.id)}
-                    className="rounded-md bg-ink px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-paper"
+            {proposals.map((p) => {
+              // Render the proposal as the SAME card the timeline / Collection
+              // show (M006 harmonization): the shared CardShell substrate +
+              // type-specific CardBody, with the accept/dismiss row riding in
+              // the shell's `actions` slot — not a bespoke stub.
+              const node = nodeFromProposal(p);
+              const kind = inferCardKind(node);
+              return (
+                <motion.div
+                  key={`inline-${p.id}`}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                >
+                  <CardShell
+                    kind={kind}
+                    status="pending"
+                    width="glance"
+                    {...(onScrollToNode
+                      ? {
+                          headerExtra: (
+                            <button
+                              type="button"
+                              onClick={() => onScrollToNode(p.id)}
+                              title="Show on timeline"
+                              aria-label="Show on timeline"
+                              className="rounded-md border border-ink/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-ink/65 hover:border-ink/40 hover:text-ink"
+                            >
+                              Show ↗
+                            </button>
+                          ),
+                        }
+                      : {})}
+                    actions={
+                      <ProposalActions
+                        onAccept={() => onAccept?.(p.id)}
+                        onDismiss={() => onDismiss?.(p.id)}
+                      />
+                    }
                   >
-                    Accept
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDismiss?.(p.id)}
-                    className="rounded-md border border-ink/20 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-ink/70"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </motion.div>
-            ))}
+                    <CardBody node={node} kind={kind} tzOffsetHours={0} />
+                  </CardShell>
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
         </div>
         <ScrollControls targetRef={scrollRef} />
@@ -216,102 +216,52 @@ export function ConversationPanel({
   );
 }
 
-// ── Flight proposal card ──────────────────────────────────────────────────────
-// A compact boarding-pass read of a proposed flight so the concierge's flight
-// proposals render as a real flight card (route + wall-clock + cabin) instead of
-// a bare title. Reads the node's FlightCardAttrs metadata directly; each end
-// shows its OWN airport-local wall clock straight off the ISO string's embedded
-// offset (a leg crosses zones), with no viewer-tz round-trip. Price isn't in the
-// card frame, so it's intentionally omitted here.
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
-function asStr(v: unknown): string | null {
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
-
-// Strip a trailing " (IATA)" parenthetical so the city reads cleanly under its
-// code, then return it (or null when there's nothing worth showing).
-function cityLabel(v: unknown): string | null {
-  if (!v || typeof v !== "object" || !("label" in v)) return null;
-  const s = asStr((v as { label?: unknown }).label);
-  return s ? s.replace(/\s*\([^)]*\)\s*$/, "").trim() || null : null;
-}
-
-function wallClock(iso: unknown): { day: string; time: string } | null {
-  const s = asStr(iso);
-  const m = s ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s) : null;
-  if (!m) return null;
+// ── Proposed-node card ────────────────────────────────────────────────────────
+// Adapt a proposal (a structural subset of NodeResponse) into the full node
+// shape CardBody reads, so the concierge's proposals render as the SAME card the
+// timeline and Collection show — a flight boarding pass, a hotel tile, etc. A
+// proposal is by definition still pending, so status is fixed; source/source_id
+// aren't read by any CardBody variant, so they're nulled.
+function nodeFromProposal(p: ConversationProposal): NodeResponse {
   return {
-    day: `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`,
-    time: `${m[4]}:${m[5]}`,
+    id: p.id,
+    itinerary_id: "",
+    parent_subgraph_id: null,
+    type: p.type as NodeResponse["type"],
+    status: "pending",
+    title: p.title,
+    source: null,
+    source_id: null,
+    metadata: p.metadata ?? {},
   };
 }
 
-function cabinLabel(v: unknown): string | null {
-  const s = asStr(v);
-  if (!s) return null;
-  const words = s.replace(/_/g, " ").trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
-}
-
-function FlightProposalBody({ meta }: { meta: { [key: string]: unknown } }) {
-  const from = asStr(meta["iata_from"]) ?? "—";
-  const to = asStr(meta["iata_to"]) ?? "—";
-  const fromCity = cityLabel(meta["from_location"]);
-  const toCity = cityLabel(meta["to_location"]);
-  const depart = wallClock(meta["depart_at"]);
-  const arrive = wallClock(meta["arrive_at"]);
-  const cabin = cabinLabel(meta["cabin"]);
-
+// The accept/dismiss row, rendered in the CardShell `actions` slot — same
+// footprint as the mood board's Must Do / Not This Time row so a proposed card
+// closes with an action band, not a bare edge.
+function ProposalActions({
+  onAccept,
+  onDismiss,
+}: {
+  onAccept: () => void;
+  onDismiss: () => void;
+}) {
   return (
-    <div className="mt-1.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-serif text-[17px] leading-none text-ink">
-            {from}
-          </div>
-          {fromCity ? (
-            <div className="mt-0.5 truncate text-[10px] text-ink/55">
-              {fromCity}
-            </div>
-          ) : null}
-        </div>
-        <div className="shrink-0 translate-y-px text-[12px] text-ink/40">✈</div>
-        <div className="min-w-0 text-right">
-          <div className="font-serif text-[17px] leading-none text-ink">
-            {to}
-          </div>
-          {toCity ? (
-            <div className="mt-0.5 truncate text-[10px] text-ink/55">
-              {toCity}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {depart || arrive ? (
-        <div className="mt-1.5 flex items-baseline justify-between gap-3 text-[11px] text-ink/70">
-          <span>{depart ? `${depart.day} · ${depart.time}` : "—"}</span>
-          <span>{arrive ? `${arrive.day} · ${arrive.time}` : ""}</span>
-        </div>
-      ) : null}
-      {cabin ? (
-        <div className="mt-1.5 inline-block rounded-full border border-ink/15 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-ink/60">
-          {cabin}
-        </div>
-      ) : null}
+    <div className="flex flex-wrap gap-2 px-3 pb-3 pt-3">
+      <button
+        type="button"
+        onClick={onAccept}
+        className="h-9 rounded-md border border-ink/20 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.18em] text-ink transition-colors hover:bg-ink/5"
+      >
+        Accept
+      </button>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="h-9 rounded-md border border-ink/15 bg-paper px-3 font-sans text-[11px] uppercase tracking-[0.18em] text-ink/60 transition-colors hover:bg-ink/5"
+      >
+        Dismiss
+      </button>
     </div>
   );
 }

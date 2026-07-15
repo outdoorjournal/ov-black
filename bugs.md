@@ -37,3 +37,4 @@ Demo Flow:
 3. Able to take that trip and make it "trunk" and issue an invoice. The invoice is a real invoice that can be paid. We can see the invoice in the advisor view and the traveler view.
 
 
+Packing profile too full.

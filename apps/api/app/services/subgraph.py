@@ -66,6 +66,9 @@ def beat_subgraph_metadata(
     duration_minutes: int | None = None,
     description: str | None = None,
     image: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+    location_label: str | None = None,
 ) -> dict[str, Any]:
     """Node ``metadata`` for one BEAT — an inferred sub-moment within a day.
 
@@ -76,13 +79,32 @@ def beat_subgraph_metadata(
     sizes it, ``description`` lands as the card's own description (top-level,
     the card-attrs socket every card view reads), and ``image`` gives the beat
     its own hero (``ambient_image`` + ``snapshot.cover_image`` — without one
-    the journey view falls back to the parent's gallery rotation). ``index``/geo
-    still come from the day the beat belongs to — several beats share one day.
+    the journey view falls back to the parent's gallery rotation). ``index``
+    still comes from the day the beat belongs to. Geo defaults to the day's,
+    but a beat that happens elsewhere in the day (``lat``/``lng``/
+    ``location_label``) overrides it so the card pins — and its Maps button
+    lands — at the beat's own spot.
     """
     metadata = day_subgraph_metadata(day)
     metadata["snapshot"]["title"] = title
     subgraph_day = metadata["subgraph_day"]
     subgraph_day["hhmm"] = hhmm
+    if lat is not None:
+        subgraph_day["lat"] = lat
+    if lng is not None:
+        subgraph_day["lng"] = lng
+    if location_label:
+        subgraph_day["location_label"] = location_label
+        metadata["snapshot"]["location"] = location_label
+    # A beat with its own coordinates gets a top-level ``location`` object so the
+    # detail view's "Open in Google Maps" / directions button pins at the beat's
+    # spot (the button reads ``metadata.location`` — subgraph children otherwise
+    # have none). Skipped for beats that inherit the day's geo, matching today.
+    if lat is not None and lng is not None:
+        location: dict[str, Any] = {"lat": lat, "lng": lng}
+        if location_label:
+            location["label"] = location_label
+        metadata["location"] = location
     if duration_minutes is not None:
         subgraph_day["duration_minutes"] = duration_minutes
     if description:

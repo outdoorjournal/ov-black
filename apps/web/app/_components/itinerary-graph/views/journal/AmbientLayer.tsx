@@ -106,7 +106,14 @@ export function AmbientLayer() {
       // still there while the story scrolls. A `fixed` backdrop escapes to the
       // whole viewport and paints its veil over the sibling rail + concierge
       // chrome, washing them grey.
-      className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+      //
+      // Confined to the RIGHT SIDE on desktop (lg+): the reading column (the
+      // spine of cards) is left-anchored, so the wash lives in the free space to
+      // its right — the whole right side, behind the rail (which carries no
+      // background of its own, so the watermark reads through it). Below lg the
+      // layout stacks (rail above the full-width Journal, no side channel), so
+      // it spans the full width as before.
+      className="pointer-events-none absolute inset-y-0 left-0 right-0 z-0 overflow-hidden lg:left-1/2"
     >
       {/* The resting wash — the trip's mood tint, always beneath the image. */}
       <div

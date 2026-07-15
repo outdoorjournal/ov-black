@@ -16,7 +16,7 @@ export const CAMPAIGN_OPENERS: Record<string, string> = {
   olympus:
     "Mount Olympus has been waiting for you. I've started shaping the ascent — " +
     "Litochoro, the refuge, the summit ridge. Before I build it out, two things: " +
-    "how many days do you have for the mountain, and who's coming with you?",
+    "how many days do you have for this adventure, and who's coming with you?",
 };
 
 /** The campaign opener for a slug, or null if not a known campaign. */

@@ -1,6 +1,7 @@
-// The concierge conversation surface's proposal rendering. A typed proposal (a
-// flight) must render as its own compact card — route + airport-local wall clock
-// + cabin — not the bare "accept/dismiss" title stub the generic path shows.
+// The concierge conversation surface's proposal rendering. A proposal renders as
+// the SAME card the timeline / Collection show — the shared CardShell substrate +
+// type-specific CardBody (M006 harmonization) — not a bespoke stub. A flight
+// reads like a boarding pass: title + route + airport-local wall clock + cabin.
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
@@ -26,10 +27,14 @@ const FLIGHT: ConversationProposal = {
   },
 };
 
-test("a flight proposal renders as a boarding-pass card, not a bare title", () => {
+test("a flight proposal renders as the shared boarding-pass card", () => {
   render(
     <ConversationPanel messages={[]} onSubmit={() => {}} proposals={[FLIGHT]} />,
   );
+
+  // The card carries its title (the real CardBody shows it — unlike the old
+  // stub, which suppressed it for typed flights).
+  expect(screen.getByText("DTW → SCL · LATAM Airlines")).toBeTruthy();
 
   // Route codes + cities read like a boarding pass.
   expect(screen.getByText("DTW")).toBeTruthy();
@@ -39,14 +44,15 @@ test("a flight proposal renders as a boarding-pass card, not a bare title", () =
 
   // Each end shows its OWN airport-local wall clock (embedded offset, no
   // viewer-tz conversion): depart 16:10, arrive 07:50.
-  expect(screen.getByText(/Nov 10 · 16:10/)).toBeTruthy();
-  expect(screen.getByText(/Nov 11 · 07:50/)).toBeTruthy();
+  expect(screen.getByText("16:10")).toBeTruthy();
+  expect(screen.getByText("07:50")).toBeTruthy();
 
   // Cabin chip humanized.
   expect(screen.getByText("Economy")).toBeTruthy();
 
-  // The raw title stub is NOT rendered for a typed flight proposal.
-  expect(screen.queryByText("DTW → SCL · LATAM Airlines")).toBeNull();
+  // Accept / Dismiss ride in the shell's actions slot.
+  expect(screen.getByText("Accept")).toBeTruthy();
+  expect(screen.getByText("Dismiss")).toBeTruthy();
 });
 
 test("a non-typed proposal falls back to the bare title", () => {

@@ -58,6 +58,7 @@ from app.models import (
     ForkStatus,
     Itinerary,
     Message,
+    Node,
     NodeStatus,
     NodeType,
     SessionAudience,
@@ -681,7 +682,36 @@ async def _campaign_for_itinerary(
     return get_campaign(campaign_id)
 
 
-def _campaign_kickoff_directive(campaign: Campaign) -> str:
+async def _campaign_reading_chips(
+    db: AsyncSession, itinerary_id: uuid.UUID | None
+) -> list[tuple[str, str]]:
+    """The ``(title, node_id)`` of the reading-list articles on this itinerary.
+
+    The dashboard kickoff stocks the reading list deterministically (see
+    ``seed_campaign_reading_list``) just before this turn runs, so by now the
+    article nodes are on the graph. We hand the agent their ids so it can drop a
+    tappable ``[title](article:<node_id>)`` chip per read into its opener — the
+    selection and the save already happened; the model only formats the chips.
+    """
+    if itinerary_id is None:
+        return []
+    rows = (
+        await db.execute(
+            select(Node.id, Node.title)
+            .where(
+                Node.itinerary_id == itinerary_id,
+                Node.type == NodeType.article,
+                Node.status != NodeStatus.discarded,
+            )
+            .order_by(Node.created_at.asc())
+        )
+    ).all()
+    return [(title, str(node_id)) for node_id, title in rows]
+
+
+def _campaign_kickoff_directive(
+    campaign: Campaign, reading_chips: list[tuple[str, str]] | None = None
+) -> str:
     """The dashboard-kickoff instruction: greet the laid-out spine, then gather.
 
     Appended to the traveler context on a ``surface="kickoff"`` turn (planning
@@ -708,18 +738,38 @@ def _campaign_kickoff_directive(campaign: Campaign) -> str:
     else:
         arrival = ""
 
+    # The reading list is already stocked (deterministically, alongside the
+    # spine). Hand the agent the exact chips to echo so the greeting lands the
+    # "I've added a few reads" beat with tappable pills, not vague prose.
+    if reading_chips:
+        chips = " · ".join(f"[{title}](article:{node_id})" for title, node_id in reading_chips)
+        reading = (
+            "- MENTIONS THE READING LIST: you've ALSO added a few reads to their "
+            "reading list to set the mood for the mountain. Say so warmly in one "
+            "line (e.g. “I've also dropped a few reads into your reading "
+            "list”), then include these chips VERBATIM on their own line so "
+            "they can tap to open each — do not rewrite the link targets:\n"
+            f"  {chips}\n"
+        )
+    else:
+        reading = ""
+
     return (
         "KICKOFF: The dashboard is opening on this campaign trip and the curated "
         "spine is ALREADY dropping onto the canvas beside you — hotels, hikes, "
         "the summit, wired in order. Do NOT call ``assemble_campaign_spine`` or "
-        "otherwise rebuild it; it's done. Your whole job this turn is to open the "
+        "otherwise rebuild it; it's done. Do NOT call ``propose_timeline`` either "
+        "— the shape is already laid out on the canvas beside you, so a timeline "
+        "block in the chat would only duplicate it. Greet the shape in PROSE, not "
+        "with a rendered timeline. Your whole job this turn is to open the "
         "conversation. Write warm, tight prose (a short paragraph, no tool "
         "chains) that:\n"
         "- GREETS what's on screen: name the shape you've laid out (the ascent, "
         "the refuge, the summit) so it reads as intentional, not a data dump. If "
         "the trip length was defaulted or snapped (you'll see it in the live plan "
         "state / brief), own it warmly — why the mountain wants that many days.\n"
-        "- ASKS THE REAL GAPS, the things the skeleton can't guess:\n"
+        + reading
+        + "- ASKS THE REAL GAPS, the things the skeleton can't guess:\n"
         "  · WHEN + HOW LONG: if the dates or night-count aren't settled, ask — "
         "and say you'll resize the ascent around whatever they choose.\n"
         "  · WHO'S COMING: confirm the party so rooms, transfers, and per-person "
@@ -1399,7 +1449,10 @@ async def stream_turn(
         # Campaign dashboard kickoff: the agent speaks first and builds the
         # skeleton. Append the build directive so this planning turn acts.
         if surface == "kickoff" and campaign is not None:
-            traveler_ctx = traveler_ctx + "\n\n" + _campaign_kickoff_directive(campaign)
+            reading_chips = await _campaign_reading_chips(db, agent_session.itinerary_id)
+            traveler_ctx = (
+                traveler_ctx + "\n\n" + _campaign_kickoff_directive(campaign, reading_chips)
+            )
         system_prompt = build_system_prompt(traveler_ctx)
         agentcore_session_id = agent_session.agentcore_session_id
         client_id = client_row.id
@@ -1422,23 +1475,33 @@ async def stream_turn(
             mode = "planning"
         prior_turns = await _load_prior_turns(db, session_id=session_id)
 
-        # Auto-title from the first user message (M006/PS2) — only when the
-        # session has no title yet, so an explicit rename (PATCH) is preserved.
-        # `agent_session` is attached to `db`, so the set persists on the commit
-        # below alongside the user turn.
-        if not agent_session.title:
-            agent_session.title = _derive_session_title(content)
+        # The campaign kickoff is AGENT-FIRST: its trigger ("Let's build it out.")
+        # is a machine seed, not something the traveler typed. Persisting it as a
+        # user turn makes it replay as a traveler bubble on the dashboard (the
+        # traveler "saying" a line they never wrote), so we skip the user-turn
+        # write entirely — the assistant greeting (transaction C) is the only row
+        # this turn leaves behind. The seed still drives generation this turn; it
+        # just isn't recorded. (The agent's response uses turn_index + 1, leaving
+        # a harmless gap at turn_index — no uniqueness concern.)
+        is_kickoff = surface == "kickoff"
+        if not is_kickoff:
+            # Auto-title from the first user message (M006/PS2) — only when the
+            # session has no title yet, so an explicit rename (PATCH) is
+            # preserved. `agent_session` is attached to `db`, so the set persists
+            # on the commit below alongside the user turn.
+            if not agent_session.title:
+                agent_session.title = _derive_session_title(content)
 
-        user_turn = AgentTurn(
-            session_id=session_id,
-            turn_index=turn_index,
-            role=TurnRole.user,
-            content=content,
-            actor_kind=actor.actor_kind,
-            actor_id=actor.actor_id,
-            retried=0,
-        )
-        db.add(user_turn)
+            user_turn = AgentTurn(
+                session_id=session_id,
+                turn_index=turn_index,
+                role=TurnRole.user,
+                content=content,
+                actor_kind=actor.actor_kind,
+                actor_id=actor.actor_id,
+                retried=0,
+            )
+            db.add(user_turn)
         try:
             await db.commit()
         except IntegrityError:

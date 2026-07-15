@@ -189,6 +189,30 @@ def _anchors(nodes: list[GraphNode], gap: GapWindow) -> tuple[GraphNode | None, 
     return prior, nxt
 
 
+def _gap_is_occupied(nodes: list[GraphNode], gap: GapWindow) -> bool:
+    """True when any timed, duration-bearing node already spans into the gap.
+
+    A "gap" must be genuinely empty: a multi-day card (a several-night hotel, a
+    lodge/expedition/cornerstone booked across a block) covers every hour inside
+    its span, so a window that lands *inside* one is not a gap at all — filling
+    it would double-book. We test half-open overlap
+    (``starts_lower < gap.end and starts_upper > gap.start``), so a stop that
+    merely butts the gap edge (``starts_upper == gap.start``) is an adjacent
+    neighbour, not an overlap. Zero-duration points (a free-standing note
+    dropped *in* the gap to request something new) carry ``starts_upper ==
+    starts_lower`` and are intentionally not treated as occupancy — that flow
+    depends on Fill still returning options.
+    """
+    return any(
+        n.starts_lower is not None
+        and n.starts_upper is not None
+        and n.starts_upper > n.starts_lower  # real duration, not a point marker
+        and n.starts_lower < gap.end
+        and n.starts_upper > gap.start
+        for n in nodes
+    )
+
+
 def _temporal_neighbors(
     nodes: list[GraphNode], gap: GapWindow
 ) -> tuple[GraphNode | None, GraphNode | None]:
@@ -565,6 +589,9 @@ async def fill_gap(
     candidates that can't fit the drive-time envelope; drops party-allergen
     meals; down-ranks a meal butted up against an adjacent meal ("you just
     ate"); scores and truncates. Never mutates the graph.
+
+    Returns no proposals when the window overlaps an existing duration-bearing
+    node (a multi-day card already covers those hours — it's not a gap).
     """
     ctx = ctx or InventoryCtx(actor_kind="system")
     start = _ensure_aware(gap.start)
@@ -594,6 +621,15 @@ async def fill_gap(
 
     scope: dict[str, Any] = {"party_id": str(party_id)} if party_id is not None else {}
     nodes = await load_timeline_nodes(session, itinerary_id=itinerary_id, scope=scope)
+
+    # A gap that overlaps an existing multi-day (or any duration-bearing) node
+    # isn't a gap — the window is already covered, so there's nothing to fill.
+    # Short-circuit before hitting inventory.
+    if _gap_is_occupied(nodes, gap):
+        return FillResult(
+            proposals=[], analysis_id=analysis_id_out, analysis_age_seconds=age_seconds
+        )
+
     prior, nxt = _anchors(nodes, gap)
     prior_neighbor, next_neighbor = _temporal_neighbors(nodes, gap)
 

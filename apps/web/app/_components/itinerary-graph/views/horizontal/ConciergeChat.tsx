@@ -22,10 +22,13 @@ import {
   createApiClient,
   createSessionEndpoint,
   listTurns,
+  type NodeResponse,
 } from "@ov-black/api-client";
 
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { useAgentStream } from "@/lib/agentStream";
+
+import { prefersReducedMotion, scrollBehaviorFor } from "../journal/motion";
 
 import {
   itineraryGraphStore,
@@ -34,8 +37,14 @@ import {
 
 import { ConversationPanel } from "@/app/_components/concierge/ConversationPanel";
 import { AgentSurface } from "@/app/_components/concierge/surfaces/AgentSurface";
-import { SurfaceContext } from "@/app/_components/concierge/surfaces/SurfaceContext";
-import type { OptionView } from "@/app/_components/concierge/surfaces/types";
+import {
+  ArticleResolverContext,
+  SurfaceContext,
+} from "@/app/_components/concierge/surfaces/SurfaceContext";
+import type {
+  ArticleSurfaceView,
+  OptionView,
+} from "@/app/_components/concierge/surfaces/types";
 import {
   optionReply,
   useAgentSurface,
@@ -77,6 +86,68 @@ type ConciergeChatProps = {
 /** Gap between staggered card reveals when a server-built batch (the campaign
  *  spine) streams in — snappy, ~1.5s for a 7-night spine. */
 const REVEAL_STAGGER_MS = 90;
+
+/** Turn a reading-list `article` node into the flyout's view, or null when it
+ *  isn't a usable read. Mirrors the metadata shape `add_article_to_reading_list`
+ *  writes (`snapshot` + `url` + `publication`) — the same source
+ *  `readingItem.toReadingItem` reads — so an `article:` chip opens the same
+ *  piece the Reading rack shows. */
+function articleViewFromNode(node: NodeResponse | undefined): ArticleSurfaceView | null {
+  if (!node || node.type !== "article") return null;
+  const meta = node.metadata ?? {};
+  const rawSnap = meta["snapshot"];
+  const snap: Record<string, unknown> =
+    rawSnap && typeof rawSnap === "object" ? (rawSnap as Record<string, unknown>) : {};
+
+  const str = (v: unknown): string | undefined =>
+    typeof v === "string" && v.length > 0 ? v : undefined;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+
+  const title = str(snap["title"]) ?? str(node.title);
+  const url = str(meta["url"]) ?? str(snap["url"]);
+  if (!title || !url) return null;
+
+  const publication = str(meta["publication"]);
+  const ogImage = str(snap["cover_image"]);
+  const excerpt = str(snap["description"]);
+  const readingTimeMinutes = num(meta["reading_time_minutes"]);
+  return {
+    title,
+    url,
+    ...(publication ? { publication } : {}),
+    ...(ogImage ? { ogImage } : {}),
+    ...(excerpt ? { excerpt } : {}),
+    ...(readingTimeMinutes !== undefined ? { readingTimeMinutes } : {}),
+  };
+}
+
+// Scroll a just-accepted card into view. It lands in the store synchronously,
+// but its day section on the spine may only appear after the server timeline
+// scaffold rebuilds (router.refresh), so retry a few frames until the element
+// mounts rather than firing once and missing it. Timers are parked on the
+// caller's reveal-timer ref so unmount cancels any still pending.
+function scrollNodeIntoView(
+  nodeId: string,
+  timersRef: { current: ReturnType<typeof setTimeout>[] },
+) {
+  if (typeof document === "undefined") return;
+  let tries = 0;
+  const attempt = () => {
+    const el = document.querySelector<HTMLElement>(
+      `[data-node-id="${nodeId}"]`,
+    );
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({
+        behavior: scrollBehaviorFor(prefersReducedMotion()),
+        block: "center",
+      });
+      return;
+    }
+    if (tries++ < 8) timersRef.current.push(setTimeout(attempt, 100));
+  };
+  timersRef.current.push(setTimeout(attempt, 60));
+}
 
 export function ConciergeChat({
   audience,
@@ -310,14 +381,27 @@ export function ConciergeChat({
         text: t.content,
       }));
       setMessages((prev) => {
-        const head = prev.filter((m) => m.role === "system" && m.id.endsWith("-sys"));
-        return [...head, ...hydrated];
+        const hydratedIds = new Set(hydrated.map((m) => m.id));
+        const head: ChatMessage[] = [];
+        // Locally-added turns the replay doesn't cover yet — above all the
+        // campaign kickoff greeting (with its reading-list chips) streaming in on
+        // THIS mount, since autoKickoff and hydrate fire together when the
+        // dashboard resumes the intake session. listTurns resolves before the LLM
+        // finishes, so a plain `[head, ...hydrated]` replace would silently drop
+        // that streaming bubble. Keep such turns and re-append them AFTER the
+        // replayed history so the greeting survives (and reads chronologically).
+        const localLive: ChatMessage[] = [];
+        for (const m of prev) {
+          if (m.role === "system" && m.id.endsWith("-sys")) head.push(m);
+          else if (!hydratedIds.has(m.id) && m.id.startsWith(`${audience}-`)) localLive.push(m);
+        }
+        return [...head, ...hydrated, ...localLive];
       });
     })();
     return () => {
       cancelled = true;
     };
-  }, [hydrateHistory, canChat, ensureSession, apiBaseUrl, accessToken]);
+  }, [hydrateHistory, canChat, ensureSession, apiBaseUrl, accessToken, audience]);
 
   useEffect(() => {
     const ref = abortRef;
@@ -373,6 +457,36 @@ export function ConciergeChat({
       })();
     },
     [audience, canChat, ensureSession, appendDelta, sendTurn, storeApi],
+  );
+
+  // Accept a proposed card. Three things have to happen without a reload: the
+  // card lands on the plan (optimistic — it survives the refresh below), it's
+  // SELECTED (the rail/ambient layer follow `focusedNodeId`) and REVEALED on the
+  // spine. The day scaffold is server-rendered (see TimelineDataContext), so the
+  // node's own date may not have a day section until the RSC re-runs — hence the
+  // `router.refresh()` + a retrying scroll that waits for the card to mount.
+  // Finally we tell the concierge, which drives the next turn: it approves the
+  // card server-side and proposes the next one (one card at a time).
+  const acceptProposal = useCallback(
+    (id: string) => {
+      const st = storeApi.getState();
+      st.acceptProposal(id);
+      st.focusNode(id, "click");
+      router.refresh();
+      scrollNodeIntoView(id, revealTimersRef);
+      handleSubmit("I accepted this suggestion");
+    },
+    [storeApi, router, handleSubmit],
+  );
+
+  // Dismiss a proposal: drop the card and tell the concierge so it takes another
+  // turn — offering a different option instead of leaving the card hanging.
+  const dismissProposal = useCallback(
+    (id: string) => {
+      storeApi.getState().dismissProposal(id);
+      handleSubmit("I did not accept this suggestion");
+    },
+    [storeApi, handleSubmit],
   );
 
   // Campaign dashboard kickoff (fires at most once). Two phases:
@@ -459,6 +573,16 @@ export function ConciergeChat({
     sendTurn,
   ]);
 
+  // Resolve an `article:<nodeId>` chip (from the concierge's kickoff greeting)
+  // to the read it stands for — read live from the graph store, where the
+  // deterministic kickoff dropped the reading-list nodes. Null for a stale/
+  // unknown id, which makes ArticleChip fall back to a plain label.
+  const resolveArticle = useCallback(
+    (nodeId: string): ArticleSurfaceView | null =>
+      articleViewFromNode(storeApi.getState().nodes.find((n) => n.id === nodeId)),
+    [storeApi],
+  );
+
   // A tapped option answers through the ordinary turn path, phrased as the
   // traveler's own reply — the agent reads it like any message.
   const onChooseOption = useCallback(
@@ -472,18 +596,20 @@ export function ConciergeChat({
   return (
     <div ref={panelRef} className="flex h-full min-h-0 flex-col">
       <SurfaceContext.Provider value={opener}>
-        <ConversationPanel
-          messages={messages}
-          proposals={pendingProposals}
-          onAccept={(id) => storeApi.getState().acceptProposal(id)}
-          onDismiss={(id) => storeApi.getState().dismissProposal(id)}
-          onSubmit={handleSubmit}
-          {...(onScrollToNode ? { onScrollToNode } : {})}
-          disabled={!canChat}
-          sending={streaming}
-          hideHeader={hideHeader}
-          working={working}
-        />
+        <ArticleResolverContext.Provider value={resolveArticle}>
+          <ConversationPanel
+            messages={messages}
+            proposals={pendingProposals}
+            onAccept={acceptProposal}
+            onDismiss={dismissProposal}
+            onSubmit={handleSubmit}
+            {...(onScrollToNode ? { onScrollToNode } : {})}
+            disabled={!canChat}
+            sending={streaming}
+            hideHeader={hideHeader}
+            working={working}
+          />
+        </ArticleResolverContext.Provider>
       </SurfaceContext.Provider>
       <AgentSurface
         surface={surface}

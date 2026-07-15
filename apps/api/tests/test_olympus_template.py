@@ -54,12 +54,14 @@ integration = pytest.mark.skipif(
 
 async def _delete_olympus_templates() -> None:
     """Clean slate: drop every Olympus spine template + its cascade."""
+    # Stored slugs are the base plus a ``-<content hash>`` suffix, so match by
+    # prefix — a bare ``= any(base_slugs)`` would miss every hashed template.
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text("delete from public.card_templates where slug = any(:slugs)"),
-                {"slugs": list(OLYMPUS_SPINE_SLUGS.values())},
+                text("delete from public.card_templates where slug like any(:patterns)"),
+                {"patterns": [f"{base}%" for base in OLYMPUS_SPINE_SLUGS.values()]},
             )
     finally:
         await engine.dispose()
@@ -132,6 +134,14 @@ async def test_cornerstone_lands_as_subgraph_in_template() -> None:
             assert day_indexes == {day.day for day in cornerstone.days}
             beat_children = [n for n in children if "hhmm" in n.metadata_["subgraph_day"]]
             assert len(beat_children) == sum(len(day.beats) for day in cornerstone.days)
+            # Each beat carries its authored card kind — a dinner is a meal, a
+            # transfer a drive, an open morning free_time — not a blanket
+            # "experience" (matched by title, which is unique per beat).
+            beat_kinds = {
+                beat.title: beat.node_type
+                for day in cornerstone.days
+                for beat in day.beats
+            }
             for child in beat_children:
                 meta = child.metadata_["subgraph_day"]
                 assert isinstance(meta.get("duration_minutes"), int)
@@ -143,6 +153,9 @@ async def test_cornerstone_lands_as_subgraph_in_template() -> None:
                 )
                 assert child.metadata_["snapshot"]["cover_image"] == ambient
                 assert child.metadata_.get("description"), "beat carries a card description"
+                assert child.type == beat_kinds[child.title], (
+                    f"beat {child.title!r} landed as {child.type} not {beat_kinds[child.title]}"
+                )
             # Rotation: beats of one category get DIFFERENT images until the
             # set wraps — e.g. the three dinners must not share a shot.
             ambients = [c.metadata_["ambient_image"] for c in beat_children]

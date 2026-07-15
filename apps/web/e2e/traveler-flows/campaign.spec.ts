@@ -124,10 +124,36 @@ test("CMP-1: the Olympus campaign builds its spine live, without leaking agent i
     await expect(
       page.getByText(/Litochoro/).first(),
     ).toBeVisible({ timeout: 150_000 });
+
+    // The kickoff also stocks the reading list and the concierge greets it with
+    // tappable chips in its opener. Wait for a chip to render (the greeting
+    // streams after the spine), then open one — the article flyout slides out and,
+    // because the read is already saved, shows the "Added" state (not an Add CTA).
+    const chip = page.getByTestId("article-chip").first();
+    await expect(chip).toBeVisible({ timeout: 150_000 });
+    await chip.click();
+    await expect(page.getByTestId("article-surface")).toBeVisible();
+    await expect(page.getByTestId("article-surface-add")).toContainText(/Added/i);
   });
 
   // #1 — nothing machine-facing reached the traveler across the whole transcript.
   await expectNoAgentLeak(page);
+
+  // The kickoff is agent-first: its machine trigger ("Let's build it out.") must
+  // NEVER surface as a traveler bubble — not live, and not on replay. Reload to
+  // force a full hydrate from persisted turns, then assert the greeting (and its
+  // reading chip) survives the cold load while the trigger line is absent.
+  await page.reload();
+  await expect(page.getByTestId("article-chip").first()).toBeVisible({
+    timeout: 60_000,
+  });
+  const replayed = (
+    await page.getByTestId("conversation-panel").innerText()
+  ).toLowerCase();
+  expect(
+    replayed.includes("let's build it out"),
+    "the kickoff trigger leaked into the transcript as a traveler turn",
+  ).toBe(false);
 
   // #2 backstop at the API seam: the spine really was built on this fork (the
   // dashboard URL carries the traveler's working fork id).

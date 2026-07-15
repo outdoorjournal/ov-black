@@ -63,7 +63,14 @@ export type ActiveSurface =
   | { kind: "place"; label: string; query: string }
   | { kind: "route"; surfaceId: string; route: RouteSurfaceView }
   | { kind: "options"; surfaceId: string; options: OptionsSurfaceView }
-  | { kind: "article"; surfaceId: string; article: ArticleSurfaceView };
+  | {
+      kind: "article";
+      surfaceId: string;
+      article: ArticleSurfaceView;
+      // The piece is already in the reading list (a chip-opened read the kickoff
+      // pre-saved) — the flyout opens showing "Added", not an Add button.
+      alreadySaved?: boolean;
+    };
 
 // ── Parsing helpers ──────────────────────────────────────────────────────
 

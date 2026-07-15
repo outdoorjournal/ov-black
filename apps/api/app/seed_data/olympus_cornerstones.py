@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.inventory.schemas import ItineraryDay, Location
+from app.models import NodeType
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,12 @@ class CornerstoneBeat:
     #: Local start time within the day, ``"HH:MM"`` (EEST — the trip's zone).
     hhmm: str
     title: str
+    #: Card kind for this moment. The vendor writes every day as prose, but the
+    #: beats it narrates are not all the same kind of thing: a dinner is a
+    #: ``meal``, a coach transfer is a ``drive``, an unstructured morning is
+    #: ``free_time``. Defaults to ``experience`` (the hikes, sights, and swims
+    #: that make up most of a day) so only the exceptions need to be declared.
+    node_type: NodeType = NodeType.experience
     duration_minutes: int = 60
     #: Short editorial description, derived from the vendor's day prose.
     description: str | None = None
@@ -52,6 +59,13 @@ class CornerstoneBeat:
     #: categories within one cornerstone rotate through the set, so three
     #: dinners get three different shots. None → the parent's gallery rotation.
     stock: str | None = None
+    #: Optional per-beat geo point. A beat normally inherits its parent day's
+    #: lat/lng, but a beat that happens somewhere else within the day (e.g. a
+    #: transit that starts at a distant transit hub) overrides it here so the
+    #: card pins — and its "open in Maps" button lands — at the right spot.
+    lat: float | None = None
+    lng: float | None = None
+    location_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -339,8 +353,8 @@ SYMBOLISM = OlympusCornerstone(
         CornerstoneDay(
             day=1,
             title="Meet your guide",
-            lat=40.63928,
-            lng=22.94242,
+            lat=40.10154,
+            lng=22.50168,
             location_label="Litochoro",
             description=(
                 "Your guide meets you at arrivals and the mountain takes over "
@@ -348,6 +362,26 @@ SYMBOLISM = OlympusCornerstone(
                 "growing on the horizon."
             ),
             beats=(
+                CornerstoneBeat(
+                    hhmm="16:00",
+                    title="Transit From Thessaloniki to Litochoro",
+                    node_type=NodeType.drive,
+                    stock="drive",
+                    duration_minutes=60,
+                    # Anchored at Thessaloniki's central rail/coach interchange —
+                    # the southbound departure point for Litochoro (which sits on
+                    # the same line). Pins the transit's origin so we can price the
+                    # airport → station leg once the traveler's flight is known,
+                    # whether they run straight from arrivals or overnight nearby.
+                    lat=40.6441,
+                    lng=22.9316,
+                    location_label="Thessaloniki New Railway Station",
+                    description=(
+                        "Your guide meets you at arrivals and the mountain takes over "
+                        "from there — an easy drive south along the coast, Olympus "
+                        "growing on the horizon."
+                    ),
+                ),
                 CornerstoneBeat(
                     hhmm="17:00",
                     title="Settle into Litochoro",
@@ -362,6 +396,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:30",
                     title="Welcome dinner in the village",
+                    node_type=NodeType.meal,
                     stock="taverna",
                     duration_minutes=120,
                     description=(
@@ -390,6 +425,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="08:00",
                     title="Breakfast in Litochoro",
+                    node_type=NodeType.meal,
                     stock="breakfast",
                     duration_minutes=60,
                     description="Village bakery breakfast before an easy first day.",
@@ -428,6 +464,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:30",
                     title="Dinner & overnight — Litochoro",
+                    node_type=NodeType.meal,
                     stock="taverna",
                     duration_minutes=120,
                     description="Last village comforts before the refuges.",
@@ -452,6 +489,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="07:30",
                     title="Breakfast & pack for the refuges",
+                    node_type=NodeType.meal,
                     stock="gear",
                     duration_minutes=60,
                     description="Bags down to essentials — two nights on the mountain.",
@@ -470,6 +508,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="12:30",
                     title="Light lunch — Petrostrouga refuge",
+                    node_type=NodeType.meal,
                     stock="refuge",
                     duration_minutes=60,
                     description="Recharge under the Bosnian pines.",
@@ -496,6 +535,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:00",
                     title="Dinner & overnight — Apostolidis refuge",
+                    node_type=NodeType.meal,
                     stock="refuge",
                     duration_minutes=120,
                     description="Refuge supper, alpine night, an early alarm.",
@@ -519,6 +559,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="06:30",
                     title="Alpine breakfast on the plateau",
+                    node_type=NodeType.meal,
                     stock="coffee-view",
                     duration_minutes=60,
                     description="First light on the Aegean, coffee at altitude.",
@@ -545,6 +586,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="14:30",
                     title="Free hours on the roof of Greece",
+                    node_type=NodeType.free_time,
                     stock="plateau",
                     duration_minutes=120,
                     description="Unhurried time among the peaks before the descent.",
@@ -559,6 +601,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="19:30",
                     title="Dinner & overnight — Petrostrouga refuge",
+                    node_type=NodeType.meal,
                     stock="refuge",
                     duration_minutes=120,
                     description="Summit stories over a refuge table.",
@@ -583,6 +626,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="07:30",
                     title="Coffee on the balcony of Olympus",
+                    node_type=NodeType.meal,
                     stock="coffee-view",
                     duration_minutes=60,
                     description=(
@@ -623,6 +667,7 @@ SYMBOLISM = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="20:00",
                     title="Dinner & overnight — a countryside guesthouse",
+                    node_type=NodeType.meal,
                     stock="taverna",
                     duration_minutes=120,
                     description="A guesthouse table in the spa country.",
@@ -642,20 +687,23 @@ SYMBOLISM = OlympusCornerstone(
             beats=(
                 CornerstoneBeat(
                     hhmm="09:00",
-                    title="A last morning, shaped to your departure",
+                    title="A last morning breakfast in the countryside",
+                    node_type=NodeType.meal,
                     stock="breakfast",
                     duration_minutes=120,
                     description=(
-                        "The schedule adapts to your flight — a final visit, a slow "
-                        "breakfast, one more look at the mountain."
+                        "A slow breakfast, one more look at the mountain."
                     ),
                 ),
                 CornerstoneBeat(
-                    hhmm="11:30",
-                    title="Return transfer — Thessaloniki airport",
+                    hhmm="11:00",
+                    title="Return to Thessaloniki",
+                    node_type=NodeType.drive,
                     stock="drive",
                     duration_minutes=90,
-                    description="Back along the coast to departures.",
+                    description="Back along the coast to the same transit terminal you departed from.",
+                    lat=40.6441,
+                    lng=22.9316,
                 ),
             ),
         ),
@@ -738,6 +786,7 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="11:00",
                     title="Drive up to Prionia (1,100 m)",
+                    node_type=NodeType.drive,
                     stock="drive",
                     duration_minutes=30,
                     description="Twenty winding minutes to the trailhead.",
@@ -755,6 +804,7 @@ GUIDED_2DAY = OlympusCornerstone(
                 CornerstoneBeat(
                     hhmm="18:00",
                     title="Refuge evening — warm meal & early night",
+                    node_type=NodeType.meal,
                     stock="refuge",
                     duration_minutes=150,
                     description=("A warm meal at the hut, kit laid out for the alpine start."),
@@ -826,7 +876,6 @@ GUIDED_2DAY = OlympusCornerstone(
         ),
     ),
 )
-
 
 def cornerstone_for_nights(nights: int, *, longest: int) -> OlympusCornerstone:
     """Pick the cornerstone for a spine of ``nights`` length.
