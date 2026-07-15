@@ -194,6 +194,12 @@ export type ItineraryGraphState = {
   focusLocked: boolean;
   flashNodeId: string | null;
   assemblePulse: number;
+  /** A monotonic nonce bumped whenever the agent changes the trip's travel
+   *  party (a `party_updated`/`party_changed` frame). The travel party is a
+   *  client-side fetch (not a server prop), so `router.refresh()` can't re-run
+   *  it — surfaces that display the roster (the dashboard hero chip) key their
+   *  fetch effect off this so a mid-chat seat/unseat re-reads the roster. */
+  partyRevision: number;
 
   // ── staff editing lifecycle ──
   /** Derived trunk lifecycle from the API (in_studio / with_traveler / approved). */
@@ -319,6 +325,9 @@ export type ItineraryGraphState = {
   applyNodeUpdate: (node: AgentNode) => void;
   flashNode: (id: string | null) => void;
   pulseAssemble: () => void;
+  /** Bump `partyRevision` — the agent changed the travel party, so the roster
+   *  fetch keyed off it re-reads. */
+  bumpPartyRevision: () => void;
 
   // ── staff editing actions (no-op unless editable) ──
   acquireLock: () => void;
@@ -880,6 +889,7 @@ export const itineraryGraphStore = createStoreContext<
         focusSource: null,
         flashNodeId: null,
         assemblePulse: 0,
+        partyRevision: 0,
         heldItem: null,
         lastPlacement: null,
 
@@ -1055,6 +1065,8 @@ export const itineraryGraphStore = createStoreContext<
         flashNode: (id) => set({ flashNodeId: id }),
         pulseAssemble: () =>
           set((s) => ({ assemblePulse: s.assemblePulse + 1 })),
+        bumpPartyRevision: () =>
+          set((s) => ({ partyRevision: s.partyRevision + 1 })),
 
         // ── staff editing ───────────────────────────────────────────────
         acquireLock: () => {

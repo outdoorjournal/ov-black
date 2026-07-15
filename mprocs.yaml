@@ -31,18 +31,24 @@ procs:
   # :8080 (LocalAgentRuntimeClient over HTTP) instead of the in-process mock,
   # so no AWS creds are needed by the API itself. --reload handles its own
   # code-change restarts; autorestart only fires if uvicorn truly dies.
+  # Output is tee'd to ../../.logs/api.log (repo-root .logs/, gitignored via
+  # *.log) so tracebacks survive off-screen — `tail -f .logs/api.log`. `-a`
+  # appends across autorestarts so a crash's traceback isn't wiped by the
+  # relaunch; clear it with `: > .logs/api.log`. PYTHONUNBUFFERED keeps the pane
+  # live now that stdout is a pipe, not the pty.
   api:
-    shell: "uv run uvicorn app.main:app --reload --port 8000"
+    shell: "mkdir -p ../../.logs && uv run uvicorn app.main:app --reload --port 8000 2>&1 | tee -a ../../.logs/api.log"
     cwd: apps/api
     autorestart: true
     stop: SIGINT
     env:
       AGENT_LOCAL_URL: "http://localhost:8080"
+      PYTHONUNBUFFERED: "1"
 
   # Bedrock AgentCore runtime on :8080. Needs live Bedrock creds — runs under
   # AWS_PROFILE=tov-sso. Its tools call back to the API at BACKEND_BASE_URL.
   agent:
-    shell: "uv run python -m agent"
+    shell: "mkdir -p ../../.logs && uv run python -m agent 2>&1 | tee -a ../../.logs/agent.log"
     cwd: apps/agent
     autorestart: true
     stop: SIGINT
@@ -50,6 +56,7 @@ procs:
       AWS_PROFILE: "tov-sso"
       AWS_REGION: "us-west-2"
       BACKEND_BASE_URL: "http://localhost:8000"
+      PYTHONUNBUFFERED: "1"
       # tool_trace SSE frames for the eval harness (`ovb agent eval`). Browsers
       # drop the unknown frame type; only ovb consumes it. Never set in prod.
       EMIT_TOOL_TRACE: "1"
@@ -57,7 +64,7 @@ procs:
   # Next.js advisor/client UI on :3000. Talks to the API via the generated
   # client; next dev manages its own hot reload.
   web:
-    shell: "pnpm dev"
+    shell: "mkdir -p ../../.logs && pnpm dev 2>&1 | tee -a ../../.logs/web.log"
     cwd: apps/web
     autorestart: true
     stop: SIGINT

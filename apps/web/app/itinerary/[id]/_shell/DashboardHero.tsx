@@ -51,7 +51,7 @@ import { CinemaPlayButton } from "@/app/_components/itinerary-graph/views/journa
 import { PartyPanel } from "@/app/_components/itinerary-graph/views/horizontal/PartyPanel";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
 import { useTimelineData } from "@/app/_components/itinerary-graph/TimelineDataContext";
-import { DEFAULT_MOOD, MOODS, type MoodEntry } from "@/lib/atmos/moods";
+import { DEFAULT_HERO_IMAGE } from "@/lib/atmos/moods";
 
 import {
   firstUnpaidIssued,
@@ -93,8 +93,9 @@ export function DashboardHero({
   const it = timeline.itinerary;
   const canEdit = apiBaseUrl !== null && accessToken !== null;
 
-  const entry = (MOODS as Record<string, MoodEntry>)[timeline.mood];
-  const imageUrl = entry?.imageUrl ?? MOODS[DEFAULT_MOOD].imageUrl;
+  // The trip's own hero image (0054), falling back to a neutral default. The
+  // itinerary owns its hero directly — no mood indirection.
+  const imageUrl = it.hero_image || DEFAULT_HERO_IMAGE;
 
   const [error, setError] = useState(false);
 

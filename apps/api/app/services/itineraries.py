@@ -672,14 +672,16 @@ async def create_itinerary(
     timing_note: str | None = None,
     campaign_id: str | None = None,
     mood: str | None = None,
+    hero_image: str | None = None,
 ) -> Itinerary:
     """Create a new itinerary container.
 
     Optional ``brief`` + timing fields (0033) let a caller seed the trip goal /
     when at creation; they usually arrive later via ``update_itinerary_details``
     from the builder's first-run intake, so all default to None. ``campaign_id``
-    + ``mood`` (0047) let a campaign seed stamp provenance + the hero mood up
-    front; None for ordinary trips.
+    + ``mood`` (0047) let a campaign seed stamp provenance + the chat mood up
+    front; ``hero_image`` (0054) stamps the trip's hero image. None for ordinary
+    trips.
 
     Itineraries themselves are not audited in node_history / edge_history —
     those tables only track graph mutations. Auditing of itinerary-level
@@ -697,6 +699,7 @@ async def create_itinerary(
         timing_note=timing_note,
         campaign_id=campaign_id,
         mood=mood,
+        hero_image=hero_image,
     )
     session.add(itinerary)
     await session.flush()
@@ -723,6 +726,7 @@ _UPDATABLE_ITINERARY_FIELDS = frozenset(
         "date_end",
         "duration_nights",
         "timing_note",
+        "hero_image",
     }
 )
 

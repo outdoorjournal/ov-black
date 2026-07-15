@@ -114,11 +114,10 @@ class MyItinerarySummary(BaseModel):
     # both null → the tile falls back to its gradient placeholder.
     cover_image: str | None = None
     cover_photo_token: str | None = None
-    # Persisted atmospheric mood id (0047) — the same one the itinerary
-    # dashboard hero renders. When set (campaign trips), the basecamp tile
-    # prefers this mood hero so the tile matches the detail-page hero rather
-    # than an arbitrarily-ordered content node; null → derive from nodes.
-    mood: str | None = None
+    # The trip's explicit hero image URL (0054). When set (campaign trips), the
+    # tile heroes on it — the SAME image the dashboard hero shows — instead of an
+    # arbitrarily-ordered content node; null → derive the cover from nodes.
+    hero_image: str | None = None
 
 
 class MyItinerariesResponse(BaseModel):
@@ -505,7 +504,7 @@ async def list_my_itineraries_endpoint(
                 duration_nights=row.duration_nights or fork_duration_nights,
                 cover_image=covers.get(row.id, (None, None))[0],
                 cover_photo_token=covers.get(row.id, (None, None))[1],
-                mood=row.mood,
+                hero_image=row.hero_image,
             )
             for (
                 row,

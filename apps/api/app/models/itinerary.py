@@ -252,13 +252,16 @@ class Itinerary(Base):
     # (ADV-17, the pinning gesture); kept on unpin so cards stay put. NULL on
     # a trip with nothing scheduled yet.
     days_anchor: Mapped[date | None] = mapped_column(Date, nullable=True)
-    # 0047 — campaign provenance + persisted hero mood. ``campaign_id`` is the
+    # 0047 — campaign provenance + persisted mood. ``campaign_id`` is the
     # inbound-campaign slug a trip was started from (NULL for ordinary trips); it
-    # drives the dashboard auto-kickoff, the hero mood preset, and the agent's
-    # campaign-awareness. ``mood`` is the curated atmospheric mood id the hero
-    # renders; NULL resolves to the default mood at read time.
+    # drives the dashboard auto-kickoff and the agent's campaign-awareness.
+    # ``mood`` is the atmospheric mood id that themes the concierge CHAT frame
+    # (keyword classifier) — NOT the itinerary hero (see ``hero_image``).
     campaign_id: Mapped[str | None] = mapped_column(nullable=True)
     mood: Mapped[str | None] = mapped_column(nullable=True)
+    # 0054 — the itinerary's hero image URL, rendered directly by the basecamp
+    # tile and the dashboard hero. NULL falls back to a default hero client-side.
+    hero_image: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

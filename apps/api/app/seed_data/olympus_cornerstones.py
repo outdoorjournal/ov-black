@@ -701,7 +701,9 @@ SYMBOLISM = OlympusCornerstone(
                     node_type=NodeType.drive,
                     stock="drive",
                     duration_minutes=90,
-                    description="Back along the coast to the same transit terminal you departed from.",
+                    description=(
+                        "Back along the coast to the same transit terminal you departed from."
+                    ),
                     lat=40.6441,
                     lng=22.9316,
                 ),

@@ -198,3 +198,7 @@ export const MOODS: Record<MoodId, MoodEntry> = {
 };
 
 export const MOOD_IDS: MoodId[] = Object.keys(MOODS) as MoodId[];
+
+// The itinerary hero image when a trip has no explicit `hero_image` (0054).
+// A neutral alpine dusk — a considered default, not a mood the trip "is".
+export const DEFAULT_HERO_IMAGE: string = MOODS[DEFAULT_MOOD].imageUrl;

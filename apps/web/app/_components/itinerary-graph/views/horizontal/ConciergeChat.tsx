@@ -339,6 +339,17 @@ export function ConciergeChat({
       // fresh window; the store's in-session graph state survives the refresh.
       router.refresh();
     },
+    // The agent changed the travel party — a new/updated member
+    // (`party_updated`) or an existing member seated/unseated on this trip
+    // (`party_changed`). The roster is a client-side fetch (not a server prop),
+    // so `router.refresh()` can't re-run it; bump the store nonce that the
+    // dashboard's party fetch keys off so the hero chip re-reads.
+    onPartyUpdated: () => {
+      storeApi.getState().bumpPartyRevision();
+    },
+    onPartyChanged: () => {
+      storeApi.getState().bumpPartyRevision();
+    },
   });
 
   // Open the session lazily, returning its id (or null on failure).

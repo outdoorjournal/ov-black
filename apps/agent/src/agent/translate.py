@@ -65,6 +65,12 @@ _TOOL_FRAME_TYPES = {
     # live. The frame carries a whitelisted subset — never dietary/medical.
     "record_party_member": "party_updated",
     "update_party_member": "party_updated",
+    # Seating/unseating an EXISTING household member on this trip changes the
+    # roster wholesale (the tool returns the full member list, not one member),
+    # so it rides a payload-free ``party_changed`` poke rather than the
+    # single-member ``party_updated`` frame. The dashboard re-reads the roster.
+    "add_trip_traveler": "party_changed",
+    "remove_trip_traveler": "party_changed",
     # Onboarding: the basecamp first-touch ledger lights a goal checkmark when
     # the agent captures a profile fact. The frame carries ONLY the fact kind
     # (never the text) — the ledger just needs to know *which* goal landed.
@@ -211,6 +217,12 @@ def _frame_for_tool(name: str, output: dict) -> dict | None:
         if isinstance(output.get("is_primary"), bool):
             member["is_primary"] = output["is_primary"]
         return {"type": "party_updated", "member": member}
+    if frame_type == "party_changed":
+        # Roster-level poke — no payload. Drop an error result so the browser
+        # never re-fetches on a failed seat/unseat.
+        if "error" in output:
+            return None
+        return {"type": "party_changed"}
     if frame_type == "profile_updated":
         # Kind only — the traveler-told text never rides this frame (the ledger
         # shows a checkmark, not the fact). Drop an error result on the floor.

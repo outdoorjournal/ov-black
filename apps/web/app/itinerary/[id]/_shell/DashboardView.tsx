@@ -33,6 +33,9 @@ export function DashboardView() {
   const itineraryId = itineraryGraphStore.useStore((s) => s.itineraryId);
   const apiBaseUrl = itineraryGraphStore.useStore((s) => s.apiBaseUrl);
   const accessToken = itineraryGraphStore.useStore((s) => s.accessToken);
+  // Bumped when the agent changes the travel party mid-chat — re-runs the party
+  // fetch below so the hero chip reflects a seat/unseat without a reload.
+  const partyRevision = itineraryGraphStore.useStore((s) => s.partyRevision);
 
   const [money, setMoney] = useState<MoneyState>({ kind: "loading" });
   const [party, setParty] = useState<PartyState>({ kind: "loading" });
@@ -71,7 +74,10 @@ export function DashboardView() {
     return () => {
       cancelled = true;
     };
-  }, [itineraryId, apiBaseUrl, accessToken]);
+    // `partyRevision` re-runs this on an agent party change: the roster feeds the
+    // hero chip, and party size also expands per-person costs, so the money read
+    // is worth refreshing alongside it.
+  }, [itineraryId, apiBaseUrl, accessToken, partyRevision]);
 
   return (
     // The `relative` frame is the ambient's containing block: it pins the wash to

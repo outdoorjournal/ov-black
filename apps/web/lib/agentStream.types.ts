@@ -138,6 +138,16 @@ export type PartyUpdatedFrame = {
   };
 };
 
+// Emitted when the trip's travel PARTY changes at the roster level — an
+// existing household member seated on (or unseated from) this trip via
+// `add_trip_traveler` / `remove_trip_traveler`. Unlike `party_updated` (which
+// carries a single mutated member for the intake card), this is a payload-free
+// "the roster changed, re-read it" poke: the tool returns the whole roster, and
+// the dashboard re-fetches it wholesale rather than patching a single member.
+export type PartyChangedFrame = {
+  type: "party_changed";
+};
+
 // Emitted when the agent records a profile fact during the basecamp
 // onboarding conversation. Carries ONLY the fact `kind` (never the
 // traveler-told text) — the onboarding ledger lights a goal checkmark
@@ -192,6 +202,7 @@ export type SseFrame =
   | NodeUpdatedFrame
   | ItineraryUpdatedFrame
   | PartyUpdatedFrame
+  | PartyChangedFrame
   | ProfileUpdatedFrame
   | IntakeCompleteFrame
   | MoodFrame

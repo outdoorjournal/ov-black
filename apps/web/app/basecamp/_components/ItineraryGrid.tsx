@@ -2,11 +2,10 @@
 
 // The "all your itineraries" surface for /basecamp variant (d).
 //
-// Imagery-forward tiles — a hero from the trip's persisted mood image when it
-// has one (campaign trips like Olympus, matching the dashboard hero), else
-// pulled from the trip's most evocative node (destination → hotel → experience
-// → meal), the serif title and timeframe resting on a scrim at the foot of the
-// image, a status chip up top. When a
+// Imagery-forward tiles — the trip's own hero image when it has one (matching
+// the dashboard hero), else pulled from the trip's most evocative node
+// (destination → hotel → experience → meal), the serif title and timeframe
+// resting on a scrim at the foot of the image, a status chip up top. When a
 // trip has no cover yet the hero falls back to a stable per-trip gradient so
 // the grid never shows a floating, image-less card. Each links to the existing
 // /itinerary/{id} detail view. The self-serve "start a new itinerary"
@@ -17,7 +16,6 @@ import Link from "next/link";
 import type { ItineraryTimingKind, MyItinerarySummary } from "@ov-black/api-client";
 
 import { placePhotoUrl } from "@/app/_components/itinerary-graph/model/placePhoto";
-import { MOODS, type MoodEntry } from "@/lib/atmos/moods";
 
 import { StartItineraryButton } from "./StartItineraryButton";
 
@@ -116,15 +114,11 @@ export function ItineraryGrid({ itineraries }: ItineraryGridProps) {
 }
 
 function ItineraryCard({ itinerary }: { itinerary: MyItinerarySummary }) {
-  // A trip with a persisted mood (campaign trips, e.g. Olympus) heroes on that
-  // mood image — the SAME hero the itinerary dashboard shows — so the tile and
-  // the detail page agree rather than the tile picking an arbitrarily-ordered
-  // content node. Everything else falls back to the trip's evocative node cover.
-  const moodEntry = itinerary.mood
-    ? (MOODS as Record<string, MoodEntry>)[itinerary.mood]
-    : undefined;
+  // The trip's own hero image (0054) wins — the SAME image the dashboard hero
+  // shows — so the tile and the detail page agree. Trips without an explicit
+  // hero (ordinary advisor trips) fall back to their most evocative node cover.
   const cover =
-    moodEntry?.imageUrl ??
+    itinerary.hero_image ??
     placePhotoUrl(itinerary.cover_photo_token ?? undefined) ??
     itinerary.cover_image ??
     undefined;

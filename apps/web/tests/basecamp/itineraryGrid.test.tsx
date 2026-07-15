@@ -9,7 +9,6 @@ import { beforeAll, expect, test } from "vitest";
 import type { MyItinerarySummary } from "@ov-black/api-client";
 
 import { ItineraryGrid } from "@/app/basecamp/_components/ItineraryGrid";
-import { MOODS } from "@/lib/atmos/moods";
 
 beforeAll(() => {
   // placePhotoUrl needs a configured API base to build the proxy URL.
@@ -57,16 +56,16 @@ test("prefers a Places photo token, then a snapshot URL, then a gradient", () =>
   expect(bareCard.querySelector("img")).toBeNull();
 });
 
-test("a persisted mood heroes on the mood image, over the node cover", () => {
-  // Campaign trips (e.g. Olympus) carry a mood — the tile should show that mood
-  // hero (matching the dashboard) rather than an arbitrarily-ordered node cover.
+test("an explicit hero image wins over the node cover", () => {
+  // Campaign trips (e.g. Olympus) carry a hero_image — the tile shows it (matching
+  // the dashboard) rather than an arbitrarily-ordered node cover.
   render(
     <ItineraryGrid
       itineraries={[
         summary({
           id: "olympus",
           title: "Olympus trip",
-          mood: "olympus",
+          hero_image: "https://img/olympus-summit.jpg",
           cover_photo_token: "tok-abc",
           cover_image: "https://img/ignored.jpg",
         }),
@@ -75,19 +74,19 @@ test("a persisted mood heroes on the mood image, over the node cover", () => {
   );
 
   const card = screen.getByRole("link", { name: /Olympus trip/ });
-  expect(card.querySelector("img")).toHaveAttribute("src", MOODS.olympus.imageUrl);
+  expect(card.querySelector("img")).toHaveAttribute("src", "https://img/olympus-summit.jpg");
 });
 
-test("an unknown mood falls back to the node cover", () => {
+test("no hero image falls back to the node cover", () => {
   render(
     <ItineraryGrid
       itineraries={[
-        summary({ id: "x", title: "Weird mood", mood: "not-a-mood", cover_image: "https://img/node.jpg" }),
+        summary({ id: "x", title: "Plain trip", cover_image: "https://img/node.jpg" }),
       ]}
     />,
   );
 
-  const card = screen.getByRole("link", { name: /Weird mood/ });
+  const card = screen.getByRole("link", { name: /Plain trip/ });
   expect(card.querySelector("img")).toHaveAttribute("src", "https://img/node.jpg");
 });
 

@@ -170,6 +170,8 @@ class UpdateItineraryRequest(BaseModel):
     date_end: date | None = None
     duration_nights: int | None = Field(default=None, ge=1, le=365)
     timing_note: str | None = Field(default=None, max_length=_NOTE_MAX)
+    # The trip's hero image URL (0054). Send null to clear back to the default.
+    hero_image: str | None = Field(default=None, max_length=2048)
 
 
 class ItineraryResponse(BaseModel):
@@ -203,13 +205,16 @@ class ItineraryResponse(BaseModel):
     # unpinned trip, so relative Day-N labels are stable. None until the first
     # card is scheduled; equals date_start once the dates are pinned (retime).
     days_anchor: date | None = None
-    # Campaign provenance + hero mood (0047). ``campaign_id`` is the inbound
-    # campaign slug a trip was started from (None on ordinary trips); it drives
-    # the dashboard auto-kickoff, hero preset, and agent campaign-awareness.
-    # ``mood`` is the persisted atmospheric mood id the hero renders; None
-    # resolves to the default mood client-side.
+    # Campaign provenance + mood (0047). ``campaign_id`` is the inbound campaign
+    # slug a trip was started from (None on ordinary trips); it drives the
+    # dashboard auto-kickoff and agent campaign-awareness. ``mood`` is the
+    # persisted atmospheric mood id that themes the concierge CHAT frame — not
+    # the itinerary hero.
     campaign_id: str | None = None
     mood: str | None = None
+    # The trip's hero image URL (0054), rendered directly by the dashboard hero
+    # + basecamp tile. None resolves to a default hero client-side.
+    hero_image: str | None = None
 
 
 class RetimeItineraryRequest(BaseModel):
@@ -1873,6 +1878,7 @@ def _itinerary_to_response(
         days_anchor=getattr(itinerary, "days_anchor", None),
         campaign_id=getattr(itinerary, "campaign_id", None),
         mood=getattr(itinerary, "mood", None),
+        hero_image=getattr(itinerary, "hero_image", None),
     )
 
 

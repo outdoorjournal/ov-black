@@ -35,6 +35,7 @@ import type {
   MoodFrame,
   NodeCreatedFrame,
   NodeUpdatedFrame,
+  PartyChangedFrame,
   PartyUpdatedFrame,
   ProfileUpdatedFrame,
   SseFrame,
@@ -57,6 +58,7 @@ export type {
   MoodFrame,
   NodeCreatedFrame,
   NodeUpdatedFrame,
+  PartyChangedFrame,
   PartyUpdatedFrame,
   ProfileUpdatedFrame,
   SseFrame,
@@ -82,6 +84,7 @@ const KNOWN_FRAME_TYPES: ReadonlySet<SseFrame["type"]> = new Set([
   "node_updated",
   "itinerary_updated",
   "party_updated",
+  "party_changed",
   "profile_updated",
   "intake_complete",
   "mood",
@@ -246,6 +249,7 @@ export type UseAgentStreamOptions = {
    * from it; other surfaces can ignore.
    */
   onPartyUpdated?: (frame: PartyUpdatedFrame) => void;
+  onPartyChanged?: (frame: PartyChangedFrame) => void;
   /**
    * Fires when the agent records a profile fact during onboarding (carries the
    * fact ``kind`` only, never the text). The basecamp first-touch ledger lights
@@ -447,6 +451,9 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
               case "party_updated":
                 current.onPartyUpdated?.(frame);
                 break;
+              case "party_changed":
+                current.onPartyChanged?.(frame);
+                break;
               case "profile_updated":
                 current.onProfileUpdated?.(frame);
                 break;
@@ -525,6 +532,9 @@ function dispatch(frames: SseFrame[], current: UseAgentStreamOptions): void {
         break;
       case "party_updated":
         current.onPartyUpdated?.(frame);
+        break;
+      case "party_changed":
+        current.onPartyChanged?.(frame);
         break;
       case "profile_updated":
         current.onProfileUpdated?.(frame);

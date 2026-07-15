@@ -274,6 +274,39 @@ def test_tool_result_update_trip_timing_maps_to_itinerary_updated() -> None:
     }
 
 
+def test_tool_result_add_trip_traveler_maps_to_party_changed() -> None:
+    # Seating an existing member returns the whole roster, not one member, so it
+    # rides a payload-free ``party_changed`` poke — the dashboard re-reads.
+    event = {
+        "tool_result": {
+            "name": "add_trip_traveler",
+            "output": {"members": [{"id": "m1"}, {"id": "m2"}]},
+        }
+    }
+    assert _one(event) == {"type": "party_changed"}
+
+
+def test_tool_result_remove_trip_traveler_maps_to_party_changed() -> None:
+    event = {
+        "tool_result": {
+            "name": "remove_trip_traveler",
+            "output": {"members": [{"id": "m1"}]},
+        }
+    }
+    assert _one(event) == {"type": "party_changed"}
+
+
+def test_tool_result_trip_traveler_error_drops_frame() -> None:
+    # A failed seat/unseat must not poke the browser into a re-fetch.
+    event = {
+        "tool_result": {
+            "name": "add_trip_traveler",
+            "output": {"error": "not_found"},
+        }
+    }
+    assert _ui(translate_event(event)) == []
+
+
 def test_tool_result_read_only_tool_has_no_ui_frame() -> None:
     # get_traveler_context is a read — no SSE frame for the browser.
     event = {"tool_result": {"name": "get_traveler_context", "output": {"profile_facts": []}}}

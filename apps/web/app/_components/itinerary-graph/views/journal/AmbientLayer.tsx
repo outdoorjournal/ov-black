@@ -93,7 +93,7 @@ export function AmbientLayer() {
 
   const fade = ambientFadeSeconds(reduced);
   // Watermark by default; presence in cinema (full-bleed, lighter veil).
-  const washOpacity = cinemaMode ? 0.5 : 0.09;
+  const washOpacity = cinemaMode ? 0.5 : 0.2;
   const key = image ?? `tint:${timeline.mood}`;
 
   return (
@@ -106,14 +106,7 @@ export function AmbientLayer() {
       // still there while the story scrolls. A `fixed` backdrop escapes to the
       // whole viewport and paints its veil over the sibling rail + concierge
       // chrome, washing them grey.
-      //
-      // Confined to the RIGHT SIDE on desktop (lg+): the reading column (the
-      // spine of cards) is left-anchored, so the wash lives in the free space to
-      // its right — the whole right side, behind the rail (which carries no
-      // background of its own, so the watermark reads through it). Below lg the
-      // layout stacks (rail above the full-width Journal, no side channel), so
-      // it spans the full width as before.
-      className="pointer-events-none absolute inset-y-0 left-0 right-0 z-0 overflow-hidden lg:left-1/2"
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
     >
       {/* The resting wash — the trip's mood tint, always beneath the image. */}
       <div
@@ -132,7 +125,16 @@ export function AmbientLayer() {
           className="absolute inset-0 bg-cover bg-center"
           style={
             image
-              ? { backgroundImage: `url(${image})`, filter: "saturate(0.85)" }
+              ? {
+                  backgroundImage: `url(${image})`,
+                  // Age the photo into the paper: sepia warms it to the page,
+                  // then a light contrast/brightness lift keeps it from muddying
+                  // under the paper veil. Cinema keeps a touch more of the
+                  // original colour so the full-bleed doesn't read as monochrome.
+                  filter: cinemaMode
+                    ? "sepia(0.5) saturate(0.85) contrast(0.95) brightness(1.02)"
+                    : "sepia(1) saturate(0.25) contrast(1) brightness(0.6)",
+                }
               : { backgroundColor: tint }
           }
         />

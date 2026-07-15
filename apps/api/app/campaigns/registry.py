@@ -47,7 +47,11 @@ class Campaign:
     title: str
     brief: str
     #: Curated atmospheric mood id (apps/web/lib/atmos/moods.ts + agent moods.py).
+    #: Themes the concierge chat frame — NOT the itinerary hero (see hero_image).
     mood: str
+    #: The trip's hero image URL — stamped onto the itinerary at seed time and
+    #: rendered directly by the basecamp tile + the dashboard hero.
+    hero_image: str
     #: The assistant's first line on the pre-warmed intake surface (turn 0).
     opener: str
     #: A short private directive threaded into the agent's traveler context so it
@@ -76,6 +80,12 @@ OLYMPUS = Campaign(
         "summit, with the Aegean at your back."
     ),
     mood="olympus",
+    # The Mytikas summit — from the cornerstone OV trip ("Path to Symbolism").
+    hero_image=(
+        "https://cdn-pub.prod.outdoorvoyage.com/operators/"
+        "018f395d-288e-777c-a64d-3808a193b686/trips/"
+        "018f39f5-7050-7b2c-a1c4-0c689797f113/images/xVMqslnvADKj.jpg"
+    ),
     opener=(
         "Mount Olympus has been waiting for you. I've started shaping the "
         "ascent — Litochoro, the refuge, the summit ridge. Before I build it "

@@ -169,6 +169,7 @@ async def seed_campaign_itinerary(
         client_id=payload.client_id,
         campaign_id=campaign.id,
         mood=campaign.mood,
+        hero_image=campaign.hero_image,
     )
 
     logger.info(
