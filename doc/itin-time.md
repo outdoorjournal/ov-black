@@ -1,0 +1,104 @@
+# Itinerary Timeline Rework
+
+We are having endless issues with items on the timeline. Specifically the process of moving items from an unpinned "day 4 at 9am in timezone X" to once dates are set, day 4 becoming August 7th, 2026 at 9am in timezone X. The current system is too fragile and we need to rework it.
+
+We also have visualization problems with particularly flights and how they run over timezones and how they are displayed on the timeline. We need to rework the timeline to be more robust and handle these cases better.
+
+## thoughts
+
+I have this nebulous idea that this is the problem where we need two types of information. The first is the "absolute" time of an item, which is the actual time it occurs in a specific timezone. The second is the "relative" time of an item, which is the time it occurs relative to the start of the trip. For example, if a trip starts on August 1st, 2026 at 9am in timezone X, then an item that occurs on August 4th, 2026 at 9am in timezone X would have a relative time of "day 4 at 9am".
+
+## On the graph
+
+I think we also need to take a step back and talk about better leveraging the formalism available with the travel graph. If we can:
+
+1. Reduce all travel planning to primative operations on nodes and edges and analysis thereof that always leave the travel graph in a valid state.
+2. Test those operations and analysis in isolation from the rest of the system.
+3. Map travel planning operations to one or more of those primatives.
+
+Then we can have a much more robust system that is easier to reason about and test, and easier to extend safely.
+
+## Plan
+
+The two problems are one project: the time model is the first (and hardest) invariant the graph kernel has to own. Building the kernel around any other invariant first would mean rebuilding it when time lands. So the plan builds the kernel *as* the time rework.
+
+### Target model
+
+**Two classes of scheduled node:**
+
+- **Anchor-relative** (default — tours, meals, hotels, transfers): stores `(day_offset, wall_time, tz_name)` where `tz_name` is an IANA zone (`Europe/Athens`), never a fixed offset. The absolute instant is *derived*: `resolve(anchor_date + day_offset, wall_time, tz_name)` via tzdb. Moving the trip never touches these nodes.
+- **World-pinned** (booked/confirmed commitments, fixed-date events): stores calendar-date endpoints, each `(date, wall_time, tz_name)` — flights get two, one per airport zone. These never move when the anchor moves; instead an anchor change generates feasibility findings against them.
+
+**Pinnedness is a lifecycle property, not a type property.** A *proposed* flight is anchor-relative like everything else — it carries per-endpoint zones and a provider snapshot, but nothing in the world holds its dates yet, so a retime may move it. Booking is what pins: `set_status(booked)` promotes the schedule to world-pinned; cancelling a booking un-pins. An advisor can also pin explicitly for things that are fixed-date by nature (a festival, New Year's Eve dinner) without any booking.
+
+**Moves can invalidate content — that's data, not an error.** A provider-sourced node's snapshot (this flight number, this fare, this fixed tour departure) was quoted for a specific date. When a schedule mutation moves such a node, the kernel marks it `needs_revalidation`: the move always succeeds structurally; the consequence is recorded on the node. Re-quoting against the provider (an `update_node` with a fresh snapshot) clears the mark. The kernel stays pure — it never talks to providers; it only marks, the analysis layer reports stale nodes, and agent/advisor tooling does the re-checking.
+
+**Retime reports; callers decide.** `set_anchor` returns a structured outcome — nodes moved, nodes held because pinned, nodes moved-but-now-stale — plus whatever feasibility findings the new dates produce against the pinned set. "A retime can't move pinned nodes" is an affordance surfaced to the caller (UI banner, agent explanation, advisor task list), not a hidden rule and not a rejection.
+
+**One anchor per itinerary:** `anchor_date` (nullable). Unset = unpinned trip ("day 4 at 9am" renders as Day 4); set = pinned (Day 4 renders as Aug 7). Setting, clearing, or shifting dates is a **single-field write** — no per-node rewrite, nothing to corrupt. This generalizes the existing `days_anchor`/`date_start` split.
+
+**Derived, never written:** the `starts_at` tstzrange stays for Postgres range/overlap queries but becomes write-through output of the kernel's resolve step. `metadata.start_time` and `tz_offset_minutes` are retired as inputs (kept temporarily as read-compat output, then deleted).
+
+**Validity is two-tier:**
+
+- *Structural* — enforced by construction in the kernel: a node has exactly one schedule class, offsets/zones are valid, edges reference real nodes, status transitions are legal. Operations that would violate it don't exist.
+- *Temporal feasibility* — analyzed, never enforced: flight margins, overlaps, edge constraints ("transfer starts ≥45min after flight lands"). Returned as findings; advisors can hold an infeasible graph while fixing it.
+
+**DST policy (explicit, tested):** nonexistent wall times (spring-forward gap) roll forward; ambiguous wall times (fall-back) take the first occurrence. A 9am tour is 9am in August and 9am in December; only the derived instant differs.
+
+### The primitive set, derived from actual activities
+
+Surveying every planning activity in the system — the e2e pillar suites (invite → dream/profile → build → details vault → fork/reconcile → invoice/book), all ~40 agent tools, the itinerary API routes, and the web store mutations — yields ~85 named activities, of which ~40 mutate or schedule the graph. They all decompose onto a small closed set:
+
+**Mutation primitives:**
+
+| Primitive | Covers |
+|---|---|
+| `add_node(type, content, provenance)` | propose_card, propose_flight, free-text cards, save link/inventory/note to Collection, add_note, add_transfer, subgraph children, campaign-spine days |
+| `update_node(node, patch)` | update_node_details (title/description/cost/confirmation), snapshot refresh |
+| `remove_node(node)` | delete node (discard is a status transition, not removal) |
+| `add_edge(from, to, type, constraints?)` / `remove_edge` | alternatives, `follows` chains, note attachment, party-member ↔ trip attachment |
+| `set_status(node, status)` | pending/approved/booked/confirmed/discarded, with a legal-transition matrix; approve-all is a batch |
+| `schedule(node, day_offset, wall_time, zone)` | agent move_node, timeline drag/drop, assemble_draft placement |
+| `pin_to_world(node, endpoints[])` / `unpin(node)` | auto-invoked by `set_status(booked)` / booking-cancel; explicit advisor pin for fixed-date events |
+| `unschedule(node)` | move to Collection |
+| `set_anchor(date)` / `clear_anchor()` | set trip dates, retime, clear dates; returns `{moved, held_pinned, marked_stale}` + findings |
+| `update_trip_meta(patch)` | title, brief, mood, hero image, timing_kind/note — thin, but included so every itinerary write flows through one door |
+
+**Composites** — transactions of primitives, adding no new semantics: `assemble_draft` (batch schedule), `materialize_subgraph` / `assemble_campaign_spine` (add_node + add_edge(`follows`) [+ schedule]), `approve_all` (batch set_status), drag-and-drop (schedule), drag-to-collection (unschedule).
+
+**Meta-operations on whole graphs — the biggest payoff:** `fork` (clone), `diff` (pure analysis over two graphs), `reconcile` (selective replay onto the trunk). If every mutation is a primitive with a serializable form, diff and reconcile stop being bespoke code: a fork's diff is *derivable* from its primitive log, reconcile is "apply the accepted subset of that log to the trunk," and a conflict has a precise definition (two ops touching the same node field). This retroactively strengthens D030 rather than fighting it.
+
+**Analysis (read-only):** time resolution, day bucketing, ordering/overlap, edge temporal constraints, flight feasibility, gap detection (the `fill` ranking's feasibility half), diff.
+
+**Explicitly outside the kernel** — activities that reference the graph but don't own it: inventory search/detail, invoicing and payments (the book money-gate is a service-layer precondition that *reads* invoice state before calling `set_status(booked)`), documents, dossier/profile/OSINT facts, party-member records themselves (their trip attachment is an edge; the person is not), chat/session plumbing, presentation tools (present_route, present_options, propose_timeline are reads/renders), auth. Locking too: the kernel is pure, so lock/release stays service-level concurrency control around primitive application.
+
+**Completeness rule:** every e2e scenario must be replayable as a sequence of primitives plus reads. Phase 1's test suite includes exactly that — one mapping test per catalogued graph-touching activity. An activity that won't decompose means the primitive set is wrong; that gets fixed in Phase 1 while it's cheap, not discovered in Phase 3.
+
+### Phases
+
+**Phase 1 — Kernel library, pure and isolated.** *(BUILT 2026-07-16 — `apps/api/app/kernel/`: schedule/graph/primitives/analysis + errors; 71 tests in `tests/test_kernel_*.py` incl. DST gap/fold, the Detroit→Thessaloniki golden block, retime-strands-booked-return, and the activity-mapping suite. mypy strict + ruff green. Not yet wired to anything — Phase 2 next.)*
+New module (e.g. `apps/api/app/kernel/`), no DB, no HTTP, no FastAPI imports: schedule types, the primitive set (`schedule`, `pin_to_world`, `unschedule`, `set_anchor`, `clear_anchor`), `resolve()` (relative → absolute via `zoneinfo`), and the analysis functions (day bucketing, ordering, overlap, flight feasibility ported from `apps/agent/src/agent/flight_timing.py`). Test exhaustively in isolation: golden cases from every real bug we've hit (naive-datetime server-tz corruption, the Detroit→Thessaloniki arrival-after-first-item flight, retime drift), DST gap/fold cases, and property tests (`set_anchor(d2) ∘ set_anchor(d1) ≡ set_anchor(d2)`; resolve-then-shift ≡ shift-then-resolve; pin/unpin round-trips). *Deliverable: the formalism exists and is proven before any production data depends on it.*
+
+**Phase 2 — Schema + backfill, dual-read verified.**
+Migration adds the canonical columns (node schedule as structured columns or JSONB; `anchor_date` on itineraries; flight endpoints promoted from card metadata). Backfill from `starts_at + tz_offset_minutes + days_anchor` — the offset only tells us the zone ambiguously, so backfill maps offset+location to an IANA zone where node location data allows, falling back to a fixed-offset pseudo-zone flagged for advisor review. Then a verification pass, not a switch: for every existing node, assert `kernel.resolve(new columns) == stored starts_at`. Nothing reads the new columns yet. *Deliverable: canonical data exists and provably agrees with today's behavior.*
+
+**Phase 3 — Writes go through the kernel.**
+`services/itineraries.py` routes all scheduling mutations through primitives; the kernel write-throughs the derived `starts_at`. `_shift_scheduled_nodes` and the retime loop are **deleted** — retime is now `set_anchor`. Booked flights become world-pinned: retime stops silently rewriting them (today's behavior is a live bug) and reports them as held, with findings; proposed provider-sourced nodes move and come back marked `needs_revalidation`. The naive-datetime validation is subsumed — the primitive signature can't express a schedule without a zone. Regenerate `packages/api-client` and the `ovb` SDK. *Deliverable: the fragile bulk-rewrite path no longer exists.*
+
+**Phase 4 — Reads return resolved time; the frontend stops guessing.**
+Read endpoints serialize a resolved view per node: absolute instant, `day_index`, local wall time per endpoint, day-span info for multi-day items. The web adapter's timezone-inference heuristic (`inferTzOffsetHours` — tallying offsets across metadata strings) is deleted; day bucketing consumes `day_index` instead of re-deriving it; drag-and-drop sends `(day_index, minute_of_day)` and the kernel builds the schedule. `start_synthesized` becomes a kernel-computed placement for unscheduled nodes rather than adapter-side synthesis. *Deliverable: one implementation of time math, in one language.*
+
+**Phase 5 — Analysis becomes the feasibility surface.**
+A findings endpoint (or embedded in the graph read) runs kernel analysis over the itinerary: flight margins, overlaps, edge temporal constraints. The agent's fail-open delete-and-rollback guard (`_guard_flight_timing`) is replaced by consulting the same analysis; the UI surfaces findings on the timeline (this is also where the flight-visualization work lands: per-endpoint local times, airline-style +1 day badges, feasibility warnings on the cards). *Deliverable: one feasibility engine shared by agent, API, and UI.*
+
+**Phase 6 — Retire the legacy representation.**
+Remove `metadata.start_time` / `tz_offset_minutes` as inputs everywhere (agent tools, templates, tests), delete the string-parsing paths (`_parse_range_bound` et al.), drop or demote compat output. Run the `ovb` e2e scenarios and slice verification against the full stack. *Deliverable: triple-storage is gone; the kernel is the only writer.*
+
+### Open decisions
+
+- **Where the kernel lives.** The agent (`apps/agent`) also needs feasibility logic. Options: a small shared Python package both import, or keep the kernel in `apps/api` and have the agent consume analysis via the internal API. Leaning to the latter — the agent already reads the graph through the API, and one deployment owning the tzdb version avoids skew.
+- **Forks and reconcile.** Schedules must survive fork → trunk reconcile, and a fork's `day_offset` must mean the same thing as the trunk's. Simplest rule: forks inherit the trunk's anchor and cannot set their own; anchor changes are trunk-only operations. Needs a decision entry (D0xx).
+- **Zone acquisition.** New nodes need a real IANA zone. Inventory-born nodes get it from location data (lat/lng → tz lookup); agent tools should pass zones, not offsets. Decide the fallback when location is unknown (trip default zone?).
+- **Schedule storage shape.** Discrete columns (queryable, mypy-friendly) vs JSONB (flexible for the two node classes). Leaning discrete columns + a `schedule_kind` discriminator.
+- **Revalidation scope.** Which provenance kinds are date-sensitive enough that a move marks them stale: flights certainly; fixed-departure tours probably; hotels arguably (rate staleness vs availability staleness may deserve different severities rather than one boolean).
