@@ -34,6 +34,7 @@ import {
   tzDayKey,
 } from "../../model/horizontalTime";
 import {
+  beatImageForChild,
   isSubgraphChild,
   subgraphChildrenByParent,
   subgraphDayMeta,
@@ -156,6 +157,11 @@ export interface SubgraphBeat {
   parentId: string;
   childId: string;
   title: string;
+  // The child node, enriched with the parent's imagery (mirrors the Journal's
+  // journey beats) so the timeline can render it as a full glance card with a
+  // photo rather than a bare chip. Its `start_time`/`duration_minutes` are set
+  // to the beat's resolved placement so the card's own clock/duration read true.
+  node: NodeResponse;
   dayKey: string;
   dayIndex: number;
   // Lane-0 x of the day column (same coordinate space as PositionedHNode.x) —
@@ -684,10 +690,33 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       const dayLayout = days[beatDayIndex];
       if (!dayLayout) return; // runs past the trip window — nothing to paint
       const hours = dm.hours;
+      // Enriched child: wear the parent's imagery (like the Journal's beats)
+      // and carry the beat's resolved placement as the card's own clock, so the
+      // glance card renders a photo + a true start time / duration.
+      const beatDayIso = `${dayLayout.date}T${formatMinuteOfDay(beatMin)}:00`;
+      const beatDurationMin =
+        typeof dm.duration_minutes === "number" && dm.duration_minutes > 0
+          ? dm.duration_minutes
+          : typeof hours === "number" && hours > 0
+            ? Math.round(hours * 60)
+            : undefined;
+      const beatImage = beatImageForChild(item.node, child, dm.index ?? i + 1);
+      const beatNode: NodeResponse = {
+        ...child,
+        metadata: {
+          ...child.metadata,
+          start_time: cm.start_time ?? beatDayIso,
+          ...(beatDurationMin !== undefined
+            ? { duration_minutes: beatDurationMin }
+            : {}),
+          ...(beatImage ? { ambient_image: beatImage } : {}),
+        },
+      };
       subgraphBeats.push({
         parentId: item.node.id,
         childId: child.id,
         title: child.title,
+        node: beatNode,
         dayKey: dayLayout.date,
         dayIndex: beatDayIndex,
         x: dayLayout.columnX,

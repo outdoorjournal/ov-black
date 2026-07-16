@@ -41,12 +41,16 @@ async def add_transfer(
         service_class: the tier — ``chauffeur_black`` (a chauffeured luxury car,
             the default for this clientele), ``first_class`` (a premium sedan/
             SUV), or ``standard_taxi``. Match it to what the traveler wants.
-        starts_at: when the car departs, an ISO-8601 datetime
-            ("2026-08-12T14:30:00"). Read the plan (``get_itinerary``) and derive
-            it from the legs the transfer bridges: an airport pickup departs
-            around the flight's ``arrive_at``; a driver between two cards departs
-            when the first one ends. The backend sizes the card's on-timeline
-            span from the real drive time, so pass only the start. Omit ONLY
+        starts_at: when the car departs, an ISO-8601 datetime WITH offset
+            ("2026-08-14T16:00:00+03:00") — always include the destination's UTC
+            offset, never a naive local time, or the backend rejects it (a
+            naive start binds to the server's timezone and reads back at the
+            wrong clock). Read the plan (``get_itinerary``) and derive it from
+            the legs the transfer bridges — reuse the offset the neighbouring
+            cards already carry: an airport pickup departs around the flight's
+            ``arrive_at``; a driver between two cards departs when the first one
+            ends. The backend sizes the card's on-timeline span from the real
+            drive time, so pass only the start. Omit ONLY
             when you genuinely can't place it (a date-less trip) — then it lands
             unscheduled in the Collection to schedule later.
 

@@ -1257,6 +1257,36 @@ async def test_add_node_persists_schedule_for_non_note(
 
 @integration
 @pytest.mark.asyncio
+async def test_add_node_rejects_naive_starts_at(
+    db_session: AsyncSession,
+) -> None:
+    """A naive (offset-less) starts_at is rejected, not silently server-tz'd.
+
+    Regression: a naive start (e.g. from add_transfer) bound to the tstzrange in
+    the server's timezone (wrong instant) AND recorded no tz_offset_minutes, so
+    the read serializer couldn't reproject it — a 16:00 pickup read back as
+    13:00/20:00. Require the offset so the wall-clock survives the round trip.
+    """
+    actor = _actor()
+    itinerary = await create_itinerary(db_session, actor, title="naive start test")
+    try:
+        result = await add_node(
+            db_session,
+            actor,
+            itinerary_id=itinerary.id,
+            type=NodeType.drive,
+            title="Airport → hotel",
+            starts_at="2026-08-14T16:00:00",  # no offset
+            duration_minutes=83,
+        )
+        assert isinstance(result, ItineraryError)
+        assert result.outcome is ItineraryOutcome.VALIDATION_ERROR
+    finally:
+        await _cleanup(db_session, itinerary.id)
+
+
+@integration
+@pytest.mark.asyncio
 async def test_add_node_rejects_malformed_schedule(
     db_session: AsyncSession,
 ) -> None:

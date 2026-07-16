@@ -56,15 +56,6 @@ function durationBarColor(type: NodeType): string {
   return DURATION_BAR_TYPE_COLOR[type] ?? "#8a8a8a";
 }
 
-// Compact "~7h" / "~3h 30m" label for a subgraph beat's active hours.
-function formatHoursLabel(hours: number): string {
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  if (m === 0) return `~${h}h`;
-  if (h === 0) return `~${m}m`;
-  return `~${h}h ${m}m`;
-}
-
 const DURATION_BAR_WIDTH = 16;
 
 interface HorizontalCanvasProps {
@@ -502,51 +493,35 @@ export function HorizontalCanvas({
           })}
 
         {/* Subgraph beats — each day of a packaged multi-day experience laid
-            onto the timeline as a chip that rides the parent's start-finish
+            onto the timeline as a full glance card (the same NodeCard the rest
+            of the timeline draws), so a day-by-day journey reads as cards with
+            imagery, not bare chips. The card rides the parent's start-finish
             line (its duration bar on day 1, its continuation bars on later
-            days). Scheduled legs sit at their real time; unscheduled ones step
+            days); scheduled legs sit at their real time, unscheduled ones step
             forward morning by morning. Clicking a beat opens the parent's
             detail (the whole packaged journey). */}
         {layout.subgraphBeats
           .filter((b) => b.parentId !== ghostId)
           .map((b) => {
             const left = b.x - axisWidth;
-            const color = durationBarColor("experience");
-            const hoursLabel =
-              typeof b.hours === "number" && b.hours > 0
-                ? formatHoursLabel(b.hours)
-                : b.scheduled
-                  ? formatMinuteOfDay(b.startMin)
-                  : "";
             return (
-              <button
+              <div
                 key={`beat-${b.childId}`}
-                type="button"
                 data-testid="subgraph-beat"
                 data-node-id={b.parentId}
                 data-child-id={b.childId}
                 data-day={b.dayKey}
-                onClick={() => onCardClick(b.parentId)}
+                className="absolute z-10"
+                style={{ top: b.y, left, width: COL_WIDTH }}
                 onMouseEnter={() => onCardHover(b.parentId)}
                 onMouseLeave={() => onCardHover(null)}
-                title={b.title}
-                className="absolute z-10 flex max-w-full items-center gap-1.5 truncate rounded-md border border-ink/15 bg-paper/90 px-2 py-1 text-left shadow-xs backdrop-blur-xs transition-colors hover:border-ink/35"
-                style={{ top: b.y, left, maxWidth: b.w }}
               >
-                <span
-                  aria-hidden
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: color }}
+                <NodeCard
+                  node={b.node}
+                  tzOffsetHours={tzOffsetHours}
+                  onClick={() => onCardClick(b.parentId)}
                 />
-                <span className="truncate font-serif text-[11px] leading-tight text-ink/80">
-                  {b.title}
-                </span>
-                {hoursLabel ? (
-                  <span className="shrink-0 font-sans text-[9px] uppercase tracking-[0.14em] text-ink/50">
-                    {hoursLabel}
-                  </span>
-                ) : null}
-              </button>
+              </div>
             );
           })}
 

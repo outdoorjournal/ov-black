@@ -83,6 +83,44 @@ export function subgraphDaySpan(children: NodeResponse[]): number {
   return indexes.size > 0 ? indexes.size : children.length;
 }
 
+/**
+ * Beat imagery: the materializer gives day children no image of their own, so
+ * each beat wears its PARENT's — a rotating pull from the parent's editorial
+ * gallery when one exists (a different shot per day, never the cover itself),
+ * else the parent's cover. Keeps a multi-day run visibly sharing the parent
+ * card's identity. Shared by the Journal (`deriveJourneyBeats`) and the
+ * horizontal timeline so a beat looks the same on both surfaces. `dayIndex` is
+ * the child's 1-based day-of-journey.
+ */
+export function beatImageForChild(
+  parent: NodeResponse,
+  child: NodeResponse,
+  dayIndex: number,
+): string | undefined {
+  const pMeta = parent.metadata as {
+    snapshot?: { cover_image?: string };
+    ambient_image?: string;
+    gallery?: Array<{ url?: string }>;
+  };
+  const cMeta = child.metadata as {
+    snapshot?: { cover_image?: string };
+    ambient_image?: string;
+  };
+  const parentCover = pMeta.snapshot?.cover_image ?? pMeta.ambient_image;
+  const galleryPool = (pMeta.gallery ?? [])
+    .map((g) => g.url)
+    .filter(
+      (u): u is string =>
+        typeof u === "string" && u.length > 0 && u !== parentCover,
+    );
+  return (
+    cMeta.snapshot?.cover_image ??
+    cMeta.ambient_image ??
+    galleryPool[Math.max(0, dayIndex - 1) % Math.max(1, galleryPool.length)] ??
+    parentCover
+  );
+}
+
 /** Vendor descriptions arrive as HTML; the Journal renders text only. */
 export function stripHtml(html: string): string {
   return html

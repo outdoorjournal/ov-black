@@ -310,6 +310,25 @@ def _build_starts_at(iso_start: str, duration_minutes: int | None) -> Range[date
     return Range(lower, upper, bounds="[)")
 
 
+def _require_start_offset(rng: Range[datetime]) -> ItineraryError | None:
+    """Reject a naive (offset-less) start; return an error, or None if aware.
+
+    A naive datetime bound to the ``tstzrange`` column is interpreted in the
+    server's session timezone — a silently wrong instant — and, having no
+    offset, leaves the read serializer with no ``tz_offset_minutes`` to
+    reproject the stored UTC back to the intended wall-clock. Both failures at
+    once produced the duplicate-transfer time drift (a 16:00 airport pickup that
+    read back as 13:00/20:00). Require the offset so the wall-clock the caller
+    meant survives the round trip end to end.
+    """
+    if rng.lower is not None and rng.lower.utcoffset() is None:
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="starts_at must include a timezone offset (e.g. 2026-08-14T16:00:00+03:00)",
+        )
+    return None
+
+
 def _resolve_note_anchor(
     *,
     metadata: dict[str, Any],
@@ -355,6 +374,8 @@ def _resolve_note_anchor(
             None,
             metadata,
         )
+    if (err := _require_start_offset(rng)) is not None:
+        return (err, None, metadata)
     mirrored = {**metadata, "start_time": iso}
     offset = rng.lower.utcoffset()
     if offset is not None:
@@ -394,6 +415,8 @@ def _resolve_scheduled_anchor(
             None,
             metadata,
         )
+    if (err := _require_start_offset(rng)) is not None:
+        return (err, None, metadata)
     mirrored = {**metadata, "start_time": starts_at}
     offset = rng.lower.utcoffset()
     if offset is not None:
