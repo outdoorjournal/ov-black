@@ -7,6 +7,7 @@ enforced by construction), ``analysis`` is the read-only feasibility layer
 model that makes re-dating a trip a one-field change.
 """
 
+from app.kernel.adapter import columns_from_schedule, schedule_from_columns
 from app.kernel.analysis import Finding, GraphDiff, NodeChange, analyze, diff
 from app.kernel.errors import KernelViolation
 from app.kernel.graph import Edge, Graph, Node, Provenance, fork
@@ -66,6 +67,7 @@ __all__ = [
     "add_node",
     "analyze",
     "clear_anchor",
+    "columns_from_schedule",
     "day_index",
     "diff",
     "fork",
@@ -75,6 +77,7 @@ __all__ = [
     "remove_edge",
     "remove_node",
     "resolve_schedule",
+    "schedule_from_columns",
     "resolve_stamp",
     "resolve_wall",
     "schedule_node",

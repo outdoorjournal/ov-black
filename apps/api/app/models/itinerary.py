@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, Numeric, func, text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, Numeric, Time, func, text
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -252,6 +252,10 @@ class Itinerary(Base):
     # (ADV-17, the pinning gesture); kept on unpin so cards stay put. NULL on
     # a trip with nothing scheduled yet.
     days_anchor: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 0055 — the kernel anchor (doc/itin-time.md Phase 2). The date Day 1 maps
+    # to; generalizes days_anchor/date_start. Written by the backfill and, from
+    # Phase 3, by the kernel's set_anchor. Nothing reads it before Phase 3.
+    anchor_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # 0047 — campaign provenance + persisted mood. ``campaign_id`` is the
     # inbound-campaign slug a trip was started from (NULL for ordinary trips); it
     # drives the dashboard auto-kickoff and the agent's campaign-awareness.
@@ -314,6 +318,24 @@ class Node(Base):
     # (see 0014) but are intentionally omitted from this ORM until the
     # geoalchemy2 dependency lands; raw queries can still read/write them.
     starts_at: Mapped[Any | None] = mapped_column(TSTZRANGE, nullable=True)
+    # 0055 — canonical wall-clock schedule (doc/itin-time.md Phase 2; see
+    # app.kernel.schedule for semantics and app.kernel.adapter for the
+    # column ↔ Schedule mapping). `relative` rows carry day offsets from the
+    # itinerary's anchor_date; `pinned` rows carry calendar dates. ``starts_at``
+    # above becomes derived output in Phase 3. Nothing reads these yet.
+    schedule_kind: Mapped[str | None] = mapped_column(nullable=True)
+    start_day_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    start_wall_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    start_tz: Mapped[str | None] = mapped_column(nullable=True)
+    end_day_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_wall_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    end_tz: Mapped[str | None] = mapped_column(nullable=True)
+    needs_revalidation: Mapped[bool] = mapped_column(
+        nullable=False,
+        server_default=text("false"),
+    )
     altitude_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_selected_alt: Mapped[bool] = mapped_column(
         nullable=False,
