@@ -2058,6 +2058,30 @@ class ResolvedPlace(BaseModel):
     photo_tokens: Annotated[list[str] | None, Field(title='Photo Tokens')] = None
 
 
+class Kind2(StrEnum):
+    relative = 'relative'
+    pinned = 'pinned'
+
+
+class ResolvedStampResponse(BaseModel):
+    """
+    One schedule endpoint, resolved for display (Phase 4).
+
+    ``day_index`` is the human Day N label (None for a pinned stamp on an
+    undated trip); ``date`` is the local calendar date (None for a relative
+    stamp on an undated trip); ``wall_time`` is "HH:MM" local; ``tz`` is the
+    IANA zone (an ``Etc/GMT±N`` pseudo-zone on rows that predate real-zone
+    writes); ``instant`` is the resolved ISO-8601 absolute time with the
+    zone's offset, when resolvable.
+    """
+
+    day_index: Annotated[int | None, Field(title='Day Index')] = None
+    date: Annotated[date_aliased | None, Field(title='Date')] = None
+    wall_time: Annotated[str, Field(title='Wall Time')]
+    tz: Annotated[str, Field(title='Tz')]
+    instant: Annotated[str | None, Field(title='Instant')] = None
+
+
 class RetimeItineraryRequest(BaseModel):
     """
     Pin the trip to real dates (Wave E / ADV-17): "Day 1 is date_start".
@@ -2123,6 +2147,38 @@ class RoutePlan(BaseModel):
     duration_seconds: Annotated[int, Field(title='Duration Seconds')]
     encoded_polyline: Annotated[str, Field(title='Encoded Polyline')]
     legs: Annotated[list[RouteLeg] | None, Field(title='Legs')] = None
+
+
+class MinuteOfDay(RootModel[int]):
+    root: Annotated[int, Field(ge=0, le=1439, title='Minute Of Day')]
+
+
+class DurationMinutes(RootModel[int]):
+    root: Annotated[int, Field(ge=1, title='Duration Minutes')]
+
+
+class SchedulePlacementPayload(BaseModel):
+    """
+    Where a card landed, in trip terms (Phase 4, doc/itin-time.md).
+
+    Drag-and-drop sends ``(day_index, minute_of_day)`` and the kernel builds
+    the schedule server-side — no client ISO assembly, no offset guessing.
+    ``clear=true`` unschedules instead (back to the Collection) and permits no
+    other field. ``tz`` (IANA name) and ``duration_minutes`` are optional
+    overrides; omitted, the node keeps its current zone (falling back to the
+    trip's default) and width.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    day_index: Annotated[int | None, Field(title='Day Index')] = None
+    minute_of_day: Annotated[MinuteOfDay | None, Field(title='Minute Of Day')] = None
+    duration_minutes: Annotated[
+        DurationMinutes | None, Field(title='Duration Minutes')
+    ] = None
+    tz: Annotated[str | None, Field(title='Tz')] = None
+    clear: Annotated[bool | None, Field(title='Clear')] = False
 
 
 class RadiusM(RootModel[int]):
@@ -2459,6 +2515,7 @@ class UpdateNodeRequest(BaseModel):
     cost_amount: Annotated[float | CostAmount | None, Field(title='Cost Amount')] = None
     cost_currency: Annotated[str | None, Field(title='Cost Currency')] = None
     cost_kind: CostKind | None = None
+    schedule: SchedulePlacementPayload | None = None
 
 
 class ValidationError(BaseModel):
@@ -3180,6 +3237,7 @@ class ItineraryResponse(BaseModel):
     duration_nights: Annotated[int | None, Field(title='Duration Nights')] = None
     timing_note: Annotated[str | None, Field(title='Timing Note')] = None
     days_anchor: Annotated[date_aliased | None, Field(title='Days Anchor')] = None
+    anchor_date: Annotated[date_aliased | None, Field(title='Anchor Date')] = None
     campaign_id: Annotated[str | None, Field(title='Campaign Id')] = None
     mood: Annotated[str | None, Field(title='Mood')] = None
     hero_image: Annotated[str | None, Field(title='Hero Image')] = None
@@ -3267,44 +3325,6 @@ class NodeChargesResponse(BaseModel):
         str, Field(pattern='^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', title='Owed Amount')
     ]
     booking: BookingResponse | None = None
-
-
-class NodeResponse(BaseModel):
-    id: Annotated[UUID, Field(title='Id')]
-    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
-    parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')]
-    type: NodeType
-    status: NodeStatus
-    title: Annotated[str, Field(title='Title')]
-    source: Annotated[str | None, Field(title='Source')]
-    source_id: Annotated[str | None, Field(title='Source Id')]
-    metadata: Annotated[dict[str, Any], Field(title='Metadata')]
-    cost_amount: Annotated[CostAmount | None, Field(title='Cost Amount')] = None
-    cost_currency: Annotated[str | None, Field(title='Cost Currency')] = None
-    cost_kind: CostKind | None = None
-    cost_display_amount: Annotated[
-        CostDisplayAmount | None, Field(title='Cost Display Amount')
-    ] = None
-    cost_display_currency: Annotated[
-        str | None, Field(title='Cost Display Currency')
-    ] = None
-    starts_at: Annotated[str | None, Field(title='Starts At')] = None
-    duration_minutes: Annotated[int | None, Field(title='Duration Minutes')] = None
-    depth: Annotated[int | None, Field(title='Depth')] = None
-    lock_reason: Annotated[str | None, Field(title='Lock Reason')] = None
-    forked_from_node_id: Annotated[UUID | None, Field(title='Forked From Node Id')] = (
-        None
-    )
-    attached_to_node_id: Annotated[UUID | None, Field(title='Attached To Node Id')] = (
-        None
-    )
-    additional_nodes: Annotated[
-        list[NodeResponse] | None, Field(title='Additional Nodes')
-    ] = None
-    schedulable: Annotated[bool | None, Field(title='Schedulable')] = True
-    needs_revalidation: Annotated[bool | None, Field(title='Needs Revalidation')] = (
-        False
-    )
 
 
 class NoteItem(BaseModel):
@@ -3495,6 +3515,25 @@ class ReleaseLockResponse(BaseModel):
     replayed_count: Annotated[int, Field(title='Replayed Count')]
 
 
+class ResolvedScheduleResponse(BaseModel):
+    """
+    A node's schedule projected for display — the Phase 4 read shape.
+
+    Per-endpoint local views (a flight's start and end each carry their own
+    airport zone), the day span (calendar days covered — airline-style +1
+    badges come from ``day_span > 1`` or differing endpoint dates), and
+    whether this is a kernel-computed provisional slot for an unscheduled
+    card (``synthesized`` — a layout hint; the card is still in the
+    Collection).
+    """
+
+    kind: Annotated[Kind2, Field(title='Kind')]
+    start: ResolvedStampResponse
+    end: ResolvedStampResponse | None = None
+    day_span: Annotated[int | None, Field(title='Day Span')] = 1
+    synthesized: Annotated[bool | None, Field(title='Synthesized')] = False
+
+
 class RetimeItineraryResponse(BaseModel):
     itinerary: ItineraryResponse
     delta_days: Annotated[int, Field(title='Delta Days')]
@@ -3588,23 +3627,6 @@ class BookingStateResponse(BaseModel):
     rows: Annotated[list[BookingStateRowResponse] | None, Field(title='Rows')] = None
 
 
-class CampaignKickoffResponse(BaseModel):
-    """
-    Result of instantiating the length-snapped campaign spine onto a fork.
-    """
-
-    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
-    campaign_id: Annotated[str, Field(title='Campaign Id')]
-    requested_nights: Annotated[int | None, Field(title='Requested Nights')]
-    snapped_length: Annotated[int, Field(title='Snapped Length')]
-    reason: Annotated[str, Field(title='Reason')]
-    node_count: Annotated[int, Field(title='Node Count')]
-    edge_count: Annotated[int, Field(title='Edge Count')]
-    created_nodes: Annotated[
-        list[NodeResponse] | None, Field(title='Created Nodes')
-    ] = None
-
-
 class ClientCreatePayload(BaseModel):
     """
     Payload for ``POST /clients``: a new client + their Dossier.
@@ -3685,21 +3707,6 @@ class ClientDetail(BaseModel):
     )
 
 
-class CollectionResponse(BaseModel):
-    """
-    The itinerary's Collection (wish list): unscheduled, non-discarded nodes.
-
-    A Collection item is just a node with no ``starts_at`` — a maybe the
-    traveler/concierge has accumulated but not yet placed on the timeline.
-    Discarded items are excluded. The web derives the same set from the graph it
-    already loads; this endpoint keeps the agent's read cheap (it doesn't need
-    the whole graph to shop the wish list before proposing something new).
-    """
-
-    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
-    items: Annotated[list[NodeResponse], Field(title='Items')]
-
-
 class ExperienceItem(BaseModel):
     source: Annotated[str, Field(title='Source')]
     source_id: Annotated[str, Field(title='Source Id')]
@@ -3729,19 +3736,6 @@ class ExperienceItem(BaseModel):
     itinerary_days: Annotated[
         list[ItineraryDay] | None, Field(title='Itinerary Days', validate_default=True)
     ] = []
-
-
-class GraphResponse(BaseModel):
-    itinerary: ItineraryResponse
-    nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
-    edges: Annotated[list[EdgeResponse], Field(title='Edges')]
-    totals: Annotated[dict[str, str] | None, Field(title='Totals')] = None
-    display_currency: Annotated[str | None, Field(title='Display Currency')] = None
-    total_display: Annotated[str | None, Field(title='Total Display')] = None
-    party_size: Annotated[int | None, Field(title='Party Size')] = 1
-    viewer_open_fork_id: Annotated[UUID | None, Field(title='Viewer Open Fork Id')] = (
-        None
-    )
 
 
 class InvoiceResponse(BaseModel):
@@ -3778,14 +3772,43 @@ class InvoiceResponse(BaseModel):
     payments: Annotated[list[PaymentResponse] | None, Field(title='Payments')] = None
 
 
-class ReconcileResponse(BaseModel):
-    """
-    The post-reconcile live baseline graph + the fork + per-change outcomes.
-    """
-
-    baseline: GraphResponse
-    fork: ItineraryResponse
-    outcomes: Annotated[list[ReconcileOutcomeResponse], Field(title='Outcomes')]
+class NodeResponse(BaseModel):
+    id: Annotated[UUID, Field(title='Id')]
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    parent_subgraph_id: Annotated[UUID | None, Field(title='Parent Subgraph Id')]
+    type: NodeType
+    status: NodeStatus
+    title: Annotated[str, Field(title='Title')]
+    source: Annotated[str | None, Field(title='Source')]
+    source_id: Annotated[str | None, Field(title='Source Id')]
+    metadata: Annotated[dict[str, Any], Field(title='Metadata')]
+    cost_amount: Annotated[CostAmount | None, Field(title='Cost Amount')] = None
+    cost_currency: Annotated[str | None, Field(title='Cost Currency')] = None
+    cost_kind: CostKind | None = None
+    cost_display_amount: Annotated[
+        CostDisplayAmount | None, Field(title='Cost Display Amount')
+    ] = None
+    cost_display_currency: Annotated[
+        str | None, Field(title='Cost Display Currency')
+    ] = None
+    starts_at: Annotated[str | None, Field(title='Starts At')] = None
+    duration_minutes: Annotated[int | None, Field(title='Duration Minutes')] = None
+    depth: Annotated[int | None, Field(title='Depth')] = None
+    lock_reason: Annotated[str | None, Field(title='Lock Reason')] = None
+    forked_from_node_id: Annotated[UUID | None, Field(title='Forked From Node Id')] = (
+        None
+    )
+    attached_to_node_id: Annotated[UUID | None, Field(title='Attached To Node Id')] = (
+        None
+    )
+    additional_nodes: Annotated[
+        list[NodeResponse] | None, Field(title='Additional Nodes')
+    ] = None
+    schedulable: Annotated[bool | None, Field(title='Schedulable')] = True
+    needs_revalidation: Annotated[bool | None, Field(title='Needs Revalidation')] = (
+        False
+    )
+    schedule: ResolvedScheduleResponse | None = None
 
 
 class SearchInventoryResponse(BaseModel):
@@ -3809,6 +3832,61 @@ class SearchInventoryResponse(BaseModel):
         list[SearchSourceDiagnostics] | None,
         Field(title='Sources', validate_default=True),
     ] = []
+
+
+class CampaignKickoffResponse(BaseModel):
+    """
+    Result of instantiating the length-snapped campaign spine onto a fork.
+    """
+
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    campaign_id: Annotated[str, Field(title='Campaign Id')]
+    requested_nights: Annotated[int | None, Field(title='Requested Nights')]
+    snapped_length: Annotated[int, Field(title='Snapped Length')]
+    reason: Annotated[str, Field(title='Reason')]
+    node_count: Annotated[int, Field(title='Node Count')]
+    edge_count: Annotated[int, Field(title='Edge Count')]
+    created_nodes: Annotated[
+        list[NodeResponse] | None, Field(title='Created Nodes')
+    ] = None
+
+
+class CollectionResponse(BaseModel):
+    """
+    The itinerary's Collection (wish list): unscheduled, non-discarded nodes.
+
+    A Collection item is just a node with no ``starts_at`` — a maybe the
+    traveler/concierge has accumulated but not yet placed on the timeline.
+    Discarded items are excluded. The web derives the same set from the graph it
+    already loads; this endpoint keeps the agent's read cheap (it doesn't need
+    the whole graph to shop the wish list before proposing something new).
+    """
+
+    itinerary_id: Annotated[UUID, Field(title='Itinerary Id')]
+    items: Annotated[list[NodeResponse], Field(title='Items')]
+
+
+class GraphResponse(BaseModel):
+    itinerary: ItineraryResponse
+    nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
+    edges: Annotated[list[EdgeResponse], Field(title='Edges')]
+    totals: Annotated[dict[str, str] | None, Field(title='Totals')] = None
+    display_currency: Annotated[str | None, Field(title='Display Currency')] = None
+    total_display: Annotated[str | None, Field(title='Total Display')] = None
+    party_size: Annotated[int | None, Field(title='Party Size')] = 1
+    viewer_open_fork_id: Annotated[UUID | None, Field(title='Viewer Open Fork Id')] = (
+        None
+    )
+
+
+class ReconcileResponse(BaseModel):
+    """
+    The post-reconcile live baseline graph + the fork + per-change outcomes.
+    """
+
+    baseline: GraphResponse
+    fork: ItineraryResponse
+    outcomes: Annotated[list[ReconcileOutcomeResponse], Field(title='Outcomes')]
 
 
 class ApproveAllResponse(BaseModel):

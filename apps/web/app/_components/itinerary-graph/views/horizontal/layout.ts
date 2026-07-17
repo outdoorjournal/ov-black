@@ -318,9 +318,14 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
     if (m.start_synthesized) continue;
     // Each node is placed by ITS OWN local wall-clock (a trip spans tzs), so
     // resolve the offset from the node's start_time and only fall back to the
-    // trip-level default when the string carries none.
+    // trip-level default when the string carries none. The day column comes
+    // from the stamped `day_key` (server-resolved, Phase 4) when present.
     const nodeTz = offsetHoursOr(m.start_time, tzOffsetHours);
-    const dayKey = tzDayKey(m.start_time, nodeTz);
+    const stampedDayKey = (m as { day_key?: unknown }).day_key;
+    const dayKey =
+      typeof stampedDayKey === "string" && stampedDayKey
+        ? stampedDayKey
+        : tzDayKey(m.start_time, nodeTz);
     const dayIndex = dayIndexByDate.get(dayKey);
     if (dayIndex === undefined) continue;
     const rawStartMin = localMinuteOfDay(m.start_time, nodeTz);

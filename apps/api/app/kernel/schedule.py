@@ -203,3 +203,65 @@ def day_index(schedule: Schedule, anchor: date | None) -> int | None:
     if anchor is None:
         return None
     return (schedule.start.on - anchor).days + 1
+
+
+@dataclass(frozen=True)
+class ResolvedStampView:
+    """One schedule endpoint projected for display (Phase 4 read shape).
+
+    Everything a renderer needs without doing time math: the human Day N
+    label, the local calendar date, the wall clock, the zone, and the resolved
+    absolute instant. ``day_index`` is None for a pinned stamp on an undated
+    trip (it has a date instead); ``on``/``instant`` are None for a relative
+    stamp on an undated trip (it has a day label instead).
+    """
+
+    day_index: int | None
+    on: date | None
+    wall_time: time
+    tz_name: str
+    instant: datetime | None
+
+
+@dataclass(frozen=True)
+class ResolvedScheduleView:
+    """A whole schedule projected for display: per-endpoint local views plus
+    the day span (calendar days covered — 2+ for overnight/multi-day items,
+    including a red-eye whose endpoints land on different local dates)."""
+
+    kind: str  # "relative" | "pinned"
+    start: ResolvedStampView
+    end: ResolvedStampView | None
+    day_span: int
+
+
+def _view_stamp(stamp: RelativeStamp | AbsoluteStamp, anchor: date | None) -> ResolvedStampView:
+    if isinstance(stamp, RelativeStamp):
+        return ResolvedStampView(
+            day_index=stamp.day_offset + 1,
+            on=anchor + timedelta(days=stamp.day_offset) if anchor is not None else None,
+            wall_time=stamp.wall_time,
+            tz_name=stamp.tz_name,
+            instant=resolve_stamp(stamp, anchor),
+        )
+    return ResolvedStampView(
+        day_index=(stamp.on - anchor).days + 1 if anchor is not None else None,
+        on=stamp.on,
+        wall_time=stamp.wall_time,
+        tz_name=stamp.tz_name,
+        instant=resolve_stamp(stamp, anchor),
+    )
+
+
+def resolve_view(schedule: Schedule, anchor: date | None) -> ResolvedScheduleView:
+    """Project a schedule into its display view against the given anchor."""
+    start = _view_stamp(schedule.start, anchor)
+    end = _view_stamp(schedule.end, anchor) if schedule.end is not None else None
+    if isinstance(schedule, RelativeSchedule):
+        end_offset = schedule.end.day_offset if schedule.end is not None else None
+        day_span = end_offset - schedule.start.day_offset + 1 if end_offset is not None else 1
+        kind = "relative"
+    else:
+        day_span = (schedule.end.on - schedule.start.on).days + 1 if schedule.end is not None else 1
+        kind = "pinned"
+    return ResolvedScheduleView(kind=kind, start=start, end=end, day_span=max(1, day_span))

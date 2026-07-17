@@ -222,25 +222,19 @@ describe("the `+`-on-the-line picker (role-gated)", () => {
     fireEvent.click(screen.getByTestId("journal-insert-collection"));
     fireEvent.click(screen.getByTestId("journal-insert-collection-item"));
 
-    // Host runs 09:00–10:00 → the end-of-day slot is 10:30.
+    // Host runs 09:00–10:00 → the end-of-day slot is 10:30. Phase 4
+    // (doc/itin-time.md): the placement persists as trip terms —
+    // (day_index, minute_of_day) — and the kernel builds the schedule
+    // server-side (which also sheds the synthesized marker).
     await waitFor(() =>
       expect(updateNodeMock).toHaveBeenCalledWith(expect.anything(), {
         itineraryId: "it-fork",
         nodeId: "wish-1",
         patch: {
-          metadata: expect.objectContaining({
-            start_time: expect.stringContaining("2024-06-20T10:30"),
-          }),
+          schedule: { day_index: 1, minute_of_day: 10 * 60 + 30 },
         },
       }),
     );
-    // The placed card sheds the synthesized marker.
-    const call = updateNodeMock.mock.calls.find(
-      (c) => (c[1] as { nodeId: string }).nodeId === "wish-1",
-    );
-    const patch = (call?.[1] as { patch: { metadata: Record<string, unknown> } })
-      .patch;
-    expect(patch.metadata["start_synthesized"]).toBeUndefined();
   });
 
   test("a blank card is authored scheduled into the same slot", async () => {
@@ -458,9 +452,9 @@ describe("editable rail detail", () => {
         itineraryId: "it-fork",
         nodeId: "n1",
         patch: {
-          metadata: expect.objectContaining({
-            start_time: expect.stringContaining("2024-06-20T14:00"),
-          }),
+          // Phase 4: the re-slot persists as trip terms; the kernel builds
+          // the schedule (14:00 on the card's own day).
+          schedule: { day_index: 1, minute_of_day: 14 * 60 },
         },
       }),
     );

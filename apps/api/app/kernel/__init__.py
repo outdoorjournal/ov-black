@@ -11,6 +11,11 @@ from app.kernel.adapter import columns_from_schedule, schedule_from_columns
 from app.kernel.analysis import Finding, GraphDiff, NodeChange, analyze, diff
 from app.kernel.errors import KernelViolation
 from app.kernel.graph import Edge, Graph, Node, Provenance, fork
+from app.kernel.placement import (
+    follows_order,
+    synthesize_placements,
+    trip_default_zone,
+)
 from app.kernel.primitives import (
     RetimeReport,
     ScheduleReport,
@@ -34,13 +39,16 @@ from app.kernel.schedule import (
     PinnedSchedule,
     RelativeSchedule,
     RelativeStamp,
+    ResolvedScheduleView,
     ResolvedSpan,
+    ResolvedStampView,
     Schedule,
     day_index,
     pin_schedule,
     relative,
     resolve_schedule,
     resolve_stamp,
+    resolve_view,
     resolve_wall,
     unpin_schedule,
 )
@@ -58,7 +66,9 @@ __all__ = [
     "Provenance",
     "RelativeSchedule",
     "RelativeStamp",
+    "ResolvedScheduleView",
     "ResolvedSpan",
+    "ResolvedStampView",
     "RetimeReport",
     "Schedule",
     "ScheduleReport",
@@ -70,6 +80,7 @@ __all__ = [
     "columns_from_schedule",
     "day_index",
     "diff",
+    "follows_order",
     "fork",
     "pin_node",
     "pin_schedule",
@@ -77,12 +88,15 @@ __all__ = [
     "remove_edge",
     "remove_node",
     "resolve_schedule",
-    "schedule_from_columns",
     "resolve_stamp",
+    "resolve_view",
     "resolve_wall",
+    "schedule_from_columns",
     "schedule_node",
     "set_anchor",
     "set_status",
+    "synthesize_placements",
+    "trip_default_zone",
     "unpin_node",
     "unpin_schedule",
     "unschedule_node",

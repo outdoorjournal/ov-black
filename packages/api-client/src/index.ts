@@ -260,6 +260,11 @@ export type {
   NodeType,
   CostKind,
   EdgeType,
+  // Phase 4 (doc/itin-time.md): server-resolved schedule views + the
+  // (day_index, minute_of_day) placement write shape.
+  ResolvedScheduleResponse,
+  ResolvedStampResponse,
+  SchedulePlacementPayload,
 } from "./generated/types.gen.js";
 
 // Inventory (S02): the discriminated InventoryItem union and its nested
@@ -1857,6 +1862,10 @@ export type UpdateNodePatch = {
   cost_amount?: string | null;
   cost_currency?: string | null;
   cost_kind?: CostKind | null;
+  // Phase 4 schedule placement (doc/itin-time.md): drag-and-drop sends
+  // {day_index, minute_of_day} (or {clear: true} to unschedule) and the
+  // kernel builds the schedule server-side. Wins over metadata.start_time.
+  schedule?: import("./generated/types.gen.js").SchedulePlacementPayload | null;
 };
 
 export type UpdateNodeArgs = {

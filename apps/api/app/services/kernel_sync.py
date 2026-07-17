@@ -77,28 +77,43 @@ def _bounds(node: Node) -> tuple[datetime | None, datetime | None]:
     )
 
 
+def _real_zone(tz_name: str | None) -> str | None:
+    """The node's existing canonical zone, if it's a real IANA zone.
+
+    Phase 4 placement writes record real zones; a later legacy ISO write
+    (agent tools still speak offsets) must not clobber them back to a
+    DST-blind pseudo-zone. Instant-exactness is preserved either way — the
+    stored UTC bound is converted *into* whichever zone wins.
+    """
+    if tz_name is None or tz_name.startswith("Etc/"):
+        return None
+    return tz_name
+
+
 def derive_schedule(node: Node, anchor_date: date | None) -> Schedule | None:
     """The node's canonical schedule, derived from its legacy representation.
 
     ``None`` when the node is unscheduled — or when its offset has no
-    pseudo-zone (non-whole-hour; unseen in practice), in which case the
-    canonical columns are left for manual review rather than written wrong.
+    pseudo-zone (non-whole-hour; unseen in practice) and no real zone is
+    already recorded, in which case the canonical columns are left for manual
+    review rather than written wrong. A real IANA zone already on the node
+    is sticky (per endpoint); otherwise the offset's pseudo-zone is used.
     """
     lower, upper = _bounds(node)
     if lower is None:
         return None
-    zone = pseudo_zone(_offset_minutes(node.metadata_))
-    if zone is None:
+    start_zone = _real_zone(node.start_tz) or pseudo_zone(_offset_minutes(node.metadata_))
+    if start_zone is None:
         return None
-    tz = ZoneInfo(zone)
-    s_local = lower.astimezone(tz)
-    e_local = upper.astimezone(tz) if upper is not None else None
+    end_zone = (_real_zone(node.end_tz) or start_zone) if upper is not None else start_zone
+    s_local = lower.astimezone(ZoneInfo(start_zone))
+    e_local = upper.astimezone(ZoneInfo(end_zone)) if upper is not None else None
 
     if node.status in _COMMITTED or anchor_date is None:
         return PinnedSchedule(
-            start=AbsoluteStamp(on=s_local.date(), wall_time=s_local.time(), tz_name=zone),
+            start=AbsoluteStamp(on=s_local.date(), wall_time=s_local.time(), tz_name=start_zone),
             end=(
-                AbsoluteStamp(on=e_local.date(), wall_time=e_local.time(), tz_name=zone)
+                AbsoluteStamp(on=e_local.date(), wall_time=e_local.time(), tz_name=end_zone)
                 if e_local is not None
                 else None
             ),
@@ -107,13 +122,13 @@ def derive_schedule(node: Node, anchor_date: date | None) -> Schedule | None:
         start=RelativeStamp(
             day_offset=(s_local.date() - anchor_date).days,
             wall_time=s_local.time(),
-            tz_name=zone,
+            tz_name=start_zone,
         ),
         end=(
             RelativeStamp(
                 day_offset=(e_local.date() - anchor_date).days,
                 wall_time=e_local.time(),
-                tz_name=zone,
+                tz_name=end_zone,
             )
             if e_local is not None
             else None
@@ -138,18 +153,19 @@ def apply_schedule_columns(node: Node, schedule: Schedule | None) -> None:
 
 def decoded_schedule(node: Node) -> Schedule | None:
     """The node's canonical schedule as stored, or ``None`` when absent or
-    malformed (malformed rows self-heal on the next sync)."""
+    malformed (malformed rows self-heal on the next sync). Reads via getattr
+    so serializer paths handed a partial node stub degrade to None."""
     try:
         return schedule_from_columns(
-            schedule_kind=node.schedule_kind,
-            start_day_offset=node.start_day_offset,
-            start_date=node.start_date,
-            start_wall_time=node.start_wall_time,
-            start_tz=node.start_tz,
-            end_day_offset=node.end_day_offset,
-            end_date=node.end_date,
-            end_wall_time=node.end_wall_time,
-            end_tz=node.end_tz,
+            schedule_kind=getattr(node, "schedule_kind", None),
+            start_day_offset=getattr(node, "start_day_offset", None),
+            start_date=getattr(node, "start_date", None),
+            start_wall_time=getattr(node, "start_wall_time", None),
+            start_tz=getattr(node, "start_tz", None),
+            end_day_offset=getattr(node, "end_day_offset", None),
+            end_date=getattr(node, "end_date", None),
+            end_wall_time=getattr(node, "end_wall_time", None),
+            end_tz=getattr(node, "end_tz", None),
         )
     except KernelViolation:
         return None

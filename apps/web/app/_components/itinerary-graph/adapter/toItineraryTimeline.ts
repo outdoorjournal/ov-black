@@ -4,14 +4,22 @@
 // result straight to <ItineraryGraphView>.
 //
 // The one piece of real work is timing. A view lays nodes onto a per-day,
-// minute-of-day axis, so each node needs a `metadata.start_time` (ISO) and a
-// `metadata.duration_minutes`. We resolve those, in priority order:
-//   1. metadata.start_time / metadata.duration_minutes  (explicit; e.g. an
-//      advisor's drag edit persists here, so it must win)
-//   2. node.starts_at / node.duration_minutes           (the row's scheduled
-//      tstzrange, surfaced by the API)
-//   3. synthesis                                          (no timing at all —
-//      sequence the node onto the first day so it still renders)
+// minute-of-day axis, so each node needs a `metadata.start_time` (ISO), a
+// `metadata.day_key` (its day column), and a `metadata.duration_minutes`.
+// Since Phase 4 (doc/itin-time.md) the SERVER resolves time: every node
+// arrives with a `schedule` view (day_index, per-endpoint local date / wall
+// time / zone, absolute instant — synthesized slots included for unscheduled
+// cards), so this adapter projects rather than derives. Start resolution, in
+// priority order:
+//   1. metadata.start_time / metadata.duration_minutes  (the server's own
+//      mirror of the schedule — and where optimistic drag edits land, so it
+//      must win)
+//   2. node.schedule                                     (the kernel-resolved
+//      view: real placements and synthesized Collection slots)
+//   3. node.starts_at / node.duration_minutes            (legacy rows with no
+//      decodable schedule)
+//   4. local synthesis                                    (fallback for nodes
+//      that bypassed the server view entirely)
 // The resolved values are written back into each node's metadata so the views
 // and layout engine read one consistent field regardless of source.
 
@@ -35,6 +43,7 @@ type TimedNode = NodeResponse & {
 
 type NodeMetaTiming = {
   start_time?: string;
+  day_key?: string;
   duration_minutes?: number;
   [k: string]: unknown;
 };
@@ -85,39 +94,6 @@ export function parseOffsetHours(iso: string): number | null {
   const hh = Number(m[2]);
   const mm = Number(m[3]);
   return sign * (hh + mm / 60);
-}
-
-/**
- * Recover the trip's local UTC offset. Node `starts_at` comes back from the
- * tstzrange UTC-normalized (offset lost), but per-type metadata datetimes
- * (flight depart_at/arrive_at, hotel check_in/out, meal seating_at, …) are
- * Pydantic-serialized tz-aware and keep their real offset. We tally every
- * offset-bearing ISO datetime in metadata and pick the most common NON-zero
- * one; UTC-normalized fields contribute 0 and only win if nothing else does.
- * The layout renders local wall-clock as `epoch + offset`, so a correct offset
- * here is what makes a Tokyo trip read 16:10 rather than 07:10.
- */
-export function inferTzOffsetHours(nodes: NodeResponse[]): number {
-  const tally = new Map<number, number>();
-  for (const n of nodes) {
-    const meta = (n.metadata ?? {}) as Record<string, unknown>;
-    for (const v of Object.values(meta)) {
-      if (typeof v !== "string" || !ISO_DATETIME_RE.test(v)) continue;
-      const off = parseOffsetHours(v);
-      if (off === null) continue;
-      tally.set(off, (tally.get(off) ?? 0) + 1);
-    }
-  }
-  let best: number | null = null;
-  let bestCount = 0;
-  for (const [off, count] of tally) {
-    if (off === 0) continue;
-    if (count > bestCount) {
-      best = off;
-      bestCount = count;
-    }
-  }
-  return best ?? 0;
 }
 
 function metaOf(node: NodeResponse): NodeMetaTiming {
@@ -255,10 +231,21 @@ export function toItineraryTimeline(
 ): ItineraryTimeline {
   const timed = nodes as TimedNode[];
 
-  // tz: prefer an explicit non-UTC offset on a start_time (e.g. an advisor's
-  // drag edit writes local time); otherwise infer the trip offset from
-  // metadata datetimes; otherwise UTC.
-  let tzOffsetHours = inferTzOffsetHours(nodes);
+  // tz: the trip's default offset comes from the SERVER-resolved instants —
+  // each `schedule.start.instant` is serialized in its own zone, so its
+  // offset is exact, not inferred. Fall back to an explicit start's own
+  // offset for legacy nodes with no schedule view; otherwise UTC. Only used
+  // for offset-less strings and the window bounds — every server-resolved
+  // node carries its own offset end to end.
+  let tzOffsetHours = 0;
+  for (const n of timed) {
+    const instant = n.schedule?.start.instant;
+    const off = instant ? parseOffsetHours(instant) : null;
+    if (off !== null && off !== 0) {
+      tzOffsetHours = off;
+      break;
+    }
+  }
   if (tzOffsetHours === 0) {
     for (const n of timed) {
       const start = explicitStart(n);
@@ -315,11 +302,44 @@ export function toItineraryTimeline(
     windowStartKey ??
     todayKey();
 
+  // The date "Day 1" maps to — the server's kernel anchor when it has one
+  // (Phase 4), else the same provisional chain the layout uses, so a
+  // day_index projected here agrees with what the server stamps on the first
+  // placement. Exposed as `dayOneKey` so the store can convert a drop's
+  // visual dayKey into a kernel day_index.
+  const rawAnchorDate = (itinerary as { anchor_date?: string | null }).anchor_date;
+  const dayOneKey =
+    (typeof rawAnchorDate === "string" && rawAnchorDate ? rawAnchorDate : null) ??
+    exactStart ??
+    daysAnchor ??
+    windowStartKey ??
+    synthAnchor;
+
+  // The server computes a provisional slot for every unscheduled root card
+  // (`schedule.synthesized` — Phase 4); project it onto the calendar. A
+  // relative slot on a fully undated trip carries no instant, so it lands on
+  // the same provisional Day-1 the layout uses.
+  const serverSynthStart = (n: TimedNode): string | null => {
+    const s = n.schedule;
+    if (!s?.synthesized) return null;
+    if (s.start.instant) return s.start.instant;
+    const [hh, mm] = s.start.wall_time.split(":").map(Number);
+    return isoOnDay(
+      addDaysToKey(dayOneKey, (s.start.day_index ?? 1) - 1),
+      (hh ?? 9) * 60 + (mm ?? 0),
+      tzOffsetHours,
+    );
+  };
+
   // Subgraph children (parent_subgraph_id) are the journey INSIDE a card —
   // the parent owns the slot, so children get no synthesized layout time.
   // They ride through `nodes` untimed for the expandable sub-journey views.
+  // Local synthesis remains only for nodes the server gave no view (e.g. a
+  // graph payload predating Phase 4).
   const undated = followOrder(
-    timed.filter((n) => explicitStart(n) === null && !n.parent_subgraph_id),
+    timed.filter(
+      (n) => explicitStart(n) === null && !n.parent_subgraph_id && serverSynthStart(n) === null,
+    ),
     edges,
   );
   const synthStartMinute = new Map<string, string>();
@@ -330,9 +350,29 @@ export function toItineraryTimeline(
     );
   });
 
+  // The day column a node belongs to — the server's resolved day when the
+  // start being rendered IS the server's, else derived from the start string's
+  // own offset (optimistic drag edits, legacy rows).
+  const dayKeyFor = (n: TimedNode, start: string | null): string | null => {
+    if (start === null) return null;
+    const s = n.schedule;
+    if (s?.start != null) {
+      const sameInstant =
+        s.start.instant !== null &&
+        s.start.instant !== undefined &&
+        new Date(s.start.instant).getTime() === new Date(start).getTime();
+      if (sameInstant || s.start.instant == null) {
+        if (typeof s.start.date === "string" && s.start.date) return s.start.date;
+        if (typeof s.start.day_index === "number")
+          return addDaysToKey(dayOneKey, s.start.day_index - 1);
+      }
+    }
+    return localDayKey(start);
+  };
+
   const resolvedNodes: NodeResponse[] = timed.map((n) => {
     const explicit = explicitStart(n);
-    const start = explicit ?? synthStartMinute.get(n.id) ?? null;
+    const start = explicit ?? serverSynthStart(n) ?? synthStartMinute.get(n.id) ?? null;
     const duration = resolveDuration(n);
     const meta = metaOf(n);
     // Distinguish a REAL placement (an advisor/agent gave it a time) from a
@@ -341,11 +381,13 @@ export function toItineraryTimeline(
     // dominance logic + timeline layout key off this flag rather than the mere
     // presence of a `start_time`.
     const synthesized = explicit === null && start !== null;
+    const dayKey = dayKeyFor(n, start);
     return {
       ...n,
       metadata: {
         ...meta,
         ...(start ? { start_time: start } : {}),
+        ...(dayKey ? { day_key: dayKey } : {}),
         ...(synthesized ? { start_synthesized: true } : {}),
         duration_minutes: duration,
       },
@@ -356,9 +398,8 @@ export function toItineraryTimeline(
   // cover the trip's exact-date window (0033) so a dated-but-empty itinerary
   // still renders its full length. Nodes falling outside the window extend it.
   const nodeDayKeys = resolvedNodes
-    .map((n) => (n.metadata as NodeMetaTiming).start_time)
-    .filter((s): s is string => typeof s === "string")
-    .map((s) => localDayKey(s));
+    .map((n) => (n.metadata as NodeMetaTiming).day_key)
+    .filter((s): s is string => typeof s === "string");
   // The Day-1 anchor joins the span candidates so numbering counts from it
   // (ADV-16): deleting the earliest card must not renumber every other day. A
   // card scheduled BEFORE the anchor still extends the span (render everything).
@@ -399,6 +440,7 @@ export function toItineraryTimeline(
     windowStart,
     windowEnd,
     days,
+    dayOneKey,
     itinerary,
     nodes: resolvedNodes,
     edges,

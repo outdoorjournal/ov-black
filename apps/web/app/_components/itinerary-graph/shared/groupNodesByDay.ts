@@ -16,14 +16,21 @@ export interface DayGroup {
 }
 
 /**
- * The local-calendar day key (YYYY-MM-DD) a node falls on, honoring the node's
- * own tz offset (the trip can cross zones), or null when it carries no start.
+ * The local-calendar day key (YYYY-MM-DD) a node falls on, or null when it
+ * carries no start. Phase 4 (doc/itin-time.md): the day comes from
+ * `metadata.day_key` — stamped by the adapter from the server's resolved
+ * schedule view and by the store on drag moves — so no client time math runs
+ * here. Deriving it from start_time + the node's own offset remains only as
+ * a fallback for nodes that bypassed the adapter (e.g. fresh SSE proposals).
  */
 export function dayKeyForNode(
   node: NodeResponse,
   tzOffsetHours: number,
 ): string | null {
-  const start = getHMeta(node).start_time;
+  const meta = getHMeta(node);
+  const stamped = (meta as { day_key?: unknown }).day_key;
+  if (typeof stamped === "string" && stamped) return stamped;
+  const start = meta.start_time;
   if (!start) return null;
   const nodeTz = offsetHoursOr(start, tzOffsetHours);
   const ms = new Date(start).getTime() + nodeTz * 3600 * 1000;

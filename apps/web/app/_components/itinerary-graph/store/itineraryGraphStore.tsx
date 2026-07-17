@@ -788,10 +788,51 @@ function rebasedMetadata(
         : null;
   if (newStart === null) return null;
   // A real drop sheds the synthesized marker: the node now has a placement
-  // someone chose, so it belongs on the timeline, not the Collection.
-  const next: Record<string, unknown> = { ...meta, start_time: newStart };
+  // someone chose, so it belongs on the timeline, not the Collection. The
+  // target day is stamped as `day_key` so day bucketing follows the drop
+  // without re-deriving it from the ISO (Phase 4, doc/itin-time.md).
+  const next: Record<string, unknown> = { ...meta, start_time: newStart, day_key: dayKey };
   delete next["start_synthesized"];
   return next;
+}
+
+// The kernel day_index (human Day N; Day 1 = the trip's anchor) for a visual
+// day column. `dayOneKey` comes from the adapter (the server's anchor_date
+// when set); a fixture without one anchors at its first day column.
+function kernelDayIndex(
+  sample: { dayOneKey?: string; days: Array<{ date: string }> },
+  dayKey: string,
+): number {
+  const anchor = sample.dayOneKey ?? sample.days[0]?.date ?? dayKey;
+  const [ay, am, ad] = anchor.split("-").map(Number);
+  const [by, bm, bd] = dayKey.split("-").map(Number);
+  const a = Date.UTC(ay ?? 1970, (am ?? 1) - 1, ad ?? 1);
+  const b = Date.UTC(by ?? 1970, (bm ?? 1) - 1, bd ?? 1);
+  return Math.round((b - a) / 86_400_000) + 1;
+}
+
+// The wall-clock minute-of-day encoded in a local ISO ("…T16:10:00+09:00").
+function minuteOfDayFromIso(iso: string): number {
+  const hh = Number(iso.slice(11, 13));
+  const mm = Number(iso.slice(14, 16));
+  return (Number.isFinite(hh) ? hh : 9) * 60 + (Number.isFinite(mm) ? mm : 0);
+}
+
+// The Phase 4 placement payload for a (dayKey, minuteOfDay) drop: trip terms
+// only — the kernel builds the schedule server-side (doc/itin-time.md). A
+// null minute (move-to-day, keep the time) reads the wall clock off the
+// optimistically-rebased start.
+function placementFor(
+  sample: { dayOneKey?: string; days: Array<{ date: string }> },
+  dayKey: string,
+  minuteOfDay: number | null,
+  startIso: string | undefined,
+): { day_index: number; minute_of_day: number } {
+  const minute = minuteOfDay ?? (startIso ? minuteOfDayFromIso(startIso) : 9 * 60);
+  return {
+    day_index: kernelDayIndex(sample, dayKey),
+    minute_of_day: Math.max(0, Math.min(1439, Math.round(minute))),
+  };
 }
 
 export const itineraryGraphStore = createStoreContext<
@@ -1399,12 +1440,42 @@ export const itineraryGraphStore = createStoreContext<
           if (!c) return;
           const moved = get().nodes.find((n) => n.id === id);
           if (!moved) return;
+          // Phase 4 (doc/itin-time.md): the drop persists as trip terms —
+          // (day_index, minute_of_day) — and the kernel builds the schedule
+          // server-side. The rebased metadata above is the optimistic render;
+          // the server's resolved node replaces it on success.
           void updateNode(c, {
             itineraryId: s.itineraryId,
             nodeId: id,
-            patch: { metadata: moved.metadata },
+            patch: {
+              schedule: placementFor(
+                s.sample,
+                dayKey,
+                minuteOfDay,
+                (moved.metadata as { start_time?: string }).start_time,
+              ),
+            },
           }).then((result) => {
-            if (!result.ok) set({ nodes: previousNodes });
+            if (!result.ok) {
+              set({ nodes: previousNodes });
+              return;
+            }
+            // Reconcile with the server-resolved node (fresh schedule view,
+            // mirrors, needs_revalidation); keep the stamped day_key so
+            // bucketing stays put. Guarded — loose test doubles may resolve
+            // ok without a node.
+            const serverNode = result.node as NodeResponse | undefined;
+            if (!serverNode) return;
+            set((cur) => ({
+              nodes: cur.nodes.map((n) =>
+                n.id === id
+                  ? {
+                      ...serverNode,
+                      metadata: { ...serverNode.metadata, day_key: dayKey },
+                    }
+                  : n,
+              ),
+            }));
           });
         },
         addNode: ({ type, title, metadata }) => {
@@ -1656,10 +1727,20 @@ export const itineraryGraphStore = createStoreContext<
                 (n) => n.forked_from_node_id === id,
               );
               if (forkNode && newMeta) {
+                // Trip terms survive the fork unchanged: the fork inherits the
+                // trunk's anchor, so the same (day_index, minute_of_day) means
+                // the same slot there.
                 void updateNode(c, {
                   itineraryId: forkId,
                   nodeId: forkNode.id,
-                  patch: { metadata: newMeta },
+                  patch: {
+                    schedule: placementFor(
+                      s.sample,
+                      dayKey,
+                      minuteOfDay,
+                      (newMeta as { start_time?: string }).start_time,
+                    ),
+                  },
                 }).finally(() => navigate(forkId));
               } else {
                 navigate(forkId);
@@ -1979,12 +2060,14 @@ export const itineraryGraphStore = createStoreContext<
             s.pendingProposals.find((n) => n.id === id);
           if (!target) return;
           // Strip start_time (+ mirrored offset) so the node returns to the
-          // Collection. Persist only for actors who may write; the backend then
-          // clears the starts_at column to match (0035 update_node fix).
+          // Collection. Persist only for actors who may write; the backend
+          // clears all three schedule representations via the Phase 4
+          // `schedule.clear` placement (doc/itin-time.md).
           const meta = { ...(target.metadata as Record<string, unknown>) };
           delete meta["start_time"];
           delete meta["tz_offset_minutes"];
           delete meta["start_synthesized"];
+          delete meta["day_key"];
           const apply = (n: NodeResponse): NodeResponse =>
             n.id === id ? { ...n, metadata: meta } : n;
           const previousNodes = s.nodes;
@@ -1999,7 +2082,7 @@ export const itineraryGraphStore = createStoreContext<
           void updateNode(c, {
             itineraryId: s.itineraryId,
             nodeId: id,
-            patch: { metadata: meta },
+            patch: { schedule: { clear: true } },
           }).then((result) => {
             if (!result.ok) set({ nodes: previousNodes });
           });

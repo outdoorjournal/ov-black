@@ -20,7 +20,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NamedTuple, TypedDict
 
@@ -29,7 +29,17 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.kernel import resolve_schedule
+from app.kernel import (
+    KernelViolation,
+    ResolvedScheduleView,
+    follows_order,
+    relative,
+    resolve_schedule,
+    resolve_view,
+    schedule_from_columns,
+    synthesize_placements,
+    trip_default_zone,
+)
 from app.models import (
     CostKind,
     Edge,
@@ -145,6 +155,15 @@ class NodeOut(NamedTuple):
     # 0055/Phase 3 — the node moved after its date-sensitive snapshot was
     # quoted; re-check with the provider (doc/itin-time.md).
     needs_revalidation: bool = False
+    # 0055/Phase 4 — the node's canonical schedule projected for display:
+    # per-endpoint day_index / local date / wall clock / zone / instant.
+    # None for unscheduled nodes with no synthesized slot (subgraph children,
+    # attached notes, non-schedulable types) and rows whose canonical columns
+    # don't decode. ``schedule_synthesized`` marks a kernel-computed
+    # provisional slot for an unscheduled node — a layout hint, not a
+    # placement (the node is still in the Collection).
+    schedule: ResolvedScheduleView | None = None
+    schedule_synthesized: bool = False
 
 
 class EdgeOut(NamedTuple):
@@ -434,6 +453,131 @@ def _resolve_scheduled_anchor(
     if duration_minutes:
         mirrored["duration_minutes"] = duration_minutes
     return (None, rng, mirrored)
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulePlacement:
+    """A drag-and-drop placement: where the card landed, in trip terms.
+
+    Phase 4 write shape (doc/itin-time.md): callers say *Day N at minute M*
+    and the kernel builds the schedule — no client-side ISO assembly, no
+    offset guessing. ``day_index`` is the human Day N label (Day 1 = the
+    anchor; 0 and negatives are legal — an outbound flight may leave home
+    before Day 1). ``duration_minutes`` omitted keeps the node's current
+    width. ``tz_name`` omitted keeps the node's current zone, falling back to
+    the trip's default zone.
+    """
+
+    day_index: int
+    minute_of_day: int
+    duration_minutes: int | None = None
+    tz_name: str | None = None
+
+
+async def _itinerary_default_zone(session: AsyncSession, itinerary_id: uuid.UUID) -> str:
+    """The trip's working zone — most common among its scheduled nodes."""
+    zones = (
+        (
+            await session.execute(
+                select(Node.start_tz).where(
+                    Node.itinerary_id == itinerary_id,
+                    Node.start_tz.is_not(None),
+                    Node.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return trip_default_zone(zones)
+
+
+def _current_duration_minutes(node: Node) -> int | None:
+    """The node's current scheduled width, from the range else the metadata."""
+    lower = getattr(node.starts_at, "lower", None)
+    upper = getattr(node.starts_at, "upper", None)
+    if isinstance(lower, datetime) and isinstance(upper, datetime):
+        return round((upper - lower).total_seconds() / 60)
+    if isinstance(node.metadata_, dict):
+        dur = node.metadata_.get("duration_minutes")
+        if isinstance(dur, int) and not isinstance(dur, bool) and dur > 0:
+            return dur
+    return None
+
+
+async def _apply_schedule_placement(
+    session: AsyncSession,
+    node: Node,
+    itinerary_id: uuid.UUID,
+    placement: SchedulePlacement,
+) -> ItineraryError | None:
+    """Build and apply a node's schedule from a (day_index, minute_of_day) drop.
+
+    The kernel owns the construction: the placement becomes a
+    ``RelativeSchedule`` in the resolved zone, the canonical columns are
+    written from it directly (no legacy re-derive — this is the path where
+    real IANA zones enter), and ``starts_at`` + the metadata mirrors are
+    derived output.
+    """
+    if not is_schedulable(node.type):
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail=f"{node.type.value} nodes are not schedulable",
+        )
+    if not (0 <= placement.minute_of_day <= 1439):
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR,
+            detail="minute_of_day must be within 0..1439",
+        )
+    zone = (
+        placement.tz_name or node.start_tz or await _itinerary_default_zone(session, itinerary_id)
+    )
+    duration = placement.duration_minutes or _current_duration_minutes(node)
+    try:
+        schedule = relative(
+            placement.day_index,
+            time(hour=placement.minute_of_day // 60, minute=placement.minute_of_day % 60),
+            zone,
+            duration_minutes=duration,
+        )
+    except KernelViolation as exc:
+        return ItineraryError(outcome=ItineraryOutcome.VALIDATION_ERROR, detail=exc.message)
+
+    # Placing a card is what stamps Day 1's identity on a not-yet-dated trip
+    # (ADV-16) — and the anchor is what the relative schedule resolves against.
+    anchor = await _maybe_stamp_days_anchor(session, itinerary_id)
+    if anchor is None:  # defensive: the stamp always leaves an anchor behind
+        return ItineraryError(
+            outcome=ItineraryOutcome.VALIDATION_ERROR, detail="itinerary has no day-1 anchor"
+        )
+    span = resolve_schedule(schedule, anchor)
+    assert span is not None  # a relative schedule always resolves against a date
+    node.starts_at = Range(span.start, span.end, bounds="[)")
+    apply_schedule_columns(node, schedule)
+
+    # Read-compat mirrors (retired as inputs in Phase 6): the wall-clock the
+    # traveler was promised, in the zone it was promised in.
+    metadata = dict(node.metadata_) if isinstance(node.metadata_, dict) else {}
+    metadata.pop("start_synthesized", None)
+    metadata["start_time"] = span.start.isoformat()
+    offset = span.start.utcoffset()
+    if offset is not None:
+        metadata["tz_offset_minutes"] = int(offset.total_seconds() // 60)
+    if duration:
+        metadata["duration_minutes"] = duration
+    node.metadata_ = metadata
+    return None
+
+
+def _clear_schedule(node: Node) -> None:
+    """Unschedule: back to the Collection, all three representations cleared."""
+    node.starts_at = None
+    apply_schedule_columns(node, None)
+    if isinstance(node.metadata_, dict):
+        metadata = dict(node.metadata_)
+        metadata.pop("start_time", None)
+        metadata.pop("start_synthesized", None)
+        node.metadata_ = metadata
 
 
 async def _write_node_history(
@@ -1220,13 +1364,17 @@ async def get_itinerary_graph(
             id, itinerary_id, parent_subgraph_id, type, status, title,
             source, source_id, metadata, cost_amount, cost_currency, cost_kind,
             starts_at, forked_from_node_id, attached_to_node_id,
-            needs_revalidation, depth
+            needs_revalidation, schedule_kind, start_day_offset, start_date,
+            start_wall_time, start_tz, end_day_offset, end_date, end_wall_time,
+            end_tz, depth
         ) as (
             select n.id, n.itinerary_id, n.parent_subgraph_id, n.type, n.status,
                    n.title, n.source, n.source_id, n.metadata, n.cost_amount,
                    n.cost_currency, n.cost_kind, n.starts_at,
                    n.forked_from_node_id, n.attached_to_node_id,
-                   n.needs_revalidation, 0
+                   n.needs_revalidation, n.schedule_kind, n.start_day_offset,
+                   n.start_date, n.start_wall_time, n.start_tz,
+                   n.end_day_offset, n.end_date, n.end_wall_time, n.end_tz, 0
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
@@ -1236,7 +1384,10 @@ async def get_itinerary_graph(
                    c.title, c.source, c.source_id, c.metadata, c.cost_amount,
                    c.cost_currency, c.cost_kind, c.starts_at,
                    c.forked_from_node_id, c.attached_to_node_id,
-                   c.needs_revalidation, s.depth + 1
+                   c.needs_revalidation, c.schedule_kind, c.start_day_offset,
+                   c.start_date, c.start_wall_time, c.start_tz,
+                   c.end_day_offset, c.end_date, c.end_wall_time, c.end_tz,
+                   s.depth + 1
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
@@ -1245,11 +1396,14 @@ async def get_itinerary_graph(
         select id, itinerary_id, parent_subgraph_id, type, status, title,
                source, source_id, metadata, cost_amount, cost_currency,
                cost_kind, starts_at, forked_from_node_id, attached_to_node_id,
-               needs_revalidation, depth
+               needs_revalidation, schedule_kind, start_day_offset, start_date,
+               start_wall_time, start_tz, end_day_offset, end_date,
+               end_wall_time, end_tz, depth
           from subgraph
          order by depth, id
         """
     )
+    anchor = itinerary.anchor_date
     node_rows = (await session.execute(cte_sql, {"iid": itinerary_id})).all()
     nodes: list[NodeOut] = []
     for row in node_rows:
@@ -1257,6 +1411,23 @@ async def get_itinerary_graph(
         iso_start, duration_minutes = _serialize_starts_at(
             row.starts_at, _tz_offset_from_metadata(row_metadata)
         )
+        schedule_view: ResolvedScheduleView | None = None
+        try:
+            decoded = schedule_from_columns(
+                schedule_kind=row.schedule_kind,
+                start_day_offset=row.start_day_offset,
+                start_date=row.start_date,
+                start_wall_time=row.start_wall_time,
+                start_tz=row.start_tz,
+                end_day_offset=row.end_day_offset,
+                end_date=row.end_date,
+                end_wall_time=row.end_wall_time,
+                end_tz=row.end_tz,
+            )
+        except KernelViolation:
+            decoded = None  # malformed rows self-heal on the next write
+        if decoded is not None:
+            schedule_view = resolve_view(decoded, anchor)
         nodes.append(
             NodeOut(
                 id=row.id,
@@ -1278,6 +1449,7 @@ async def get_itinerary_graph(
                 forked_from_node_id=row.forked_from_node_id,
                 attached_to_node_id=row.attached_to_node_id,
                 needs_revalidation=row.needs_revalidation,
+                schedule=schedule_view,
             )
         )
 
@@ -1307,7 +1479,48 @@ async def get_itinerary_graph(
         if edge.from_node_id in visible_node_ids and edge.to_node_id in visible_node_ids
     ]
 
+    nodes = _with_synthesized_placements(nodes, edges, anchor)
     return GraphView(itinerary=itinerary, nodes=nodes, edges=edges)
+
+
+def _with_synthesized_placements(
+    nodes: list[NodeOut], edges: list[EdgeOut], anchor: date | None
+) -> list[NodeOut]:
+    """Attach kernel-computed provisional slots to unscheduled root cards.
+
+    Phase 4 (doc/itin-time.md): the web adapter used to synthesize a layout
+    time for undated nodes; that rule now runs once, here, and serializes as a
+    ``schedule`` view with ``schedule_synthesized=True``. Subgraph children
+    ride their parent's slot, attached notes ride their host, discarded and
+    non-schedulable cards get nothing.
+    """
+    candidates = [
+        n
+        for n in nodes
+        if n.schedule is None
+        and n.starts_at is None
+        and n.parent_subgraph_id is None
+        and n.attached_to_node_id is None
+        and n.status is not NodeStatus.discarded
+        and is_schedulable(n.type)
+    ]
+    if not candidates:
+        return nodes
+    zone = trip_default_zone(n.schedule.start.tz_name for n in nodes if n.schedule is not None)
+    ordered = follows_order(
+        [str(n.id) for n in candidates],
+        ((str(e.from_node_id), str(e.to_node_id)) for e in edges if e.type is EdgeType.follows),
+    )
+    placements = synthesize_placements(ordered, zone)
+    return [
+        n
+        if str(n.id) not in placements
+        else n._replace(
+            schedule=resolve_view(placements[str(n.id)], anchor),
+            schedule_synthesized=True,
+        )
+        for n in nodes
+    ]
 
 
 async def add_node(
@@ -1495,12 +1708,17 @@ async def update_node(
     *,
     itinerary_id: uuid.UUID,
     node_id: uuid.UUID,
+    placement: SchedulePlacement | None = None,
+    clear_schedule: bool = False,
     **fields: Any,
 ) -> Node | ItineraryError:
     """Update a node + capture before/after snapshots in history.
 
     Only a small whitelist of fields can be changed through this path — the
-    primary key, itinerary_id, and timestamps are never mutable.
+    primary key, itinerary_id, and timestamps are never mutable. ``placement``
+    (Phase 4) schedules the node from a ``(day_index, minute_of_day)`` drop —
+    the kernel builds the schedule; ``clear_schedule`` returns the card to the
+    Collection. Both count as content mutations for every gate.
     """
     node = (
         await session.execute(
@@ -1525,7 +1743,8 @@ async def update_node(
         "cost_kind",
     }
     updates: dict[str, Any] = {k: v for k, v in fields.items() if k in allowed}
-    mutates_other_fields = any(key != "status" for key in updates)
+    moves_schedule = placement is not None or clear_schedule
+    mutates_other_fields = moves_schedule or any(key != "status" for key in updates)
 
     # Pure status flips (traveler approval / discard, advisor demotion) are the
     # one write a trunk accepts directly — everything else must go via a fork.
@@ -1539,7 +1758,7 @@ async def update_node(
     if lock_err is not None:
         return lock_err
 
-    if not updates:
+    if not updates and not moves_schedule:
         return node  # No-op update is idempotent — don't write history.
 
     # Status gate (G1): a firmed node is immutable except for an advisor's pure
@@ -1600,7 +1819,8 @@ async def update_node(
     # the timeline (the read serializer + web adapter fall back to the column).
     # Attached notes ride a host and carry no own time, so they're left alone.
     if (
-        "metadata" in updates
+        not moves_schedule
+        and "metadata" in updates
         and isinstance(node.metadata_, dict)
         and not (node.type is NodeType.note and node.attached_to_node_id is not None)
     ):
@@ -1629,15 +1849,24 @@ async def update_node(
         else:
             node.starts_at = None
 
-    # A metadata patch is the drag-to-timeline path — the first card scheduled
-    # pins Day 1's identity (ADV-16). No-op once the anchor is stamped. The
-    # canonical kernel columns (0055) then re-derive from whatever this write
-    # left in the legacy representation (schedule change, unschedule, or a
-    # committed-status boundary — booking pins, demotion un-pins).
-    anchor: date | None = None
-    if node.starts_at is not None:
-        anchor = await _maybe_stamp_days_anchor(session, itinerary_id)
-    sync_node_schedule(node, anchor)
+    if clear_schedule:
+        _clear_schedule(node)
+    elif placement is not None:
+        placement_err = await _apply_schedule_placement(session, node, itinerary_id, placement)
+        if placement_err is not None:
+            return placement_err
+    else:
+        # A metadata patch is the drag-to-timeline path — the first card
+        # scheduled pins Day 1's identity (ADV-16). No-op once the anchor is
+        # stamped. The canonical kernel columns (0055) then re-derive from
+        # whatever this write left in the legacy representation (schedule
+        # change, unschedule, or a committed-status boundary — booking pins,
+        # demotion un-pins). A placement skips this re-derive: its canonical
+        # columns were written first-hand by the kernel, zone included.
+        anchor: date | None = None
+        if node.starts_at is not None:
+            anchor = await _maybe_stamp_days_anchor(session, itinerary_id)
+        sync_node_schedule(node, anchor)
     # Moving a date-sensitive quote succeeds and flags it for re-checking with
     # the provider (doc/itin-time.md "Moves can invalidate content"); a fresh
     # quote (new source_id) clears the flag.

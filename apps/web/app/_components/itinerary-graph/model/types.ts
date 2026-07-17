@@ -16,6 +16,13 @@ export type { CardSnapshot, MoodId } from "./baseTypes";
 export interface VerticalNodeMeta extends NodeMeta {
   start_time?: string;
   duration_minutes?: number;
+  // The local calendar day (YYYY-MM-DD) this node belongs to — stamped by the
+  // adapter from the SERVER's resolved schedule view (node.schedule), and by
+  // the store on optimistic drag moves. Day bucketing reads this instead of
+  // re-deriving the day from start_time + offset math (Phase 4,
+  // doc/itin-time.md); derivation remains only as a fallback for nodes that
+  // bypassed the adapter (e.g. fresh SSE proposals).
+  day_key?: string;
   // A flight's own depart/arrive wall-clock (each an offset-bearing ISO in its
   // OWN timezone — a leg crosses zones). The journal's duration-bar ruler reads
   // these so an overnight leg's ticks run in DESTINATION time and cross midnight.
@@ -56,6 +63,12 @@ export interface ItineraryTimeline {
   windowStart: string;
   windowEnd: string;
   days: Array<{ date: string; label: string; weather_emoji?: string }>;
+  // The calendar date "Day 1" maps to (Phase 4): the server's kernel
+  // anchor_date when set, else the same provisional anchor the layout uses.
+  // The store converts a drop's visual dayKey into the kernel day_index with
+  // it: day_index = diffDays(dayOneKey, dayKey) + 1. Optional so hand-built
+  // fixtures stay valid; consumers fall back to days[0].date.
+  dayOneKey?: string;
   itinerary: ItineraryResponse;
   nodes: NodeResponse[];
   edges: EdgeResponse[];

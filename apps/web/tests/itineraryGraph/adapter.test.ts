@@ -1,20 +1,20 @@
 // Unit tests for the API-graph → ItineraryTimeline adapter.
 //
 // Focus on the three things the adapter actually decides: per-node start_time
-// resolution (metadata.start_time > node.starts_at > synthesis), tz recovery
-// from metadata datetimes (the column normalizes to UTC so the offset must be
-// inferred), and contiguous day-span construction.
+// resolution (metadata.start_time > server schedule view > node.starts_at >
+// synthesis), consuming the server's resolved schedule views (Phase 4,
+// doc/itin-time.md — tz + day come from the kernel, not inference), and
+// contiguous day-span construction.
 
 import { describe, expect, test } from "vitest";
 
 import type {
-  EdgeResponse,
   ItineraryResponse,
   NodeResponse,
+  ResolvedScheduleResponse,
 } from "@ov-black/api-client";
 
 import {
-  inferTzOffsetHours,
   parseOffsetHours,
   toItineraryTimeline,
 } from "@/app/_components/itinerary-graph/adapter/toItineraryTimeline";
@@ -68,22 +68,120 @@ describe("parseOffsetHours", () => {
   });
 });
 
-describe("inferTzOffsetHours", () => {
-  test("recovers a non-UTC offset from a metadata datetime field", () => {
-    const nodes = [
-      makeNode("a", {
-        starts_at: "2024-06-20T07:10:00+00:00", // UTC-normalized
-        metadata: { depart_at: "2024-06-20T16:10:00+09:00" }, // keeps offset
-      }),
-    ];
-    expect(inferTzOffsetHours(nodes)).toBe(9);
+// A server-resolved schedule view (Phase 4) — relative, one endpoint.
+function relativeView(
+  dayIndex: number,
+  date: string,
+  wallTime: string,
+  tz: string,
+  instant: string,
+  synthesized = false,
+): ResolvedScheduleResponse {
+  return {
+    kind: "relative",
+    start: { day_index: dayIndex, date, wall_time: wallTime, tz, instant },
+    end: null,
+    day_span: 1,
+    synthesized,
+  };
+}
+
+describe("toItineraryTimeline — server-resolved schedule views (Phase 4)", () => {
+  test("trip tz comes from the schedule view's resolved instant, not inference", () => {
+    const node = makeNode("a", {
+      starts_at: "2024-06-20T16:10:00+09:00",
+      metadata: { start_time: "2024-06-20T16:10:00+09:00" },
+      schedule: relativeView(
+        1,
+        "2024-06-20",
+        "16:10",
+        "Asia/Tokyo",
+        "2024-06-20T16:10:00+09:00",
+      ),
+    } as NodeOverrides);
+    const tl = toItineraryTimeline(ITINERARY, [node], []);
+    expect(tl.timezoneOffsetHours).toBe(9);
   });
 
-  test("all-UTC → 0", () => {
-    const nodes = [
-      makeNode("a", { metadata: { check_in: "2024-06-20T07:10:00+00:00" } }),
-    ];
-    expect(inferTzOffsetHours(nodes)).toBe(0);
+  test("day_key is stamped from the server view's local date", () => {
+    // A late-night LA start: instant 06:00Z on the 21st, LOCAL date the 20th.
+    // The server view's date is authoritative — no client offset math.
+    const node = makeNode("la", {
+      starts_at: "2024-06-20T23:00:00-07:00",
+      metadata: { start_time: "2024-06-20T23:00:00-07:00" },
+      schedule: relativeView(
+        1,
+        "2024-06-20",
+        "23:00",
+        "America/Los_Angeles",
+        "2024-06-20T23:00:00-07:00",
+      ),
+    } as NodeOverrides);
+    const tl = toItineraryTimeline(ITINERARY, [node], []);
+    expect(
+      (tl.nodes[0]!.metadata as { day_key?: string }).day_key,
+    ).toBe("2024-06-20");
+  });
+
+  test("a server-synthesized slot renders as a start_synthesized placement", () => {
+    const wish = makeNode("wish", {
+      schedule: relativeView(
+        1,
+        "2026-08-10",
+        "09:00",
+        "Europe/Athens",
+        "2026-08-10T09:00:00+03:00",
+        true,
+      ),
+    } as NodeOverrides);
+    const tl = toItineraryTimeline(ITINERARY, [wish], []);
+    const m = tl.nodes[0]!.metadata as {
+      start_time?: string;
+      start_synthesized?: boolean;
+      day_key?: string;
+    };
+    expect(m.start_time).toBe("2026-08-10T09:00:00+03:00");
+    expect(m.start_synthesized).toBe(true);
+    expect(m.day_key).toBe("2026-08-10");
+  });
+
+  test("a synthesized slot with no instant (undated trip) projects onto Day 1", () => {
+    const wish = makeNode("wish", {
+      schedule: {
+        kind: "relative",
+        start: {
+          day_index: 1,
+          date: null,
+          wall_time: "09:00",
+          tz: "UTC",
+          instant: null,
+        },
+        end: null,
+        day_span: 1,
+        synthesized: true,
+      },
+    } as NodeOverrides);
+    const tl = toItineraryTimeline(ITINERARY, [wish], [], {
+      synthAnchorDate: "2026-08-10",
+    });
+    const m = tl.nodes[0]!.metadata as { start_time?: string };
+    expect(m.start_time).toContain("2026-08-10T09:00");
+  });
+
+  test("dayOneKey follows the server anchor_date over the visual first day", () => {
+    const anchored: ItineraryResponse = {
+      ...ITINERARY,
+      anchor_date: "2026-08-10",
+    } as ItineraryResponse;
+    // A card scheduled BEFORE Day 1 (outbound leaving home the day before)
+    // extends the visual span, but Day 1's identity stays the anchor.
+    const early = makeNode("early", {
+      starts_at: "2026-08-09T17:00:00+00:00",
+      metadata: { start_time: "2026-08-09T17:00:00+00:00" },
+    });
+    const tl = toItineraryTimeline(anchored, [early], []);
+    expect(tl.dayOneKey).toBe("2026-08-10");
+    expect(tl.days[0]!.date).toBe("2026-08-09");
   });
 });
 
@@ -180,15 +278,27 @@ describe("toItineraryTimeline — flight timing is intrinsic", () => {
 });
 
 describe("toItineraryTimeline — days + tz", () => {
-  test("builds a contiguous day span and recovers the trip tz", () => {
+  test("builds a contiguous day span; tz comes from the server views", () => {
     const day1 = makeNode("d1", {
-      starts_at: "2024-06-20T07:10:00+00:00", // 16:10 JST
-      metadata: { depart_at: "2024-06-20T16:10:00+09:00" },
-    });
+      starts_at: "2024-06-20T16:10:00+09:00",
+      schedule: relativeView(
+        1,
+        "2024-06-20",
+        "16:10",
+        "Asia/Tokyo",
+        "2024-06-20T16:10:00+09:00",
+      ),
+    } as NodeOverrides);
     const day3 = makeNode("d3", {
-      starts_at: "2024-06-22T01:00:00+00:00", // 10:00 JST on the 22nd
-      metadata: {},
-    });
+      starts_at: "2024-06-22T10:00:00+09:00",
+      schedule: relativeView(
+        3,
+        "2024-06-22",
+        "10:00",
+        "Asia/Tokyo",
+        "2024-06-22T10:00:00+09:00",
+      ),
+    } as NodeOverrides);
     const tl = toItineraryTimeline(ITINERARY, [day1, day3], []);
     expect(tl.timezoneOffsetHours).toBe(9);
     // 20th, 21st, 22nd inclusive — even though the 21st has no nodes.

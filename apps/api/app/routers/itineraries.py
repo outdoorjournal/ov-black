@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import date as _date  # the ResolvedStampResponse.date field shadows `date`
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
@@ -37,6 +38,7 @@ from app.config import get_settings
 from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
 from app.inventory.schemas import ExperienceItem, FlightItem
+from app.kernel import ResolvedScheduleView, ResolvedStampView, resolve_view
 from app.models import (
     CardTemplate,
     Client,
@@ -82,6 +84,7 @@ from app.services.itineraries import (
     DaySlot,
     ItineraryError,
     ItineraryOutcome,
+    SchedulePlacement,
     _serialize_starts_at,
     _tz_offset_from_metadata,
     acquire_lock,
@@ -99,6 +102,7 @@ from app.services.itineraries import (
     update_itinerary_details,
     update_node,
 )
+from app.services.kernel_sync import decoded_schedule
 from app.services.link_preview import fetch_link_preview
 from app.services.node_cost import (
     NodeCost,
@@ -205,6 +209,13 @@ class ItineraryResponse(BaseModel):
     # unpinned trip, so relative Day-N labels are stable. None until the first
     # card is scheduled; equals date_start once the dates are pinned (retime).
     days_anchor: date | None = None
+    # Kernel anchor (0055, doc/itin-time.md): the canonical Day-1 calendar
+    # date every relative schedule resolves against. Generalizes
+    # ``days_anchor``/``date_start`` (exact trips anchor at date_start,
+    # everything else at the stamped days_anchor); the web maps node
+    # ``day_index`` labels onto dates with it. None on a never-scheduled,
+    # never-dated trip.
+    anchor_date: date | None = None
     # Campaign provenance + mood (0047). ``campaign_id`` is the inbound campaign
     # slug a trip was started from (None on ordinary trips); it drives the
     # dashboard auto-kickoff and agent campaign-awareness. ``mood`` is the
@@ -313,6 +324,26 @@ class CreateNodeFromLinkRequest(BaseModel):
     parent_subgraph_id: uuid.UUID | None = None
 
 
+class SchedulePlacementPayload(BaseModel):
+    """Where a card landed, in trip terms (Phase 4, doc/itin-time.md).
+
+    Drag-and-drop sends ``(day_index, minute_of_day)`` and the kernel builds
+    the schedule server-side — no client ISO assembly, no offset guessing.
+    ``clear=true`` unschedules instead (back to the Collection) and permits no
+    other field. ``tz`` (IANA name) and ``duration_minutes`` are optional
+    overrides; omitted, the node keeps its current zone (falling back to the
+    trip's default) and width.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    day_index: int | None = None
+    minute_of_day: int | None = Field(default=None, ge=0, le=1439)
+    duration_minutes: int | None = Field(default=None, ge=1)
+    tz: str | None = None
+    clear: bool = False
+
+
 class UpdateNodeRequest(BaseModel):
     """Partial update. Any field omitted is left unchanged.
 
@@ -333,6 +364,45 @@ class UpdateNodeRequest(BaseModel):
     cost_amount: Decimal | None = None
     cost_currency: str | None = None
     cost_kind: CostKind | None = None
+    # Phase 4 schedule placement — see SchedulePlacementPayload. Wins over any
+    # ``metadata.start_time`` in the same request.
+    schedule: SchedulePlacementPayload | None = None
+
+
+class ResolvedStampResponse(BaseModel):
+    """One schedule endpoint, resolved for display (Phase 4).
+
+    ``day_index`` is the human Day N label (None for a pinned stamp on an
+    undated trip); ``date`` is the local calendar date (None for a relative
+    stamp on an undated trip); ``wall_time`` is "HH:MM" local; ``tz`` is the
+    IANA zone (an ``Etc/GMT±N`` pseudo-zone on rows that predate real-zone
+    writes); ``instant`` is the resolved ISO-8601 absolute time with the
+    zone's offset, when resolvable.
+    """
+
+    day_index: int | None = None
+    date: _date | None = None
+    wall_time: str
+    tz: str
+    instant: str | None = None
+
+
+class ResolvedScheduleResponse(BaseModel):
+    """A node's schedule projected for display — the Phase 4 read shape.
+
+    Per-endpoint local views (a flight's start and end each carry their own
+    airport zone), the day span (calendar days covered — airline-style +1
+    badges come from ``day_span > 1`` or differing endpoint dates), and
+    whether this is a kernel-computed provisional slot for an unscheduled
+    card (``synthesized`` — a layout hint; the card is still in the
+    Collection).
+    """
+
+    kind: Literal["relative", "pinned"]
+    start: ResolvedStampResponse
+    end: ResolvedStampResponse | None = None
+    day_span: int = 1
+    synthesized: bool = False
 
 
 class NodeResponse(BaseModel):
@@ -390,6 +460,13 @@ class NodeResponse(BaseModel):
     # flight quote) was taken; re-check availability with the provider. Set by
     # schedule moves and retimes; cleared by a fresh quote (new source_id).
     needs_revalidation: bool = False
+    # 0055/Phase 4 — the resolved schedule view: day_index, per-endpoint local
+    # wall time + zone + date, absolute instants, day span. The web renders
+    # from this instead of re-deriving time client-side. None only for
+    # unscheduled nodes with no synthesized slot (subgraph children, attached
+    # notes, non-schedulable types) and legacy rows whose canonical schedule
+    # columns don't decode.
+    schedule: ResolvedScheduleResponse | None = None
 
 
 class CreateEdgeRequest(BaseModel):
@@ -878,11 +955,37 @@ def _raise_for_error(err: ItineraryError) -> NoReturn:
 # ── Node response builders ──────────────────────────────────────────────────
 
 
+def _stamp_response(stamp: ResolvedStampView) -> ResolvedStampResponse:
+    return ResolvedStampResponse(
+        day_index=stamp.day_index,
+        date=stamp.on,
+        wall_time=stamp.wall_time.strftime("%H:%M"),
+        tz=stamp.tz_name,
+        instant=stamp.instant.isoformat() if stamp.instant is not None else None,
+    )
+
+
+def _schedule_response(
+    view: ResolvedScheduleView | None, *, synthesized: bool = False
+) -> ResolvedScheduleResponse | None:
+    if view is None:
+        return None
+    kind: Literal["relative", "pinned"] = "pinned" if view.kind == "pinned" else "relative"
+    return ResolvedScheduleResponse(
+        kind=kind,
+        start=_stamp_response(view.start),
+        end=_stamp_response(view.end) if view.end is not None else None,
+        day_span=view.day_span,
+        synthesized=synthesized,
+    )
+
+
 def _node_response_from_out(n: Any) -> NodeResponse:
     """Build a NodeResponse from a service ``NodeOut`` (graph-read shape).
 
-    ``NodeOut`` already carries the serialized ``starts_at`` / cost fields, so
-    this is a straight field copy. Used by the graph-read + assemble endpoints.
+    ``NodeOut`` already carries the serialized ``starts_at`` / cost / resolved
+    schedule fields, so this is a straight field copy. Used by the graph-read
+    + assemble endpoints.
     """
     return NodeResponse(
         id=n.id,
@@ -905,19 +1008,26 @@ def _node_response_from_out(n: Any) -> NodeResponse:
         attached_to_node_id=n.attached_to_node_id,
         schedulable=is_schedulable(n.type),
         needs_revalidation=bool(getattr(n, "needs_revalidation", False) or False),
+        schedule=_schedule_response(
+            getattr(n, "schedule", None),
+            synthesized=bool(getattr(n, "schedule_synthesized", False)),
+        ),
     )
 
 
-def _node_response_from_node(node: Any) -> NodeResponse:
+def _node_response_from_node(node: Any, anchor: date | None = None) -> NodeResponse:
     """Build a NodeResponse from a persisted ``Node`` ORM row (write shape).
 
     The single-node write endpoints (create / update / from-inventory) return
     a ``Node`` whose ``starts_at`` is still a raw tstzrange, so it's serialized
-    here with the node's recorded local offset.
+    here with the node's recorded local offset. ``anchor`` (the itinerary's
+    Day-1 date) lets the resolved schedule view carry dates/instants for
+    relative schedules; callers fetch it via :func:`_anchor_date_of`.
     """
     starts_at, duration_minutes = _serialize_starts_at(
         node.starts_at, _tz_offset_from_metadata(node.metadata_)
     )
+    decoded = decoded_schedule(node)
     return NodeResponse(
         id=node.id,
         itinerary_id=node.itinerary_id,
@@ -938,7 +1048,20 @@ def _node_response_from_node(node: Any) -> NodeResponse:
         attached_to_node_id=getattr(node, "attached_to_node_id", None),
         schedulable=is_schedulable(node.type),
         needs_revalidation=bool(getattr(node, "needs_revalidation", False) or False),
+        schedule=_schedule_response(resolve_view(decoded, anchor) if decoded is not None else None),
     )
+
+
+async def _anchor_date_of(session: AsyncSession, itinerary_id: uuid.UUID) -> date | None:
+    """The itinerary's kernel Day-1 anchor, for write-path serialization.
+
+    Degrades to None on a stubbed session (router tests replace the service
+    layer and hand the endpoint an inert session object) — the anchor only
+    enriches the resolved schedule view, it never gates the write.
+    """
+    if not hasattr(session, "scalar"):
+        return None
+    return await session.scalar(select(Itinerary.anchor_date).where(Itinerary.id == itinerary_id))
 
 
 def _graph_to_response(
@@ -1267,7 +1390,7 @@ async def create_node_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    return _node_response_from_node(result)
+    return _node_response_from_node(result, await _anchor_date_of(session, itinerary_id))
 
 
 async def _create_flight_leg_nodes(
@@ -1399,8 +1522,9 @@ async def create_node_from_inventory_endpoint(
             cost=cost,
         )
         primary, *rest = legs
-        response = _node_response_from_node(primary)
-        response.additional_nodes = [_node_response_from_node(n) for n in rest]
+        anchor = await _anchor_date_of(session, itinerary_id)
+        response = _node_response_from_node(primary, anchor)
+        response.additional_nodes = [_node_response_from_node(n, anchor) for n in rest]
         return response
 
     result = await add_node(
@@ -1444,7 +1568,7 @@ async def create_node_from_inventory_endpoint(
         except SubgraphMaterializeError as exc:
             _raise_for_error(exc.error)
 
-    return _node_response_from_node(result)
+    return _node_response_from_node(result, await _anchor_date_of(session, itinerary_id))
 
 
 @router.post(
@@ -1498,7 +1622,7 @@ async def create_node_from_link_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    return _node_response_from_node(result)
+    return _node_response_from_node(result, await _anchor_date_of(session, itinerary_id))
 
 
 #: Known editorial hosts → display publication name (reading-list cards).
@@ -1605,7 +1729,7 @@ async def create_node_from_route_endpoint(
     )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    return _node_response_from_node(result)
+    return _node_response_from_node(result, await _anchor_date_of(session, itinerary_id))
 
 
 def _itinerary_requested_nights(itinerary: Itinerary) -> int | None:
@@ -1683,7 +1807,7 @@ class CampaignKickoffResponse(BaseModel):
     created_nodes: list[NodeResponse] = Field(default_factory=list)
 
 
-def _placement_ready_node(node: Any) -> NodeResponse:
+def _placement_ready_node(node: Any, anchor: date | None = None) -> NodeResponse:
     """Serialize a persisted spine node so it's ready to drop on the canvas.
 
     ``_node_response_from_node`` gives the row's ``starts_at`` as a top-level
@@ -1693,7 +1817,7 @@ def _placement_ready_node(node: Any) -> NodeResponse:
     adapter, so mirror the invariant here — copy ``starts_at`` into
     ``metadata.start_time`` (+ duration) when the node is scheduled.
     """
-    resp = _node_response_from_node(node)
+    resp = _node_response_from_node(node, anchor)
     if resp.starts_at and not resp.metadata.get("start_time"):
         meta = {**resp.metadata, "start_time": resp.starts_at}
         if resp.duration_minutes is not None and meta.get("duration_minutes") is None:
@@ -1802,8 +1926,9 @@ async def campaign_kickoff_endpoint(
         .scalars()
         .all()
     )
+    kickoff_anchor = await _anchor_date_of(session, itinerary_id)
     created_nodes = sorted(
-        (_placement_ready_node(n) for n in created_rows),
+        (_placement_ready_node(n, kickoff_anchor) for n in created_rows),
         key=lambda n: (n.starts_at is None, n.starts_at or ""),
     )
 
@@ -1846,10 +1971,41 @@ async def update_node_endpoint(
         actor = _advisor_actor_from_user(user)
     # Only forward fields the client actually set so "omitted" ≠ "set to None".
     fields = payload.model_dump(exclude_unset=True)
-    result = await update_node(session, actor, itinerary_id=itinerary_id, node_id=node_id, **fields)
+    fields.pop("schedule", None)  # forwarded as a typed placement below, not a raw dict
+    placement: SchedulePlacement | None = None
+    clear_schedule = False
+    if payload.schedule is not None:
+        sched = payload.schedule
+        if sched.clear:
+            if sched.day_index is not None or sched.minute_of_day is not None:
+                raise HTTPException(
+                    status_code=422, detail="schedule.clear permits no other placement field"
+                )
+            clear_schedule = True
+        else:
+            if sched.day_index is None or sched.minute_of_day is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="schedule placement needs day_index and minute_of_day",
+                )
+            placement = SchedulePlacement(
+                day_index=sched.day_index,
+                minute_of_day=sched.minute_of_day,
+                duration_minutes=sched.duration_minutes,
+                tz_name=sched.tz,
+            )
+    result = await update_node(
+        session,
+        actor,
+        itinerary_id=itinerary_id,
+        node_id=node_id,
+        placement=placement,
+        clear_schedule=clear_schedule,
+        **fields,
+    )
     if isinstance(result, ItineraryError):
         _raise_for_error(result)
-    return _node_response_from_node(result)
+    return _node_response_from_node(result, await _anchor_date_of(session, itinerary_id))
 
 
 @router.delete(
@@ -1898,6 +2054,7 @@ def _itinerary_to_response(
         duration_nights=getattr(itinerary, "duration_nights", None),
         timing_note=getattr(itinerary, "timing_note", None),
         days_anchor=getattr(itinerary, "days_anchor", None),
+        anchor_date=getattr(itinerary, "anchor_date", None),
         campaign_id=getattr(itinerary, "campaign_id", None),
         mood=getattr(itinerary, "mood", None),
         hero_image=getattr(itinerary, "hero_image", None),
