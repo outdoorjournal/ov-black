@@ -700,9 +700,7 @@ SYMBOLISM = OlympusCornerstone(
                     node_type=NodeType.meal,
                     stock="breakfast",
                     duration_minutes=120,
-                    description=(
-                        "A slow breakfast, one more look at the mountain."
-                    ),
+                    description=("A slow breakfast, one more look at the mountain."),
                 ),
                 CornerstoneBeat(
                     hhmm="11:00",
@@ -887,6 +885,7 @@ GUIDED_2DAY = OlympusCornerstone(
         ),
     ),
 )
+
 
 def cornerstone_for_nights(nights: int, *, longest: int) -> OlympusCornerstone:
     """Pick the cornerstone for a spine of ``nights`` length.

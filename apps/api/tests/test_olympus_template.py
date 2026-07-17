@@ -138,9 +138,7 @@ async def test_cornerstone_lands_as_subgraph_in_template() -> None:
             # transfer a drive, an open morning free_time — not a blanket
             # "experience" (matched by title, which is unique per beat).
             beat_kinds = {
-                beat.title: beat.node_type
-                for day in cornerstone.days
-                for beat in day.beats
+                beat.title: beat.node_type for day in cornerstone.days for beat in day.beats
             }
             for child in beat_children:
                 meta = child.metadata_["subgraph_day"]

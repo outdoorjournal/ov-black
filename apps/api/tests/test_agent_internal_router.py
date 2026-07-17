@@ -786,9 +786,7 @@ def test_patch_logistics_reports_overwrite_conflict(
     from app.services.facts import LogisticsConflict
 
     async def _fake_record(*_args: Any, **kwargs: Any) -> Any:
-        stored = SimpleNamespace(
-            favorite_airport="DEN", address=None, preferred_currency=None
-        )
+        stored = SimpleNamespace(favorite_airport="DEN", address=None, preferred_currency=None)
         return SimpleNamespace(
             client=stored,
             skipped=[LogisticsConflict(field="home_airport", existing="DEN", proposed="ASE")],
@@ -803,9 +801,7 @@ def test_patch_logistics_reports_overwrite_conflict(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["home_airport"] == "DEN"  # unchanged — no clobber without confirm
-    assert body["skipped"] == [
-        {"field": "home_airport", "existing": "DEN", "proposed": "ASE"}
-    ]
+    assert body["skipped"] == [{"field": "home_airport", "existing": "DEN", "proposed": "ASE"}]
 
 
 def test_patch_logistics_rejects_bad_iata(client: TestClient) -> None:

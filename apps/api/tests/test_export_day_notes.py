@@ -278,9 +278,7 @@ async def test_advisor_row_never_regenerated(db_session: AsyncSession) -> None:
         # Advisor day used verbatim; only the OTHER day is generated.
         assert result[date(2026, 6, 1)]["bring"] == ["Advisor pick"]
         assert len(client.prompts) == 1
-        targets_line = next(
-            ln for ln in client.prompts[0].splitlines() if "dates only:" in ln
-        )
+        targets_line = next(ln for ln in client.prompts[0].splitlines() if "dates only:" in ln)
         assert "2026-06-01" not in targets_line  # advisor day excluded from generation
         assert "2026-06-02" in targets_line
     finally:

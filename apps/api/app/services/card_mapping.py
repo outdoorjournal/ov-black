@@ -216,7 +216,9 @@ def _hotel_place_facts(item: HotelItem) -> PlaceFacts | None:
     loc = item.location
     maps_url: str | None = None
     if loc is not None and loc.lat is not None and loc.lng is not None:
-        maps_url = f"https://www.google.com/maps/search/?api=1&query={quote(f'{loc.lat},{loc.lng}')}"
+        maps_url = (
+            f"https://www.google.com/maps/search/?api=1&query={quote(f'{loc.lat},{loc.lng}')}"
+        )
     elif loc is not None and loc.label:
         maps_url = f"https://www.google.com/maps/search/?api=1&query={quote(loc.label)}"
     facts = PlaceFacts(

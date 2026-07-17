@@ -66,7 +66,7 @@ def _content_disposition(title: str, anchor: date | None, ext: str) -> str:
     ascii_name = f"{_slug(title)}-{stamp}.{ext}"
     # A UTF-8 filename* for modern clients; the ASCII filename= as fallback.
     utf8_name = quote(f"{title} {stamp}.{ext}")
-    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{utf8_name}'
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
 
 
 @router.get(
@@ -166,9 +166,7 @@ async def list_day_notes_endpoint(
         .scalars()
         .all()
     )
-    return DayNotesListResponse(
-        itinerary_id=itinerary_id, notes=[_to_response(r) for r in rows]
-    )
+    return DayNotesListResponse(itinerary_id=itinerary_id, notes=[_to_response(r) for r in rows])
 
 
 @router.put(
@@ -249,9 +247,7 @@ async def generate_day_notes_endpoint(
     itinerary = await _load_readable_itinerary(session, user, itinerary_id)
     trip = await load_export_trip(session, itinerary)
     only = set(payload.days) if payload.days else None
-    await ensure_day_notes(
-        session, itinerary_id, trip, force_regenerate=True, only_dates=only
-    )
+    await ensure_day_notes(session, itinerary_id, trip, force_regenerate=True, only_dates=only)
     await session.commit()
     rows = (
         (
@@ -264,6 +260,4 @@ async def generate_day_notes_endpoint(
         .scalars()
         .all()
     )
-    return DayNotesListResponse(
-        itinerary_id=itinerary_id, notes=[_to_response(r) for r in rows]
-    )
+    return DayNotesListResponse(itinerary_id=itinerary_id, notes=[_to_response(r) for r in rows])

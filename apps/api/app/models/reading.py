@@ -52,6 +52,4 @@ class ReadingArticle(Base):
     # Postgres-owned generated column (weighted title/tags/excerpt). Read-only:
     # ``FetchedValue`` keeps the ORM from ever writing it, so it's available for
     # the FTS ``@@`` / ``ts_rank`` query without appearing in inserts.
-    search_tsv: Mapped[Any] = mapped_column(
-        TSVECTOR, nullable=False, server_default=FetchedValue()
-    )
+    search_tsv: Mapped[Any] = mapped_column(TSVECTOR, nullable=False, server_default=FetchedValue())

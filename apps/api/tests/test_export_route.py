@@ -226,9 +226,7 @@ def test_day_notes_traveler_cannot_write(
         json={"bring": ["x"], "tips": []},
     )
     assert put.status_code == 403
-    gen = client.post(
-        f"/itinerary/{seed.itinerary_id}/day-notes/generate", headers=trav, json={}
-    )
+    gen = client.post(f"/itinerary/{seed.itinerary_id}/day-notes/generate", headers=trav, json={})
     assert gen.status_code == 403
 
 
@@ -237,8 +235,6 @@ def test_day_notes_generate_409_when_disabled(
 ) -> None:
     # export_day_notes_enabled defaults False in tests → manual invoke 409s.
     adv = _hdr(make_token, seed.advisor_id)
-    gen = client.post(
-        f"/itinerary/{seed.itinerary_id}/day-notes/generate", headers=adv, json={}
-    )
+    gen = client.post(f"/itinerary/{seed.itinerary_id}/day-notes/generate", headers=adv, json={})
     assert gen.status_code == 409
     assert gen.json()["detail"] == "day_notes_disabled"

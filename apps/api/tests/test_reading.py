@@ -289,9 +289,7 @@ async def test_add_article_to_reading_list_lands_on_client_trunk() -> None:
                 await conn.execute(
                     text("delete from public.clients where id = :i"), {"i": client_id}
                 )
-                await conn.execute(
-                    text("delete from auth.users where id = :i"), {"i": owner}
-                )
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": owner})
         finally:
             await eng.dispose()
         await engine.dispose()
