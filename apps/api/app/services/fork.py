@@ -26,11 +26,14 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.kernel import resolve_schedule
 from app.models import (
     AnalysisStatus,
     Edge,
@@ -48,6 +51,7 @@ from app.services.itineraries import (
     ItineraryError,
     ItineraryOutcome,
     NodeOut,
+    _retime_scheduled_nodes,
     _write_edge_history,
     _write_node_history,
     add_edge,
@@ -57,6 +61,7 @@ from app.services.itineraries import (
     get_itinerary_graph,
     update_node,
 )
+from app.services.kernel_sync import decoded_schedule
 
 logger = logging.getLogger("ov_black.fork")
 
@@ -112,6 +117,19 @@ async def fork_itinerary(
         campaign_id=baseline.campaign_id,
         mood=baseline.mood,
         hero_image=baseline.hero_image,
+        # A branch starts at HEAD: the fork inherits the trunk's timing block +
+        # anchors wholesale, so its cloned relative schedules resolve to the
+        # same dates the trunk shows. Without this the fork's anchor would
+        # lazily stamp to *today* on its first schedule write and every cloned
+        # day-offset would silently mean a different calendar date
+        # (doc/itin-time.md "Forks and reconcile").
+        timing_kind=baseline.timing_kind,
+        date_start=baseline.date_start,
+        date_end=baseline.date_end,
+        duration_nights=baseline.duration_nights,
+        timing_note=baseline.timing_note,
+        days_anchor=baseline.days_anchor,
+        anchor_date=baseline.anchor_date,
     )
     session.add(fork)
     await session.flush()  # assign fork.id
@@ -334,7 +352,15 @@ class NodeChange:
 
 @dataclass(frozen=True, slots=True)
 class ForkDiff:
-    """The full divergence of a fork from its baseline, bucketed by kind."""
+    """The full divergence of a fork from its baseline, bucketed by kind.
+
+    ``timing`` is the trip-level divergence (kind ``"timing"``): the fork
+    retimed or re-windowed against a trunk that has its own timing. Its
+    ``change_id`` is the FORK itinerary id (never collides with node ids).
+    ``None`` when timing agrees — or when the trunk has no timing at all, in
+    which case reconcile adopts the fork's block unconditionally (the
+    degenerate no-conflict fold; a solo traveler's trunk starts empty).
+    """
 
     fork_id: uuid.UUID
     baseline_id: uuid.UUID
@@ -342,6 +368,7 @@ class ForkDiff:
     removed: list[NodeChange]
     changed: list[NodeChange]
     moved: list[NodeChange]
+    timing: NodeChange | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,6 +426,69 @@ def _node_snapshot(n: NodeOut) -> dict[str, Any]:
     }
 
 
+_TIMING_FIELDS = (
+    "timing_kind",
+    "date_start",
+    "date_end",
+    "duration_nights",
+    "timing_note",
+    "anchor_date",
+)
+
+
+def _timing_snapshot(itin: Itinerary) -> dict[str, Any]:
+    """JSON-safe snapshot of the trip-level timing block for the diff response."""
+    return {
+        "timing_kind": itin.timing_kind.value if itin.timing_kind is not None else None,
+        "date_start": itin.date_start.isoformat() if itin.date_start is not None else None,
+        "date_end": itin.date_end.isoformat() if itin.date_end is not None else None,
+        "duration_nights": itin.duration_nights,
+        "timing_note": itin.timing_note,
+        "anchor_date": itin.anchor_date.isoformat() if itin.anchor_date is not None else None,
+    }
+
+
+def _timing_change(baseline: Itinerary, fork: Itinerary) -> NodeChange | None:
+    """The trip-timing divergence, if it needs an explicit decision.
+
+    Surfaced only when the trunk has its own timing (``timing_kind`` set) —
+    a genuine conflict for the advisor to arbitrate. A trunk with no timing
+    adopts the fork's block via the unconditional fold instead, and a fork
+    with no timing at all has nothing to propose.
+    """
+    if baseline.timing_kind is None:
+        return None
+    if fork.timing_kind is None and fork.anchor_date is None:
+        return None
+    before = _timing_snapshot(baseline)
+    after = _timing_snapshot(fork)
+    fields = tuple(f for f in _TIMING_FIELDS if before[f] != after[f])
+    if not fields:
+        return None
+    return NodeChange(
+        change_id=fork.id,
+        kind="timing",
+        fork_node_id=None,
+        baseline_node_id=None,
+        fields=fields,
+        before=before,
+        after=after,
+    )
+
+
+# Schedule OUTPUT mirrored into metadata (Phase 6 read-compat) — derived from
+# the resolved schedule, so it's the schedule machinery's to write, never a
+# content divergence: the diff ignores it and a metadata copy preserves the
+# destination's own mirrors.
+_SCHEDULE_MIRROR_KEYS = ("start_time", "tz_offset_minutes")
+
+
+def _content_metadata(metadata: Any) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    return {k: v for k, v in metadata.items() if k not in _SCHEDULE_MIRROR_KEYS}
+
+
 def _changed_fields(baseline: NodeOut, fork: NodeOut) -> list[str]:
     """Names of the content fields that differ fork-vs-baseline.
 
@@ -420,9 +510,19 @@ def _changed_fields(baseline: NodeOut, fork: NodeOut) -> list[str]:
         fields.append("cost_currency")
     if baseline.cost_kind is not fork.cost_kind:
         fields.append("cost_kind")
-    if (baseline.starts_at, baseline.duration_minutes) != (fork.starts_at, fork.duration_minutes):
+    # Compare relative intent (the canonical kernel schedule) when both sides
+    # decoded — a fork retime moves every resolved instant but changes no
+    # day-offset, and that whole-trip move is the ``timing`` change's to
+    # report, not a per-node ``starts_at`` diff on every card. Instants are
+    # the fallback for legacy rows with no canonical schedule.
+    b_sched = getattr(baseline, "kernel_schedule", None)
+    f_sched = getattr(fork, "kernel_schedule", None)
+    if b_sched is not None or f_sched is not None:
+        if (b_sched, baseline.duration_minutes) != (f_sched, fork.duration_minutes):
+            fields.append("starts_at")
+    elif (baseline.starts_at, baseline.duration_minutes) != (fork.starts_at, fork.duration_minutes):
         fields.append("starts_at")
-    if baseline.metadata != fork.metadata:
+    if _content_metadata(baseline.metadata) != _content_metadata(fork.metadata):
         fields.append("metadata")
     if baseline.source != fork.source:
         fields.append("source")
@@ -570,6 +670,7 @@ async def diff_fork(
         removed=removed,
         changed=changed,
         moved=moved,
+        timing=_timing_change(baseline_view.itinerary, fork_view.itinerary),
     )
 
 
@@ -606,22 +707,57 @@ async def _feasibility_block(
     return None
 
 
-async def _copy_starts_at(session: AsyncSession, *, src: uuid.UUID, dst: uuid.UUID) -> None:
-    """Copy the schedule from one node to another — the ``starts_at`` tstzrange
-    plus its canonical kernel columns (0055), which must never diverge."""
-    await session.execute(
-        text(
-            "update public.nodes d set starts_at = s.starts_at, "
-            "schedule_kind = s.schedule_kind, "
-            "start_day_offset = s.start_day_offset, start_date = s.start_date, "
-            "start_wall_time = s.start_wall_time, start_tz = s.start_tz, "
-            "end_day_offset = s.end_day_offset, end_date = s.end_date, "
-            "end_wall_time = s.end_wall_time, end_tz = s.end_tz, "
-            "needs_revalidation = s.needs_revalidation "
-            "from public.nodes s where s.id = :src and d.id = :dst"
-        ),
-        {"src": src, "dst": dst},
-    )
+_SCHEDULE_COLUMNS = (
+    "schedule_kind",
+    "start_day_offset",
+    "start_date",
+    "start_wall_time",
+    "start_tz",
+    "end_day_offset",
+    "end_date",
+    "end_wall_time",
+    "end_tz",
+)
+
+
+async def _copy_schedule(
+    session: AsyncSession, *, src: uuid.UUID, dst: uuid.UUID, anchor: date | None
+) -> None:
+    """Carry a node's schedule fork→baseline, the kernel way.
+
+    The canonical columns (0055) copy verbatim — relative intent ("day N of
+    this itinerary") is what merges — but ``starts_at`` and the metadata
+    mirrors are **re-derived against the destination's anchor**, never copied:
+    the tstzrange is kernel output, and a verbatim copy would freeze the
+    fork's absolute dates onto a baseline whose anchor may differ, breaking
+    ``resolve(columns) == starts_at`` (doc/itin-time.md "Forks and
+    reconcile"). Falls back to the source's stored range only when the
+    schedule cannot resolve (a relative schedule on an anchorless baseline).
+    """
+    src_node = (await session.execute(select(Node).where(Node.id == src))).scalar_one_or_none()
+    dst_node = (await session.execute(select(Node).where(Node.id == dst))).scalar_one_or_none()
+    if src_node is None or dst_node is None:
+        return
+    for column in _SCHEDULE_COLUMNS:
+        setattr(dst_node, column, getattr(src_node, column))
+    dst_node.needs_revalidation = src_node.needs_revalidation
+    decoded = decoded_schedule(dst_node)
+    span = resolve_schedule(decoded, anchor) if decoded is not None else None
+    if span is not None:
+        dst_node.starts_at = Range(span.start, span.end, bounds="[)")
+        meta = dst_node.metadata_ if isinstance(dst_node.metadata_, dict) else {}
+        offset = span.start.utcoffset()
+        dst_node.metadata_ = {
+            **meta,
+            "start_time": span.start.isoformat(),
+            **(
+                {"tz_offset_minutes": int(offset.total_seconds() // 60)}
+                if offset is not None
+                else {}
+            ),
+        }
+    else:
+        dst_node.starts_at = src_node.starts_at
     await session.commit()
 
 
@@ -663,6 +799,7 @@ async def _apply_added(
     actor: ActorContext,
     *,
     baseline_id: uuid.UUID,
+    baseline_anchor: date | None,
     baseline_by_id: dict[uuid.UUID, NodeOut],
     change: NodeChange,
 ) -> ReconcileOutcome:
@@ -703,7 +840,7 @@ async def _apply_added(
     )
     if isinstance(new, ItineraryError):
         return _failed(change, new.detail)
-    await _copy_starts_at(session, src=fork_node.id, dst=new.id)
+    await _copy_schedule(session, src=fork_node.id, dst=new.id, anchor=baseline_anchor)
     return _ok(change, str(new.id))
 
 
@@ -712,6 +849,7 @@ async def _apply_changed(
     actor: ActorContext,
     *,
     baseline_id: uuid.UUID,
+    baseline_anchor: date | None,
     baseline_by_id: dict[uuid.UUID, NodeOut],
     change: NodeChange,
 ) -> ReconcileOutcome:
@@ -750,7 +888,17 @@ async def _apply_changed(
         if field not in _RECONCILABLE_CONTENT:
             continue
         if field == "metadata":
-            content["metadata"] = dict(fork_node.metadata_ or {})
+            # Content copies; the schedule mirrors stay the BASELINE's own
+            # (they're derived from its resolved schedule — ``_copy_schedule``
+            # rewrites them if the schedule itself was accepted).
+            merged = dict(fork_node.metadata_ or {})
+            base_meta = baseline_node.metadata if isinstance(baseline_node.metadata, dict) else {}
+            for key in _SCHEDULE_MIRROR_KEYS:
+                if key in base_meta:
+                    merged[key] = base_meta[key]
+                else:
+                    merged.pop(key, None)
+            content["metadata"] = merged
         else:
             content[field] = getattr(fork_node, field)
     if content:
@@ -766,7 +914,9 @@ async def _apply_changed(
                 return _refused(change)
             return _failed(change, res.detail)
     if "starts_at" in change.fields:
-        await _copy_starts_at(session, src=fork_node.id, dst=change.baseline_node_id)
+        await _copy_schedule(
+            session, src=fork_node.id, dst=change.baseline_node_id, anchor=baseline_anchor
+        )
     return _ok(change)
 
 
@@ -869,6 +1019,51 @@ def _fold_trip_metadata(baseline: Itinerary, fork: Itinerary) -> None:
         baseline.duration_nights = fork.duration_nights
         baseline.timing_note = fork.timing_note
         baseline.days_anchor = fork.days_anchor
+        baseline.anchor_date = fork.anchor_date
+    # The kernel anchor also folds on its own: a fork that scheduled cards but
+    # never chose dates has a stamped anchor with no timing_kind, and the
+    # trunk needs it for the copied relative columns to resolve — and for
+    # Day-N identity to survive publish.
+    if baseline.anchor_date is None and fork.anchor_date is not None:
+        baseline.anchor_date = fork.anchor_date
+        if baseline.days_anchor is None:
+            baseline.days_anchor = fork.days_anchor
+
+
+async def _apply_timing(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    baseline: Itinerary,
+    fork: Itinerary,
+    change: NodeChange,
+) -> ReconcileOutcome:
+    """Adopt the fork's trip-timing block onto the trunk (an accepted
+    ``timing`` change). Copies the whole block — kind, window, note, anchors —
+    then, when the anchor actually moved, re-resolves the trunk's spine
+    against it exactly like a direct retime: uncommitted relative cards move,
+    world-pinned commitments hold, moved date-sensitive quotes go stale. The
+    counts ride back in ``detail``."""
+    old_anchor = baseline.anchor_date
+    baseline.timing_kind = fork.timing_kind
+    baseline.date_start = fork.date_start
+    baseline.date_end = fork.date_end
+    baseline.duration_nights = fork.duration_nights
+    baseline.timing_note = fork.timing_note
+    baseline.days_anchor = fork.days_anchor
+    baseline.anchor_date = fork.anchor_date
+    detail: str | None = None
+    if (
+        old_anchor is not None
+        and baseline.anchor_date is not None
+        and baseline.anchor_date != old_anchor
+    ):
+        retimed = await _retime_scheduled_nodes(
+            session, actor, baseline.id, old_anchor=old_anchor, new_anchor=baseline.anchor_date
+        )
+        detail = f"moved={len(retimed.moved)} held={len(retimed.held)} stale={len(retimed.stale)}"
+    await session.commit()
+    return _ok(change, detail)
 
 
 async def reconcile_fork(
@@ -915,10 +1110,29 @@ async def reconcile_fork(
     if isinstance(diff, ItineraryError):
         return diff
     change_map = {c.change_id: c for c in (*diff.added, *diff.removed, *diff.changed, *diff.moved)}
+    if diff.timing is not None:
+        change_map[diff.timing.change_id] = diff.timing
     if accept_all:
         decisions = [
             ReconcileDecision(change_id=change_id, accept=True) for change_id in change_map
         ]
+    # The timing verdict applies FIRST regardless of payload order: node
+    # schedules re-derive against the trunk's anchor as they copy, so the
+    # anchor must land before any node change does. (Stable sort — node
+    # decisions keep their relative order.)
+    decisions = sorted(
+        decisions,
+        key=lambda d: 0 if (c := change_map.get(d.change_id)) and c.kind == "timing" else 1,
+    )
+
+    baseline_row = (
+        await session.execute(select(Itinerary).where(Itinerary.id == baseline_id))
+    ).scalar_one()
+    # Publish the fork's trip-level title/brief/timing onto the trunk BEFORE
+    # applying node changes (the diff only carries node + timing changes; the
+    # fold fills what the trunk never had) — copied schedules must see the
+    # folded anchor, else they'd re-derive against nothing.
+    _fold_trip_metadata(baseline_row, fork_itin)
 
     baseline_view = await get_itinerary_graph(session, baseline_id)
     if isinstance(baseline_view, ItineraryError):
@@ -951,11 +1165,20 @@ async def reconcile_fork(
                 ReconcileOutcome(change_id=change.change_id, kind=change.kind, result="discarded")
             )
             continue
-        if change.kind == "added":
+        if change.kind == "timing":
+            outcome = await _apply_timing(
+                session,
+                actor,
+                baseline=baseline_row,
+                fork=fork_itin,
+                change=change,
+            )
+        elif change.kind == "added":
             outcome = await _apply_added(
                 session,
                 actor,
                 baseline_id=baseline_id,
+                baseline_anchor=baseline_row.anchor_date,
                 baseline_by_id=baseline_by_id,
                 change=change,
             )
@@ -975,6 +1198,7 @@ async def reconcile_fork(
                 session,
                 actor,
                 baseline_id=baseline_id,
+                baseline_anchor=baseline_row.anchor_date,
                 baseline_by_id=baseline_by_id,
                 change=change,
             )
@@ -1005,20 +1229,11 @@ async def reconcile_fork(
     all_covered = set(change_map).issubset(decided)
     unresolved = any(o.result in ("refused_booked", "failed") for o in outcomes)
 
-    fork_row = (
-        await session.execute(select(Itinerary).where(Itinerary.id == fork_id))
-    ).scalar_one()
-    baseline_row = (
-        await session.execute(select(Itinerary).where(Itinerary.id == baseline_id))
-    ).scalar_one()
+    fork_row = fork_itin
     if all_covered and not unresolved:
         fork_row.fork_status = ForkStatus.reconciled
     fork_row.reconcile_requested_at = None
     fork_row.reconcile_request_note = None
-    # Publish the fork's trip-level title/brief/timing onto the trunk (the diff
-    # only carries node changes), filling any trunk field the traveler's working
-    # copy owns but the trunk never had.
-    _fold_trip_metadata(baseline_row, fork_row)
     await session.commit()
     await session.refresh(fork_row)
     await session.refresh(baseline_row)

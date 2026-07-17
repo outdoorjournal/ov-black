@@ -72,7 +72,24 @@ type ReconcileBuckets = Pick<
 >;
 
 function allChanges(diff: ForkDiffResponse): NodeChangeResponse[] {
-  return [...diff.added, ...diff.removed, ...diff.changed, ...diff.moved];
+  return [
+    ...(diff.timing ? [diff.timing] : []),
+    ...diff.added,
+    ...diff.removed,
+    ...diff.changed,
+    ...diff.moved,
+  ];
+}
+
+// Trip-timing snapshot → a compact date-range label ("2027-06-01 – 2027-06-08";
+// the anchor stands in when only Day-1 identity exists; kind covers the rest).
+function timingLabel(snapshot: Snapshot): string {
+  const start = str(snapshot, "date_start") ?? str(snapshot, "anchor_date");
+  const end = str(snapshot, "date_end");
+  if (!start) {
+    return str(snapshot, "timing_kind") === "flexible" ? "Flexible" : "No dates";
+  }
+  return end ? `${start} – ${end}` : start;
 }
 
 export function DiffPanel({
@@ -208,6 +225,7 @@ export function DiffPanel({
   }, [diff, decisions, analysis, overrideBlock, forkItineraryId, reconciling]);
 
   const changeCount = diff ? allChanges(diff).length : 0;
+  const timingChange = diff?.timing ?? null;
 
   return (
     <div
@@ -282,6 +300,36 @@ export function DiffPanel({
               )
             ) : null}
           </section>
+
+          {/* Trip-timing divergence — the fork retimed against a dated trunk.
+              Accepting adopts the fork's dates and re-times the agreed plan
+              (booked cards hold their dates and are reported, never moved). */}
+          {timingChange ? (
+            <section className="flex flex-col gap-2">
+              <h4 className="font-sans text-[11px] uppercase tracking-[0.16em] text-ink/55">
+                Trip dates
+              </h4>
+              <ul className="flex flex-col divide-y divide-ink/10 border-y border-ink/10">
+                <li
+                  data-testid={`diff-change-${timingChange.change_id}`}
+                  className="flex items-start gap-3 py-2.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <ChangeBody change={timingChange} />
+                  </div>
+                  <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-[10px] uppercase tracking-[0.18em] text-ink/60">
+                    <input
+                      type="checkbox"
+                      checked={decisions[timingChange.change_id] ?? true}
+                      onChange={() => toggle(timingChange.change_id)}
+                      className="accent-ink"
+                    />
+                    Accept
+                  </label>
+                </li>
+              </ul>
+            </section>
+          ) : null}
 
           {/* Change buckets */}
           {SECTIONS.map(({ key, label }) => {
@@ -414,6 +462,18 @@ function ChangeBody({ change }: { change: NodeChangeResponse }) {
           reordered
         </span>
       </p>
+    );
+  }
+  if (change.kind === "timing") {
+    return (
+      <div className="font-sans text-sm text-ink/90">
+        <span className="text-ink/55">{timingLabel(before)}</span>
+        <span className="px-1 text-ink/40">→</span>
+        <span className="font-medium">{timingLabel(after)}</span>
+        <span className="ml-2 font-sans text-[10px] uppercase tracking-[0.14em] text-ink/45">
+          whole trip re-timed
+        </span>
+      </div>
     );
   }
   // changed — show baseline → fork with the changed field names.

@@ -3122,12 +3122,21 @@ class FlightItem(BaseModel):
 
 
 class ForkDiffResponse(BaseModel):
+    """
+    ``timing`` (kind ``"timing"``, change_id = the fork itinerary id) is the
+    trip-level divergence — the fork retimed or re-windowed against a trunk
+    with its own timing; accepting it adopts the fork's block and re-resolves
+    the trunk spine (world-pinned cards hold). Null when timing agrees or the
+    trunk has no timing (that case folds unconditionally on reconcile).
+    """
+
     fork_id: Annotated[UUID, Field(title='Fork Id')]
     baseline_id: Annotated[UUID, Field(title='Baseline Id')]
     added: Annotated[list[NodeChangeResponse], Field(title='Added')]
     removed: Annotated[list[NodeChangeResponse], Field(title='Removed')]
     changed: Annotated[list[NodeChangeResponse], Field(title='Changed')]
     moved: Annotated[list[NodeChangeResponse], Field(title='Moved')]
+    timing: NodeChangeResponse | None = None
 
 
 class HTTPValidationError(BaseModel):

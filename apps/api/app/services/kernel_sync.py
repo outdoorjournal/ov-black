@@ -8,8 +8,12 @@ canonical columns here — the Python twin of the 0055
 
 * committed (booked/confirmed) nodes and nodes on anchorless itineraries pin
   to their calendar dates; everything else is anchor-relative;
-* zones are ``Etc/GMT±N`` pseudo-zones derived from the stored offset —
-  instant-exact but DST-blind — until the API accepts real IANA zones.
+* zones cascade (doc/itin-time.md "Zone acquisition"): a real IANA zone
+  already on the node is sticky (per endpoint) → the node's location metadata
+  resolves one (lat/lng → tzdb via ``geo_zone``; flights per endpoint) → the
+  stored offset's ``Etc/GMT±N`` pseudo-zone (instant-exact, DST-blind) is the
+  last resort. Instant-exactness holds at every step — the stored UTC bound
+  is converted *into* whichever zone wins.
 
 Retime consumes these columns in the other direction: a node's anchor-relative
 schedule is resolved against the NEW anchor to produce its new ``starts_at``,
@@ -34,6 +38,7 @@ from app.kernel import (
     unpin_schedule,
 )
 from app.models.itinerary import Node, NodeStatus, NodeType
+from app.services.geo_zone import node_location_zones
 
 _COMMITTED = (NodeStatus.booked, NodeStatus.confirmed)
 
@@ -102,10 +107,15 @@ def derive_schedule(node: Node, anchor_date: date | None) -> Schedule | None:
     lower, upper = _bounds(node)
     if lower is None:
         return None
-    start_zone = _real_zone(node.start_tz) or pseudo_zone(_offset_minutes(node.metadata_))
+    loc_start, loc_end = node_location_zones(node)
+    start_zone = (
+        _real_zone(node.start_tz) or loc_start or pseudo_zone(_offset_minutes(node.metadata_))
+    )
     if start_zone is None:
         return None
-    end_zone = (_real_zone(node.end_tz) or start_zone) if upper is not None else start_zone
+    end_zone = (
+        (_real_zone(node.end_tz) or loc_end or start_zone) if upper is not None else start_zone
+    )
     s_local = lower.astimezone(ZoneInfo(start_zone))
     e_local = upper.astimezone(ZoneInfo(end_zone)) if upper is not None else None
 

@@ -605,12 +605,19 @@ class NodeChangeResponse(BaseModel):
 
 
 class ForkDiffResponse(BaseModel):
+    """``timing`` (kind ``"timing"``, change_id = the fork itinerary id) is the
+    trip-level divergence — the fork retimed or re-windowed against a trunk
+    with its own timing; accepting it adopts the fork's block and re-resolves
+    the trunk spine (world-pinned cards hold). Null when timing agrees or the
+    trunk has no timing (that case folds unconditionally on reconcile)."""
+
     fork_id: uuid.UUID
     baseline_id: uuid.UUID
     added: list[NodeChangeResponse]
     removed: list[NodeChangeResponse]
     changed: list[NodeChangeResponse]
     moved: list[NodeChangeResponse]
+    timing: NodeChangeResponse | None = None
 
 
 class ReconcileDecisionPayload(BaseModel):
@@ -1162,6 +1169,7 @@ def _fork_diff_response(diff: ForkDiff) -> ForkDiffResponse:
         removed=[_node_change_response(c) for c in diff.removed],
         changed=[_node_change_response(c) for c in diff.changed],
         moved=[_node_change_response(c) for c in diff.moved],
+        timing=_node_change_response(diff.timing) if diff.timing is not None else None,
     )
 
 

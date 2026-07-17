@@ -157,9 +157,12 @@ describe("selectCanApprove", () => {
   test("traveler may NOT approve while in the studio (advisor still building)", () => {
     expect(selectCanApprove({ ...traveler, status: "in_studio" })).toBe(false);
   });
-  test("advisor may approve-all from in_studio or with_traveler (on a client's behalf)", () => {
-    expect(selectCanApprove({ ...traveler, canEdit: true, status: "in_studio" })).toBe(true);
-    expect(selectCanApprove({ ...traveler, canEdit: true, status: "with_traveler" })).toBe(true);
+  test("advisor may NOT approve — approval is the traveler's gesture", () => {
+    // The trunk+fork model makes approval traveler-only: the advisor proposes
+    // (in_studio → with_traveler); the traveler approves. `canEdit` (advisor)
+    // therefore disables the approve affordance in every display status.
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "in_studio" })).toBe(false);
+    expect(selectCanApprove({ ...traveler, canEdit: true, status: "with_traveler" })).toBe(false);
   });
   test("false once approved", () => {
     expect(selectCanApprove({ ...traveler, status: "approved" })).toBe(false);
