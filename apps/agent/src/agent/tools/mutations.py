@@ -124,39 +124,43 @@ async def update_node_details(
 
 
 @tool
-async def move_node(node_id: str, starts_at: str) -> dict:
-    """Reschedule a node to a new start time — the timeline equivalent of a drag.
+async def move_node(node_id: str, day_index: int, time: str = "09:00") -> dict:
+    """Reschedule a card in trip terms — Day N at a local wall-clock time.
 
-    ``starts_at`` is an ISO-8601 datetime WITH offset (e.g.
-    ``"2025-07-02T20:00:00+09:00"``); keep the node's own timezone, and the day
-    is taken from the date you pass. Use this to reshape an alternative version
-    the traveler is working on, or to move a still-editable card on a draft.
+    ``day_index`` is the human day label (Day 1 is the trip's first day; 0 or
+    a negative is legal — an outbound flight can leave home before Day 1).
+    ``time`` is the LOCAL wall clock ``"HH:MM"`` (24h) the traveler should
+    see on the card. The card keeps the timezone it already lives in and the
+    backend's kernel resolves the exact instant — never compute ISO
+    datetimes or UTC offsets yourself (Phase 6, doc/itin-time.md: wall-clock
+    trip terms are the only scheduling input).
 
-    On the agreed plan an already approved/booked node is locked — the API
-    refuses with ``status_locked``. Don't retry: branch an alternative version
-    (``fork_itinerary``) and move it there. Requires an itinerary pinned to the
-    session. Returns the updated node.
+    Use this to schedule a Collection card, or to reshape a still-editable
+    card / an alternative version the traveler is working on. On the agreed
+    plan an already approved/booked node is locked — the API refuses with
+    ``status_locked``. Don't retry: branch an alternative version
+    (``fork_itinerary``) and move it there. Requires an itinerary pinned to
+    the session. Returns the updated node.
     """
     pin = pin_ctx.get() or {}
     itinerary_id = pin.get("itinerary_id")
     if not itinerary_id:
         raise BackendError(status=None, reason="missing_itinerary_id")
 
-    # The PATCH replaces metadata wholesale, so read the node's current metadata
-    # and merge the new start_time in — otherwise we'd wipe its snapshot / cost /
-    # duration. The backend keeps a free-standing note's starts_at column in sync
-    # with metadata.start_time on its side.
-    graph = await get_json(f"/itinerary/{itinerary_id}")
-    nodes = (graph or {}).get("nodes", [])
-    current = next((n for n in nodes if str(n.get("id")) == str(node_id)), None)
-    if current is None:
-        raise BackendError(status=None, reason="not_found")
-    metadata: dict[str, Any] = dict(current.get("metadata") or {})
-    metadata["start_time"] = starts_at
+    try:
+        hours_str, minutes_str = time.strip().split(":", 1)
+        hours, minutes = int(hours_str), int(minutes_str)
+    except ValueError as exc:
+        raise BackendError(status=None, reason="time_must_be_hh_mm") from exc
+    if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        raise BackendError(status=None, reason="time_must_be_hh_mm")
+    minute_of_day = hours * 60 + minutes
 
+    # A trip-terms placement: the kernel builds the schedule and preserves the
+    # node's other metadata server-side — no read-merge round trip needed.
     return await patch_json(
         f"/itinerary/{itinerary_id}/nodes/{node_id}",
-        json={"metadata": metadata},
+        json={"schedule": {"day_index": day_index, "minute_of_day": minute_of_day}},
     )
 
 

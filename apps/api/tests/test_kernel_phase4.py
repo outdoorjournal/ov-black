@@ -322,8 +322,14 @@ async def test_placement_keeps_node_zone_and_flags_flight_quotes(
 
 
 @integration
-async def test_real_zone_is_sticky_across_legacy_writes(db_session: AsyncSession) -> None:
-    """A real IANA zone written by a placement survives a metadata ISO write."""
+async def test_real_zone_is_sticky_across_content_writes(db_session: AsyncSession) -> None:
+    """A real IANA zone written by a placement survives later content writes.
+
+    Phase 6 retired ``metadata.start_time`` as an input, but every plain
+    update still re-derives the canonical columns from ``starts_at`` (the
+    committed-status boundary sync) — that re-derive must keep the real zone
+    instead of clobbering it back to an ``Etc/GMT±N`` pseudo-zone.
+    """
     itin = await create_itinerary(
         db_session,
         _actor(),
@@ -345,18 +351,21 @@ async def test_real_zone_is_sticky_across_legacy_writes(db_session: AsyncSession
         )
         assert not isinstance(placed, ItineraryError)
 
-        # Legacy write path (agent tools still speak ISO-with-offset).
-        moved = await update_node(
+        # A content-only write triggers the sync re-derive; the schedule and
+        # its real zone are untouched.
+        renamed = await update_node(
             db_session,
             _actor(),
             itinerary_id=itin.id,
             node_id=node.id,
-            metadata={**placed.metadata_, "start_time": "2027-06-04T11:00:00+03:00"},
+            title="Sail the Aegean",
+            metadata={**placed.metadata_, "description": "sunset departure"},
         )
-        assert not isinstance(moved, ItineraryError)
-        assert moved.start_tz == "Europe/Athens"  # not clobbered back to Etc/GMT-3
-        assert moved.start_day_offset == 3
-        assert str(moved.start_wall_time) == "11:00:00"
+        assert not isinstance(renamed, ItineraryError)
+        assert renamed.start_tz == "Europe/Athens"  # not clobbered back to Etc/GMT-3
+        assert renamed.start_day_offset == 1
+        assert str(renamed.start_wall_time) == "09:00:00"
+        assert renamed.starts_at == placed.starts_at
     finally:
         await _cleanup(db_session, itin.id)
 

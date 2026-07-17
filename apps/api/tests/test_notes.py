@@ -21,6 +21,7 @@ from app.services.itineraries import (
     ActorKind,
     ItineraryError,
     ItineraryOutcome,
+    SchedulePlacement,
     add_node,
     create_itinerary,
     get_itinerary_graph,
@@ -163,11 +164,13 @@ async def test_attached_note_persists_attachment_and_no_range(
 
 @integration
 @pytest.mark.asyncio
-async def test_free_standing_note_falls_back_to_metadata_start_time(
+async def test_note_metadata_start_time_is_inert_content(
     db_session: AsyncSession,
 ) -> None:
-    # The web "Add note" posts type=note with only metadata.start_time and no
-    # explicit starts_at — the service derives the anchor so the CHECK passes.
+    # Phase 6 (doc/itin-time.md): metadata.start_time is retired as an input.
+    # A note posted with only a metadata start (no typed ``starts_at``) is a
+    # timeless Collection note — the mirror is read-compat output, never read
+    # back as a schedule.
     itinerary = await create_itinerary(db_session, _actor(), title="notes meta")
     try:
         node = await add_node(
@@ -179,10 +182,8 @@ async def test_free_standing_note_falls_back_to_metadata_start_time(
             metadata={"start_time": "2025-07-02T12:00:00+09:00"},
         )
         assert not isinstance(node, ItineraryError)
-        view = await get_itinerary_graph(db_session, itinerary.id)
-        assert not isinstance(view, ItineraryError)
-        (read,) = view.nodes
-        assert read.starts_at == "2025-07-02T12:00:00+09:00"
+        assert node.starts_at is None
+        assert node.schedule_kind is None
     finally:
         await _cleanup(itinerary.id)
 
@@ -302,12 +303,12 @@ async def test_attached_to_node_id_rejected_on_non_note(
 
 @integration
 @pytest.mark.asyncio
-async def test_move_free_standing_note_resyncs_starts_at(
+async def test_move_free_standing_note_via_placement(
     db_session: AsyncSession,
 ) -> None:
-    # A move is a metadata patch (web `moveNode` / agent `move_node`). For a
-    # free-standing note the service must re-derive starts_at from the new
-    # metadata.start_time, or the CHECK would be left stale.
+    # A move is a trip-terms placement (web `moveNode` / agent `move_node`,
+    # Phase 6): the kernel builds the schedule and starts_at is derived
+    # output. The note keeps its own zone (+09:00 here).
     itinerary = await create_itinerary(db_session, _actor(), title="notes move")
     try:
         note = await add_node(
@@ -324,14 +325,14 @@ async def test_move_free_standing_note_resyncs_starts_at(
             _actor(),
             itinerary_id=itinerary.id,
             node_id=note.id,
-            metadata={"start_time": "2025-07-02T21:00:00+09:00"},
+            placement=SchedulePlacement(day_index=1, minute_of_day=21 * 60),
         )
         assert not isinstance(moved, ItineraryError)
-
-        view = await get_itinerary_graph(db_session, itinerary.id)
-        assert not isinstance(view, ItineraryError)
-        (read,) = view.nodes
-        assert read.starts_at == "2025-07-02T21:00:00+09:00"
+        assert moved.schedule_kind == "relative"
+        assert moved.start_day_offset == 0
+        assert str(moved.start_wall_time) == "21:00:00"
+        assert moved.starts_at is not None
+        assert moved.metadata_["start_time"].endswith("+09:00")  # promised wall clock
     finally:
         await _cleanup(itinerary.id)
 
@@ -341,10 +342,9 @@ async def test_move_free_standing_note_resyncs_starts_at(
 async def test_metadata_patch_schedules_then_unschedules_non_note(
     db_session: AsyncSession,
 ) -> None:
-    # Collection ↔ timeline for a non-note (0035): scheduling by writing
-    # metadata.start_time mirrors into the starts_at column; clearing it (drag a
-    # card back to the Collection) clears the column so the read no longer
-    # places it on the timeline — not just for notes.
+    # Collection ↔ timeline for a non-note (Phase 6): a metadata patch is
+    # content-only — the ONLY way onto the timeline is a typed placement, and
+    # the only way back to the Collection is ``clear_schedule``.
     itinerary = await create_itinerary(db_session, _actor(), title="collection sched")
     try:
         node = await add_node(
@@ -357,33 +357,51 @@ async def test_metadata_patch_schedules_then_unschedules_non_note(
         assert not isinstance(node, ItineraryError)
         assert node.starts_at is None  # lands in the Collection, unscheduled
 
-        # Schedule it (a move is a full metadata patch carrying start_time).
-        scheduled = await update_node(
+        # A metadata patch carrying start_time is inert content — no schedule.
+        patched = await update_node(
             db_session,
             _actor(),
             itinerary_id=itinerary.id,
             node_id=node.id,
             metadata={"start_time": "2025-07-02T13:30:00+09:00"},
         )
-        assert not isinstance(scheduled, ItineraryError)
-        view = await get_itinerary_graph(db_session, itinerary.id)
-        assert not isinstance(view, ItineraryError)
-        (read,) = view.nodes
-        assert read.starts_at == "2025-07-02T13:30:00+09:00"
+        assert not isinstance(patched, ItineraryError)
+        assert patched.starts_at is None
 
-        # Un-schedule it: a metadata patch with no start_time → back to Collection.
-        unscheduled = await update_node(
+        # Placement schedules; the kernel owns the construction.
+        scheduled = await update_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            placement=SchedulePlacement(day_index=1, minute_of_day=13 * 60 + 30),
+        )
+        assert not isinstance(scheduled, ItineraryError)
+        assert scheduled.starts_at is not None
+        assert str(scheduled.start_wall_time) == "13:30:00"
+
+        # A later content patch does NOT unschedule …
+        content_only = await update_node(
             db_session,
             _actor(),
             itinerary_id=itinerary.id,
             node_id=node.id,
             metadata={"note": "maybe later"},
         )
+        assert not isinstance(content_only, ItineraryError)
+        assert content_only.starts_at is not None
+
+        # … clear_schedule does.
+        unscheduled = await update_node(
+            db_session,
+            _actor(),
+            itinerary_id=itinerary.id,
+            node_id=node.id,
+            clear_schedule=True,
+        )
         assert not isinstance(unscheduled, ItineraryError)
-        view2 = await get_itinerary_graph(db_session, itinerary.id)
-        assert not isinstance(view2, ItineraryError)
-        (read2,) = view2.nodes
-        assert read2.starts_at is None
+        assert unscheduled.starts_at is None
+        assert unscheduled.schedule_kind is None
     finally:
         await _cleanup(itinerary.id)
 
@@ -411,7 +429,7 @@ async def test_unschedule_note_returns_to_collection(
             _actor(),
             itinerary_id=itinerary.id,
             node_id=note.id,
-            metadata={"body": "still thinking about it"},
+            clear_schedule=True,
         )
         assert not isinstance(unscheduled, ItineraryError)
         view = await get_itinerary_graph(db_session, itinerary.id)

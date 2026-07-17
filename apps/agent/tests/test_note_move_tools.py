@@ -90,48 +90,39 @@ async def test_add_note_without_pin_raises() -> None:
         pin_ctx.reset(token)
 
 
-async def test_move_node_merges_metadata_and_patches(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_move_node_patches_trip_terms_placement(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Phase 6 (doc/itin-time.md): the tool speaks trip terms — (day_index,
+    # local HH:MM) — and the kernel builds the schedule server-side. No graph
+    # read, no metadata merge: the placement path preserves the node's other
+    # metadata on the backend.
     patched: list[tuple[str, Any]] = []
-
-    async def _get(path: str, *, params: dict | None = None) -> Any:
-        return {
-            "nodes": [
-                {"id": "n-1", "metadata": {"snapshot": {"title": "Dinner"}, "duration_minutes": 90}},
-                {"id": "n-2", "metadata": {}},
-            ]
-        }
 
     async def _patch(path: str, *, json: dict | None = None) -> Any:
         patched.append((path, json))
         return {"id": "n-1"}
 
-    monkeypatch.setattr(mutations_mod, "get_json", _get)
     monkeypatch.setattr(mutations_mod, "patch_json", _patch)
     token = pin_ctx.set(_pin())
     try:
-        await mutations_mod.move_node._tool_func("n-1", "2025-07-02T20:00:00+09:00")
+        await mutations_mod.move_node._tool_func("n-1", day_index=3, time="20:00")
         path, body = patched[-1]
         assert path == "/itinerary/it-1/nodes/n-1"
-        # Existing metadata is preserved; only start_time changes.
-        assert body["metadata"] == {
-            "snapshot": {"title": "Dinner"},
-            "duration_minutes": 90,
-            "start_time": "2025-07-02T20:00:00+09:00",
-        }
+        assert body == {"schedule": {"day_index": 3, "minute_of_day": 20 * 60}}
     finally:
         pin_ctx.reset(token)
 
 
-async def test_move_node_unknown_node_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _get(path: str, *, params: dict | None = None) -> Any:
-        return {"nodes": []}
+async def test_move_node_rejects_malformed_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _patch(path: str, *, json: dict | None = None) -> Any:  # pragma: no cover
+        raise AssertionError("must not reach the backend with a bad time")
 
-    monkeypatch.setattr(mutations_mod, "get_json", _get)
+    monkeypatch.setattr(mutations_mod, "patch_json", _patch)
     token = pin_ctx.set(_pin())
     try:
-        with pytest.raises(BackendError) as exc:
-            await mutations_mod.move_node._tool_func("missing", "2025-07-02T20:00:00+09:00")
-        assert exc.value.reason == "not_found"
+        for bad in ("evening", "25:00", "12:99", ""):
+            with pytest.raises(BackendError) as exc:
+                await mutations_mod.move_node._tool_func("n-1", day_index=1, time=bad)
+            assert exc.value.reason == "time_must_be_hh_mm"
     finally:
         pin_ctx.reset(token)
 

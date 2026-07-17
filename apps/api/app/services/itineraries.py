@@ -394,7 +394,10 @@ def _resolve_note_anchor(
             )
         return (None, None, metadata)
 
-    iso = starts_at or metadata.get("start_time")
+    # Phase 6: the typed ``starts_at`` param is the only time input — a
+    # ``metadata.start_time`` on the payload is inert content (read-compat
+    # output written by the schedule-owning paths, never read back).
+    iso = starts_at
     if not isinstance(iso, str) or not iso:
         # A timeless, unattached note is a Collection note (0035): it lives in
         # the wish list with no schedule, exactly like any other unscheduled
@@ -1818,45 +1821,12 @@ async def update_node(
         else:
             setattr(node, key, value)
 
-    # Keep the starts_at column in sync with metadata.start_time on a metadata
-    # patch (the web `moveNode` / agent `move_node` schedule by writing the full
-    # merged metadata, start_time included). Applies to EVERY node type: a
-    # present start schedules the node (mirrored into the tstzrange column); an
-    # absent/blank start un-schedules it — clearing the column so the card
-    # returns to the Collection instead of a stale starts_at keeping it pinned to
-    # the timeline (the read serializer + web adapter fall back to the column).
-    # Attached notes ride a host and carry no own time, so they're left alone.
-    if (
-        not moves_schedule
-        and "metadata" in updates
-        and isinstance(node.metadata_, dict)
-        and not (node.type is NodeType.note and node.attached_to_node_id is not None)
-    ):
-        iso = node.metadata_.get("start_time")
-        # A non-schedulable card (article) can never take a time — reject the
-        # drag-to-timeline gesture instead of pinning a reading-list item.
-        if isinstance(iso, str) and iso and not is_schedulable(node.type):
-            return ItineraryError(
-                outcome=ItineraryOutcome.VALIDATION_ERROR,
-                detail=f"{node.type.value} nodes are not schedulable",
-            )
-        if isinstance(iso, str) and iso:
-            dur = node.metadata_.get("duration_minutes")
-            rng = _build_starts_at(iso, dur if isinstance(dur, int) else None)
-            if rng is not None:
-                node.starts_at = rng
-                # Refresh the mirrored offset so the read serializer reconstructs
-                # the wall-clock the caller sent, even on a partial metadata patch
-                # that dropped tz_offset_minutes.
-                offset = rng.lower.utcoffset() if rng.lower is not None else None
-                if offset is not None:
-                    node.metadata_ = {
-                        **node.metadata_,
-                        "tz_offset_minutes": int(offset.total_seconds() // 60),
-                    }
-        else:
-            node.starts_at = None
-
+    # Phase 6 (doc/itin-time.md): ``metadata.start_time`` is retired as an
+    # input — a metadata patch is content-only and NEVER moves the schedule.
+    # The only schedule mutations on this path are the typed placement
+    # (``schedule={day_index, minute_of_day, …}``) and ``clear_schedule``;
+    # the mirrors in metadata remain read-compat OUTPUT, refreshed by the
+    # writes that own them (placement, retime, create).
     if clear_schedule:
         _clear_schedule(node)
     elif placement is not None:
@@ -1864,13 +1834,11 @@ async def update_node(
         if placement_err is not None:
             return placement_err
     else:
-        # A metadata patch is the drag-to-timeline path — the first card
-        # scheduled pins Day 1's identity (ADV-16). No-op once the anchor is
-        # stamped. The canonical kernel columns (0055) then re-derive from
-        # whatever this write left in the legacy representation (schedule
-        # change, unschedule, or a committed-status boundary — booking pins,
-        # demotion un-pins). A placement skips this re-derive: its canonical
-        # columns were written first-hand by the kernel, zone included.
+        # Re-derive the canonical kernel columns from the (unchanged)
+        # ``starts_at`` so committed-status boundaries stay honest — an
+        # advisor demotion out of booked/confirmed un-pins here. A placement
+        # skips this re-derive: its canonical columns were written first-hand
+        # by the kernel, zone included.
         anchor: date | None = None
         if node.starts_at is not None:
             anchor = await _maybe_stamp_days_anchor(session, itinerary_id)

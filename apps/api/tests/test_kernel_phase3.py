@@ -22,6 +22,7 @@ from app.services.itineraries import (
     ActorKind,
     ItineraryError,
     RetimeResult,
+    SchedulePlacement,
     add_node,
     create_itinerary,
     retime_itinerary,
@@ -145,10 +146,7 @@ async def test_flight_revalidation_lifecycle(db_session: AsyncSession) -> None:
             _actor(),
             itinerary_id=itin.id,
             node_id=flight.id,
-            metadata={
-                **flight.metadata_,
-                "start_time": "2027-06-05T10:00:00-04:00",
-            },
+            placement=SchedulePlacement(day_index=5, minute_of_day=10 * 60),
         )
         assert not isinstance(moved, ItineraryError)
         assert moved.needs_revalidation is True  # the quote no longer matches its date

@@ -31,6 +31,7 @@ from app.services.itineraries import (
     ActorKind,
     ItineraryError,
     RetimeResult,
+    SchedulePlacement,
     add_node,
     create_itinerary,
     retime_itinerary,
@@ -176,10 +177,10 @@ async def test_first_scheduled_card_on_flexible_trip_stamps_today(
 
 @integration
 @pytest.mark.asyncio
-async def test_drag_to_timeline_metadata_patch_stamps_anchor(
+async def test_drag_to_timeline_placement_stamps_anchor(
     db_session: AsyncSession,
 ) -> None:
-    """The web's drag-from-Collection path (a metadata patch) stamps too."""
+    """The web's drag-from-Collection path (a trip-terms placement) stamps too."""
     itin = await _windowed_itinerary(db_session, title="anchor-drag")
     try:
         node = await add_node(
@@ -199,11 +200,12 @@ async def test_drag_to_timeline_metadata_patch_stamps_anchor(
             _actor(),
             itinerary_id=itin.id,
             node_id=node.id,
-            metadata={**node.metadata_, "start_time": "2027-06-02T10:00:00+02:00"},
+            placement=SchedulePlacement(day_index=2, minute_of_day=10 * 60),
         )
         assert not isinstance(moved, ItineraryError)
         await db_session.refresh(itin)
         assert itin.days_anchor == date(2027, 6, 1)
+        assert moved.start_day_offset == 1  # Day 2 against the stamped anchor
     finally:
         await _cleanup(itin.id)
 
