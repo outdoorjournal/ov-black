@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.kernel import resolve_schedule
 from app.models import (
     CostKind,
     Edge,
@@ -42,6 +43,12 @@ from app.models import (
     NodeType,
 )
 from app.services.display_status import NON_APPROVABLE_TYPES
+from app.services.kernel_sync import (
+    apply_schedule_columns,
+    is_date_sensitive,
+    relative_schedule_of,
+    sync_node_schedule,
+)
 from app.services.node_kinds import is_schedulable
 
 logger = logging.getLogger("ov_black.itineraries")
@@ -135,6 +142,9 @@ class NodeOut(NamedTuple):
     # free-standing note / any non-note. Trailing-optional so existing NodeOut
     # construction sites (and test stubs) don't need to pass it.
     attached_to_node_id: uuid.UUID | None = None
+    # 0055/Phase 3 — the node moved after its date-sensitive snapshot was
+    # quoted; re-check with the provider (doc/itin-time.md).
+    needs_revalidation: bool = False
 
 
 class EdgeOut(NamedTuple):
@@ -807,9 +817,10 @@ async def update_itinerary_details(
     # dates while the trip now claims the new ones, so the timeline still shows
     # the old Day 1. Capture the whole-day delta from the OLD anchor now — the
     # field loop below overwrites date_start. Booked cards pin the calendar
-    # (their dates are supplier commitments), so a real shift refuses the same
-    # way `retime_itinerary` does.
+    # (their dates are supplier commitments): they hold their dates and are
+    # reported, the same affordance as `retime_itinerary` (Phase 3).
     retime_delta_days = 0
+    old_days_anchor = itinerary.days_anchor
     if (
         new_kind is ItineraryTimingKind.exact
         and new_start is not None
@@ -817,11 +828,6 @@ async def update_itinerary_details(
         and new_start != itinerary.date_start
     ):
         retime_delta_days = (new_start - itinerary.days_anchor).days
-        if retime_delta_days != 0 and await _has_booked_nodes(session, itinerary.id):
-            return ItineraryError(
-                outcome=ItineraryOutcome.CONFLICT,
-                detail="booked_dates_locked",
-            )
 
     changed: list[str] = []
     for key, value in updates.items():
@@ -838,19 +844,34 @@ async def update_itinerary_details(
     # stale anchor the caller isn't moving off (e.g. a `days_anchor` stamped
     # against a scratch note before dates were set) — the delta is zero, the
     # shift is a no-op, and only the label is corrected.
-    shifted_node_ids: list[uuid.UUID] = []
+    retimed = RetimedNodes()
     if (
         itinerary.timing_kind is ItineraryTimingKind.exact
         and itinerary.date_start is not None
         and itinerary.days_anchor != itinerary.date_start
     ):
-        if retime_delta_days != 0:
-            shifted_node_ids = await _shift_scheduled_nodes(
-                session, actor, itinerary.id, delta_days=retime_delta_days
+        if retime_delta_days != 0 and old_days_anchor is not None:
+            retimed = await _retime_scheduled_nodes(
+                session,
+                actor,
+                itinerary.id,
+                old_anchor=old_days_anchor,
+                new_anchor=itinerary.date_start,
             )
         itinerary.days_anchor = itinerary.date_start
         if "days_anchor" not in changed:
             changed.append("days_anchor")
+
+    # Keep the kernel anchor (0055) in lockstep with the legacy fields: exact
+    # trips anchor at date_start, everything else at the stamped days_anchor.
+    new_anchor_date = (
+        itinerary.date_start
+        if itinerary.timing_kind is ItineraryTimingKind.exact and itinerary.date_start
+        else itinerary.days_anchor
+    )
+    if new_anchor_date is not None and itinerary.anchor_date != new_anchor_date:
+        itinerary.anchor_date = new_anchor_date
+        changed.append("anchor_date")
 
     if changed:
         await session.commit()
@@ -863,7 +884,8 @@ async def update_itinerary_details(
             "actor_id": actor.actor_id,
             # Field NAMES only — never the free-text brief / note values.
             "fields": ",".join(sorted(changed)),
-            "shifted_nodes": len(shifted_node_ids),
+            "shifted_nodes": len(retimed.moved),
+            "held_nodes": len(retimed.held),
         },
     )
     return itinerary
@@ -889,7 +911,7 @@ async def _has_booked_nodes(session: AsyncSession, itinerary_id: uuid.UUID) -> b
     return row is not None
 
 
-async def _maybe_stamp_days_anchor(session: AsyncSession, itinerary_id: uuid.UUID) -> None:
+async def _maybe_stamp_days_anchor(session: AsyncSession, itinerary_id: uuid.UUID) -> date | None:
     """Give "Day 1" a stable identity the first time anything is scheduled (ADV-16).
 
     On an unpinned trip the cards' absolute dates are provisional coordinates;
@@ -903,13 +925,27 @@ async def _maybe_stamp_days_anchor(session: AsyncSession, itinerary_id: uuid.UUI
     itinerary = (
         await session.execute(select(Itinerary).where(Itinerary.id == itinerary_id))
     ).scalar_one_or_none()
-    if itinerary is None or itinerary.days_anchor is not None:
-        return
-    itinerary.days_anchor = itinerary.date_start or datetime.now(UTC).date()
-    logger.info(
-        "itinerary.days_anchor.stamp",
-        extra={"itinerary_id": str(itinerary_id), "days_anchor": itinerary.days_anchor.isoformat()},
-    )
+    if itinerary is None:
+        return None
+    if itinerary.days_anchor is None:
+        itinerary.days_anchor = itinerary.date_start or datetime.now(UTC).date()
+        logger.info(
+            "itinerary.days_anchor.stamp",
+            extra={
+                "itinerary_id": str(itinerary_id),
+                "days_anchor": itinerary.days_anchor.isoformat(),
+            },
+        )
+    # The kernel anchor (0055) rides along: exact trips anchor at date_start,
+    # everything else at the stamped days_anchor. Kept in lockstep until the
+    # legacy fields retire (Phase 6).
+    if itinerary.anchor_date is None:
+        itinerary.anchor_date = (
+            itinerary.date_start
+            if itinerary.timing_kind is ItineraryTimingKind.exact and itinerary.date_start
+            else itinerary.days_anchor
+        )
+    return itinerary.anchor_date
 
 
 def _node_local_start_date(node: Node) -> date | None:
@@ -937,33 +973,57 @@ def _node_local_start_date(node: Node) -> date | None:
 
 @dataclass(frozen=True, slots=True)
 class RetimeResult:
-    """Outcome of :func:`retime_itinerary` — the pinned itinerary + what moved."""
+    """Outcome of :func:`retime_itinerary` — the pinned itinerary + what moved.
+
+    ``held_node_ids`` are booked/confirmed cards that kept their calendar dates
+    (world-pinned — supplier commitments are never silently rewritten);
+    ``stale_node_ids`` are moved cards whose date-sensitive snapshots now need
+    re-checking with their provider. Both are the caller's affordance, not an
+    error (doc/itin-time.md "Retime reports; callers decide").
+    """
 
     itinerary: Itinerary
     delta_days: int
     shifted_node_ids: tuple[uuid.UUID, ...]
+    held_node_ids: tuple[uuid.UUID, ...] = ()
+    stale_node_ids: tuple[uuid.UUID, ...] = ()
 
 
-async def _shift_scheduled_nodes(
+@dataclass(frozen=True, slots=True)
+class RetimedNodes:
+    """What one anchor move did to the spine — moved/held/stale node ids."""
+
+    moved: tuple[uuid.UUID, ...] = ()
+    held: tuple[uuid.UUID, ...] = ()
+    stale: tuple[uuid.UUID, ...] = ()
+
+
+async def _retime_scheduled_nodes(
     session: AsyncSession,
     actor: ActorContext,
     itinerary_id: uuid.UUID,
     *,
-    delta_days: int,
-) -> list[uuid.UUID]:
-    """Shift every scheduled node by ``delta_days`` whole days, wall-clock kept.
+    old_anchor: date,
+    new_anchor: date,
+) -> RetimedNodes:
+    """Move the plan's spine to a new Day-1 date, the kernel way (Phase 3).
 
-    The shared core of a uniform trip retime: each node's ``starts_at`` /
-    ``metadata.start_time`` moves by ``delta_days`` days while its wall-clock
-    time and tz offset are preserved (a 09:00 breakfast stays a 09:00
-    breakfast), and each moved node gets a ``node_history`` row. Both the
-    explicit retime gesture (:func:`retime_itinerary`) and the intake
-    date-settle path (:func:`update_itinerary_details`, when an exact trip's
-    anchor moves under already-scheduled cards) shift through here so a card's
-    Day-N position survives the anchor move. A zero delta is a no-op.
+    Each uncommitted node's schedule is taken as anchor-*relative* (its
+    canonical 0055 columns; a pinned-but-uncommitted or legacy row derives
+    against ``old_anchor``) and its ``starts_at`` / metadata mirror are simply
+    **re-resolved against the new anchor** — the schedule itself never changes,
+    which is what makes retime corruption-proof (doc/itin-time.md). A 09:00
+    breakfast stays a 09:00 breakfast because the wall-clock is the stored
+    truth, not the shifted quantity.
+
+    Booked/confirmed nodes are world-pinned: they hold their calendar dates and
+    are reported in ``held`` — never silently rewritten (previously this path
+    refused outright with ``booked_dates_locked``). Moved nodes whose snapshots
+    are date-sensitive (quoted flights) come back in ``stale`` and get
+    ``needs_revalidation`` — the move succeeds; the consequence is data.
     """
-    if delta_days == 0:
-        return []
+    if new_anchor == old_anchor:
+        return RetimedNodes()
     nodes = (
         (
             await session.execute(
@@ -977,46 +1037,40 @@ async def _shift_scheduled_nodes(
         .scalars()
         .all()
     )
-    delta = timedelta(days=delta_days)
-    shifted: list[uuid.UUID] = []
+    moved: list[uuid.UUID] = []
+    held: list[uuid.UUID] = []
+    stale: list[uuid.UUID] = []
     for node in nodes:
+        if node.status in (NodeStatus.booked, NodeStatus.confirmed):
+            held.append(node.id)
+            if node.schedule_kind != "pinned":
+                sync_node_schedule(node, old_anchor)  # heal: commitments are pinned
+            continue
+        relative = relative_schedule_of(node, old_anchor)
+        if relative is None:
+            continue  # unparseable legacy row — leave it in place rather than guess
+        span = resolve_schedule(relative, new_anchor)
+        if span is None:
+            continue  # unreachable: new_anchor is a real date
         before = _snapshot_node(node)
+        node.starts_at = Range(span.start, span.end, bounds="[)")
         meta = node.metadata_ if isinstance(node.metadata_, dict) else {}
-        iso = meta.get("start_time")
-        new_range: Range[datetime] | None = None
-        if isinstance(iso, str) and iso:
-            # Shift the mirrored wall-clock and rebuild the column from it — the
-            # same metadata-first contract as update_node's schedule sync. A
-            # fixed-offset datetime + N days keeps the wall-clock.
-            try:
-                new_local = datetime.fromisoformat(iso) + delta
-            except ValueError:
-                new_local = None
-            if new_local is not None:
-                lower = getattr(node.starts_at, "lower", None)
-                upper = getattr(node.starts_at, "upper", None)
-                dur = (
-                    round((upper - lower).total_seconds() / 60)
-                    if isinstance(lower, datetime) and isinstance(upper, datetime)
-                    else None
-                )
-                new_iso = new_local.isoformat()
-                new_range = _build_starts_at(new_iso, dur)
-                if new_range is not None:
-                    node.metadata_ = {**meta, "start_time": new_iso}
-        if new_range is None:
-            # No (parseable) mirror — shift the raw UTC bounds; whole-day deltas
-            # preserve the wall-clock in any fixed-offset zone.
-            lower = getattr(node.starts_at, "lower", None)
-            upper = getattr(node.starts_at, "upper", None)
-            if not isinstance(lower, datetime):
-                continue
-            new_range = Range(
-                lower + delta,
-                upper + delta if isinstance(upper, datetime) else None,
-                bounds="[)",
-            )
-        node.starts_at = new_range
+        offset = span.start.utcoffset()
+        node.metadata_ = {
+            **meta,
+            "start_time": span.start.isoformat(),
+            **(
+                {"tz_offset_minutes": int(offset.total_seconds() // 60)}
+                if offset is not None
+                else {}
+            ),
+        }
+        # The canonical columns keep the (unchanged) relative schedule — this
+        # also heals backfilled pinned-uncommitted rows into relative form.
+        apply_schedule_columns(node, relative)
+        if is_date_sensitive(node):
+            node.needs_revalidation = True
+            stale.append(node.id)
         await _write_node_history(
             session,
             node_id=node.id,
@@ -1026,8 +1080,8 @@ async def _shift_scheduled_nodes(
             before=before,
             after=_snapshot_node(node),
         )
-        shifted.append(node.id)
-    return shifted
+        moved.append(node.id)
+    return RetimedNodes(moved=tuple(moved), held=tuple(held), stale=tuple(stale))
 
 
 async def retime_itinerary(
@@ -1049,9 +1103,11 @@ async def retime_itinerary(
     node_history row.
 
     Deliberately trip-level: approved (but unbooked) cards move with the trip —
-    the G1 per-node edit gate does not apply here. What DOES refuse is a shift
-    while booked/confirmed cards exist (``booked_dates_locked``): booking gates
-    on pinned dates, so a booked card's date is a supplier commitment.
+    the G1 per-node edit gate does not apply here. Booked/confirmed cards are
+    world-pinned supplier commitments: they HOLD their calendar dates and come
+    back in ``held_node_ids`` for the caller to act on (rebook, cancel, keep) —
+    the retime itself always succeeds (doc/itin-time.md Phase 3; formerly a
+    ``booked_dates_locked`` refusal).
 
     ``date_end`` resolution when omitted: an already-exact trip keeps its span;
     else ``duration_nights`` counts forward from ``date_start``; else the last
@@ -1091,17 +1147,16 @@ async def retime_itinerary(
         anchor = min(scheduled_dates) if scheduled_dates else date_start
 
     delta_days = (date_start - anchor).days
-    if delta_days != 0 and any(
-        n.status in (NodeStatus.booked, NodeStatus.confirmed) for n in nodes
-    ):
-        return ItineraryError(
-            outcome=ItineraryOutcome.CONFLICT,
-            detail="booked_dates_locked",
-        )
 
-    # Shift every scheduled card by the whole-day delta (wall-clock preserved,
-    # node_history written). Shares its core with the intake date-settle path.
-    shifted = await _shift_scheduled_nodes(session, actor, itinerary.id, delta_days=delta_days)
+    # Re-resolve every uncommitted card against the new anchor (wall-clock
+    # preserved, node_history written). Booked/confirmed cards are world-pinned
+    # supplier commitments: they HOLD their dates and are reported to the
+    # caller instead of blocking the retime (doc/itin-time.md Phase 3 — the
+    # old ``booked_dates_locked`` refusal became this affordance).
+    retimed = await _retime_scheduled_nodes(
+        session, actor, itinerary.id, old_anchor=anchor, new_anchor=date_start
+    )
+    shifted = list(retimed.moved)
 
     old_start, old_end = itinerary.date_start, itinerary.date_end
     resolved_end = date_end
@@ -1118,6 +1173,7 @@ async def retime_itinerary(
     itinerary.date_start = date_start
     itinerary.date_end = resolved_end
     itinerary.days_anchor = date_start
+    itinerary.anchor_date = date_start
 
     await session.commit()
     await session.refresh(itinerary)
@@ -1129,12 +1185,16 @@ async def retime_itinerary(
             "actor_id": actor.actor_id,
             "delta_days": delta_days,
             "shifted_nodes": len(shifted),
+            "held_nodes": len(retimed.held),
+            "stale_nodes": len(retimed.stale),
         },
     )
     return RetimeResult(
         itinerary=itinerary,
         delta_days=delta_days,
         shifted_node_ids=tuple(shifted),
+        held_node_ids=retimed.held,
+        stale_node_ids=retimed.stale,
     )
 
 
@@ -1159,12 +1219,14 @@ async def get_itinerary_graph(
         with recursive subgraph(
             id, itinerary_id, parent_subgraph_id, type, status, title,
             source, source_id, metadata, cost_amount, cost_currency, cost_kind,
-            starts_at, forked_from_node_id, attached_to_node_id, depth
+            starts_at, forked_from_node_id, attached_to_node_id,
+            needs_revalidation, depth
         ) as (
             select n.id, n.itinerary_id, n.parent_subgraph_id, n.type, n.status,
                    n.title, n.source, n.source_id, n.metadata, n.cost_amount,
                    n.cost_currency, n.cost_kind, n.starts_at,
-                   n.forked_from_node_id, n.attached_to_node_id, 0
+                   n.forked_from_node_id, n.attached_to_node_id,
+                   n.needs_revalidation, 0
               from public.nodes n
              where n.itinerary_id = :iid
                and n.parent_subgraph_id is null
@@ -1173,7 +1235,8 @@ async def get_itinerary_graph(
             select c.id, c.itinerary_id, c.parent_subgraph_id, c.type, c.status,
                    c.title, c.source, c.source_id, c.metadata, c.cost_amount,
                    c.cost_currency, c.cost_kind, c.starts_at,
-                   c.forked_from_node_id, c.attached_to_node_id, s.depth + 1
+                   c.forked_from_node_id, c.attached_to_node_id,
+                   c.needs_revalidation, s.depth + 1
               from public.nodes c
               join subgraph s on c.parent_subgraph_id = s.id
              where c.itinerary_id = :iid
@@ -1181,7 +1244,8 @@ async def get_itinerary_graph(
         )
         select id, itinerary_id, parent_subgraph_id, type, status, title,
                source, source_id, metadata, cost_amount, cost_currency,
-               cost_kind, starts_at, forked_from_node_id, attached_to_node_id, depth
+               cost_kind, starts_at, forked_from_node_id, attached_to_node_id,
+               needs_revalidation, depth
           from subgraph
          order by depth, id
         """
@@ -1213,6 +1277,7 @@ async def get_itinerary_graph(
                 lock_reason=compute_lock_reason(NodeStatus(row.status)),
                 forked_from_node_id=row.forked_from_node_id,
                 attached_to_node_id=row.attached_to_node_id,
+                needs_revalidation=row.needs_revalidation,
             )
         )
 
@@ -1405,9 +1470,12 @@ async def add_node(
         before=None,
         after=_snapshot_node(node),
     )
-    # First thing on the timeline pins Day 1's identity (ADV-16).
+    # First thing on the timeline pins Day 1's identity (ADV-16); the canonical
+    # kernel columns (0055) always ride along with the legacy representation.
+    anchor: date | None = None
     if node.starts_at is not None:
-        await _maybe_stamp_days_anchor(session, itinerary_id)
+        anchor = await _maybe_stamp_days_anchor(session, itinerary_id)
+    sync_node_schedule(node, anchor)
     await session.commit()
     logger.info(
         "itinerary.mutate",
@@ -1516,6 +1584,7 @@ async def update_node(
         return cost_err
 
     before = _snapshot_node(node)
+    prior_starts_at = node.starts_at
     for key, value in updates.items():
         if key == "metadata":
             node.metadata_ = value
@@ -1561,9 +1630,21 @@ async def update_node(
             node.starts_at = None
 
     # A metadata patch is the drag-to-timeline path — the first card scheduled
-    # pins Day 1's identity (ADV-16). No-op once the anchor is stamped.
-    if "metadata" in updates and node.starts_at is not None:
-        await _maybe_stamp_days_anchor(session, itinerary_id)
+    # pins Day 1's identity (ADV-16). No-op once the anchor is stamped. The
+    # canonical kernel columns (0055) then re-derive from whatever this write
+    # left in the legacy representation (schedule change, unschedule, or a
+    # committed-status boundary — booking pins, demotion un-pins).
+    anchor: date | None = None
+    if node.starts_at is not None:
+        anchor = await _maybe_stamp_days_anchor(session, itinerary_id)
+    sync_node_schedule(node, anchor)
+    # Moving a date-sensitive quote succeeds and flags it for re-checking with
+    # the provider (doc/itin-time.md "Moves can invalidate content"); a fresh
+    # quote (new source_id) clears the flag.
+    if node.starts_at != prior_starts_at and is_date_sensitive(node):
+        node.needs_revalidation = True
+    if "source_id" in updates and updates["source_id"] != before.get("source_id"):
+        node.needs_revalidation = False
 
     try:
         await session.flush()

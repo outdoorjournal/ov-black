@@ -84,6 +84,7 @@ from app.services.itineraries import (
     _snapshot_node,
     _write_node_history,
 )
+from app.services.kernel_sync import sync_node_schedule
 from app.services.node_cost import (
     cost_from_inventory_item,
     effective_node_cost,
@@ -93,6 +94,14 @@ from app.services.node_cost import (
 logger = logging.getLogger("ov_black.bookings")
 
 _ZERO = Decimal("0.00")
+
+
+async def _anchor_date_of(session: AsyncSession, itinerary_id: uuid.UUID) -> date | None:
+    """The itinerary's kernel anchor (0055) — Day 1's calendar date."""
+    return (
+        await session.execute(select(Itinerary.anchor_date).where(Itinerary.id == itinerary_id))
+    ).scalar_one_or_none()
+
 
 # A snapshot quote (no live provider behind it) is our own static price; we still
 # stamp a freshness window so the flight gate's "needs a fresh offer" check has
@@ -748,6 +757,9 @@ async def book_node(
     session.add(booking)
     before = _snapshot_node(node)
     node.status = node_target_status
+    # Booking pins (doc/itin-time.md "Pinnedness is a lifecycle property"):
+    # the canonical schedule flips to world-pinned calendar dates.
+    sync_node_schedule(node, await _anchor_date_of(session, itinerary_id))
     await session.flush()
     await _write_node_history(
         session,
@@ -842,6 +854,7 @@ async def record_confirmation(
     booking.confirmed_at = _now()
     before = _snapshot_node(node)
     node.status = NodeStatus.confirmed
+    sync_node_schedule(node, await _anchor_date_of(session, itinerary_id))
     await session.flush()
     await _write_node_history(
         session,
@@ -1034,9 +1047,11 @@ async def cancel_booking(
                 )
 
     # Demote the node — the firmed→approved transition the G1 gate permits an
-    # advisor (done inline like book_node, not bypassing the gate).
+    # advisor (done inline like book_node, not bypassing the gate). Cancelling
+    # un-pins: the canonical schedule returns to anchor-relative.
     before = _snapshot_node(node)
     node.status = _BOOKABLE_FROM
+    sync_node_schedule(node, await _anchor_date_of(session, itinerary_id))
     refunded = refund_status in (RefundStatus.refunded, RefundStatus.voided)
     booking.cancelled_at = _now()
     booking.cancelled_by = actor.user_id

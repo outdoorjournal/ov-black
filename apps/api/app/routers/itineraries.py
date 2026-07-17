@@ -238,6 +238,13 @@ class RetimeItineraryResponse(BaseModel):
     # UI's "Day 1 → Wed Mar 18 · 6 cards moved" confirmation payload.
     delta_days: int
     shifted_nodes: int
+    # The retime affordance (doc/itin-time.md Phase 3): booked/confirmed cards
+    # HOLD their calendar dates (world-pinned supplier commitments) instead of
+    # blocking the retime; moved cards with date-sensitive snapshots (quoted
+    # flights) need re-checking with their provider. The caller decides what to
+    # surface — a banner, an advisor task list, an agent explanation.
+    held_node_ids: list[uuid.UUID] = Field(default_factory=list)
+    stale_node_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class CreateNodeRequest(BaseModel):
@@ -379,6 +386,10 @@ class NodeResponse(BaseModel):
     # Defaulted so existing callers/fixtures stay valid; the serializers set it
     # explicitly from ``is_schedulable(type)``.
     schedulable: bool = True
+    # 0055/Phase 3 — the card moved after its date-sensitive snapshot (e.g. a
+    # flight quote) was taken; re-check availability with the provider. Set by
+    # schedule moves and retimes; cleared by a fresh quote (new source_id).
+    needs_revalidation: bool = False
 
 
 class CreateEdgeRequest(BaseModel):
@@ -893,6 +904,7 @@ def _node_response_from_out(n: Any) -> NodeResponse:
         forked_from_node_id=n.forked_from_node_id,
         attached_to_node_id=n.attached_to_node_id,
         schedulable=is_schedulable(n.type),
+        needs_revalidation=bool(getattr(n, "needs_revalidation", False) or False),
     )
 
 
@@ -925,6 +937,7 @@ def _node_response_from_node(node: Any) -> NodeResponse:
         forked_from_node_id=getattr(node, "forked_from_node_id", None),
         attached_to_node_id=getattr(node, "attached_to_node_id", None),
         schedulable=is_schedulable(node.type),
+        needs_revalidation=bool(getattr(node, "needs_revalidation", False) or False),
     )
 
 
@@ -1212,6 +1225,8 @@ async def retime_itinerary_endpoint(
         itinerary=_itinerary_to_response(result.itinerary),
         delta_days=result.delta_days,
         shifted_nodes=len(result.shifted_node_ids),
+        held_node_ids=list(result.held_node_ids),
+        stale_node_ids=list(result.stale_node_ids),
     )
 
 

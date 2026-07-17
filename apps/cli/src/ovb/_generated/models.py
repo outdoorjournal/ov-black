@@ -3302,6 +3302,9 @@ class NodeResponse(BaseModel):
         list[NodeResponse] | None, Field(title='Additional Nodes')
     ] = None
     schedulable: Annotated[bool | None, Field(title='Schedulable')] = True
+    needs_revalidation: Annotated[bool | None, Field(title='Needs Revalidation')] = (
+        False
+    )
 
 
 class NoteItem(BaseModel):
@@ -3496,6 +3499,8 @@ class RetimeItineraryResponse(BaseModel):
     itinerary: ItineraryResponse
     delta_days: Annotated[int, Field(title='Delta Days')]
     shifted_nodes: Annotated[int, Field(title='Shifted Nodes')]
+    held_node_ids: Annotated[list[UUID] | None, Field(title='Held Node Ids')] = None
+    stale_node_ids: Annotated[list[UUID] | None, Field(title='Stale Node Ids')] = None
 
 
 class SupplierAvailabilityResponse(BaseModel):

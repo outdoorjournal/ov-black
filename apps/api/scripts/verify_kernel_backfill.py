@@ -44,7 +44,7 @@ async def main() -> int:
     for sample in report.samples:
         print(f"  - {sample}")
     if report.clean:
-        print("OK — dual read is exact; safe to proceed toward Phase 3.")
+        print("OK — dual read is exact; the kernel schedule columns are trustworthy.")
         return 0
     print("FAIL — do not switch reads/writes to the kernel columns yet.")
     return 1

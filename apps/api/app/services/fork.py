@@ -153,6 +153,18 @@ async def fork_itinerary(
             cost_currency=old.cost_currency,
             cost_kind=old.cost_kind,
             forked_from_node_id=old.id,
+            # 0055 — the canonical kernel schedule travels with the clone (the
+            # fork shares the trunk's anchor, so day offsets mean the same).
+            schedule_kind=old.schedule_kind,
+            start_day_offset=old.start_day_offset,
+            start_date=old.start_date,
+            start_wall_time=old.start_wall_time,
+            start_tz=old.start_tz,
+            end_day_offset=old.end_day_offset,
+            end_date=old.end_date,
+            end_wall_time=old.end_wall_time,
+            end_tz=old.end_tz,
+            needs_revalidation=old.needs_revalidation,
         )
         session.add(clone)
         new_nodes.append(clone)
@@ -595,10 +607,17 @@ async def _feasibility_block(
 
 
 async def _copy_starts_at(session: AsyncSession, *, src: uuid.UUID, dst: uuid.UUID) -> None:
-    """Copy the ORM-invisible ``starts_at`` tstzrange from one node to another."""
+    """Copy the schedule from one node to another — the ``starts_at`` tstzrange
+    plus its canonical kernel columns (0055), which must never diverge."""
     await session.execute(
         text(
-            "update public.nodes d set starts_at = s.starts_at "
+            "update public.nodes d set starts_at = s.starts_at, "
+            "schedule_kind = s.schedule_kind, "
+            "start_day_offset = s.start_day_offset, start_date = s.start_date, "
+            "start_wall_time = s.start_wall_time, start_tz = s.start_tz, "
+            "end_day_offset = s.end_day_offset, end_date = s.end_date, "
+            "end_wall_time = s.end_wall_time, end_tz = s.end_tz, "
+            "needs_revalidation = s.needs_revalidation "
             "from public.nodes s where s.id = :src and d.id = :dst"
         ),
         {"src": src, "dst": dst},

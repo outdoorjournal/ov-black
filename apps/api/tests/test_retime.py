@@ -273,17 +273,47 @@ async def test_retime_shifts_scheduled_nodes_preserving_wall_clock(
 
 @integration
 @pytest.mark.asyncio
-async def test_retime_refused_while_booked_cards_exist(db_session: AsyncSession) -> None:
+async def test_retime_holds_booked_cards_and_reports_them(db_session: AsyncSession) -> None:
+    """Phase 3 (doc/itin-time.md): a retime never rewrites a supplier
+    commitment — booked cards HOLD their calendar dates and come back in
+    ``held_node_ids`` for the caller to act on. Unbooked cards still move."""
     itin = await _windowed_itinerary(db_session, title="retime-booked")
     try:
-        node = await _scheduled_node(db_session, itin.id, starts_at="2027-06-02T09:00:00+02:00")
+        booked = await _scheduled_node(db_session, itin.id, starts_at="2027-06-02T09:00:00+02:00")
+        free = await _scheduled_node(
+            db_session, itin.id, starts_at="2027-06-03T09:00:00+02:00", title="Walk"
+        )
         # Simulate a booked card directly (the booking flow itself is pin-gated).
-        node.status = NodeStatus.booked
+        booked.status = NodeStatus.booked
         await db_session.commit()
+        booked_range_before = (
+            await db_session.execute(
+                text("select starts_at from nodes where id = :nid"), {"nid": booked.id}
+            )
+        ).scalar_one()
 
-        refused = await retime_itinerary(db_session, _actor(), itin, date_start=date(2027, 7, 1))
-        assert isinstance(refused, ItineraryError)
-        assert refused.detail == "booked_dates_locked"
+        result = await retime_itinerary(db_session, _actor(), itin, date_start=date(2027, 7, 1))
+        assert isinstance(result, RetimeResult)
+        assert result.held_node_ids == (booked.id,)
+        assert free.id in result.shifted_node_ids
+        assert booked.id not in result.shifted_node_ids
+
+        # The booked card's dates are untouched; its canonical schedule is pinned.
+        booked_range_after = (
+            await db_session.execute(
+                text("select starts_at from nodes where id = :nid"), {"nid": booked.id}
+            )
+        ).scalar_one()
+        assert booked_range_after == booked_range_before
+        kind = (
+            await db_session.execute(
+                text("select schedule_kind from nodes where id = :nid"), {"nid": booked.id}
+            )
+        ).scalar_one()
+        assert kind == "pinned"
+        # The free card moved with Day 1 (Jun 3 was Day 3; Day 3 is now Jul 3).
+        await db_session.refresh(free)
+        assert free.metadata_["start_time"].startswith("2027-07-03T09:00:00")
     finally:
         await _cleanup(itin.id)
 
@@ -455,10 +485,11 @@ async def test_settling_exact_dates_shifts_provisional_anchor_spine(
 
 @integration
 @pytest.mark.asyncio
-async def test_settling_exact_dates_shift_refused_while_booked(
+async def test_settling_exact_dates_holds_booked_cards(
     db_session: AsyncSession,
 ) -> None:
-    """A date-settle that would shift cards refuses while booked cards exist."""
+    """The intake date-settle path shares retime's affordance (Phase 3): the
+    settle succeeds, booked cards hold their dates, unbooked cards shift."""
     itin = await create_itinerary(
         db_session,
         _actor(),
@@ -472,8 +503,13 @@ async def test_settling_exact_dates_shift_refused_while_booked(
         )
         node.status = NodeStatus.booked
         await db_session.commit()
+        range_before = (
+            await db_session.execute(
+                text("select starts_at from nodes where id = :nid"), {"nid": node.id}
+            )
+        ).scalar_one()
 
-        refused = await update_itinerary_details(
+        settled = await update_itinerary_details(
             db_session,
             _actor(),
             itin,
@@ -483,8 +519,17 @@ async def test_settling_exact_dates_shift_refused_while_booked(
                 "date_end": anchor + timedelta(days=12),
             },
         )
-        assert isinstance(refused, ItineraryError)
-        assert refused.detail == "booked_dates_locked"
+        assert not isinstance(settled, ItineraryError)
+        assert settled.date_start == anchor + timedelta(days=5)
+        assert settled.anchor_date == anchor + timedelta(days=5)
+
+        # The booked card held its calendar dates through the settle.
+        range_after = (
+            await db_session.execute(
+                text("select starts_at from nodes where id = :nid"), {"nid": node.id}
+            )
+        ).scalar_one()
+        assert range_after == range_before
     finally:
         await _cleanup(itin.id)
 
