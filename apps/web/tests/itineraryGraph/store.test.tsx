@@ -13,8 +13,10 @@ import type {
 } from "@ov-black/api-client";
 
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/types";
+import { journalProblems } from "@/app/_components/itinerary-graph/views/journal/problems";
 import {
   itineraryGraphStore,
+  seedFindingsFromGraph,
   selectCanApprove,
   selectCanLeaveNote,
   selectEditable,
@@ -377,5 +379,50 @@ describe("selectIsDraftMine", () => {
   test("false when approved or without creds", () => {
     expect(selectIsDraftMine({ ...draft, status: "approved" })).toBe(false);
     expect(selectIsDraftMine({ ...draft, accessToken: null })).toBe(false);
+  });
+});
+
+describe("seedFindingsFromGraph (Phase 5 — kernel findings on the graph read)", () => {
+  test("expands one kernel finding into one store finding per node", () => {
+    const seeded = seedFindingsFromGraph([
+      {
+        code: "overlap",
+        severity: "warn",
+        message: "'Lunch' overlaps 'Tour'",
+        node_ids: ["n-lunch", "n-tour"],
+      },
+      {
+        code: "flight_infeasible",
+        severity: "block",
+        message: "arrives after the first item",
+        node_ids: ["n-flight"],
+      },
+    ]);
+    expect(seeded).toHaveLength(3);
+    const byNode = new Map(seeded.map((f) => [f.node_id, f]));
+    expect(byNode.get("n-lunch")?.severity).toBe("warn");
+    expect(byNode.get("n-lunch")?.category).toBe("overlap");
+    expect(byNode.get("n-flight")?.severity).toBe("block");
+    // Synthetic ids are stable + unique so React keys don't collide.
+    expect(new Set(seeded.map((f) => f.id)).size).toBe(3);
+  });
+
+  test("feeds journalProblems: warn/block become card problems, info does not", () => {
+    const seeded = seedFindingsFromGraph([
+      {
+        code: "flight_tight",
+        severity: "warn",
+        message: "only 90 min of margin",
+        node_ids: ["n1"],
+      },
+      { code: "stale", severity: "info", message: "re-check", node_ids: ["n2"] },
+    ]);
+    const problems = journalProblems(
+      [NODE, { ...NODE, id: "n2" }],
+      seeded,
+    );
+    expect(problems.get("n1")?.severity).toBe("warn");
+    expect(problems.get("n1")?.message).toBe("only 90 min of margin");
+    expect(problems.has("n2")).toBe(false); // info is advisory, not a badge
   });
 });

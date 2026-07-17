@@ -1102,6 +1102,30 @@ class GeoPointResponse(BaseModel):
     lng: Annotated[float, Field(title='Lng')]
 
 
+class Severity(StrEnum):
+    block = 'block'
+    warn = 'warn'
+    info = 'info'
+
+
+class GraphFindingResponse(BaseModel):
+    """
+    One kernel feasibility finding (Phase 5, doc/itin-time.md).
+
+    Judgements, never rejections: ``flight_infeasible`` (block) — the traveler
+    would still be in transit; ``flight_tight`` / ``overlap`` /
+    ``follows_gap`` (warn) — physically possible but deserves an advisor's
+    eye; ``stale`` (info) — a date-sensitive snapshot moved after it was
+    quoted. ``node_ids`` are the nodes the judgement is about, so the UI can
+    badge the exact cards.
+    """
+
+    code: Annotated[str, Field(title='Code')]
+    severity: Annotated[Severity, Field(title='Severity')]
+    message: Annotated[str, Field(title='Message')]
+    node_ids: Annotated[list[UUID], Field(title='Node Ids')]
+
+
 class HealthResponse(BaseModel):
     status: Annotated[str, Field(title='Status')]
 
@@ -3870,6 +3894,9 @@ class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: Annotated[list[NodeResponse], Field(title='Nodes')]
     edges: Annotated[list[EdgeResponse], Field(title='Edges')]
+    findings: Annotated[list[GraphFindingResponse] | None, Field(title='Findings')] = (
+        None
+    )
     totals: Annotated[dict[str, str] | None, Field(title='Totals')] = None
     display_currency: Annotated[str | None, Field(title='Display Currency')] = None
     total_display: Annotated[str | None, Field(title='Total Display')] = None

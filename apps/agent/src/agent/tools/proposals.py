@@ -15,7 +15,6 @@ from typing import Any
 from strands import tool
 
 from agent.backend import BackendError, delete_json, get_json, pin_ctx, post_json
-from agent.flight_timing import flight_conflicts
 
 logger = logging.getLogger(__name__)
 
@@ -127,16 +126,39 @@ def _is_flight(result: dict) -> bool:
     return any((extra or {}).get("type") == "flight" for extra in result.get("additional_nodes") or [])
 
 
+def _blocking_flight_findings(graph: dict, created: set[str]) -> list[str]:
+    """Messages of block-severity flight findings that touch the created nodes.
+
+    Phase 5 (doc/itin-time.md): the graph read carries the KERNEL's
+    feasibility findings — the same engine the advisor UI renders — so the
+    guard consults them instead of re-deriving flight timing agent-side.
+    """
+    messages: list[str] = []
+    for finding in graph.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("severity") != "block":
+            continue
+        if not str(finding.get("code") or "").startswith("flight"):
+            continue
+        node_ids = {str(nid) for nid in finding.get("node_ids") or []}
+        if node_ids & created:
+            messages.append(str(finding.get("message") or "flight infeasible"))
+    return messages
+
+
 async def _guard_flight_timing(itinerary_id: str, result: dict) -> None:
     """Reject a flight that can't physically make the plan, and roll it back.
 
     A prose rule already told the model to land before the first item; it once
     narrated its way past it and booked an arrival a day late (a flight in the
-    middle of day 1). This is the hard floor: after the write, re-read the graph
-    and, if the just-placed leg arrives after the first commitment (or a return
-    departs before the last one ends), delete it and raise so the model must
-    choose a feasible offer instead. Fail-open on any guard error — a guard bug
-    must never swallow a real proposal.
+    middle of day 1). This is the hard floor: after the write, re-read the
+    graph and, if the kernel's feasibility findings block the just-placed leg
+    (arrives after the first commitment / departs before the last one ends),
+    delete it and raise so the model must choose a feasible offer instead.
+    The analysis itself runs in the API's kernel (one feasibility engine for
+    agent, API, and UI); this guard only reacts to it. Fail-open on any guard
+    error — a guard bug must never swallow a real proposal.
     """
     if not _is_flight(result):
         return
@@ -145,11 +167,10 @@ async def _guard_flight_timing(itinerary_id: str, result: dict) -> None:
         return
     try:
         graph = await get_json(f"/itinerary/{itinerary_id}")
-        conflicts = flight_conflicts(graph.get("nodes") or [])
+        blocking = _blocking_flight_findings(graph, created)
     except Exception:  # noqa: BLE001 — guard must not mask a successful write
         logger.warning("propose_flight.timing_guard_failed", exc_info=True)
         return
-    blocking = [c for c in conflicts if c.severity == "block" and c.node_id in created]
     if not blocking:
         return
     for node_id in created:
@@ -159,7 +180,7 @@ async def _guard_flight_timing(itinerary_id: str, result: dict) -> None:
             logger.warning("propose_flight.rollback_failed", extra={"node_id": node_id})
     raise BackendError(
         status=None,
-        reason="flight_schedule_conflict: " + " ".join(c.detail for c in blocking),
+        reason="flight_schedule_conflict: " + " ".join(blocking),
     )
 
 

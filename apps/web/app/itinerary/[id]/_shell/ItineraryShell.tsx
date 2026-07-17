@@ -19,7 +19,7 @@
 
 import { useState } from "react";
 
-import type { DisplayStatus } from "@ov-black/api-client";
+import type { DisplayStatus, GraphFindingResponse } from "@ov-black/api-client";
 
 import type { ItineraryTimeline } from "@/app/_components/itinerary-graph/model/horizontalTypes";
 import { itineraryGraphStore } from "@/app/_components/itinerary-graph/store/itineraryGraphStore";
@@ -49,6 +49,9 @@ export type ItineraryShellProps = {
   awaitingProposal?: boolean;
   /** Per-currency plan price from the graph read (ADV-10) — `{}` when unpriced. */
   totals?: Record<string, string>;
+  /** Kernel feasibility findings from the graph read (Phase 5) — seed the
+   *  store's problem treatment on load. */
+  graphFindings?: GraphFindingResponse[];
   /** 0048: traveler's preferred display currency + converted grand total. */
   displayCurrency?: string | null;
   totalDisplay?: string | null;
@@ -67,6 +70,7 @@ export function ItineraryShell({
   viewerOpenForkId,
   awaitingProposal = false,
   totals = {},
+  graphFindings = [],
   displayCurrency = null,
   totalDisplay = null,
   children,
@@ -106,6 +110,7 @@ export function ItineraryShell({
         viewerOpenForkId,
         awaitingProposal,
         totals,
+        graphFindings,
         displayCurrency,
         totalDisplay,
       }}

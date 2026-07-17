@@ -158,6 +158,7 @@ import type {
   ClientSessionSummary,
   ClientSummary,
   ClientUpdatePayload,
+  GraphFindingResponse,
   CreateEdgeRequest,
   CreateItineraryRequest,
   CreateNodeRequest,
@@ -265,6 +266,8 @@ export type {
   ResolvedScheduleResponse,
   ResolvedStampResponse,
   SchedulePlacementPayload,
+  // Phase 5: kernel feasibility findings on the graph read.
+  GraphFindingResponse,
 } from "./generated/types.gen.js";
 
 // Inventory (S02): the discriminated InventoryItem union and its nested
@@ -1463,6 +1466,10 @@ export type GetItineraryResult =
       // The caller's own open fork of this baseline ("My version"), when present
       // — drives the traveler's two-version toggle. Null on a fork or when none.
       viewer_open_fork_id: string | null;
+      // Kernel feasibility findings over the graph (Phase 5, doc/itin-time.md):
+      // flight margins, overlaps, follows-gap constraints, stale snapshots.
+      // `[]` when the plan is clean.
+      findings: GraphFindingResponse[];
     }
   | { ok: false; status: number; detail: GetItineraryDetail };
 
@@ -1492,6 +1499,7 @@ export async function getItinerary(
         total_display: data.total_display ?? null,
         party_size: data.party_size ?? 1,
         viewer_open_fork_id: data.viewer_open_fork_id ?? null,
+        findings: data.findings ?? [],
       };
     }
     return {

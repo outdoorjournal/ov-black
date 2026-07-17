@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.kernel import (
     KernelViolation,
     ResolvedScheduleView,
+    Schedule,
     follows_order,
     relative,
     resolve_schedule,
@@ -164,6 +165,12 @@ class NodeOut(NamedTuple):
     # placement (the node is still in the Collection).
     schedule: ResolvedScheduleView | None = None
     schedule_synthesized: bool = False
+    # 0055/Phase 5 — the decoded kernel schedule the view above was projected
+    # from, carried so the feasibility surface (services.kernel_graph →
+    # kernel.analysis) analyzes exactly what the read served without a second
+    # decode. Synthesized slots do NOT land here (they are layout hints, not
+    # commitments to analyze). Never serialized.
+    kernel_schedule: Schedule | None = None
 
 
 class EdgeOut(NamedTuple):
@@ -1450,6 +1457,7 @@ async def get_itinerary_graph(
                 attached_to_node_id=row.attached_to_node_id,
                 needs_revalidation=row.needs_revalidation,
                 schedule=schedule_view,
+                kernel_schedule=decoded,
             )
         )
 

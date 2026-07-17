@@ -38,7 +38,7 @@ from app.config import get_settings
 from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
 from app.inventory.schemas import ExperienceItem, FlightItem
-from app.kernel import ResolvedScheduleView, ResolvedStampView, resolve_view
+from app.kernel import ResolvedScheduleView, ResolvedStampView, analyze, resolve_view
 from app.models import (
     CardTemplate,
     Client,
@@ -102,6 +102,7 @@ from app.services.itineraries import (
     update_itinerary_details,
     update_node,
 )
+from app.services.kernel_graph import kernel_graph_from_view
 from app.services.kernel_sync import decoded_schedule
 from app.services.link_preview import fetch_link_preview
 from app.services.node_cost import (
@@ -485,10 +486,31 @@ class EdgeResponse(BaseModel):
     metadata: dict[str, Any]
 
 
+class GraphFindingResponse(BaseModel):
+    """One kernel feasibility finding (Phase 5, doc/itin-time.md).
+
+    Judgements, never rejections: ``flight_infeasible`` (block) — the traveler
+    would still be in transit; ``flight_tight`` / ``overlap`` /
+    ``follows_gap`` (warn) — physically possible but deserves an advisor's
+    eye; ``stale`` (info) — a date-sensitive snapshot moved after it was
+    quoted. ``node_ids`` are the nodes the judgement is about, so the UI can
+    badge the exact cards.
+    """
+
+    code: str
+    severity: Literal["block", "warn", "info"]
+    message: str
+    node_ids: list[uuid.UUID]
+
+
 class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: list[NodeResponse]
     edges: list[EdgeResponse]
+    # Kernel feasibility findings over this graph (Phase 5) — flight margins,
+    # overlaps, follows-gap constraints, stale snapshots. Populated by the
+    # graph-read endpoint; other producers (fork/reconcile) leave it empty.
+    findings: list[GraphFindingResponse] = Field(default_factory=list)
     # Per-currency price of the plan (ADV-10): ``{currency: amount}`` summed over
     # the itinerary's priced, non-discarded, selected nodes — ``per_person``
     # amounts expanded by party size, matching the money-gate. Amounts serialize
@@ -1052,6 +1074,33 @@ def _node_response_from_node(node: Any, anchor: date | None = None) -> NodeRespo
     )
 
 
+def _findings_for_view(view: Any) -> list[GraphFindingResponse]:
+    """Run the kernel feasibility read over a served graph view (Phase 5).
+
+    Never raises past this boundary: a findings bug must not take down the
+    graph read — the feasibility surface degrades to empty instead.
+    """
+    try:
+        findings = analyze(kernel_graph_from_view(view))
+    except Exception:  # noqa: BLE001 — advisory surface, never fatal
+        logger.warning("itinerary.findings_failed", exc_info=True)
+        return []
+    out: list[GraphFindingResponse] = []
+    for f in findings:
+        severity: Literal["block", "warn", "info"] = (
+            "block" if f.severity == "block" else "info" if f.severity == "info" else "warn"
+        )
+        out.append(
+            GraphFindingResponse(
+                code=f.code,
+                severity=severity,
+                message=f.message,
+                node_ids=[uuid.UUID(nid) for nid in f.node_ids],
+            )
+        )
+    return out
+
+
 async def _anchor_date_of(session: AsyncSession, itinerary_id: uuid.UUID) -> date | None:
     """The itinerary's kernel Day-1 anchor, for write-path serialization.
 
@@ -1238,6 +1287,9 @@ async def get_itinerary_endpoint(
     totals = {c: str(a) for c, a in (await sum_node_costs(session, itinerary_id)).items()}
     party_size = await resolve_party_size(session, itinerary_id)
     response = _graph_to_response(result, totals=totals, party_size=party_size)
+    # Kernel feasibility read (Phase 5): findings, never rejections — the UI
+    # badges the cards, the advisor decides.
+    response.findings = _findings_for_view(result)
     # Convert totals + node costs into the client's preferred currency (0048).
     await _apply_display_currency(session, client_id=result.itinerary.client_id, response=response)
     response.itinerary.display_status = await _display_status_for(session, itinerary_id)

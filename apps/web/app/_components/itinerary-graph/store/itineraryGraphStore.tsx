@@ -51,6 +51,7 @@ import {
   type DisplayStatus,
   type FillProposalResponse,
   type FindingResponse,
+  type GraphFindingResponse,
   type ForkDiffResponse,
   type SearchInventoryQuery,
   type SearchInventoryResponse,
@@ -520,6 +521,10 @@ export type ItineraryGraphInit = {
   awaitingProposal?: boolean;
   /** Per-currency plan price from the `GraphResponse` (ADV-10). Empty by default. */
   totals?: Record<string, string>;
+  /** Kernel feasibility findings from the `GraphResponse` (Phase 5,
+   *  doc/itin-time.md) — seeded into `findings` so the Journal's problem
+   *  treatment lights up on load, not only after an advisor-run Analyze. */
+  graphFindings?: GraphFindingResponse[];
   /** 0048: preferred display currency + converted grand total (both nullable). */
   displayCurrency?: string | null;
   totalDisplay?: string | null;
@@ -818,6 +823,33 @@ function minuteOfDayFromIso(iso: string): number {
   return (Number.isFinite(hh) ? hh : 9) * 60 + (Number.isFinite(mm) ? mm : 0);
 }
 
+/**
+ * Kernel graph-read findings → the store's Analyze-shaped `findings` list
+ * (Phase 5, doc/itin-time.md). A kernel finding names every node it judges
+ * (an overlap names both cards), so it expands to one entry per node — the
+ * Journal's `journalProblems` keys problems by node id. Synthetic ids keep
+ * React keys stable; a later advisor-run Analyze simply replaces the list.
+ */
+export function seedFindingsFromGraph(
+  graphFindings: GraphFindingResponse[],
+): FindingResponse[] {
+  const out: FindingResponse[] = [];
+  for (const f of graphFindings) {
+    for (const nodeId of f.node_ids ?? []) {
+      out.push({
+        id: `kernel-${f.code}-${nodeId}`,
+        node_id: nodeId,
+        severity: f.severity,
+        category: f.code,
+        message: f.message,
+        evidence: {},
+        suggested_fix: null,
+      });
+    }
+  }
+  return out;
+}
+
 // The Phase 4 placement payload for a (dayKey, minuteOfDay) drop: trip terms
 // only — the kernel builds the schedule server-side (doc/itin-time.md). A
 // null minute (move-to-day, keep the time) reads the wall clock off the
@@ -849,6 +881,7 @@ export const itineraryGraphStore = createStoreContext<
     viewerOpenForkId = null,
     awaitingProposal = false,
     totals = {},
+    graphFindings = [],
     displayCurrency = null,
     totalDisplay = null,
     startLocked = false,
@@ -2096,7 +2129,9 @@ export const itineraryGraphStore = createStoreContext<
         analysisId: null,
         analyzeStatus: "idle",
         analyzePending: false,
-        findings: [],
+        // Seeded from the graph read's kernel findings (Phase 5) so problem
+        // treatment is on from first paint; an Analyze run replaces the list.
+        findings: seedFindingsFromGraph(graphFindings),
         analyzeSummary: null,
         fillProposals: [],
         fillPending: false,
