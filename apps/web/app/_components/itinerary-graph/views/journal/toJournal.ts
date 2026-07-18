@@ -85,6 +85,11 @@ export type JournalNight = {
   /** A non-hotel `night_bar` node bracketing this night, when the graph models
    *  one (hotels are spine cards, never nights); null = generic night wash. */
   node: NodeResponse | null;
+  /** Where the traveler sleeps this night — the lodging node whose stay covers
+   *  it (kernel presence: `nightly_lodging` on the graph read). Names the
+   *  night wash ("Night · Bellagio"); null = the plan leaves the night
+   *  roofless. A `night_bar` node still wins the caption when both exist. */
+  lodging?: NodeResponse | null;
 };
 
 export type JournalDaySection = {
@@ -109,6 +114,10 @@ export type JournalElision = {
   dayCount: number;
   /** The collapsed days, for the marker's expand affordance. */
   days: Array<{ date: string; label: string; index: number }>;
+  /** The ONE lodging covering every night of the collapsed run, when there is
+   *  one — the marker reads "open days at the Bellagio", not a hole in the
+   *  story. Null when the run is roofless or split across stays. */
+  lodging?: { nodeId: string; title: string } | null;
 };
 
 export type JournalSection = JournalDaySection | JournalElision;
@@ -119,12 +128,24 @@ export interface Journal {
   nodeCount: number;
 }
 
+/** One night's roof from the graph read's `nightly_lodging` (kernel presence):
+ *  the evening of Day `day_index` (1-based) is spent at node `node_id`; `on`
+ *  is its calendar date when the trip is anchored, null while undated. */
+export type NightLodgingInput = {
+  day_index: number;
+  on?: string | null;
+  node_id: string;
+};
+
 export interface ToJournalInput {
   nodes: NodeResponse[];
   edges: EdgeResponse[];
   /** The adapter's contiguous day scaffold (`ItineraryTimeline.days`). */
   days: ReadonlyArray<{ date: string; label: string }>;
   timezoneOffsetHours: number;
+  /** Kernel lodging presence — optional; without it nights render unnamed
+   *  exactly as before. */
+  nightlyLodging?: ReadonlyArray<NightLodgingInput>;
 }
 
 // ── Node visibility ───────────────────────────────────────────────────────────
@@ -382,6 +403,19 @@ export function toJournal(input: ToJournalInput): Journal {
     const key = dayKeyForNode(n, tz);
     if (key && !nightByDay.has(key)) nightByDay.set(key, n);
   }
+  // Lodging presence: scaffold day → the lodging node whose stay owns that
+  // night. The kernel's `day_index` is 1-based Day N, so Day 1 = days[0]; the
+  // scaffold mapping also covers undated trips (where `on` is null), with the
+  // anchored calendar date as the fallback for a scaffold that doesn't open
+  // on Day 1.
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
+  const lodgingByDate = new Map<string, NodeResponse>();
+  for (const nl of input.nightlyLodging ?? []) {
+    const date = days[nl.day_index - 1]?.date ?? nl.on;
+    if (!date) continue;
+    const node = nodeById.get(nl.node_id);
+    if (node) lodgingByDate.set(date, node);
+  }
 
   let nodeCount = 0;
   const daySections: JournalDaySection[] = days.map((d, index) => {
@@ -522,9 +556,13 @@ export function toJournal(input: ToJournalInput): Journal {
 
     const isEmpty = (cardsByDay.get(d.date) ?? []).length === 0;
     const hasNight = nightByDay.has(d.date);
+    const lodging = lodgingByDate.get(d.date) ?? null;
+    // A known roof makes even an empty day's night worth naming — a lone
+    // quiet day mid-stay closes with "Night · <hotel>" instead of a bare
+    // hole. (Runs of empty days still collapse; the elision names the roof.)
     const night: JournalNight | null =
-      index < days.length - 1 && (!isEmpty || hasNight)
-        ? { node: nightByDay.get(d.date) ?? null }
+      index < days.length - 1 && (!isEmpty || hasNight || lodging !== null)
+        ? { node: nightByDay.get(d.date) ?? null, lodging }
         : null;
 
     return { kind: "day", date: d.date, label: d.label, index, entries, night };
@@ -563,6 +601,14 @@ export function toJournal(input: ToJournalInput): Journal {
     const first = run[0];
     const last = run[run.length - 1];
     if (run.length >= ELISION_MIN_DAYS && first && last) {
+      // One roof over the whole run → the marker names it ("at the Bellagio").
+      // Mixed or partial coverage stays anonymous — naming one hotel over a
+      // run that changes rooms would misplace the traveler.
+      const roofIds = new Set(
+        run.map((s) => lodgingByDate.get(s.date)?.id ?? null),
+      );
+      const roofId = roofIds.size === 1 ? [...roofIds][0] : null;
+      const roof = roofId ? (nodeById.get(roofId) ?? null) : null;
       sections.push({
         kind: "elision",
         startDate: first.date,
@@ -571,6 +617,7 @@ export function toJournal(input: ToJournalInput): Journal {
         endLabel: last.label,
         dayCount: run.length,
         days: run.map((s) => ({ date: s.date, label: s.label, index: s.index })),
+        lodging: roof ? { nodeId: roof.id, title: roof.title } : null,
       });
     } else {
       sections.push(...run);

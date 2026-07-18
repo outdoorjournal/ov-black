@@ -137,6 +137,7 @@ export function JournalView({
   const nodes = itineraryGraphStore.useStore((s) => s.nodes);
   const edges = itineraryGraphStore.useStore((s) => s.edges);
   const findings = itineraryGraphStore.useStore((s) => s.findings);
+  const nightlyLodging = itineraryGraphStore.useStore((s) => s.nightlyLodging);
   const focusedNodeId = itineraryGraphStore.useStore((s) => s.focusedNodeId);
   const focusNode = itineraryGraphStore.useStore((s) => s.focusNode);
   const awaitingProposal = itineraryGraphStore.useStore((s) => s.awaitingProposal);
@@ -172,6 +173,7 @@ export function JournalView({
       edges,
       days: timeline.days,
       timezoneOffsetHours: tz,
+      nightlyLodging,
     };
     if (diff) return toJournalDiff({ ...base, diff });
     // Toggled on, response not landed yet — the compare register (and the
@@ -185,7 +187,7 @@ export function JournalView({
       total: 0,
       summary: "",
     };
-  }, [diffActive, diff, nodes, edges, timeline.days, tz]);
+  }, [diffActive, diff, nodes, edges, timeline.days, tz, nightlyLodging]);
   const journal = useMemo(
     () =>
       diffView?.journal ??
@@ -194,8 +196,9 @@ export function JournalView({
         edges,
         days: timeline.days,
         timezoneOffsetHours: tz,
+        nightlyLodging,
       }),
-    [diffView, nodes, edges, timeline.days, tz],
+    [diffView, nodes, edges, timeline.days, tz, nightlyLodging],
   );
   // Embedded subgraphs (a multi-day card's internal journey), parent → days.
   const subgraphChildren = useMemo(
@@ -951,7 +954,18 @@ function DaySection({
           />
         ) : null}
         {section.night ? (
-          <NightSegment title={section.night.node?.title} />
+          <NightSegment
+            title={section.night.node?.title ?? section.night.lodging?.title}
+            lodging={
+              section.night.lodging
+                ? {
+                    nodeId: section.night.lodging.id,
+                    title: section.night.lodging.title,
+                  }
+                : null
+            }
+            onActivateLodging={onActivate}
+          />
         ) : null}
       </div>
     </section>

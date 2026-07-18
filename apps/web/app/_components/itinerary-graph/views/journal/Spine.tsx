@@ -362,11 +362,33 @@ export function QuietCircle() {
  * shape that competes with the duration bars. When the graph models the night
  * with a (non-hotel) `night_bar` node its title names the stop; hotels are
  * spine cards now, so they never appear here.
+ *
+ * A ROOFED night (kernel lodging presence) trades the ☾ for the hotel's own
+ * icon-in-circle on the spine — a quiet miniature of the card's identity —
+ * and both the circle and the caption are click targets that activate the
+ * hotel card (pin it for the rail / open its detail), so "where am I sleeping
+ * tonight" is always one tap from the night itself.
  */
-export function NightSegment({ title }: { title?: string | undefined }) {
+export function NightSegment({
+  title,
+  lodging = null,
+  onActivateLodging,
+}: {
+  title?: string | undefined;
+  /** The night's roof — the lodging node whose stay covers this night. */
+  lodging?: { nodeId: string; title: string } | null;
+  /** The Journal's card-activate gesture (pin + rail follow / detail route). */
+  onActivateLodging?: ((nodeId: string) => void) | undefined;
+}) {
   // Dusk (~19:00) melting into deep night (~23:30) — sampled from the shared
   // sun stops so the Journal and the planner's axis speak the same sky.
   const wash = `linear-gradient(180deg, ${sunColorAtHour(18.5)} 0%, ${sunColorAtHour(20.5)} 45%, ${sunColorAtHour(23.5)} 100%)`;
+  const hotel = TYPE_TOKENS.hotel;
+  const caption = title ?? lodging?.title;
+  const activate =
+    lodging && onActivateLodging
+      ? () => onActivateLodging(lodging.nodeId)
+      : null;
   return (
     <div
       data-testid="journal-night"
@@ -393,12 +415,58 @@ export function NightSegment({ title }: { title?: string | undefined }) {
               "radial-gradient(120% 100% at 50% 0%, #000 55%, transparent 100%)",
           }}
         >
-          <span className="text-[10px] leading-none text-paper/90">☾</span>
+          {lodging ? null : (
+            <span className="text-[10px] leading-none text-paper/90">☾</span>
+          )}
         </span>
+        {/* The roof's circle rides the spine ABOVE the wash (the wash is
+            -z-10; a control can't live at negative z). Quietly smaller than
+            an event's SpineCircle — presence, not a competing moment. */}
+        {lodging ? (
+          activate ? (
+            <button
+              type="button"
+              data-testid="journal-night-lodging-circle"
+              aria-label={`Night at ${lodging.title} — view the hotel`}
+              onClick={activate}
+              className="absolute top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full text-paper transition-transform hover:scale-110"
+              style={{
+                backgroundColor: hotel.accent,
+                boxShadow: "0 0 0 1px rgba(10,10,10,0.18)",
+              }}
+            >
+              <hotel.Icon size={12} strokeWidth={1.8} aria-hidden />
+            </button>
+          ) : (
+            <span
+              role="img"
+              aria-label={`Night at ${lodging.title}`}
+              data-testid="journal-night-lodging-circle"
+              className="absolute top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full text-paper"
+              style={{
+                backgroundColor: hotel.accent,
+                boxShadow: "0 0 0 1px rgba(10,10,10,0.18)",
+              }}
+            >
+              <hotel.Icon size={12} strokeWidth={1.8} aria-hidden />
+            </span>
+          )
+        ) : null}
       </div>
-      <p className="flex items-center font-serif text-[12px] italic text-ink/40">
-        {title ? `Night · ${title}` : "Night"}
-      </p>
+      {activate ? (
+        <button
+          type="button"
+          data-testid="journal-night-lodging"
+          onClick={activate}
+          className="flex items-center text-left font-serif text-[12px] italic text-ink/40 underline-offset-4 transition-colors hover:text-ink hover:underline"
+        >
+          {caption ? `Night · ${caption}` : "Night"}
+        </button>
+      ) : (
+        <p className="flex items-center font-serif text-[12px] italic text-ink/40">
+          {caption ? `Night · ${caption}` : "Night"}
+        </p>
+      )}
     </div>
   );
 }

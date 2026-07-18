@@ -159,6 +159,7 @@ import type {
   ClientSummary,
   ClientUpdatePayload,
   GraphFindingResponse,
+  NightLodgingResponse,
   CreateEdgeRequest,
   CreateItineraryRequest,
   CreateNodeRequest,
@@ -268,6 +269,8 @@ export type {
   SchedulePlacementPayload,
   // Phase 5: kernel feasibility findings on the graph read.
   GraphFindingResponse,
+  // Lodging-as-presence: night → lodging coverage on the graph read.
+  NightLodgingResponse,
 } from "./generated/types.gen.js";
 
 // Inventory (S02): the discriminated InventoryItem union and its nested
@@ -1470,6 +1473,9 @@ export type GetItineraryResult =
       // flight margins, overlaps, follows-gap constraints, stale snapshots.
       // `[]` when the plan is clean.
       findings: GraphFindingResponse[];
+      // Lodging-as-presence (doc/itin-time.md): every covered trip night →
+      // the lodging node whose stay owns it. `[]` when no stay covers a night.
+      nightly_lodging: NightLodgingResponse[];
     }
   | { ok: false; status: number; detail: GetItineraryDetail };
 
@@ -1500,6 +1506,7 @@ export async function getItinerary(
         party_size: data.party_size ?? 1,
         viewer_open_fork_id: data.viewer_open_fork_id ?? null,
         findings: data.findings ?? [],
+        nightly_lodging: data.nightly_lodging ?? [],
       };
     }
     return {

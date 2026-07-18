@@ -151,6 +151,7 @@ export default async function ItineraryLayout({
         awaitingProposal={awaitingProposal}
         totals={result.totals}
         graphFindings={result.findings}
+        nightlyLodging={result.nightly_lodging}
         displayCurrency={result.display_currency ?? null}
         totalDisplay={result.total_display ?? null}
       >

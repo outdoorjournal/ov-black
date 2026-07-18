@@ -192,10 +192,12 @@ function FlightBody({
   const arrive = meta.arrive_at
     ? formatClock(meta.arrive_at, offsetHoursOr(meta.arrive_at, tzOffsetHours))
     : null;
-  // Boarding-pass "+N": a red-eye departs one local date and lands on a later
-  // one, but the timing strip only shows wall-clock HH:MM — so 04:34 reads as
-  // the SAME day it departed. Count local date boundaries crossed (each end in
-  // its own offset) and mark the arrival with a "+1"/"+2" the way airlines do.
+  // Boarding-pass "+N"/"−N": a red-eye departs one local date and lands on a
+  // later one, but the timing strip only shows wall-clock HH:MM — so 04:34
+  // reads as the SAME day it departed. Count local date boundaries crossed
+  // (each end in its own offset) and mark the arrival the way airlines do:
+  // "+1"/"+2" eastbound overnight, "−1" westbound across the date line
+  // (Tokyo → LAX lands the previous local day).
   const arriveDayDelta =
     meta.depart_at && meta.arrive_at
       ? localDayIndex(meta.arrive_at, offsetHoursOr(meta.arrive_at, tzOffsetHours)) -
@@ -242,9 +244,9 @@ function FlightBody({
           ) : null}
           <span>
             {arrive ?? "—"}
-            {arrive && arriveDayDelta > 0 ? (
+            {arrive && arriveDayDelta !== 0 ? (
               <sup className="ml-0.5 text-[8px] font-medium text-ink/45">
-                +{arriveDayDelta}
+                {arriveDayDelta > 0 ? `+${arriveDayDelta}` : `−${-arriveDayDelta}`}
               </sup>
             ) : null}
           </span>

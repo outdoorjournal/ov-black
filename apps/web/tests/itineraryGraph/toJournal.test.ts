@@ -16,6 +16,7 @@ import {
   toJournal,
   type JournalDaySection,
   type JournalEntry,
+  type NightLodgingInput,
 } from "@/app/_components/itinerary-graph/views/journal/toJournal";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -70,13 +71,18 @@ function days(count: number): Array<{ date: string; label: string }> {
 
 function journal(
   nodes: NodeResponse[],
-  opts: { edges?: EdgeResponse[]; dayCount?: number } = {},
+  opts: {
+    edges?: EdgeResponse[];
+    dayCount?: number;
+    nightlyLodging?: ReadonlyArray<NightLodgingInput>;
+  } = {},
 ) {
   return toJournal({
     nodes,
     edges: opts.edges ?? [],
     days: days(opts.dayCount ?? 2),
     timezoneOffsetHours: TZ,
+    ...(opts.nightlyLodging ? { nightlyLodging: opts.nightlyLodging } : {}),
   });
 }
 
@@ -248,8 +254,115 @@ describe("toJournal · nights", () => {
       node("a", "2024-06-20T09:00:00+09:00"),
       node("b", "2024-06-21T10:00:00+09:00"),
     ]);
-    expect(daySection(result, 0).night).toEqual({ node: null });
+    expect(daySection(result, 0).night).toEqual({ node: null, lodging: null });
     expect(daySection(result, 1).night).toBeNull();
+  });
+});
+
+// ── Lodging presence (kernel `nightly_lodging` on the graph read) ─────────────
+describe("toJournal · lodging presence", () => {
+  const hotel = () =>
+    node("grand-hotel", "2024-06-20T16:00:00+09:00", { type: "hotel" });
+
+  test("a covered night names its lodging on the day's night treatment", () => {
+    const result = journal([hotel(), node("exp", "2024-06-20T09:00:00+09:00")], {
+      nightlyLodging: [
+        { day_index: 1, on: "2024-06-20", node_id: "grand-hotel" },
+      ],
+    });
+    const day1 = daySection(result, 0);
+    expect(day1.night?.lodging?.id).toBe("grand-hotel");
+    // The hotel stays a spine card — presence names the night, never demotes.
+    expect(
+      day1.entries.some((e) => e.kind === "node" && e.node.id === "grand-hotel"),
+    ).toBe(true);
+  });
+
+  test("an empty mid-stay day still closes with a named night (day_index path, undated)", () => {
+    // Nights carry no calendar date while the trip is undated (`on: null`) —
+    // the 1-based day_index maps onto the scaffold. Day 2 is empty but roofed,
+    // so it closes with a night instead of a bare hole.
+    const result = journal(
+      [
+        hotel(),
+        node("exp", "2024-06-20T09:00:00+09:00"),
+        node("exp3", "2024-06-22T10:00:00+09:00"),
+      ],
+      {
+        dayCount: 3,
+        nightlyLodging: [
+          { day_index: 1, on: null, node_id: "grand-hotel" },
+          { day_index: 2, on: null, node_id: "grand-hotel" },
+        ],
+      },
+    );
+    const day2 = daySection(result, 1);
+    expect(day2.night?.lodging?.id).toBe("grand-hotel");
+    expect(day2.night?.node).toBeNull();
+  });
+
+  test("an elided run under one roof names it; a split run stays anonymous", () => {
+    // Days 2–4 are empty (≥ ELISION_MIN_DAYS) with every night at one hotel →
+    // the elision carries the roof.
+    const oneRoof = journal(
+      [
+        hotel(),
+        node("exp", "2024-06-20T09:00:00+09:00"),
+        node("exp5", "2024-06-24T10:00:00+09:00"),
+      ],
+      {
+        dayCount: 5,
+        nightlyLodging: [1, 2, 3, 4].map((day_index) => ({
+          day_index,
+          on: `2024-06-${19 + day_index}`,
+          node_id: "grand-hotel",
+        })),
+      },
+    );
+    const elision = oneRoof.sections[1];
+    if (!elision || elision.kind !== "elision") {
+      throw new Error("sections[1] is not an elision");
+    }
+    expect(elision.dayCount).toBe(3);
+    expect(elision.lodging).toEqual({
+      nodeId: "grand-hotel",
+      title: "grand-hotel",
+    });
+
+    // Same shape but the run changes rooms mid-way → no single roof to name.
+    const splitRoof = journal(
+      [
+        hotel(),
+        node("ryokan", "2024-06-22T15:00:00+09:00", { type: "hotel" }),
+        node("exp", "2024-06-20T09:00:00+09:00"),
+        node("exp5", "2024-06-24T10:00:00+09:00"),
+      ],
+      {
+        dayCount: 5,
+        nightlyLodging: [
+          { day_index: 1, on: "2024-06-20", node_id: "grand-hotel" },
+          { day_index: 2, on: "2024-06-21", node_id: "grand-hotel" },
+          { day_index: 3, on: "2024-06-22", node_id: "ryokan" },
+          { day_index: 4, on: "2024-06-23", node_id: "ryokan" },
+        ],
+      },
+    );
+    // Day 3 now carries the ryokan card, so the empty run is days 2 and 4 —
+    // split into two single days? No: day 2 (grand-hotel) and day 4 (ryokan)
+    // are separated by the card day, so neither run reaches ELISION_MIN_DAYS;
+    // both render as open days with named nights instead.
+    const day2 = daySection(splitRoof, 1);
+    const day4 = daySection(splitRoof, 3);
+    expect(day2.night?.lodging?.id).toBe("grand-hotel");
+    expect(day4.night?.lodging?.id).toBe("ryokan");
+  });
+
+  test("without lodging data nights render exactly as before", () => {
+    const result = journal([
+      node("a", "2024-06-20T09:00:00+09:00"),
+      node("b", "2024-06-21T10:00:00+09:00"),
+    ]);
+    expect(daySection(result, 0).night?.lodging ?? null).toBeNull();
   });
 });
 

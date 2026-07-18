@@ -223,6 +223,7 @@ export function ElisionMarker({
             </span>
             <span aria-hidden className="text-ink/35">
               · {rangeLabel}
+              {elision.lodging ? ` · at ${elision.lodging.title}` : ""}
             </span>
           </button>
           {jumpLabel ? (
@@ -262,7 +263,8 @@ export function ElisionMarker({
                     <QuietCircle />
                   </div>
                   <p className="font-serif text-[12px] italic text-ink/40">
-                    {d.label} — open
+                    {d.label} —{" "}
+                    {elision.lodging ? `at ${elision.lodging.title}` : "open"}
                   </p>
                 </div>
               ))}

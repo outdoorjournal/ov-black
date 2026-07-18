@@ -52,6 +52,7 @@ import {
   type FillProposalResponse,
   type FindingResponse,
   type GraphFindingResponse,
+  type NightLodgingResponse,
   type ForkDiffResponse,
   type SearchInventoryQuery,
   type SearchInventoryResponse,
@@ -475,6 +476,10 @@ export type ItineraryGraphState = {
   analyzeStatus: AnalysisStatus | "idle";
   analyzePending: boolean;
   findings: FindingResponse[];
+  /** Lodging-as-presence from the graph read (doc/itin-time.md): each covered
+   *  trip night → the lodging node whose stay owns it. The Journal's night
+   *  treatment reads it; refreshed with the server graph, never mutated here. */
+  nightlyLodging: NightLodgingResponse[];
   analyzeSummary: string | null;
   fillProposals: FillProposalResponse[];
   fillPending: boolean;
@@ -525,6 +530,9 @@ export type ItineraryGraphInit = {
    *  doc/itin-time.md) — seeded into `findings` so the Journal's problem
    *  treatment lights up on load, not only after an advisor-run Analyze. */
   graphFindings?: GraphFindingResponse[];
+  /** Lodging-as-presence night coverage from the graph read — drives the
+   *  Journal's night treatment ("Night · Bellagio") and elision annotation. */
+  nightlyLodging?: NightLodgingResponse[];
   /** 0048: preferred display currency + converted grand total (both nullable). */
   displayCurrency?: string | null;
   totalDisplay?: string | null;
@@ -882,6 +890,7 @@ export const itineraryGraphStore = createStoreContext<
     awaitingProposal = false,
     totals = {},
     graphFindings = [],
+    nightlyLodging = [],
     displayCurrency = null,
     totalDisplay = null,
     startLocked = false,
@@ -2132,6 +2141,7 @@ export const itineraryGraphStore = createStoreContext<
         // Seeded from the graph read's kernel findings (Phase 5) so problem
         // treatment is on from first paint; an Analyze run replaces the list.
         findings: seedFindingsFromGraph(graphFindings),
+        nightlyLodging,
         analyzeSummary: null,
         fillProposals: [],
         fillPending: false,

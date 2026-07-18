@@ -90,6 +90,28 @@ describe("flight Node card", () => {
     expect(screen.getByText("+1")).toBeInTheDocument();
   });
 
+  test("a westbound date-line crossing marks the arrival with −1 (lands the previous local day)", () => {
+    // Tokyo → LA just past midnight JST: departs 07-11 00:30 (+09:00), lands
+    // 07-10 17:30 (−07:00) — the PREVIOUS local calendar day. Airlines mark
+    // this "−1"; a bare 17:30 would read as same-day.
+    const node = flightNode({
+      title: "HND → LAX · ANA",
+      metadata: {
+        kind: "flight",
+        iata_from: "HND",
+        iata_to: "LAX",
+        depart_at: "2026-07-11T00:30:00+09:00",
+        arrive_at: "2026-07-10T17:30:00-07:00",
+        start_time: "2026-07-11T00:30:00+09:00",
+        duration_minutes: 540,
+      },
+    });
+    render(<NodeCard node={node} tzOffsetHours={9} />);
+    expect(screen.getByText("00:30")).toBeInTheDocument();
+    expect(screen.getByText("17:30")).toBeInTheDocument();
+    expect(screen.getByText("−1")).toBeInTheDocument();
+  });
+
   test("a same-day flight carries no +N marker", () => {
     const node = flightNode({
       metadata: {
