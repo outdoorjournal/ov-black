@@ -32,6 +32,12 @@ from app.inventory.schemas import ItineraryDay, Location
 from app.models import NodeType
 
 
+def _hhmm_minutes(hhmm: str) -> int:
+    """An ``"HH:MM"`` wall time as minutes past local midnight."""
+    hh, mm = (int(part) for part in hhmm.split(":", 1))
+    return hh * 60 + mm
+
+
 @dataclass(frozen=True)
 class CornerstoneBeat:
     """One inferred moment within a cornerstone day — a virtual sub-node.
@@ -140,6 +146,25 @@ class OlympusCornerstone:
     #: The trip's internal day-by-day itinerary — baked from OV, materialized as
     #: the summit node's subgraph children (see :func:`itinerary_days`).
     days: tuple[CornerstoneDay, ...] = field(default_factory=tuple)
+
+    def anchor_duration_minutes(self) -> int:
+        """Minutes from the day-1 meet (``anchor_hhmm``) to the last beat's end
+        on the final day — the anchor card's TRUE span.
+
+        The old whole-days estimate (``len(days) * 24h``) ran a mid-afternoon
+        start past the trip's last day and into the extension's first morning,
+        which analysis correctly read as a phantom overlap; the guided trip
+        actually ends when its final beat does (the airport drop, the drive
+        back to the village). Whole days remain the fallback for a beat-less
+        cornerstone (none ship today).
+        """
+        start_minute = _hhmm_minutes(self.anchor_hhmm)
+        days_with_beats = [day for day in self.days if day.beats]
+        if not days_with_beats:
+            return max(len(self.days), 1) * 24 * 60
+        last = max(days_with_beats, key=lambda day: day.day)
+        end_minute = max(_hhmm_minutes(b.hhmm) + b.duration_minutes for b in last.beats)
+        return (last.day - 1) * 24 * 60 + end_minute - start_minute
 
     def itinerary_days(self) -> list[ItineraryDay]:
         """The cornerstone's days as :class:`ItineraryDay`, subgraph-ready.

@@ -3,7 +3,8 @@
 Structural validity is the primitives' job; everything here is a judgement
 about a graph that is already legal to hold — overlaps, follows-gaps, flight
 feasibility (ported from apps/agent flight_timing, now running on true resolved
-instants so cross-zone ordering is exact), stale snapshots, and diffs between
+instants so cross-zone ordering is exact), lodging windows (check-in
+reachability, checkout-morning conflicts), stale snapshots, and diffs between
 two graphs.
 
 An undated trip is analyzed on a provisional calendar: ordering, overlaps, and
@@ -14,18 +15,29 @@ DST-specific instants only become exact once the trip is pinned.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from math import asin, cos, radians, sin, sqrt
 
 from app.kernel.graph import Graph, Node
-from app.kernel.schedule import ResolvedSpan, resolve_schedule
+from app.kernel.presence import LODGING_TYPES
+from app.kernel.schedule import (
+    AbsoluteStamp,
+    RelativeStamp,
+    ResolvedSpan,
+    resolve_schedule,
+    resolve_wall,
+)
 from app.models.itinerary import EdgeType, NodeStatus, NodeType
 
-# Types that mean "the traveler must physically be on the ground" — these
-# anchor the flight-feasibility floor. Transit kinds don't (a drive is usually
-# the airport transfer itself); notes and articles are not commitments.
-_GROUND_TYPES = frozenset(
-    {NodeType.experience, NodeType.hotel, NodeType.meal, NodeType.free_time, NodeType.destination}
+# Types that mean "the traveler must physically be at an event" — these anchor
+# the flight-feasibility floor and the overlap read. Transit kinds don't (a
+# drive is usually the airport transfer itself); notes and articles are not
+# commitments. Lodging is deliberately absent: a stay is presence, not an
+# event — its span is *supposed* to contain every dinner and tour of the trip,
+# and the only moments that carry constraints (check-in reachability, checkout
+# morning) get their own findings in ``lodging_findings``.
+_EVENT_TYPES = frozenset(
+    {NodeType.experience, NodeType.meal, NodeType.free_time, NodeType.destination}
 )
 
 # Margins below which a physically-possible connection is still called out as
@@ -44,7 +56,9 @@ _PROVISIONAL_ANCHOR = date(2001, 1, 1)
 
 @dataclass(frozen=True)
 class Finding:
-    code: str  # "flight_infeasible" | "flight_tight" | "overlap" | "follows_gap" | "stale"
+    # "flight_infeasible" | "flight_tight" | "overlap" | "follows_gap" |
+    # "lodging_checkin_late" | "lodging_checkout_conflict" | "stale"
+    code: str
     severity: str  # "block" | "warn" | "info"
     message: str
     node_ids: tuple[str, ...]
@@ -92,13 +106,15 @@ def _intentional_pairs(graph: Graph) -> set[frozenset[str]]:
 
 
 def overlap_findings(graph: Graph) -> list[Finding]:
-    """Ground commitments whose resolved spans intersect — unless the graph
-    says the overlap is intentional (alternative_to / grouped_with edges)."""
+    """Event commitments whose resolved spans intersect — unless the graph
+    says the overlap is intentional (alternative_to / grouped_with edges).
+    Lodging never participates: a multi-night stay containing the trip's
+    dinners is the point of a hotel, not a conflict."""
     anchor = effective_anchor(graph)
     intentional = _intentional_pairs(graph)
     spanned: list[tuple[Node, datetime, datetime]] = []
     for node in graph.nodes.values():
-        if node.type not in _GROUND_TYPES:
+        if node.type not in _EVENT_TYPES:
             continue
         span = _span(node, anchor)
         if span is None or span.end is None:
@@ -210,16 +226,27 @@ def _classify_lone(leg: _Leg, base: tuple[float, float] | None) -> tuple[_Leg | 
 
 
 def flight_findings(graph: Graph) -> list[Finding]:
-    """The outbound must land before the first ground commitment begins; the
+    """The outbound must land before the first event commitment begins; the
     return must depart after the last one ends. Blocks fire only on physical
     impossibility; tight margins warn. Resolution gives true instants, so a
     Detroit departure and an Athens arrival compare exactly.
+
+    Lodging is not part of the floor: a check-in is a window, not a start you
+    can miss (``lodging_findings`` judges it against the desk cutoff), and a
+    checkout is not an end you must stay for — an early return flight before
+    checkout time is normal, not infeasible. Lodging still anchors the base
+    location, since the hotel is usually the best-placed node.
     """
     anchor = effective_anchor(graph)
     grounds = [
         _Ground(span.start, span.end if span.end is not None else span.start, node)
         for node in graph.nodes.values()
-        if node.type in _GROUND_TYPES and (span := _span(node, anchor)) is not None
+        if node.type in _EVENT_TYPES and (span := _span(node, anchor)) is not None
+    ]
+    lodgings = [
+        _Ground(span.start, span.end if span.end is not None else span.start, node)
+        for node in graph.nodes.values()
+        if node.type in LODGING_TYPES and (span := _span(node, anchor)) is not None
     ]
     first, last = _ground_bounds(grounds)
     if first is None or last is None:
@@ -256,7 +283,7 @@ def flight_findings(graph: Graph) -> list[Finding]:
         )
         inbound: _Leg | None = max(legs, key=lambda leg: leg.depart)
     else:
-        outbound, inbound = _classify_lone(legs[0], _base_location(grounds))
+        outbound, inbound = _classify_lone(legs[0], _base_location(grounds + lodgings))
 
     findings: list[Finding] = []
     if outbound is not None and outbound.arrive is not None:
@@ -320,6 +347,113 @@ def flight_findings(graph: Graph) -> list[Finding]:
     return findings
 
 
+# ── lodging: the first night is a window, the last morning a soft deadline ───
+
+# Arrivals this long after the check-in date's local midnight still belong to
+# the check-in night (covers a red-eye landing at 01:30 the next local date).
+_CHECKIN_NIGHT_HOURS = 36
+
+
+def _cutoff_wall(value: object) -> time | None:
+    """Parse a ``check_in_cutoff`` card value ("HH:MM"); None on anything else."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = time.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is None else None
+
+
+def _stamp_local_date(stamp: RelativeStamp | AbsoluteStamp, anchor: date) -> date:
+    if isinstance(stamp, AbsoluteStamp):
+        return stamp.on
+    return anchor + timedelta(days=stamp.day_offset)
+
+
+def lodging_findings(graph: Graph) -> list[Finding]:
+    """A stay's two real timeline moments, judged as windows — never blocks.
+
+    Check-in reachability: the first night is the only one you must *get to*,
+    and even that is a window. When the card carries a ``check_in_cutoff``
+    ("HH:MM" wall time at the property; absent means a 24h desk and no
+    finding), and every flight landing around the check-in night arrives
+    after it, the desk may be closed on the traveler.
+
+    Checkout conflict: an event still running at checkout time on the last
+    morning means luggage or late-checkout logistics an advisor should see.
+    """
+    anchor = effective_anchor(graph)
+    arrivals: list[tuple[datetime, Node]] = []
+    for node in graph.nodes.values():
+        if node.type is not NodeType.flight:
+            continue
+        span = _span(node, anchor)
+        if span is not None and span.end is not None:
+            arrivals.append((span.end, node))
+
+    findings: list[Finding] = []
+    for node in graph.nodes.values():
+        if node.type not in LODGING_TYPES:
+            continue
+        span = _span(node, anchor)
+        if span is None:
+            continue
+
+        cutoff_wall = _cutoff_wall(node.content.get("check_in_cutoff"))
+        if cutoff_wall is not None and arrivals:
+            checkin_stamp = node.schedule.start if node.schedule is not None else None
+            if checkin_stamp is not None:
+                checkin_date = _stamp_local_date(checkin_stamp, anchor)
+                tz_name = checkin_stamp.tz_name
+                cutoff = resolve_wall(checkin_date, cutoff_wall, tz_name)
+                if cutoff < span.start:  # an after-midnight cutoff (e.g. 01:00)
+                    cutoff = resolve_wall(checkin_date + timedelta(days=1), cutoff_wall, tz_name)
+                night_open = resolve_wall(checkin_date, time(0, 0), tz_name)
+                night_close = night_open + timedelta(hours=_CHECKIN_NIGHT_HOURS)
+                night_arrivals = [a for a in arrivals if night_open <= a[0] < night_close]
+                if night_arrivals:
+                    earliest, leg = min(night_arrivals, key=lambda a: a[0])
+                    if earliest > cutoff:
+                        late = int((earliest - cutoff).total_seconds() // 60)
+                        findings.append(
+                            Finding(
+                                code="lodging_checkin_late",
+                                severity="warn",
+                                message=(
+                                    f"'{leg.title}' lands {_fmt(earliest)}, {late} min after "
+                                    f"'{node.title}' stops check-in ({_fmt(cutoff)}) — the desk "
+                                    f"may be closed on arrival night."
+                                ),
+                                node_ids=(node.id, leg.id),
+                            )
+                        )
+
+        checkout = span.end
+        if checkout is None:
+            continue
+        for other in graph.nodes.values():
+            if other.type not in _EVENT_TYPES:
+                continue
+            ospan = _span(other, anchor)
+            if ospan is None or ospan.end is None:
+                continue
+            if span.start <= ospan.start < checkout < ospan.end:
+                findings.append(
+                    Finding(
+                        code="lodging_checkout_conflict",
+                        severity="warn",
+                        message=(
+                            f"'{other.title}' ({_fmt(ospan.start)}–{_fmt(ospan.end)}) is still "
+                            f"running when '{node.title}' checkout closes ({_fmt(checkout)}) — "
+                            f"plan luggage or a late checkout."
+                        ),
+                        node_ids=(node.id, other.id),
+                    )
+                )
+    return findings
+
+
 # ── staleness ────────────────────────────────────────────────────────────────
 
 
@@ -340,6 +474,7 @@ def analyze(graph: Graph) -> tuple[Finding, ...]:
     """The full feasibility read: every finding, never an exception."""
     return tuple(
         flight_findings(graph)
+        + lodging_findings(graph)
         + overlap_findings(graph)
         + follows_findings(graph)
         + stale_findings(graph)

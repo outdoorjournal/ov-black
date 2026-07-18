@@ -8,7 +8,7 @@ Two halves:
 * Integration — a real graph read produces kernel findings for the classic
   cases (the Detroit→Thessaloniki arrival-after-first-item flight, an
   overlap, a stale moved quote), serialized as ``GraphFindingResponse`` on
-  the graph-read endpoint's ``findings`` field via ``_findings_for_view``.
+  the graph-read endpoint's ``findings`` field via ``_kernel_read_for_view``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import pytest
 import pytest_asyncio
 from app.kernel import analyze, relative
 from app.models import EdgeType, ItineraryTimingKind, NodeStatus, NodeType
-from app.routers.itineraries import _findings_for_view
+from app.routers.itineraries import _kernel_read_for_view
 from app.services.itineraries import (
     ActorContext,
     ActorKind,
@@ -213,7 +213,7 @@ async def test_late_outbound_produces_flight_infeasible_block(db_session: AsyncS
         assert set(blocks[0].node_ids) == {str(flight.id), str(first.id)}
 
         # And the router serialization carries the same judgement.
-        responses = _findings_for_view(view)
+        responses, _nights = _kernel_read_for_view(view)
         assert any(
             r.code == "flight_infeasible" and r.severity == "block" and flight.id in r.node_ids
             for r in responses
@@ -276,7 +276,7 @@ async def test_overlap_and_stale_findings_on_graph_read(db_session: AsyncSession
 
         view = await get_itinerary_graph(db_session, itin.id)
         assert isinstance(view, GraphView)
-        by_code = {f.code: f for f in _findings_for_view(view)}
+        by_code = {f.code: f for f in _kernel_read_for_view(view)[0]}
 
         assert "overlap" in by_code
         assert by_code["overlap"].severity == "warn"
@@ -332,6 +332,6 @@ async def test_alternatives_do_not_overlap_warn(db_session: AsyncSession) -> Non
 
         view = await get_itinerary_graph(db_session, itin.id)
         assert isinstance(view, GraphView)
-        assert all(f.code != "overlap" for f in _findings_for_view(view))
+        assert all(f.code != "overlap" for f in _kernel_read_for_view(view)[0])
     finally:
         await _cleanup(db_session, itin.id)

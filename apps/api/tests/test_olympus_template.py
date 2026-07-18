@@ -89,6 +89,64 @@ def test_beats_are_fully_authored() -> None:
 
 @integration
 @pytest.mark.asyncio
+async def test_travel_day_placeholder_leads_the_spine() -> None:
+    """Day 1 is a held travel placeholder; everything else shifts down a day.
+
+    The traveler needs the first day open to fly in, so the spine leads with a
+    single free_time card whose note says the day is reserved for travel, the
+    cornerstone anchor lands on day 2, and the extension is prefix-sliced one
+    day shorter so the trip still fits its nights.
+    """
+    await _delete_olympus_templates()
+    engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+    day_minutes = 24 * 60
+    try:
+        async with maker() as session:
+            nights = 14
+            template = await build_olympus_template(session, nights=nights)
+            cornerstone = cornerstone_for_nights(nights, longest=max(OLYMPUS_SPINE_SLUGS))
+            rows = (
+                (
+                    await session.execute(
+                        select(TemplateNode).where(TemplateNode.template_id == template.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            spine = [n for n in rows if n.parent_id is None]
+
+            travel = next(n for n in spine if n.title == "Travel day — held for your arrival")
+            assert travel.type.value == "free_time"
+            assert travel.starts_at_offset_minutes is not None
+            assert 0 <= travel.starts_at_offset_minutes < day_minutes, "travel owns day 1"
+            assert "held open for travel" in travel.metadata_["description"]
+
+            # Everything else starts day 2 or later, and the whole spine still
+            # fits the trip frame (depart on day nights+1 at the latest).
+            others = [n for n in spine if n.id != travel.id]
+            offsets = [n.starts_at_offset_minutes for n in others]
+            assert all(off is not None and off >= day_minutes for off in offsets)
+            assert max(off for off in offsets if off is not None) < nights * day_minutes
+
+            anchor = next(n for n in spine if n.title == cornerstone.title)
+            assert anchor.starts_at_offset_minutes is not None
+            assert day_minutes <= anchor.starts_at_offset_minutes < 2 * day_minutes
+
+            # The extension gave up one day to the travel day: its slice is now
+            # nights - span - 1, so the 14-night tour closes in the Pelion
+            # villages and the old day-14 Thessaloniki closer is sliced off.
+            titles = {n.title for n in spine}
+            assert "A slow day in the villages" in titles
+            assert "Thessaloniki — the northern capital" not in titles
+    finally:
+        await engine.dispose()
+        await _delete_olympus_templates()
+
+
+@integration
+@pytest.mark.asyncio
 async def test_cornerstone_lands_as_subgraph_in_template() -> None:
     """The summit anchor gets one child template_node per cornerstone BEAT."""
     await _delete_olympus_templates()

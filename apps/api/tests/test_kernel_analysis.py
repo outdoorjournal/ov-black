@@ -176,6 +176,118 @@ class TestOverlaps:
         assert "overlap" in _codes(graph)
 
 
+def _stay(
+    node_id: str,
+    check_in_day: int,
+    check_out_day: int,
+    *,
+    hh_in: int = 15,
+    content: dict | None = None,
+) -> Node:
+    from app.kernel import RelativeSchedule, RelativeStamp
+
+    return Node(
+        id=node_id,
+        type=NodeType.hotel,
+        title=f"Stay {node_id}",
+        schedule=RelativeSchedule(
+            start=RelativeStamp(
+                day_offset=check_in_day - 1, wall_time=time(hh_in, 0), tz_name=ATHENS
+            ),
+            end=RelativeStamp(day_offset=check_out_day - 1, wall_time=time(10, 0), tz_name=ATHENS),
+        ),
+        content={"location": OLYMPUS, **(content or {})},
+    )
+
+
+class TestLodgingIsPresenceNotEvent:
+    def test_a_stay_never_overlaps_the_dinners_it_contains(self):
+        """A 4-night span holding every dinner of the trip is the point of a
+        hotel, not a conflict."""
+        graph = add_node(Graph(anchor_date=AUG_1), _stay("h1", 1, 5))
+        graph = add_node(graph, _ground("g1", 2, 20))
+        graph = add_node(graph, _ground("g2", 3, 20))
+        assert "overlap" not in _codes(graph)
+
+    def test_arriving_after_checkin_time_is_not_infeasible(self):
+        """Check-in is a window, not a start you can miss: a flight landing
+        after the 15:00 check-in but before the evening's first event is fine."""
+        graph = add_node(Graph(anchor_date=AUG_1), _stay("h1", 1, 5))
+        graph = add_node(graph, _ground("g1", 1, 21))
+        graph = add_node(
+            graph,
+            _flight(
+                "fl-out",
+                AbsoluteStamp(date(2026, 7, 31), time(20, 0), DETROIT),
+                AbsoluteStamp(date(2026, 8, 1), time(18, 0), ATHENS),
+                outbound=True,
+            ),
+        )
+        assert "flight_infeasible" not in _codes(graph)
+
+    def test_early_return_before_checkout_is_not_infeasible(self):
+        """Checking out early for a morning flight is normal — the checkout
+        wall time is not an end the traveler must stay for."""
+        graph = add_node(Graph(anchor_date=AUG_1), _stay("h1", 1, 5))
+        graph = add_node(graph, _ground("g1", 2, 15))
+        graph = add_node(
+            graph,
+            _flight(
+                "fl-back",
+                AbsoluteStamp(date(2026, 8, 5), time(7, 0), ATHENS),
+                AbsoluteStamp(date(2026, 8, 5), time(11, 0), DETROIT),
+                outbound=False,
+            ),
+        )
+        assert "flight_infeasible" not in _codes(graph)
+
+
+class TestLodgingFindings:
+    def _with_arrival(self, cutoff: str | None, arrive: time, arrive_on: date) -> Graph:
+        content = {"check_in_cutoff": cutoff} if cutoff is not None else None
+        graph = add_node(Graph(anchor_date=AUG_1), _stay("h1", 1, 5, content=content))
+        return add_node(
+            graph,
+            _flight(
+                "fl-out",
+                AbsoluteStamp(date(2026, 7, 31), time(20, 0), DETROIT),
+                AbsoluteStamp(arrive_on, arrive, ATHENS),
+                outbound=True,
+            ),
+        )
+
+    def test_landing_after_the_desk_cutoff_warns(self):
+        graph = self._with_arrival("22:00", time(23, 30), date(2026, 8, 1))
+        findings = [f for f in analyze(graph) if f.code == "lodging_checkin_late"]
+        assert len(findings) == 1
+        assert findings[0].severity == "warn"
+        assert set(findings[0].node_ids) == {"h1", "fl-out"}
+
+    def test_after_midnight_landing_still_counts_as_arrival_night(self):
+        graph = self._with_arrival("22:00", time(1, 30), date(2026, 8, 2))
+        assert "lodging_checkin_late" in _codes(graph)
+
+    def test_landing_before_the_cutoff_is_clean(self):
+        graph = self._with_arrival("22:00", time(20, 0), date(2026, 8, 1))
+        assert "lodging_checkin_late" not in _codes(graph)
+
+    def test_no_cutoff_means_a_24h_desk(self):
+        graph = self._with_arrival(None, time(23, 30), date(2026, 8, 1))
+        assert "lodging_checkin_late" not in _codes(graph)
+
+    def test_event_running_past_checkout_warns(self):
+        graph = add_node(Graph(anchor_date=AUG_1), _stay("h1", 1, 5))
+        graph = add_node(graph, _ground("g1", 5, 8, duration=240))  # 08:00-12:00, checkout 10:00
+        findings = [f for f in analyze(graph) if f.code == "lodging_checkout_conflict"]
+        assert len(findings) == 1
+        assert set(findings[0].node_ids) == {"h1", "g1"}
+
+    def test_morning_event_ending_before_checkout_is_clean(self):
+        graph = add_node(Graph(anchor_date=AUG_1), _stay("h1", 1, 5))
+        graph = add_node(graph, _ground("g1", 5, 8, duration=90))  # ends 09:30
+        assert "lodging_checkout_conflict" not in _codes(graph)
+
+
 class TestFollowsGap:
     def test_short_gap_after_predecessor_warns(self):
         graph = add_node(Graph(anchor_date=AUG_1), _ground("g1", 2, 9, duration=60))

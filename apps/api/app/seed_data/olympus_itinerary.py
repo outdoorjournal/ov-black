@@ -5,7 +5,9 @@ composed at build time (:mod:`app.services.olympus_template`) from three parts s
 the mountain is told ONCE — by the real OV cornerstone trip — and never
 double-booked by hand-authored cards:
 
-1. **Arrival** — the Litochoro base only. Day 1.
+1. **Arrival** — day 1 is a held travel-day placeholder, nothing else. The
+   card's note tells the traveler the day is reserved for the journey in and
+   that flights are shaped in conversation once we know their origin.
 2. **The cornerstone** — the real, bookable OV adventure (Path to Symbolism for
    the long spine, the 2-Day Summit push for the short ones). Its day-by-day
    itinerary is materialized as a SUBGRAPH whose children lay across the mountain
@@ -17,9 +19,10 @@ double-booked by hand-authored cards:
    by the cornerstone's span at build time, then prefix-sliced to fill whatever
    nights remain. Any prefix is a coherent extension.
 
-So a 14-night trip = a 6-day guided ascent + an 8-day grand tour; a 7-night = a
-2-day summit push + a 5-day tour; a 5-night = the push + a 3-day tour. The
-mountain days carry the cornerstone's beats and only the beats.
+So a 14-night trip = a travel day + a 6-day guided ascent + a 7-day grand tour;
+a 7-night = travel + the 2-day summit push + a 4-day tour; a 5-night = travel +
+the push + a 2-day tour. The mountain days carry the cornerstone's beats and
+only the beats.
 
 Every item is a Pydantic ``CardAttributes`` model, so a schema violation fails
 the import — the fixture is its own smoke test, exactly like the Japan seed.
@@ -90,25 +93,31 @@ def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
 
 
 # ── Part 1: arrival (day 1) ────────────────────────────────────────────
-# A Litochoro base for the mountain days — the night-bar lane (it never collides
-# with the cornerstone's experience beats); the refuge nights are told by the
-# beats themselves. Deliberately NO inbound flight: we don't know where the
-# traveler flies from, so flights are proposed in conversation, never seeded.
+# Day 1 is deliberately EMPTY of itinerary content: a single held placeholder
+# whose note says the day is reserved for travel. We don't know where the
+# traveler flies from, so no inbound flight (or airport transfer) is seeded —
+# the agent proposes those in conversation, and this card says exactly that.
+# The guided ascent begins the next morning (the builder shifts the cornerstone
+# and the extension one day down to make room).
 
 ARRIVAL_ITEMS: list[FixtureItem] = [
-    # FixtureItem(
-    #     id_hint="d01-base",
-    #     title="Litochoro base — Villa Drosos",
-    #     starts_at=_at("2026-09-14", "18:00"),
-    #     duration_minutes=60,
-    #     status="booked",
-    #     attrs=_hotel(
-    #         "Villa Drosos",
-    #         2,
-    #         LITOCHORO,
-    #         "Stone rooms at the mountain's foot, olive terrace, Mytikas on the skyline.",
-    #     ),
-    # ),
+    FixtureItem(
+        id_hint="d01-travel",
+        title="Travel day — held for your arrival",
+        starts_at=_at("2026-09-14", "09:00"),
+        duration_minutes=540,
+        status="pending",
+        attrs=FreeTimeCardAttrs(
+            energy_advice="A day for the journey in — land, exhale, let the mountain wait.",
+            location=LITOCHORO,
+            description=(
+                "This first day is held open for travel. We don't yet know where "
+                "you'll be flying from — tell us and we'll shape the flights, and "
+                "the drive down to the mountain, around your door. Nothing on "
+                "this day is booked until you say so."
+            ),
+        ),
+    ),
 ]
 
 

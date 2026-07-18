@@ -1460,6 +1460,22 @@ class MyRoleResponse(BaseModel):
     role: Annotated[Role, Field(title='Role')]
 
 
+class NightLodgingResponse(BaseModel):
+    """
+    Where the traveler sleeps on one trip night — derived from lodging span
+    coverage at read time, never stored. ``day_index`` labels the night by its
+    evening (the night of Day 2 is Day 2's evening); ``on`` is that evening's
+    calendar date, None until the trip is dated. Nights the plan leaves
+    roofless simply don't appear. When two stays cover a night (same-day hotel
+    change, overnight excursion away from a kept room), the later check-in
+    owns it.
+    """
+
+    day_index: Annotated[int, Field(title='Day Index')]
+    on: Annotated[date_aliased | None, Field(title='On')] = None
+    node_id: Annotated[UUID, Field(title='Node Id')]
+
+
 class NodeChangeResponse(BaseModel):
     """
     One divergence in a fork's diff (added/removed/changed/moved).
@@ -3906,6 +3922,9 @@ class GraphResponse(BaseModel):
     findings: Annotated[list[GraphFindingResponse] | None, Field(title='Findings')] = (
         None
     )
+    nightly_lodging: Annotated[
+        list[NightLodgingResponse] | None, Field(title='Nightly Lodging')
+    ] = None
     totals: Annotated[dict[str, str] | None, Field(title='Totals')] = None
     display_currency: Annotated[str | None, Field(title='Display Currency')] = None
     total_display: Annotated[str | None, Field(title='Total Display')] = None

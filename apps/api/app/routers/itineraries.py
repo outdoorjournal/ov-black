@@ -38,7 +38,13 @@ from app.config import get_settings
 from app.db import get_session, get_sessionmaker
 from app.inventory.registry import InventoryCtx, UnknownSourceError
 from app.inventory.schemas import ExperienceItem, FlightItem
-from app.kernel import ResolvedScheduleView, ResolvedStampView, analyze, resolve_view
+from app.kernel import (
+    ResolvedScheduleView,
+    ResolvedStampView,
+    analyze,
+    nightly_lodging,
+    resolve_view,
+)
 from app.models import (
     CardTemplate,
     Client,
@@ -503,14 +509,34 @@ class GraphFindingResponse(BaseModel):
     node_ids: list[uuid.UUID]
 
 
+class NightLodgingResponse(BaseModel):
+    """Where the traveler sleeps on one trip night — derived from lodging span
+    coverage at read time, never stored. ``day_index`` labels the night by its
+    evening (the night of Day 2 is Day 2's evening); ``on`` is that evening's
+    calendar date, None until the trip is dated. Nights the plan leaves
+    roofless simply don't appear. When two stays cover a night (same-day hotel
+    change, overnight excursion away from a kept room), the later check-in
+    owns it.
+    """
+
+    day_index: int
+    on: date | None = None
+    node_id: uuid.UUID
+
+
 class GraphResponse(BaseModel):
     itinerary: ItineraryResponse
     nodes: list[NodeResponse]
     edges: list[EdgeResponse]
     # Kernel feasibility findings over this graph (Phase 5) — flight margins,
-    # overlaps, follows-gap constraints, stale snapshots. Populated by the
-    # graph-read endpoint; other producers (fork/reconcile) leave it empty.
+    # lodging windows, overlaps, follows-gap constraints, stale snapshots.
+    # Populated by the graph-read endpoint; other producers (fork/reconcile)
+    # leave it empty.
     findings: list[GraphFindingResponse] = Field(default_factory=list)
+    # Night-by-night lodging coverage (derived, read-only): lets any surface —
+    # timeline, agent, exports — answer "where do they sleep tonight" without
+    # walking spans itself. Populated by the graph-read endpoint only.
+    nightly_lodging: list[NightLodgingResponse] = Field(default_factory=list)
     # Per-currency price of the plan (ADV-10): ``{currency: amount}`` summed over
     # the itinerary's priced, non-discarded, selected nodes — ``per_person``
     # amounts expanded by party size, matching the money-gate. Amounts serialize
@@ -1081,17 +1107,22 @@ def _node_response_from_node(node: Any, anchor: date | None = None) -> NodeRespo
     )
 
 
-def _findings_for_view(view: Any) -> list[GraphFindingResponse]:
-    """Run the kernel feasibility read over a served graph view (Phase 5).
+def _kernel_read_for_view(
+    view: Any,
+) -> tuple[list[GraphFindingResponse], list[NightLodgingResponse]]:
+    """Run the kernel read surfaces (feasibility findings + nightly lodging)
+    over a served graph view.
 
-    Never raises past this boundary: a findings bug must not take down the
-    graph read — the feasibility surface degrades to empty instead.
+    Never raises past this boundary: a kernel-read bug must not take down the
+    graph read — both surfaces degrade to empty instead.
     """
     try:
-        findings = analyze(kernel_graph_from_view(view))
+        graph = kernel_graph_from_view(view)
+        findings = analyze(graph)
+        nights = nightly_lodging(graph)
     except Exception:  # noqa: BLE001 — advisory surface, never fatal
-        logger.warning("itinerary.findings_failed", exc_info=True)
-        return []
+        logger.warning("itinerary.kernel_read_failed", exc_info=True)
+        return [], []
     out: list[GraphFindingResponse] = []
     for f in findings:
         severity: Literal["block", "warn", "info"] = (
@@ -1105,7 +1136,11 @@ def _findings_for_view(view: Any) -> list[GraphFindingResponse]:
                 node_ids=[uuid.UUID(nid) for nid in f.node_ids],
             )
         )
-    return out
+    lodging = [
+        NightLodgingResponse(day_index=n.day_index, on=n.on, node_id=uuid.UUID(n.node_id))
+        for n in nights
+    ]
+    return out, lodging
 
 
 async def _anchor_date_of(session: AsyncSession, itinerary_id: uuid.UUID) -> date | None:
@@ -1295,9 +1330,9 @@ async def get_itinerary_endpoint(
     totals = {c: str(a) for c, a in (await sum_node_costs(session, itinerary_id)).items()}
     party_size = await resolve_party_size(session, itinerary_id)
     response = _graph_to_response(result, totals=totals, party_size=party_size)
-    # Kernel feasibility read (Phase 5): findings, never rejections — the UI
-    # badges the cards, the advisor decides.
-    response.findings = _findings_for_view(result)
+    # Kernel read surfaces: feasibility findings (never rejections — the UI
+    # badges the cards, the advisor decides) and nightly lodging coverage.
+    response.findings, response.nightly_lodging = _kernel_read_for_view(result)
     # Convert totals + node costs into the client's preferred currency (0048).
     await _apply_display_currency(session, client_id=result.itinerary.client_id, response=response)
     response.itinerary.display_status = await _display_status_for(session, itinerary_id)

@@ -3,15 +3,18 @@
 Composes each shipped spine (5 / 7 / 14 nights) from three parts rather than
 slicing one hand-authored day-list (see :mod:`app.seed_data.olympus_itinerary`):
 
-1. **Arrival** — a Litochoro base (a night-bar lane). No inbound flight: we
-   don't know the traveler's origin, so flights are proposed in conversation.
+1. **Arrival** — day 1 is a held travel-day placeholder whose note says the
+   day is reserved for the journey in. No inbound flight: we don't know the
+   traveler's origin, so flights are proposed in conversation.
 2. **The cornerstone** — a single anchor card for the real OV adventure, carrying
    its cover/gallery/price enrichment AND its day-by-day itinerary as a SUBGRAPH.
-   The subgraph children lay across the mountain days as the trip's experiences
-   (the frontend's ``deriveJourneyBeats`` spreads them from the anchor's day
-   forward). This is the ONLY mountain content — nothing hand-authored competes.
+   It starts on day 2, the morning after the travel day. The subgraph children
+   lay across the mountain days as the trip's experiences (the frontend's
+   ``deriveJourneyBeats`` spreads them from the anchor's day forward). This is
+   the ONLY mountain content — nothing hand-authored competes.
 3. **The extension** — the grand tour AFTER the guided ascent, shifted past the
-   cornerstone's day-span and prefix-sliced to fill the remaining nights.
+   travel day + the cornerstone's day-span and prefix-sliced to fill the
+   remaining nights.
 
 So the cornerstone owns the mountain segment and the extension owns the days
 after it — a beat and a hand-authored card never land on the same day. Each build
@@ -71,7 +74,7 @@ OLYMPUS_SPINE_SLUGS: dict[int, str] = {5: "olympus-5d", 7: "olympus-7d", 14: "ol
 #: composition, different metadata shape) — folds into the content hash so those
 #: changes also mint a fresh template. Seed-data edits need no bump; they change
 #: the hash on their own.
-_BUILD_VERSION = 2
+_BUILD_VERSION = 4
 
 
 def _canonical(obj: Any) -> Any:
@@ -246,10 +249,11 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
     # Real OV trip this spine is built around — the longest spine anchors on the
     # full "Path to Symbolism" ascent, the shorter ones on the 2-day summit push.
     cornerstone = cornerstone_for_nights(nights, longest=max(OLYMPUS_SPINE_SLUGS))
-    # The mountain segment is exactly as long as the cornerstone's own itinerary;
-    # the extension picks up on the day after it and fills the remaining nights.
+    # Day 1 is the held travel day, so the mountain segment starts on day 2 and
+    # runs the cornerstone's own length; the extension picks up on the day after
+    # it and fills the nights left once the travel day has taken its one.
     span_days = len(cornerstone.days)
-    extension_days = EXTENSION_DAYS[: max(0, nights - span_days)]
+    extension_days = EXTENSION_DAYS[: max(0, nights - span_days - 1)]
 
     template, created = await find_or_create_template(
         session,
@@ -314,8 +318,9 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
             prev_spine = tnode.id
         return tnode.id
 
-    # 1. Arrival — the Litochoro base (a night-bar, off-chain). No flight is
-    # seeded; the traveler's origin is unknown until they tell us.
+    # 1. Arrival — the day-1 travel placeholder (its note says the day is held
+    # for the journey in). No flight is seeded; the traveler's origin is
+    # unknown until they tell us.
     for item in ARRIVAL_ITEMS:
         await add_node_from(
             type_=_node_type_for(item),
@@ -331,6 +336,7 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
     # as a subgraph whose beats lay across the mountain days at their authored
     # clock times (the anchor's own start comes from the cornerstone — the full
     # ascent begins with a mid-afternoon pickup, the 2-day push meets at 10:00).
+    # It lands on DAY 2: day 1 belongs to the held travel placeholder.
     hh, mm = (int(part) for part in cornerstone.anchor_hhmm.split(":", 1))
     anchor_metadata: dict[str, Any] = {
         "category": "mountaineering",
@@ -344,8 +350,11 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
     anchor_id = await add_node_from(
         type_=NodeType.experience,
         title=cornerstone.title,
-        offset_minutes=hh * 60 + mm,
-        duration_minutes=span_days * _MINUTES_PER_DAY,
+        offset_minutes=_MINUTES_PER_DAY + hh * 60 + mm,
+        # The card's span ends when the guided trip does (its last authored
+        # beat) — a whole-days span from a mid-afternoon start would bleed into
+        # the extension's first morning and analyze as a phantom overlap.
+        duration_minutes=cornerstone.anchor_duration_minutes(),
         metadata=anchor_metadata,
         on_chain=True,
     )
@@ -355,9 +364,10 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
     total_nodes += n
     total_edges += e
 
-    # 3. Extension — shifted past the cornerstone's span, then prefix-sliced. Its
-    # items are authored from their own day 0, so add span_days to every offset.
-    shift = span_days * _MINUTES_PER_DAY
+    # 3. Extension — shifted past the travel day + the cornerstone's span, then
+    # prefix-sliced. Its items are authored from their own day 0, so every
+    # offset moves down by the travel day and the mountain days.
+    shift = (1 + span_days) * _MINUTES_PER_DAY
     for day in extension_days:
         for item in day.items:
             await add_node_from(

@@ -44,12 +44,14 @@ from app.models import (
     EdgeType,
     Itinerary,
     ItineraryTimingKind,
+    Node,
     NodeRole,
     NodeStatus,
     NodeType,
     TemplateEdge,
     TemplateNode,
 )
+from app.services.kernel_sync import sync_node_schedule
 
 logger = logging.getLogger("ov_black.templates")
 
@@ -445,6 +447,33 @@ async def _materialize_template_into(
         itinerary.date_start = trip_start_date
         itinerary.date_end = (trip_start_at + timedelta(minutes=max_offset)).date()
     itinerary.days_anchor = trip_start_date
+    # The kernel anchor rides along (0055) — same lockstep rule as
+    # ``_maybe_stamp_days_anchor``: exact trips anchor at date_start, everything
+    # else at the (possibly provisional) days_anchor just stamped.
+    if itinerary.anchor_date is None:
+        itinerary.anchor_date = (
+            itinerary.date_start
+            if itinerary.timing_kind is ItineraryTimingKind.exact and itinerary.date_start
+            else trip_start_date
+        )
+
+    # The raw inserts above bypass the ORM write path, so derive the canonical
+    # kernel-schedule columns here. Without them the spine is invisible to the
+    # feasibility analysis (and to the resolved schedule views) until the first
+    # retime happens to touch it — and an undated trip is supposed to analyze
+    # on its provisional calendar (doc/itin-time.md).
+    inserted = (
+        (
+            await session.execute(
+                select(Node).where(Node.id.in_(list(new_id_by_template_node.values())))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for node in inserted:
+        sync_node_schedule(node, itinerary.anchor_date)
+    await session.flush()
 
     _ = by_id  # silence: kept for future debug paths
     return len(template_nodes), len(template_edges)
