@@ -9,6 +9,29 @@ from strands import tool
 from agent.backend import BackendError, get_json, patch_json, pin_ctx
 
 
+async def _patch_node_following_lineage(itinerary_id: str, node_id: str, body: dict) -> dict:
+    """PATCH a node, resolving a stale baseline id across a fork boundary.
+
+    After ``fork_itinerary`` the session re-pins to the fork, whose nodes are
+    CLONES with new ids — a card id read off the baseline graph 404s there.
+    The clone remembers its origin (``forked_from_node_id``), so on a 404 we
+    look the lineage up once and retry with the fork's own id instead of
+    surfacing a dead-end ``not_found`` the model can only escalate on.
+    """
+    try:
+        return await patch_json(f"/itinerary/{itinerary_id}/nodes/{node_id}", json=body)
+    except BackendError as exc:
+        if exc.status != 404:
+            raise
+        graph = await get_json(f"/itinerary/{itinerary_id}")
+        for node in (graph or {}).get("nodes", []):
+            if str(node.get("forked_from_node_id")) == str(node_id):
+                return await patch_json(
+                    f"/itinerary/{itinerary_id}/nodes/{node['id']}", json=body
+                )
+        raise
+
+
 @tool
 async def update_node_status(
     node_id: str,
@@ -37,10 +60,7 @@ async def update_node_status(
     itinerary_id = pin.get("itinerary_id")
     if not itinerary_id:
         raise BackendError(status=None, reason="missing_itinerary_id")
-    return await patch_json(
-        f"/itinerary/{itinerary_id}/nodes/{node_id}",
-        json={"status": status},
-    )
+    return await _patch_node_following_lineage(itinerary_id, node_id, {"status": status})
 
 
 @tool
@@ -117,10 +137,7 @@ async def update_node_details(
     if not body:
         raise BackendError(status=None, reason="nothing_to_update")
 
-    return await patch_json(
-        f"/itinerary/{itinerary_id}/nodes/{node_id}",
-        json=body,
-    )
+    return await _patch_node_following_lineage(itinerary_id, node_id, body)
 
 
 @tool
@@ -158,9 +175,10 @@ async def move_node(node_id: str, day_index: int, time: str = "09:00") -> dict:
 
     # A trip-terms placement: the kernel builds the schedule and preserves the
     # node's other metadata server-side — no read-merge round trip needed.
-    return await patch_json(
-        f"/itinerary/{itinerary_id}/nodes/{node_id}",
-        json={"schedule": {"day_index": day_index, "minute_of_day": minute_of_day}},
+    return await _patch_node_following_lineage(
+        itinerary_id,
+        node_id,
+        {"schedule": {"day_index": day_index, "minute_of_day": minute_of_day}},
     )
 
 
@@ -219,9 +237,11 @@ async def update_trip_timing(
     kind needs:
     - ``exact`` — the trip is booked to specific days. Pass ``date_start`` and
       ``date_end`` (both ISO dates, ``"YYYY-MM-DD"``).
-    - ``window`` — dates are still soft but bounded. Pass ``date_start`` and
-      ``date_end`` for the acceptable window, plus ``duration_nights`` for the
-      target length inside it ("~7 nights within Jun–Aug").
+    - ``window`` — the shape is known but not pinned. Pass whatever the
+      traveler actually gave you: ``duration_nights`` alone for a length with
+      no dates ("about a week"), ``date_start`` + ``date_end`` for a soft
+      range, or both ("~7 nights within Jun–Aug"). A length with no dates is
+      a perfectly good window — do NOT invent a date range to go with it.
     - ``flexible`` — no dates chosen yet. Pass only ``timing_kind``; any stored
       dates are cleared. Use this when the traveler steps back from a date they
       had picked.
@@ -247,14 +267,25 @@ async def update_trip_timing(
         body["date_start"] = None
         body["date_end"] = None
         body["duration_nights"] = None
-    else:
-        # exact + window both carry a range. Refuse a dateless call rather than
-        # wiping the stored dates — a missing date here is a model slip, not an
-        # intent to clear.
+    elif timing_kind == "exact":
+        # Exact means real calendar days — refuse a dateless call rather than
+        # wiping the stored dates (a missing date here is a model slip, not an
+        # intent to clear).
         if not date_start or not date_end:
             raise BackendError(status=None, reason="dates_required")
         body["date_start"] = date_start
         body["date_end"] = date_end
+        if duration_nights is not None:
+            body["duration_nights"] = duration_nights
+    else:  # window
+        # A window is legal with dates, a length, or both — "about a week"
+        # with no dates is the classic intake answer and must persist as-is.
+        # Only passing NEITHER is a slip.
+        if not (date_start and date_end) and duration_nights is None:
+            raise BackendError(status=None, reason="window_needs_dates_or_length")
+        if date_start and date_end:
+            body["date_start"] = date_start
+            body["date_end"] = date_end
         if duration_nights is not None:
             body["duration_nights"] = duration_nights
     if timing_note is not None:

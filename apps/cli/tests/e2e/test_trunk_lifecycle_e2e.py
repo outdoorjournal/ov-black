@@ -57,9 +57,7 @@ async def test_trunk_and_fork_full_loop(
     advisor_fork_id = str(advisor_fork.itinerary.id)
     assert str(advisor_fork.itinerary.forked_from_id) == trunk_id
 
-    kaiseki = await advisor.add_node(
-        advisor_fork_id, type="experience", title="Sunset kaiseki dinner"
-    )
+    await advisor.add_node(advisor_fork_id, type="experience", title="Sunset kaiseki dinner")
     await advisor.add_node(advisor_fork_id, type="hotel", title="Ryokan with a view")
     # An annotation card — must never participate in approval counts.
     await advisor.add_node(

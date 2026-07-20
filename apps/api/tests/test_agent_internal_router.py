@@ -868,3 +868,83 @@ def test_post_thread_message_empty_content_returns_422(client: TestClient) -> No
         json={"content": ""},
     )
     assert resp.status_code == 422
+
+
+# ── POST /agent/session/repin ─────────────────────────────────────────────
+
+
+class _FakeRepinDb:
+    """Async-session stand-in for the repin route: ``get`` + ``commit`` only."""
+
+    def __init__(self, session_row: Any, itinerary_row: Any) -> None:
+        self._session_row = session_row
+        self._itinerary_row = itinerary_row
+        self.committed = False
+
+    async def get(self, model: Any, _pk: Any) -> Any:
+        return self._session_row if model.__name__ == "AgentSession" else self._itinerary_row
+
+    async def commit(self) -> None:
+        self.committed = True
+
+
+def _repin_case(
+    app: FastAPI, *, client_id: uuid.UUID, itinerary_client_id: uuid.UUID | None
+) -> tuple[str, uuid.UUID, _FakeRepinDb]:
+    """Wire a token + fake DB for one repin call; returns (token, itin_id, db)."""
+    from app.db import get_session
+
+    session_id = uuid.uuid4()
+    itinerary_id = uuid.uuid4()
+    session_row = SimpleNamespace(id=session_id, itinerary_id=None)
+    itinerary_row = (
+        None
+        if itinerary_client_id is None
+        else SimpleNamespace(id=itinerary_id, client_id=itinerary_client_id)
+    )
+    db = _FakeRepinDb(session_row, itinerary_row)
+
+    async def _yield_db():
+        yield db
+
+    app.dependency_overrides[get_session] = _yield_db
+    token = mint_agent_token(
+        session_id=session_id,
+        client_id=client_id,
+        agentcore_session_id="ac",
+        settings=_settings(),
+    )
+    return token, itinerary_id, db
+
+
+def test_session_repin_moves_this_sessions_pin(app: FastAPI, client: TestClient) -> None:
+    client_id = uuid.uuid4()
+    token, itinerary_id, db = _repin_case(app, client_id=client_id, itinerary_client_id=client_id)
+    resp = client.post(
+        "/agent/session/repin",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"itinerary_id": str(itinerary_id)},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["itinerary_id"] == str(itinerary_id)
+    assert db._session_row.itinerary_id == itinerary_id
+    assert db.committed
+
+
+def test_session_repin_foreign_itinerary_returns_404(app: FastAPI, client: TestClient) -> None:
+    token, itinerary_id, db = _repin_case(
+        app, client_id=uuid.uuid4(), itinerary_client_id=uuid.uuid4()
+    )
+    resp = client.post(
+        "/agent/session/repin",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"itinerary_id": str(itinerary_id)},
+    )
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "itinerary_not_found"}
+    assert not db.committed
+
+
+def test_session_repin_without_token_returns_401(client: TestClient) -> None:
+    resp = client.post("/agent/session/repin", json={"itinerary_id": str(uuid.uuid4())})
+    assert resp.status_code == 401

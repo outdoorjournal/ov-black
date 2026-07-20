@@ -7,10 +7,13 @@ paid booking). Staff later diff the fork against the baseline and reconcile the
 changes they accept (G3).
 
 After forking, the session **re-pins to the alternative** (G3, §4.1) so the agent's
-subsequent mutations target the fork, not the agreed plan: a DB re-pin (POST
-/sessions, idempotent per (client_id, audience)) for future turns, plus an
-in-process ``pin_ctx`` set so even a fork-then-edit within the same turn lands on
-the alternative.
+subsequent mutations target the fork, not the agreed plan: a DB re-pin via the
+backend-only ``POST /agent/session/repin`` (the agent token names the session)
+for future turns, plus an IN-PLACE mutation of the shared ``pin_ctx`` dict so a
+fork-then-edit within the same turn lands on the alternative. The in-place part
+is load-bearing: tool calls can run in sibling task contexts, where a
+``pin_ctx.set`` made inside one tool is invisible to the next — mutating the one
+dict every context references is what actually propagates.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from typing import Any
 
 from strands import tool
 
-from agent.backend import BackendError, pin_ctx, post_json
+from agent.backend import BackendError, agent_post_json, pin_ctx, post_json
 
 logger = logging.getLogger("agent.tools.fork")
 
@@ -28,26 +31,21 @@ logger = logging.getLogger("agent.tools.fork")
 async def _repin_session_to_fork(pin: dict[str, Any], fork_id: str) -> None:
     """Re-pin the session to the fork — DB (future turns) + in-process (this turn).
 
-    Best-effort: the fork already succeeded, so a re-pin failure must not fail the
-    tool. The DB re-pin reuses the idempotent ``POST /sessions`` reuse path, which
-    updates ``agent_sessions.itinerary_id`` for the matching (client_id, audience).
+    Best-effort: the fork already succeeded, so a re-pin failure must not fail
+    the tool. The DB re-pin uses ``POST /agent/session/repin`` — the per-session
+    agent token identifies the session, so exactly the conversation the traveler
+    is in moves to the fork. (POST /sessions can't do this: its reuse is scoped
+    to the exact (client, audience, itinerary) triple, so posting the fork id
+    would mint a NEW session and strand this one on the trunk.)
     """
-    client_id = pin.get("client_id")
-    audience = pin.get("audience", "traveler")
-    if client_id:
-        try:
-            await post_json(
-                "/sessions",
-                json={
-                    "client_id": client_id,
-                    "itinerary_id": fork_id,
-                    "audience": audience,
-                },
-            )
-        except BackendError as exc:
-            logger.warning("fork.repin_failed", extra={"reason": exc.reason})
-    # In-process re-pin so a fork-then-mutate within THIS turn hits the alternative.
-    pin_ctx.set({**pin, "itinerary_id": fork_id})
+    try:
+        await agent_post_json("/agent/session/repin", json={"itinerary_id": fork_id})
+    except BackendError as exc:
+        logger.warning("fork.repin_failed", extra={"reason": exc.reason})
+    # In-process re-pin. Mutate the SHARED dict (visible to sibling tool-call
+    # contexts) and set the contextvar (correct in this context either way).
+    pin["itinerary_id"] = fork_id
+    pin_ctx.set(pin)
 
 
 @tool
@@ -61,9 +59,13 @@ async def fork_itinerary(title: str | None = None) -> dict:
     changes back in later.
 
     After this call the session is **on the alternative version** — your further
-    edits (status changes, new cards) apply to it, not the agreed plan. Always
-    speak of it as "an alternative version", never a "fork". You cannot merge it
-    yourself; the traveler can ask staff to, via ``request_reconcile``.
+    edits (status changes, new cards) apply to it, not the agreed plan. The
+    fork's cards are CLONES with NEW ids: a node id you read off the original
+    graph is dead here, so re-read the graph (or use this call's returned
+    graph, whose nodes carry ``forked_from_node_id`` back-references) before
+    addressing a card by id. Always speak of it as "an alternative version",
+    never a "fork". You cannot merge it yourself; the traveler can ask staff
+    to, via ``request_reconcile``.
 
     Args:
         title: Optional name for the fork. Defaults to ``"{baseline} (fork)"``.

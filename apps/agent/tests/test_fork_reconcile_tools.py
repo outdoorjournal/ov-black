@@ -39,46 +39,50 @@ def test_planning_bundle_has_fork_and_reconcile_tools() -> None:
 
 async def test_fork_tool_repins_session_to_alternative(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, Any]] = []
+    agent_calls: list[tuple[str, Any]] = []
 
     async def _post(path: str, *, json: dict | None = None) -> Any:
         calls.append((path, json))
-        if path.endswith("/fork"):
-            return {"itinerary": {"id": "fork-123", "forked_from_id": "base-1"}, "nodes": []}
-        return {"id": "sess-1"}
+        return {"itinerary": {"id": "fork-123", "forked_from_id": "base-1"}, "nodes": []}
+
+    async def _agent_post(path: str, *, json: dict | None = None) -> Any:
+        agent_calls.append((path, json))
+        return {"session_id": "sess-1", "itinerary_id": "fork-123"}
 
     monkeypatch.setattr(fork_mod, "post_json", _post)
-    token = pin_ctx.set(
-        {
-            "client_id": "client-9",
-            "itinerary_id": "base-1",
-            "actor_kind": "user",
-            "audience": "traveler",
-        }
-    )
+    monkeypatch.setattr(fork_mod, "agent_post_json", _agent_post)
+    pin = {
+        "client_id": "client-9",
+        "itinerary_id": "base-1",
+        "actor_kind": "user",
+        "audience": "traveler",
+    }
+    token = pin_ctx.set(pin)
     try:
         result = await fork_mod.fork_itinerary._tool_func(title="Slower version")
         assert result["itinerary"]["id"] == "fork-123"
-        # It forked the pinned baseline, then re-pinned the session to the fork.
+        # It forked the pinned baseline, then re-pinned ITS OWN session to the
+        # fork via the backend-only agent route (the token names the session).
         assert ("/itinerary/base-1/fork", {"title": "Slower version"}) in calls
-        repin = next(c for p, c in calls if p == "/sessions")
-        assert repin == {
-            "client_id": "client-9",
-            "itinerary_id": "fork-123",
-            "audience": "traveler",
-        }
-        # In-process pin now targets the alternative for the rest of the turn.
+        assert agent_calls == [("/agent/session/repin", {"itinerary_id": "fork-123"})]
+        # In-process pin now targets the alternative for the rest of the turn —
+        # via IN-PLACE mutation, so sibling tool-call contexts holding the same
+        # dict see it too (a contextvar set alone would not propagate).
         assert pin_ctx.get()["itinerary_id"] == "fork-123"
+        assert pin["itinerary_id"] == "fork-123"
     finally:
         pin_ctx.reset(token)
 
 
 async def test_fork_tool_survives_repin_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _post(path: str, *, json: dict | None = None) -> Any:
-        if path.endswith("/fork"):
-            return {"itinerary": {"id": "fork-9"}, "nodes": []}
-        raise BackendError(status=500, reason="boom")  # re-pin POST /sessions fails
+        return {"itinerary": {"id": "fork-9"}, "nodes": []}
+
+    async def _agent_post(path: str, *, json: dict | None = None) -> Any:
+        raise BackendError(status=500, reason="boom")  # DB re-pin fails
 
     monkeypatch.setattr(fork_mod, "post_json", _post)
+    monkeypatch.setattr(fork_mod, "agent_post_json", _agent_post)
     token = pin_ctx.set(
         {"client_id": "c1", "itinerary_id": "base", "actor_kind": "user", "audience": "traveler"}
     )

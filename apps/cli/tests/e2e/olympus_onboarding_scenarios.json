@@ -1,0 +1,131 @@
+{
+  "scenarios": [
+    {
+      "name": "intake-reluctant-drip",
+      "description": "A traveler who guards information: evades length, floats a 'maybe' companion, then wants to move on. The agent must not fabricate timing, must not seat a maybe, must not interrogate — and must still leave a renderable trip behind.",
+      "audience": "traveler",
+      "seeded_opener": "Mount Olympus has been waiting for you. I've started shaping the ascent — Litochoro, the refuge, the summit ridge. Before I build it out, two things: how many days do you have for the mountain, and who's coming with you?",
+      "turns": [
+        {
+          "say": "Hey. Honestly I can't commit to much yet — work is chaos and I genuinely don't know my dates.",
+          "surface": "intake",
+          "forbid_tools": ["complete_intake"],
+          "expect_state": { "timing_kind_in": ["", "flexible"] },
+          "rubric": "The traveler just said they DON'T know their dates. Recording the trip as flexible/undecided is fine; INVENTING a length or a date range is not. The agent must not end the conversation and must not fire off a list of questions — at most one gentle follow-up (length or party), acknowledging the chaos warmly. Fail if it presses with multiple questions or claims dates are set."
+        },
+        {
+          "say": "Maybe a week? Could be more, could be less. My partner Sam might join but genuinely don't hold me to it.",
+          "surface": "intake",
+          "expect_tools": ["update_trip_timing"],
+          "expect_state": {
+            "timing_kind": "window",
+            "duration_nights": 7,
+            "party_not_contains": ["sam"]
+          },
+          "rubric": "'Maybe a week' is a real answer: the agent should bank a rough 7-night window WITHOUT demanding exact dates. Sam is a 'maybe' — judge ONLY the prose for how Sam is handled (a soft door left open is ideal; treating Sam as confirmed or interrogating who Sam is fails). IMPORTANT: tool names alone tell you nothing about WHO was affected — an add_trip_traveler call may legitimately seat the traveler themself, and the persisted party roster is verified by a separate check, so never fail on tool calls alone. Fail only if the PROSE re-asks for exact dates, confirms Sam as coming, or presses about Sam."
+        },
+        {
+          "say": "That's all I've got for now — let's just get going.",
+          "surface": "intake",
+          "expect_tools": ["complete_intake"],
+          "expect_frames": ["intake_complete"],
+          "expect_state": { "timing_kind": "window", "duration_nights": 7, "healthy": true },
+          "rubric": "The traveler is done. The agent must hand off (the intake completes) with a short parting line, without re-asking anything it already knows and without narrating operations ('locking in', 'seating you'). The product's own house-style close — 'the journal is open', 'I'm right here whenever' — is the EXPECTED wording, not a failure; judge the close on whether it re-asks or narrates mechanics, never on its warmth or metaphor."
+        }
+      ]
+    },
+    {
+      "name": "intake-knows-everything",
+      "description": "A traveler who volunteers everything in one breath: exact dates, full party, home city, and a personal dream. Every piece must be captured in that same turn, and nothing may be re-asked afterward.",
+      "audience": "traveler",
+      "seeded_opener": "Mount Olympus has been waiting for you. I've started shaping the ascent — Litochoro, the refuge, the summit ridge. Before I build it out, two things: how many days do you have for the mountain, and who's coming with you?",
+      "turns": [
+        {
+          "say": "We've got exactly two weeks — September 12th through the 26th. It's me, my wife Dana, and our son Miles, he's twelve. We'll be flying out of Denver. I want the full mountain, summit included — it's been a dream since my twenties.",
+          "surface": "intake",
+          "expect_tools": ["update_trip_timing"],
+          "expect_state": {
+            "timing_kind": "exact",
+            "date_start": "2026-09-12",
+            "date_end": "2026-09-26",
+            "min_party": 2,
+            "party_contains": ["dana", "miles"],
+            "profile_facts_contain": ["summit"]
+          },
+          "rubric": "Everything was volunteered at once: exact September dates (next future September), wife Dana and son Miles seated on the trip, Denver noted as home logistics, and the decades-old summit dream present in the profile (recorded now, or already on file from an earlier conversation — not double-recorded). The reply should acknowledge naturally and briefly — NOT recite the details back as a checklist, and NOT ask for anything that was just given."
+        },
+        {
+          "say": "That's everything. Let's get started.",
+          "surface": "intake",
+          "expect_tools": ["complete_intake"],
+          "expect_frames": ["intake_complete"],
+          "expect_state": {
+            "timing_kind": "exact",
+            "min_party": 3,
+            "healthy": true
+          },
+          "rubric": "Clean hand-off: completes the intake with a short parting line. Fail if the agent asks another question or re-confirms details it already has."
+        }
+      ]
+    },
+    {
+      "name": "intake-self-correcting",
+      "description": "A traveler who changes their mind mid-conversation: 5 nights becomes 7, and daughter June is swapped for father Robert. Final state must reflect only the corrections — no ghost seats, no stale length.",
+      "audience": "traveler",
+      "seeded_opener": "Mount Olympus has been waiting for you. I've started shaping the ascent — Litochoro, the refuge, the summit ridge. Before I build it out, two things: how many days do you have for the mountain, and who's coming with you?",
+      "turns": [
+        {
+          "say": "Thinking five nights. And my daughter June is coming with me.",
+          "surface": "intake",
+          "expect_tools": ["update_trip_timing"],
+          "expect_state": {
+            "timing_kind": "window",
+            "duration_nights": 5,
+            "min_party": 1,
+            "party_contains": ["june"]
+          },
+          "rubric": "Both facts are definite (a rough 5-night length, daughter June coming), so the agent records them. Any brief, natural reply that moves the conversation forward is a PASS — it does not need to announce or confirm what it recorded. Fail ONLY if it re-asks for the length or June, contradicts them, or recites a checklist of what it saved."
+        },
+        {
+          "say": "Actually, scratch that — make it a full week. And June can't make it after all; my father Robert is coming instead.",
+          "surface": "intake",
+          "expect_tools": ["update_trip_timing", "remove_trip_traveler"],
+          "expect_state": {
+            "timing_kind": "window",
+            "duration_nights": 7,
+            "min_party": 1,
+            "party_contains": ["robert"],
+            "party_not_contains": ["june"]
+          },
+          "rubric": "Two corrections in one breath: the length moves 5→7 nights, June comes OFF the trip, Robert goes on. NOTE CAREFULLY: 'June' is the daughter's NAME, not a month — no month, season, or date has EVER been mentioned in this conversation, so asking when the trip might happen is gathering the one still-missing piece, NOT re-asking. The agent applies all three changes, doesn't guilt-trip about June, and doesn't re-confirm what was stated plainly. A sentence of warmth about the change (e.g. about climbing with a father) is welcome house voice. Fail only on missed corrections, re-asking something actually given, or guilt."
+        },
+        {
+          "say": "Perfect. Let's go.",
+          "surface": "intake",
+          "expect_tools": ["complete_intake"],
+          "expect_frames": ["intake_complete"],
+          "expect_state": {
+            "duration_nights": 7,
+            "party_contains": ["robert"],
+            "party_not_contains": ["june"],
+            "healthy": true
+          },
+          "rubric": "Completes the intake and closes warmly. The details card carries the state; the parting line must not recite it."
+        }
+      ]
+    },
+    {
+      "name": "kickoff-greeting",
+      "description": "The campaign dashboard opener after the spine has landed. Kickoff is prose-only: the agent greets the shape already on the canvas, mentions the reads, and asks the real gaps — it builds nothing.",
+      "audience": "traveler",
+      "turns": [
+        {
+          "say": "Alright, I'm on the dashboard — walk me through what you've set up.",
+          "surface": "kickoff",
+          "forbid_tools": ["assemble_campaign_spine", "propose_timeline", "get_itinerary", "get_traveler_context"],
+          "rubric": "A prose greeting of the ALREADY-laid spine (Litochoro, the refuge, the summit — the shape on the canvas), a mention of the reads added to the reading list, closing on ONE genuine question about what the skeleton can't guess (party or the way in — the dates are already pinned). The traveler asked to be walked through it, so a short narrative sketch of the arc — even day by day — is a fine answer, and an imperative invitation to browse ('have a look at the cards') is NOT a question. Acknowledging that flights/transfers aren't sorted yet is honest, not a failure. Fail only if it claims to be building/laying anything NOW, asks where the traveler wants to go, re-asks the pinned dates, or asks TWO OR MORE genuine questions."
+        }
+      ]
+    }
+  ]
+}

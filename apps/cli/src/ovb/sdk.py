@@ -805,6 +805,12 @@ class Ovb:
         params: dict[str, QueryValue] = {"include_redacted": 1} if include_redacted else {}
         return await self._model(gm.ClientDetail, "GET", f"/clients/{client_id}", params=params)
 
+    async def update_client(self, client_id: str, **fields: Any) -> gm.ClientDetail:
+        """PATCH /clients/{id} — partial update (favorite_airport, address, …)."""
+        return await self._model(
+            gm.ClientDetail, "PATCH", f"/clients/{client_id}", json_body=fields
+        )
+
     async def list_client_sessions(self, client_id: str) -> gm.ClientSessionsResponse:
         return await self._model(gm.ClientSessionsResponse, "GET", f"/clients/{client_id}/sessions")
 

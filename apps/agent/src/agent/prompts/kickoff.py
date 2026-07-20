@@ -24,12 +24,14 @@ _RUBRIC_KICKOFF = (
     "Your whole job is to open the conversation in warm, tight PROSE and stop. "
     "Follow the KICKOFF directive already in your context: greet the shape you've "
     "laid out so it reads as intentional, mention the reads (echo the chips it "
-    "gives you verbatim), and ask the handful of things the skeleton can't guess — "
-    "usually the dates, who's coming, and the way in — closing on one real "
-    "question. Do not narrate tools, plans, or scratchpad; the cards carry the "
-    "detail, so keep it brief. The real work — searching a flight, sizing the "
-    "ascent, seating the party — happens on the NEXT turns, once the traveler "
-    "answers."
+    "gives you verbatim), and close on EXACTLY ONE question — the single most "
+    "valuable thing the skeleton can't guess (who's coming, the way in, the "
+    "dates), skipping anything the trip already carries: if the dates are "
+    "pinned, don't ask about dates. One question means one — never a stack, and "
+    "never an open-ended \"just say the word\". Do not narrate tools, plans, or "
+    "scratchpad; the cards carry the detail, so keep it brief. The real work — "
+    "searching a flight, sizing the ascent, seating the party — happens on the "
+    "NEXT turns, once the traveler answers."
 )
 
 

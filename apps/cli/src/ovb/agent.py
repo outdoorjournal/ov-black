@@ -33,14 +33,23 @@ from ovb.sse import (
 )
 
 
-async def stream_turn(ovb: Ovb, session_id: str, content: str) -> AsyncIterator[Frame]:
+async def stream_turn(
+    ovb: Ovb, session_id: str, content: str, *, surface: str | None = None
+) -> AsyncIterator[Frame]:
     """Stream one turn, yielding typed SSE frames as they arrive.
+
+    ``surface`` names the UI surface sending the turn (``"intake"`` — the
+    immersive first-conversation screen — or ``"kickoff"`` — the campaign
+    dashboard opener). The API pins the agent's mode from it, exactly as the
+    web surfaces do; omit it for ordinary journal/dashboard turns.
 
     Raises :class:`ApiError` if the endpoint rejects the turn before streaming
     (e.g. 404 session_not_found, 422 bad content) — matching the UI's
     pre-stream JSON error contract.
     """
-    body = {"content": content}
+    body: dict[str, Any] = {"content": content}
+    if surface is not None:
+        body["surface"] = surface
     async with ovb.transport.stream("POST", f"/sessions/{session_id}/turn", json_body=body) as resp:
         if resp.status_code != 200:
             await resp.aread()
@@ -113,6 +122,7 @@ async def run_turn(
     session_id: str,
     content: str,
     *,
+    surface: str | None = None,
     on_frame: Any = None,
     raise_on_error: bool = False,
 ) -> TurnResult:
@@ -121,7 +131,7 @@ async def run_turn(
     ``on_frame`` (optional callable) is invoked per frame for live rendering.
     """
     result = TurnResult()
-    async for frame in stream_turn(ovb, session_id, content):
+    async for frame in stream_turn(ovb, session_id, content, surface=surface):
         result.frames.append(frame)
         if on_frame is not None:
             on_frame(frame)
@@ -196,10 +206,20 @@ class Conversation:
         )
 
     async def say(
-        self, content: str, *, on_frame: Any = None, raise_on_error: bool = False
+        self,
+        content: str,
+        *,
+        surface: str | None = None,
+        on_frame: Any = None,
+        raise_on_error: bool = False,
     ) -> TurnResult:
         result = await run_turn(
-            self.ovb, self.session_id, content, on_frame=on_frame, raise_on_error=raise_on_error
+            self.ovb,
+            self.session_id,
+            content,
+            surface=surface,
+            on_frame=on_frame,
+            raise_on_error=raise_on_error,
         )
         self.history.append(result)
         # The agent may auto-create + pin an itinerary on the first card.

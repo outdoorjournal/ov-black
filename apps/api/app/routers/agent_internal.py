@@ -648,3 +648,53 @@ async def search_reading_endpoint(
             for h in hits
         ]
     )
+
+
+# ── /agent/session/repin — follow a mid-conversation fork ────────────────────
+#
+# When a traveler content-write on a trunk forces a lazy fork (D030), the
+# conversation must FOLLOW the working copy: the agent forks, then re-pins its
+# own session here so subsequent turns (and same-turn tool calls) target the
+# fork. POST /sessions can't do this anymore — its reuse is scoped to the exact
+# (client, audience, itinerary) triple, so posting the fork id would mint a
+# NEW session rather than move the one the traveler is talking through.
+
+
+class AgentSessionRepinRequest(BaseModel):
+    """Body for ``POST /agent/session/repin`` — the itinerary to pin."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    itinerary_id: uuid.UUID
+
+
+class AgentSessionRepinResponse(BaseModel):
+    session_id: uuid.UUID
+    itinerary_id: uuid.UUID
+
+
+@router.post(
+    "/session/repin",
+    response_model=AgentSessionRepinResponse,
+    include_in_schema=False,
+    summary="Re-pin the token's own session to another of the client's itineraries.",
+)
+async def agent_session_repin(
+    payload: AgentSessionRepinRequest,
+    claims: AgentTokenClaims = Depends(require_agent_token),
+    session: AsyncSession = Depends(get_session),
+) -> AgentSessionRepinResponse:
+    """Move THIS session's pin (the token names the session — no id in the body).
+
+    404 if the target itinerary doesn't exist or belongs to another client — a
+    leaked id cannot point a conversation at someone else's trip.
+    """
+    agent_session = await session.get(AgentSession, claims.session_id)
+    if agent_session is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    itinerary = await session.get(Itinerary, payload.itinerary_id)
+    if itinerary is None or itinerary.client_id != claims.client_id:
+        raise HTTPException(status_code=404, detail="itinerary_not_found")
+    agent_session.itinerary_id = itinerary.id
+    await session.commit()
+    return AgentSessionRepinResponse(session_id=claims.session_id, itinerary_id=itinerary.id)
