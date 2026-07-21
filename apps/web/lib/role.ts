@@ -53,6 +53,19 @@ export async function resolveUserRole(
 export async function resolveClientIdForUser(
   supabase: SupabaseClient,
 ): Promise<string | null> {
+  const client = await resolveClientForUser(supabase);
+  return client?.clientId ?? null;
+}
+
+export type ResolvedClient = {
+  clientId: string;
+  /** The advisor-entered clients.full_name — the display name for greetings. */
+  fullName: string | null;
+};
+
+export async function resolveClientForUser(
+  supabase: SupabaseClient,
+): Promise<ResolvedClient | null> {
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -70,8 +83,14 @@ export async function resolveClientIdForUser(
     if (!res.ok) {
       return null;
     }
-    const body = (await res.json()) as { client_id?: unknown };
-    return typeof body.client_id === "string" ? body.client_id : null;
+    const body = (await res.json()) as { client_id?: unknown; full_name?: unknown };
+    if (typeof body.client_id !== "string") {
+      return null;
+    }
+    return {
+      clientId: body.client_id,
+      fullName: typeof body.full_name === "string" ? body.full_name : null,
+    };
   } catch {
     return null;
   }

@@ -29,7 +29,7 @@ import {
 
 import { publicEnv } from "@/lib/env";
 import { headerUserFromSupabase } from "@/lib/appHeader";
-import { resolveClientIdForUser } from "@/lib/role";
+import { resolveClientForUser } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 import { BasecampShell, type BasecampVariant } from "./_components/BasecampShell";
@@ -53,10 +53,11 @@ export default async function BasecampPage() {
     redirect("/");
   }
 
-  const clientId = await resolveClientIdForUser(supabase);
-  if (!clientId) {
+  const client = await resolveClientForUser(supabase);
+  if (!client) {
     notFound();
   }
+  const clientId = client.clientId;
 
   const { apiBaseUrl } = publicEnv();
   const api = createApiClient({ baseUrl: apiBaseUrl, accessToken });
@@ -114,6 +115,7 @@ export default async function BasecampPage() {
       variant={variant}
       user={headerUserFromSupabase(user)}
       clientId={clientId}
+      clientName={client.fullName}
       accessToken={accessToken}
       apiBaseUrl={apiBaseUrl}
       opener={opener}

@@ -109,7 +109,7 @@ export function DownloadMenu() {
     "flex w-full items-center justify-between gap-6 px-3 py-2 text-left font-sans text-[12px] text-ink/80 transition-colors hover:bg-ink/5 disabled:cursor-default disabled:opacity-50";
 
   return (
-    <div className="absolute left-4 top-4 z-10 sm:left-6 sm:top-6" ref={rootRef}>
+    <div className="relative" ref={rootRef}>
       <button
         type="button"
         data-testid="hero-download"
@@ -125,7 +125,7 @@ export function DownloadMenu() {
       {open ? (
         <div
           data-testid="hero-download-menu"
-          className="absolute left-0 top-full mt-2 w-48 overflow-hidden rounded-lg border border-ink/10 bg-paper py-1 text-ink shadow-xl"
+          className="absolute right-0 top-full z-10 mt-2 w-48 overflow-hidden rounded-lg border border-ink/10 bg-paper py-1 text-ink shadow-xl"
         >
           <button
             type="button"
@@ -157,7 +157,7 @@ export function DownloadMenu() {
       {error ? (
         <p
           data-testid="hero-download-error"
-          className="absolute left-0 top-full mt-2 w-52 rounded-md bg-black/70 px-3 py-2 font-sans text-[11px] text-white/85 backdrop-blur-sm"
+          className="absolute right-0 top-full z-10 mt-2 w-52 rounded-md bg-black/70 px-3 py-2 font-sans text-[11px] text-white/85 backdrop-blur-sm"
         >
           Couldn’t prepare the file — please try again.
         </p>

@@ -1908,3 +1908,38 @@ def test_kickoff_directive_omits_reading_when_no_reads() -> None:
     directive = _campaign_kickoff_directive(OLYMPUS, [])
     assert "article:" not in directive
     assert "reading list" not in directive.lower()
+
+
+def test_directive_for_swaps_length_goal_once_settled() -> None:
+    """The campaign ships one shape — the 14-night traverse — so NEITHER
+    variant asks for a length or offers 5/7-night options; the settled
+    variant additionally retires the "record 14 at the close" step."""
+    from app.campaigns.registry import OLYMPUS
+
+    unsettled = OLYMPUS.directive_for(length_settled=False)
+    settled = OLYMPUS.directive_for(length_settled=True)
+
+    assert unsettled == OLYMPUS.directive
+    assert "FIXED" in unsettled
+    assert "14-night" in unsettled
+    for variant in (unsettled, settled):
+        assert "NEVER ask" in variant
+        assert "5-, 7-" not in variant
+
+    assert settled == OLYMPUS.directive_length_settled
+    assert "ALREADY SETTLED" in settled
+    assert "duration_nights=14" not in settled
+    # The party goal survives the swap in both variants.
+    assert "PARTY" in settled
+    assert "add_trip_traveler" in settled
+
+
+def test_directive_for_falls_back_without_settled_variant() -> None:
+    """A campaign that ships no settled variant keeps its one directive
+    regardless of timing state."""
+    from dataclasses import replace
+
+    from app.campaigns.registry import OLYMPUS
+
+    bare = replace(OLYMPUS, directive_length_settled=None)
+    assert bare.directive_for(length_settled=True) == bare.directive

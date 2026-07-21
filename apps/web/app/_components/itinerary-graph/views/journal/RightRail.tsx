@@ -51,7 +51,7 @@ import { attachedNotesByHost } from "../../shared/attachedNotes";
 import { inferCardKind } from "../../shared/cards/CardBody";
 import { NodeZoomCard } from "../../shared/cards/NodeZoomCard";
 import { TYPE_TOKENS } from "../../shared/cards/tokens";
-import { subgraphDayMeta } from "../../shared/subgraph";
+import { subgraphDayMeta, subgraphDaySpan } from "../../shared/subgraph";
 import { prefersReducedMotion, scrollBehaviorFor } from "./motion";
 import { resolveNodeAffordances, type NodeAffordances } from "./affordances";
 import {
@@ -132,11 +132,16 @@ export function RightRail({
     active && !activeIsGhost && active.parent_subgraph_id
       ? (nodes.find((n) => n.id === active.parent_subgraph_id) ?? null)
       : null;
+  // Day span, not child count — a campaign-authored day holds several beat
+  // children, so "of N" must count distinct day indexes.
   const activeSiblingCount = activeParent
-    ? nodes.filter(
-        (n) =>
-          n.parent_subgraph_id === activeParent.id && n.status !== "discarded",
-      ).length
+    ? subgraphDaySpan(
+        nodes.filter(
+          (n) =>
+            n.parent_subgraph_id === activeParent.id &&
+            n.status !== "discarded",
+        ),
+      )
     : 0;
 
   const problems = useMemo(

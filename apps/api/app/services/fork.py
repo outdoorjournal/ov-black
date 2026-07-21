@@ -62,6 +62,7 @@ from app.services.itineraries import (
     update_node,
 )
 from app.services.kernel_sync import decoded_schedule
+from app.services.pg_locks import advisory_xact_lock
 
 logger = logging.getLogger("ov_black.fork")
 
@@ -94,6 +95,17 @@ async def fork_itinerary(
 ) -> Itinerary | ItineraryError:
     """Deep-copy ``itinerary_id`` into a new fork itinerary; returns the fork row.
 
+    **Idempotent per (baseline, user)** — D030's lazy-fork model: a caller who
+    already holds an OPEN fork of this baseline gets that fork back instead of
+    a duplicate. Callers do pre-read ``viewer_open_fork_id`` before forking,
+    but any stale read (a replayed dev render, a double submit) used to mint a
+    second fork and strand the first one's chat sessions; enforcing the reuse
+    here makes the invariant hold no matter what the caller saw. The advisory
+    lock serializes truly concurrent duplicates (two in-flight calls both
+    missing the reuse SELECT). Unattributable actors (``user_id is None`` —
+    system actors with no auth user) always mint a fresh fork: there is no
+    "their working copy" to reuse.
+
     The whole copy lands in one transaction. Node/edge inserts each write an
     ``op='insert'`` history row (the fork relationship itself is recorded on the
     node via ``forked_from_node_id``; ``node_history.op`` is constrained to
@@ -104,6 +116,35 @@ async def fork_itinerary(
     ).scalar_one_or_none()
     if baseline is None:
         return ItineraryError(outcome=ItineraryOutcome.NOT_FOUND)
+
+    if actor.user_id is not None:
+        await advisory_xact_lock(session, f"fork_itinerary:{baseline.id}:{actor.user_id}")
+        existing = (
+            (
+                await session.execute(
+                    select(Itinerary)
+                    .where(
+                        Itinerary.forked_from_id == baseline.id,
+                        Itinerary.fork_status == ForkStatus.open,
+                        Itinerary.created_by == actor.user_id,
+                    )
+                    .order_by(Itinerary.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            logger.info(
+                "itinerary.fork.reused",
+                extra={
+                    "fork_id": str(existing.id),
+                    "forked_from_id": str(baseline.id),
+                    "actor_kind": actor.kind.value,
+                },
+            )
+            return existing
 
     fork = Itinerary(
         client_id=baseline.client_id,

@@ -62,6 +62,13 @@ export type IntakeExperienceProps = {
    *  first line matches the destination (agent is already campaign-aware via the
    *  server directive). Defaults to the generic "Where shall we take you?". */
   seededOpener?: string;
+  /** The big serif line over the chat card. A campaign intake replaces the
+   *  generic "Where shall we take you?" with its own line — the destination is
+   *  already settled, so the prompt shouldn't ask where. */
+  headline?: string;
+  /** The small uppercase kicker above the headline ("A new adventure" by
+   *  default; a campaign supplies its title). */
+  eyebrow?: string;
 };
 
 export function IntakeExperience({
@@ -72,6 +79,8 @@ export function IntakeExperience({
   trunkId,
   initial,
   seededOpener = SEEDED_OPENER,
+  headline = "Where shall we take you?",
+  eyebrow = "A new adventure",
 }: IntakeExperienceProps) {
   const router = useRouter();
   const reduced = useReducedMotion() ?? false;
@@ -339,10 +348,10 @@ export function IntakeExperience({
           className="w-full max-w-5xl pb-6 pt-2 text-center lg:text-left"
         >
           <p className="font-sans text-[11px] uppercase tracking-[0.3em] text-paper/55">
-            A new adventure
+            {eyebrow}
           </p>
           <h1 className="mt-2 font-serif text-4xl leading-tight tracking-tight sm:text-5xl">
-            Where shall we take you?
+            {headline}
           </h1>
         </motion.div>
 

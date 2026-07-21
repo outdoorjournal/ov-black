@@ -74,6 +74,7 @@ from app.services.agent_token import AgentTokenError, mint_agent_token
 from app.services.display_status import DisplayStatus, display_status_expr
 from app.services.facts import load_agent_context
 from app.services.graph_digest import graph_digest_for_itinerary, viewing_context_for_node
+from app.services.pg_locks import advisory_xact_lock
 
 logger = logging.getLogger("ov_black.agent.service")
 
@@ -401,6 +402,18 @@ async def open_or_reuse_session(
         # re-pinned. `force_new` opts out for the "＋ new session" path.
         existing: AgentSession | None = None
         if not force_new:
+            # Two idempotent opens of the same scope can race — React
+            # strict-mode double-effects fire POST /sessions twice within
+            # microseconds — and both miss the reuse SELECT, minting duplicate
+            # live sessions (each with its own seeded-opener turn). Serialize
+            # the scope: the loser blocks until the winner commits, then its
+            # SELECT below sees the winner's row and reuses it. `force_new`
+            # skips the lock too — many live sessions per scope is exactly
+            # what it means.
+            await advisory_xact_lock(
+                session,
+                f"agent_session_open:{client_id}:{audience.value}:{itinerary_id}",
+            )
             scope_match = (
                 AgentSession.itinerary_id.is_(None)
                 if itinerary_id is None
@@ -682,9 +695,7 @@ async def _campaign_for_itinerary(
     return get_campaign(campaign_id)
 
 
-async def _itinerary_length_settled(
-    session: AsyncSession, itinerary_id: uuid.UUID | None
-) -> bool:
+async def _itinerary_length_settled(session: AsyncSession, itinerary_id: uuid.UUID | None) -> bool:
     """Whether the pinned trip already carries a settled length.
 
     True when the itinerary has an explicit ``duration_nights`` (recorded at

@@ -14,6 +14,7 @@ Gated on ``_supabase_running()`` so a fresh checkout without Docker skips cleanl
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -40,7 +41,7 @@ from app.services.itineraries import (
     get_itinerary_graph,
     update_node,
 )
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -276,6 +277,130 @@ async def test_fork_missing_baseline_returns_not_found(db_session: AsyncSession)
     result = await fork_itinerary(db_session, _actor(), itinerary_id=uuid.uuid4())
     assert isinstance(result, ItineraryError)
     assert result.outcome is ItineraryOutcome.NOT_FOUND
+
+
+# ── Idempotence per (baseline, user) — D030's lazy-fork model, enforced ─────
+#
+# `created_by` carries an FK to auth.users, so attributable actors need a real
+# auth row (same convention as test_me.py).
+
+
+async def _seed_auth_user(session: AsyncSession) -> uuid.UUID:
+    user_id = uuid.uuid4()
+    await session.execute(
+        text(
+            """
+            insert into auth.users (id, email, aud, role, instance_id)
+            values (:id, :email, 'authenticated', 'authenticated',
+                    '00000000-0000-0000-0000-000000000000')
+            """
+        ),
+        {"id": user_id, "email": f"{user_id}@fork-test.local"},
+    )
+    await session.commit()
+    return user_id
+
+
+async def _cleanup_users(*user_ids: uuid.UUID) -> None:
+    engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+    try:
+        async with engine.begin() as conn:
+            for uid in user_ids:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": uid})
+    finally:
+        await engine.dispose()
+
+
+def _user_actor(user_id: uuid.UUID) -> ActorContext:
+    return ActorContext(user_id=user_id, kind=ActorKind.USER, actor_id=str(user_id))
+
+
+@integration
+@pytest.mark.asyncio
+async def test_fork_reuses_the_callers_open_fork(db_session: AsyncSession) -> None:
+    """Same user + same baseline → the SAME open fork back, never a twin.
+
+    A different user still gets their own working copy, and once the first
+    fork leaves ``open`` (abandoned here) the next call mints a fresh one.
+    """
+    alice = await _seed_auth_user(db_session)
+    bob = await _seed_auth_user(db_session)
+    baseline = await create_itinerary(db_session, _actor(), title="Olympus")
+    fork_ids: set[uuid.UUID] = set()
+    try:
+        first = await fork_itinerary(db_session, _user_actor(alice), itinerary_id=baseline.id)
+        assert isinstance(first, Itinerary)
+        fork_ids.add(first.id)
+
+        again = await fork_itinerary(db_session, _user_actor(alice), itinerary_id=baseline.id)
+        assert isinstance(again, Itinerary)
+        fork_ids.add(again.id)
+        assert again.id == first.id  # reused, not duplicated
+
+        theirs = await fork_itinerary(db_session, _user_actor(bob), itinerary_id=baseline.id)
+        assert isinstance(theirs, Itinerary)
+        fork_ids.add(theirs.id)
+        assert theirs.id != first.id  # another user's working copy is their own
+
+        # Closing the fork releases the slot: the next fork is a fresh copy.
+        first.fork_status = ForkStatus.abandoned
+        await db_session.commit()
+        fresh = await fork_itinerary(db_session, _user_actor(alice), itinerary_id=baseline.id)
+        assert isinstance(fresh, Itinerary)
+        fork_ids.add(fresh.id)
+        assert fresh.id != first.id
+    finally:
+        await _cleanup(*fork_ids, baseline.id)
+        await _cleanup_users(alice, bob)
+
+
+@integration
+@pytest.mark.asyncio
+async def test_concurrent_forks_collapse_to_one(db_session: AsyncSession) -> None:
+    """N truly concurrent forks by one user yield ONE fork (advisory lock).
+
+    Regression for the double-fork incident: two in-flight renders both read
+    "no open fork yet" and each minted one, stranding the first fork's chat
+    sessions. Serialized, the losers block, re-read, and reuse the winner's.
+    """
+    user = await _seed_auth_user(db_session)
+    baseline = await create_itinerary(db_session, _actor(), title="racy")
+    engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+
+    async def fork_once() -> uuid.UUID:
+        async with maker() as s:
+            result = await fork_itinerary(s, _user_actor(user), itinerary_id=baseline.id)
+            assert isinstance(result, Itinerary)
+            return result.id
+
+    try:
+        ids = set(await asyncio.gather(*(fork_once() for _ in range(4))))
+        assert len(ids) == 1
+        open_count = (
+            await db_session.execute(
+                select(func.count())
+                .select_from(Itinerary)
+                .where(
+                    Itinerary.forked_from_id == baseline.id,
+                    Itinerary.fork_status == ForkStatus.open,
+                )
+            )
+        ).scalar_one()
+        assert open_count == 1
+    finally:
+        await engine.dispose()
+        forks = (
+            (
+                await db_session.execute(
+                    select(Itinerary.id).where(Itinerary.forked_from_id == baseline.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        await _cleanup(*forks, baseline.id)
+        await _cleanup_users(user)
 
 
 # ── Router (service stubbed) ───────────────────────────────────────────────

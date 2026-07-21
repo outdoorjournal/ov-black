@@ -136,13 +136,14 @@ export function DashboardHero({
       <div className="pointer-events-none absolute bottom-4 right-4 sm:bottom-6 sm:right-6">
         <CinemaPlayButton />
       </div>
-      {/* Download (PDF / Excel), top-left — export the version being viewed.
-          Both roles; mirrors the money callout's chip styling. */}
-      <DownloadMenu />
-      {/* Money, called out in the hero's top-right space — the trip's balance is
-          the one number worth surfacing above the story (the full ledger lives
-          behind the tap, on the invoices surface). */}
-      <HeroMoney money={money} itineraryId={itineraryId} />
+      {/* Top-right stack — Download (PDF / Excel, both roles) sits uppermost,
+          sharing the play button's right padding; the money callout — the one
+          number worth surfacing above the story (the full ledger lives behind
+          the tap, on the invoices surface) — sits beneath it. */}
+      <div className="absolute right-4 top-4 z-10 flex flex-col items-end gap-2 sm:right-6 sm:top-6">
+        <DownloadMenu />
+        <HeroMoney money={money} itineraryId={itineraryId} />
+      </div>
       <div className="mx-auto w-full max-w-5xl">
         <TimingInline itinerary={it} canEdit={canEdit} onSave={save} />
         <TitleInline
@@ -197,7 +198,7 @@ function HeroMoney({
     : "All settled";
 
   return (
-    <div className="absolute right-4 top-4 z-10 sm:right-6 sm:top-6">
+    <div>
       <Link
         href={href}
         data-testid="hero-money"

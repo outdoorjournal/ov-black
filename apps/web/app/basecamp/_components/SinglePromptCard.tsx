@@ -76,6 +76,8 @@ function asMoodId(value: string): MoodId | null {
 export type SinglePromptCardProps = {
   opener: OnboardingOpenerResponse;
   clientId: string;
+  // Display name for the greeting; null → plain "Welcome".
+  clientName: string | null;
   accessToken: string;
   apiBaseUrl: string;
 };
@@ -83,6 +85,7 @@ export type SinglePromptCardProps = {
 export function SinglePromptCard({
   opener,
   clientId,
+  clientName,
   accessToken,
   apiBaseUrl,
 }: SinglePromptCardProps) {
@@ -91,6 +94,7 @@ export function SinglePromptCard({
       <SinglePromptInner
         opener={opener}
         clientId={clientId}
+        clientName={clientName}
         accessToken={accessToken}
         apiBaseUrl={apiBaseUrl}
       />
@@ -101,6 +105,7 @@ export function SinglePromptCard({
 function SinglePromptInner({
   opener,
   clientId,
+  clientName,
   accessToken,
   apiBaseUrl,
 }: SinglePromptCardProps) {
@@ -364,7 +369,7 @@ function SinglePromptInner({
       <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center px-4 pb-6 sm:px-10">
         <div className="w-full max-w-5xl pb-6 pt-2 text-center lg:text-left">
           <p className="font-sans text-[11px] uppercase tracking-[0.3em] text-paper/55">
-            Welcome
+            {clientName ? `Welcome, ${clientName}` : "Welcome"}
           </p>
           <h1
             key="opener"

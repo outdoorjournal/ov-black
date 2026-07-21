@@ -68,6 +68,7 @@ class MyClientResponse(BaseModel):
     """Response for ``GET /me/client`` — the client_id the caller belongs to."""
 
     client_id: uuid.UUID
+    full_name: str
 
 
 class MyRoleResponse(BaseModel):
@@ -288,7 +289,7 @@ async def get_my_client_endpoint(
     client = await resolve_client_for_auth_user(session, user_id=user_id, email=user.email)
     if client is None:
         raise HTTPException(status_code=404, detail="client_not_found")
-    return MyClientResponse(client_id=client.id)
+    return MyClientResponse(client_id=client.id, full_name=client.full_name)
 
 
 class ReadingListAddRequest(BaseModel):

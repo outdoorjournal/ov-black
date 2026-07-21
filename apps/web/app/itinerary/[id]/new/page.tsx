@@ -26,7 +26,7 @@ import {
   updateItinerary,
 } from "@ov-black/api-client";
 
-import { campaignOpener } from "@/lib/campaigns";
+import { campaignIntake } from "@/lib/campaigns";
 import { publicEnv } from "@/lib/env";
 import { resolveUserRole } from "@/lib/role";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -43,7 +43,6 @@ type PageProps = {
 export default async function NewItineraryPage({ params, searchParams }: PageProps) {
   const { id: routeId } = await params;
   const { campaign } = await searchParams;
-  const opener = campaignOpener(campaign);
 
   const supabase = await createServerSupabase();
   const {
@@ -80,13 +79,17 @@ export default async function NewItineraryPage({ params, searchParams }: PagePro
     } else if (isOwnBuild && briefEmpty && result.nodes.length === 0) {
       const forked = await forkItinerary(api, routeId);
       if (!forked.ok) redirect(`/itinerary/${routeId}/dashboard`);
-      // Forking an unnamed trunk synthesizes a "(fork)" placeholder title —
-      // lineage bookkeeping that would read as the trip's name across the
-      // dashboard hero and breadcrumbs. Blank it; Artemis names the
+      // Forking synthesizes a "{trunk title} (fork)" title — lineage
+      // bookkeeping that would read as the trip's name across the dashboard
+      // hero and breadcrumbs. Strip the suffix but KEEP the base name: a
+      // campaign shell arrives already named (e.g. "Mount Olympus by First
+      // Light") and that name must survive even if the agent never renames
+      // it. An unnamed trunk's fork reduces to blank; Artemis names that
       // adventure during the conversation.
       const placeholder = (forked.graph.itinerary.title ?? "").trim();
-      if (placeholder === "(fork)" || /\(fork\)$/i.test(placeholder)) {
-        await updateItinerary(api, forked.graph.itinerary.id, { title: "" });
+      const baseName = placeholder.replace(/\s*\(fork\)$/i, "").trim();
+      if (placeholder !== baseName) {
+        await updateItinerary(api, forked.graph.itinerary.id, { title: baseName });
       }
       const fork = await getItinerary(api, forked.graph.itinerary.id);
       if (!fork.ok) notFound();
@@ -112,6 +115,12 @@ export default async function NewItineraryPage({ params, searchParams }: PagePro
   const clientId = target.itinerary.client_id;
   if (!clientId) redirect(`/itinerary/${target.itinerary.id}/dashboard`);
 
+  // Campaign intakes speak in the campaign's voice — headline, eyebrow, and
+  // the seeded opener all come from the campaign trim. The itinerary's own
+  // campaign_id (stamped at seed time, inherited by forks) is the durable
+  // source; the ?campaign= param covers the first hop before hydration.
+  const intake = campaignIntake(campaign ?? target.itinerary.campaign_id);
+
   return (
     <IntakeExperience
       apiBaseUrl={apiBaseUrl}
@@ -119,7 +128,13 @@ export default async function NewItineraryPage({ params, searchParams }: PagePro
       clientId={clientId}
       itineraryId={target.itinerary.id}
       trunkId={routeId}
-      {...(opener ? { seededOpener: opener } : {})}
+      {...(intake
+        ? {
+            seededOpener: intake.opener,
+            headline: intake.headline,
+            eyebrow: intake.eyebrow,
+          }
+        : {})}
       initial={{
         // The fork of an unnamed trunk carries a placeholder like "(fork)" —
         // that's lineage bookkeeping, not a name. Show "still listening…"

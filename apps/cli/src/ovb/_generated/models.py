@@ -1354,6 +1354,7 @@ class MyClientResponse(BaseModel):
     """
 
     client_id: Annotated[UUID, Field(title='Client Id')]
+    full_name: Annotated[str, Field(title='Full Name')]
 
 
 class MyInvoiceSummary(BaseModel):

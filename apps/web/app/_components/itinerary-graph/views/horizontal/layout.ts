@@ -90,6 +90,25 @@ const DAY_END_MIN = 21 * 60;
 // morning — matches the Journal's `BEAT_START_TIME` so the two views agree.
 const BEAT_MORNING_MIN = 9 * 60;
 
+// "HH:MM" (a beat's authored `subgraph_day.hhmm`) → minute of day.
+function hhmmToMinute(s: string): number {
+  const [h, m] = s.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+// The ISO offset suffix of `iso`, or one built from the trip default. A derived
+// beat's `start_time` must carry an offset — an offset-less ISO is parsed in
+// the BROWSER's zone and re-rendered in the trip's, drifting the displayed
+// clock by the difference. Mirrors the Journal's `offsetSuffixOf`.
+function offsetSuffixOf(iso: string, tzDefault: number): string {
+  const m = iso.match(/(Z|[+-]\d{2}:\d{2})$/);
+  if (m?.[1]) return m[1];
+  const sign = tzDefault < 0 ? "-" : "+";
+  const abs = Math.abs(tzDefault);
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  return `${sign}${pad2(Math.floor(abs))}:${pad2(Math.round((abs % 1) * 60))}`;
+}
+
 export interface TimelineSegment {
   type: "live" | "elide";
   startMin: number;
@@ -689,7 +708,10 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
         // Day 1 is the parent card itself — no separate beat for it.
         if (idx <= 1) return;
         beatDayIndex = item.dayIndex + (idx - 1);
-        beatMin = BEAT_MORNING_MIN;
+        // An authored beat carries its own clock within the day (`hhmm`); a
+        // plain day child starts the morning — same rule as the Journal's
+        // `deriveJourneyBeats`, so the two views agree.
+        beatMin = dm.hhmm ? snapMinute(hhmmToMinute(dm.hhmm)) : BEAT_MORNING_MIN;
         scheduled = false;
       }
       const dayLayout = days[beatDayIndex];
@@ -697,8 +719,11 @@ export function computeHorizontalLayout(args: LayoutArgs): HLayoutResult {
       const hours = dm.hours;
       // Enriched child: wear the parent's imagery (like the Journal's beats)
       // and carry the beat's resolved placement as the card's own clock, so the
-      // glance card renders a photo + a true start time / duration.
-      const beatDayIso = `${dayLayout.date}T${formatMinuteOfDay(beatMin)}:00`;
+      // glance card renders a photo + a true start time / duration. The offset
+      // (the parent's own, else the trip's) makes the wall time exact for every
+      // reader — offset-less strings drift by browser-vs-trip zone.
+      const beatSuffix = offsetSuffixOf(getHMeta(item.node).start_time ?? "", tzOffsetHours);
+      const beatDayIso = `${dayLayout.date}T${formatMinuteOfDay(beatMin)}:00${beatSuffix}`;
       const beatDurationMin =
         typeof dm.duration_minutes === "number" && dm.duration_minutes > 0
           ? dm.duration_minutes

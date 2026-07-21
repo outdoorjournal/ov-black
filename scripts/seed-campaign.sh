@@ -69,8 +69,7 @@ for c in d.get("clients",[]):
       "full_name": sys.argv[1], "email": sys.argv[2],
       "dossier": {"typed": {
         "contact_preference": "email",
-        "travel_party_notes": "Wife and three children; based in Boulder, Colorado.",
-        "estimated_net_worth_usd": 250000000
+        "travel_party_notes": "Wife and three children; based in Boulder, Colorado."
       }}
     }))' "$CLIENT_NAME" "$CLIENT_EMAIL")
     resp=$(curl -fsS "${auth[@]}" -H 'Content-Type: application/json' -X POST "$API_URL/clients" -d "$body") \

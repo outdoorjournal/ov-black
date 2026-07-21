@@ -38,6 +38,9 @@ export type BasecampShellProps = {
   // The resolved viewer, for the shared AppHeader masthead (PS7).
   user: AppHeaderUser;
   clientId: string;
+  // The advisor-entered clients.full_name — greets the traveler by name on
+  // the first-touch welcome (Supabase metadata is empty for magic-link users).
+  clientName: string | null;
   accessToken: string;
   apiBaseUrl: string;
   // Non-null on first_prompt; null on returning variants (the server skips
@@ -60,6 +63,7 @@ export function BasecampShell({
   variant,
   user,
   clientId,
+  clientName,
   accessToken,
   apiBaseUrl,
   opener,
@@ -77,6 +81,7 @@ export function BasecampShell({
       <SinglePromptCard
         opener={opener}
         clientId={clientId}
+        clientName={clientName ?? user.name}
         accessToken={accessToken}
         apiBaseUrl={apiBaseUrl}
       />
@@ -228,6 +233,7 @@ function OnboardingReminder() {
         You stepped away before your concierge could learn your tastes. Pick the
         thread back up whenever you like — a sentence or two is enough to begin.
       </p>
+      <StartItineraryButton />
     </div>
   );
 }

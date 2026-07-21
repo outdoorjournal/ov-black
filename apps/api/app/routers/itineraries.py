@@ -2250,6 +2250,10 @@ async def fork_itinerary_endpoint(
     copy in editable; booked/confirmed nodes copy in carried-locked (the G1 gate
     keeps them immutable in the fork). Every node carries ``forked_from_node_id``
     lineage; the itinerary carries ``forked_from_id``.
+
+    Idempotent per caller: if the caller already holds an OPEN fork of this
+    baseline, that fork's graph is returned instead of a duplicate being minted
+    (still 201 — the caller can't distinguish, matching session-open semantics).
     """
     baseline = await _load_itinerary(session, itinerary_id)
     if baseline is None:
