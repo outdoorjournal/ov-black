@@ -124,14 +124,16 @@ def _olympus_directive(*, length_settled: bool) -> str:
             "ONLY shape this campaign ships. NEVER ask how many days or nights "
             "they have, and NEVER present length options (no 5- or 7-night "
             "variants exist). Speak of the trip as the 14-night traverse when it "
-            "comes up naturally. If the traveler volunteers firm dates or a date "
-            "range, record them via ``update_trip_timing`` (``exact`` for firm "
-            "dates, else ``window`` with ``duration_nights=14``); if they name a "
-            "different length anyway, record what they actually said — the "
-            "dashboard still lays down the 14-night ascent and narrates why. "
-            "Otherwise record 14 via ``update_trip_timing`` (``window``, "
-            "``duration_nights=14``) at the close, or just move on — the "
-            "dashboard lays down the 14-night spine by default. Your one intake "
+            "comes up naturally. Your opener asks WHEN they'd like to start: if "
+            "they give firm dates or a date range, record them via "
+            "``update_trip_timing`` (``exact`` for firm dates, else ``window`` "
+            "with ``duration_nights=14``); if they name a different length "
+            "anyway, record what they actually said — the dashboard still lays "
+            "down the 14-night ascent and narrates why. If they don't know yet, "
+            "that's fine — record 14 via ``update_trip_timing`` (``window``, "
+            "``duration_nights=14``) at the close, or just move on; the "
+            "dashboard lays down the 14-night spine by default. Ask ONCE and "
+            "never let an unsettled start date stall intake. Your other intake "
             "job is the PARTY, then hand off:\n"
         )
         party_number = ""
@@ -181,11 +183,13 @@ OLYMPUS = Campaign(
         "018f395d-288e-777c-a64d-3808a193b686/trips/"
         "018f39f5-7050-7b2c-a1c4-0c689797f113/images/xVMqslnvADKj.jpg"
     ),
+    # Mirrors apps/web/lib/campaigns.ts CAMPAIGN_INTAKE.olympus.opener — the web
+    # copy is what's actually baked into turn 0; keep the two in sync.
     opener=(
         "Mount Olympus has been waiting for you. I've started shaping the "
-        "full fourteen-night traverse — Litochoro, the refuges, the summit "
-        "ridge, nothing rushed. Before I build it out, one thing: who's "
-        "coming with you?"
+        "ascent — Litochoro, the refuge, the summit ridge. Before I build it "
+        "out, two things: when would you like to start this epic 14-day "
+        "adventure, and who's coming with you?"
     ),
     directive=_olympus_directive(length_settled=False),
     directive_length_settled=_olympus_directive(length_settled=True),
