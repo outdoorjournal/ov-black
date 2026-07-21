@@ -250,7 +250,10 @@ export function SessionThread({
   );
 }
 
-function SessionRow({
+// Shared row markup for a resumable session (name / rename / archive). Also
+// consumed by basecamp's RightRailChat, whose session rail lists the unpinned
+// (itinerary_id NULL) scope with the same affordances.
+export function SessionRow({
   session,
   active,
   onResume,

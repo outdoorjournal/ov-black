@@ -2,7 +2,7 @@
 # scripts/cleanup-robin.sh — reset a demo traveler's self-expressed state.
 #
 # Targeted cleanup for re-running the Robin Thurston / Mt Olympus demo (or
-# any client). Wipes exactly four things and nothing else:
+# any client). Wipes exactly five things and nothing else:
 #   - profile_facts       — what the traveler self-expressed (agent/advisor)
 #   - itineraries         — cascades to nodes + edges (the whole graph)
 #   - reading list        — the `article` nodes that live ON the itinerary,
@@ -12,14 +12,19 @@
 #                           companions). Client-scoped, so it is NOT touched by
 #                           the itineraries cascade and needs its own delete;
 #                           intake re-seats the party on the next demo run.
+#   - agent_sessions      — cascades to agent_turns. Without this, basecamp
+#                           resumes the old onboarding conversation — and the
+#                           itineraries delete makes it WORSE: the FK's
+#                           `on delete set null` un-pins every old trip chat
+#                           into the basecamp (itinerary_id IS NULL) scope, so
+#                           stale trip conversations surface in the rail too.
+#                           Deleting them restores the first-touch prompt.
 #
 # What it does NOT touch (unlike reset-client.sh --reset-dossier):
 #   - clients / auth.users     — the traveler can still log in
 #   - dossiers + dossier_facts — private advisor knowledge
 #   - osint_facts              — external research
 #   - reading_catalog          — the shared Outside catalog is not per-client
-#   - agent_sessions           — kept; their itinerary_id pin is set null by
-#                                the FK's `on delete set null`, so no dangling
 #
 # Env overrides:
 #   DB_URL              postgres dsn (default: local Supabase on :54322)
@@ -39,7 +44,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --email) EMAIL="${2:?}"; shift 2;;
     -y|--yes) ASSUME_YES=1; shift;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0;;
     *) die "unknown flag: $1";;
   esac
 done
@@ -86,13 +91,17 @@ counts=$(psql_exec -c "
     (select count(*) from public.nodes n
        join public.itineraries i on i.id = n.itinerary_id
        where i.client_id = '$client_id' and n.type = 'article'),
-    (select count(*) from public.party_members where client_id = '$client_id');
+    (select count(*) from public.party_members where client_id = '$client_id'),
+    (select count(*) from public.agent_sessions where client_id = '$client_id'),
+    (select count(*) from public.agent_turns t
+       join public.agent_sessions s on s.id = t.session_id
+       where s.client_id = '$client_id');
 ")
-IFS='|' read -r n_p_facts n_itins n_nodes n_edges n_articles n_party <<< "$counts"
+IFS='|' read -r n_p_facts n_itins n_nodes n_edges n_articles n_party n_sessions n_turns <<< "$counts"
 
-log "to delete: ${n_p_facts} profile facts, ${n_itins} itineraries (${n_nodes} nodes / ${n_edges} edges), incl. ${n_articles} reading-list article(s), ${n_party} party member(s)"
+log "to delete: ${n_p_facts} profile facts, ${n_itins} itineraries (${n_nodes} nodes / ${n_edges} edges), incl. ${n_articles} reading-list article(s), ${n_party} party member(s), ${n_sessions} agent session(s) (${n_turns} turns)"
 
-if [[ "$n_p_facts" == "0" && "$n_itins" == "0" && "$n_party" == "0" ]]; then
+if [[ "$n_p_facts" == "0" && "$n_itins" == "0" && "$n_party" == "0" && "$n_sessions" == "0" ]]; then
   log "nothing to do — already clean"
   exit 0
 fi
@@ -105,13 +114,15 @@ if [[ "$ASSUME_YES" != "1" ]]; then
 fi
 
 # --- 4. delete in one transaction (article/reading-list nodes go with the
-#        itineraries cascade — no separate delete needed)
+#        itineraries cascade, agent_turns with the agent_sessions cascade —
+#        no separate deletes needed)
 psql_exec <<SQL
 begin;
-  delete from public.profile_facts where client_id = '$client_id';
-  delete from public.itineraries   where client_id = '$client_id';
-  delete from public.party_members where client_id = '$client_id';
+  delete from public.profile_facts  where client_id = '$client_id';
+  delete from public.itineraries    where client_id = '$client_id';
+  delete from public.party_members  where client_id = '$client_id';
+  delete from public.agent_sessions where client_id = '$client_id';
 commit;
 SQL
 
-log "done — profile facts, itineraries, reading list, and travel party cleared"
+log "done — profile facts, itineraries, reading list, travel party, and agent sessions cleared"

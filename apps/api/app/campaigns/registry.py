@@ -70,6 +70,107 @@ class Campaign:
     arrival_place: str | None = None
     #: Human place label for the transfer DESTINATION — the trip's first base.
     base_place: str | None = None
+    #: Variant of ``directive`` for a trip whose length is already settled
+    #: (an explicit duration or pinned dates on the itinerary) — it must tell
+    #: the agent NOT to ask how long the trip is. None → ``directive`` is used
+    #: regardless of timing state.
+    directive_length_settled: str | None = None
+
+    def directive_for(self, *, length_settled: bool) -> str:
+        """The private directive to thread into this turn's prompt.
+
+        The directive leads the system prompt every turn, so a stale intake
+        goal ("pin down the length") outshouts the trip brief's settled
+        timing — the swap here is what actually stops the agent re-asking
+        "how many days do you have?" after the length is on file.
+        """
+        if length_settled and self.directive_length_settled:
+            return self.directive_length_settled
+        return self.directive
+
+
+def _olympus_directive(*, length_settled: bool) -> str:
+    """Assemble the Olympus private directive.
+
+    Two variants share everything but the LENGTH goal. The intake variant
+    steers warmly toward a night count (asked ONCE). The settled variant —
+    picked the moment the itinerary carries a length, whether intake recorded
+    one or the kickoff persisted the 14-night default — forbids raising the
+    question at all: the mountain shape is already laid down, and re-asking
+    "how many days do you have for the mountain?" over a live 14-night
+    itinerary reads as the concierge not knowing the trip it's hosting.
+    """
+    intro = (
+        "This trip was started from the Mount Olympus inbound campaign. Open "
+        "grounded in Olympus — the traveler already knows this is the "
+        "destination, so don't ask where. "
+    )
+    if length_settled:
+        length_part = (
+            "The trip's LENGTH is ALREADY SETTLED — it is on file in the trip "
+            "brief and the mountain shape is laid down. NEVER ask how many "
+            "days or nights they have, in any phrasing — not as an opener, "
+            "not as a confirmation, not at the close. Reopen timing ONLY if "
+            "the traveler themselves asks to change it, and record the change "
+            "via ``update_trip_timing``. Your one remaining intake job is the "
+            "PARTY, then hand off:\n"
+        )
+        party_number = ""
+        close_gate = "Once the party is settled, call ``complete_intake``."
+    else:
+        length_part = (
+            "Your ONLY job in intake is to settle "
+            "two things, then hand off:\n"
+            "1. LENGTH — how many days/nights they have for the mountain. This is "
+            "the single most important thing to pin down: the ascent is built as a "
+            "5-, 7-, or 14-night shape (short summit push, the classic ascent, or "
+            "the unhurried full traverse), and the length decides which one you lay "
+            "down on the dashboard next. Steer warmly toward a number of nights — if "
+            "they're vague (\"about a week\"), that's fine, land on a rough count. "
+            "The MOMENT you have it, call ``update_trip_timing``: ``window`` with "
+            "``duration_nights`` (and a rough date range if they gave one), or "
+            "``exact`` if they named firm dates. Ask ONCE — and never pre-record a "
+            "length they didn't give: a traveler who says they don't know yet "
+            "leaves timing UNSET (or ``flexible``), not silently defaulted. Only "
+            "after they've deflected your one ask — evasive, undecided, or they'd "
+            "rather you just handle it — does the default apply: the full 14-night "
+            "ascent (the whole mountain, unhurried), easy to trim later. Record 14 "
+            "via ``update_trip_timing`` (``window``, ``duration_nights=14``) at the "
+            "close, or just move on to party — the dashboard lays down the 14-night "
+            "spine by default when no length was settled. Never let a missing "
+            "length stall intake or make you re-ask.\n"
+        )
+        party_number = "2. "
+        close_gate = "Once length and party are settled, call ``complete_intake``."
+    return (
+        intro
+        + length_part
+        + party_number
+        + "PARTY — settle who is coming AND seat them on THIS trip; recording a "
+        "companion in the household is not enough, they must be on the trip or "
+        "the itinerary (flights, rooms, transfers, per-person costs) is sized "
+        "wrong. First check ``party_members`` via ``get_traveler_context`` — a "
+        "returning traveler already has family on file. For each person coming: "
+        "someone ALREADY on file (a spouse, the kids) → ``add_trip_traveler`` "
+        "with their member id; a brand-new person → ``record_party_member`` "
+        "(which both saves and seats them). If someone on file is sitting this "
+        "one out → ``remove_trip_traveler``. If it's genuinely just them, seat "
+        "the primary via ``record_party_member`` (``is_primary=true``, their own "
+        'name) so the ledger reads "just you". Don\'t leave known family '
+        "unseated: if their kids are on file, confirm and seat them. But a "
+        "MAYBE is not a yes: a companion floated with hedging (\"might join\", "
+        "\"don't hold me to it\") is NOT seated, NOT recorded, and NOT "
+        "cross-examined against the household file — acknowledge lightly, move "
+        "on, and never re-raise it, especially not at the close. Settling the "
+        "party means capturing what the traveler actually committed to, even "
+        "when that is \"just me, for now\".\n"
+        "Set the campaign mood. And when the traveler volunteers something real "
+        "about themselves — a decades-old dream of this summit, a passion, a "
+        "fear — record ONE profile fact for it (``record_profile_fact``) that "
+        "same turn; the campaign's goals never crowd out a genuinely "
+        "offered piece of who they are. Do NOT build the itinerary yet — the "
+        "skeleton goes down on the dashboard right after. " + close_gate
+    )
 
 
 OLYMPUS = Campaign(
@@ -92,55 +193,8 @@ OLYMPUS = Campaign(
         "out, two things: how many days do you have for the mountain, and "
         "who's coming with you?"
     ),
-    directive=(
-        "This trip was started from the Mount Olympus inbound campaign. Open "
-        "grounded in Olympus — the traveler already knows this is the "
-        "destination, so don't ask where. Your ONLY job in intake is to settle "
-        "two things, then hand off:\n"
-        "1. LENGTH — how many days/nights they have for the mountain. This is "
-        "the single most important thing to pin down: the ascent is built as a "
-        "5-, 7-, or 14-night shape (short summit push, the classic ascent, or "
-        "the unhurried full traverse), and the length decides which one you lay "
-        "down on the dashboard next. Steer warmly toward a number of nights — if "
-        "they're vague (\"about a week\"), that's fine, land on a rough count. "
-        "The MOMENT you have it, call ``update_trip_timing``: ``window`` with "
-        "``duration_nights`` (and a rough date range if they gave one), or "
-        "``exact`` if they named firm dates. Ask ONCE — and never pre-record a "
-        "length they didn't give: a traveler who says they don't know yet "
-        "leaves timing UNSET (or ``flexible``), not silently defaulted. Only "
-        "after they've deflected your one ask — evasive, undecided, or they'd "
-        "rather you just handle it — does the default apply: the full 14-night "
-        "ascent (the whole mountain, unhurried), easy to trim later. Record 14 "
-        "via ``update_trip_timing`` (``window``, ``duration_nights=14``) at the "
-        "close, or just move on to party — the dashboard lays down the 14-night "
-        "spine by default when no length was settled. Never let a missing "
-        "length stall intake or make you re-ask.\n"
-        "2. PARTY — settle who is coming AND seat them on THIS trip; recording a "
-        "companion in the household is not enough, they must be on the trip or "
-        "the itinerary (flights, rooms, transfers, per-person costs) is sized "
-        "wrong. First check ``party_members`` via ``get_traveler_context`` — a "
-        "returning traveler already has family on file. For each person coming: "
-        "someone ALREADY on file (a spouse, the kids) → ``add_trip_traveler`` "
-        "with their member id; a brand-new person → ``record_party_member`` "
-        "(which both saves and seats them). If someone on file is sitting this "
-        "one out → ``remove_trip_traveler``. If it's genuinely just them, seat "
-        "the primary via ``record_party_member`` (``is_primary=true``, their own "
-        'name) so the ledger reads "just you". Don\'t leave known family '
-        "unseated: if their kids are on file, confirm and seat them. But a "
-        "MAYBE is not a yes: a companion floated with hedging (\"might join\", "
-        "\"don't hold me to it\") is NOT seated, NOT recorded, and NOT "
-        "cross-examined against the household file — acknowledge lightly, move "
-        "on, and never re-raise it, especially not at the close. Settling the "
-        "party means capturing what the traveler actually committed to, even "
-        "when that is \"just me, for now\".\n"
-        "Set the campaign mood. And when the traveler volunteers something real "
-        "about themselves — a decades-old dream of this summit, a passion, a "
-        "fear — record ONE profile fact for it (``record_profile_fact``) that "
-        "same turn; the campaign's two goals never crowd out a genuinely "
-        "offered piece of who they are. Do NOT build the itinerary yet — the "
-        "skeleton goes down on the dashboard right after. Once length and party "
-        "are settled, call ``complete_intake``."
-    ),
+    directive=_olympus_directive(length_settled=False),
+    directive_length_settled=_olympus_directive(length_settled=True),
     supported_lengths=(5, 7, 14),
     spine_slugs_by_length={5: "olympus-5d", 7: "olympus-7d", 14: "olympus-14d"},
     arrival_airport="SKG",

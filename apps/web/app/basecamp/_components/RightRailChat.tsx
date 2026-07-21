@@ -23,7 +23,11 @@ import {
   addToReadingList,
   createApiClient,
   createSessionEndpoint,
+  listSessions,
+  listTurns,
+  patchSession,
   type AgentTurnSummary,
+  type SessionSummary,
 } from "@ov-black/api-client";
 
 import {
@@ -50,6 +54,7 @@ import {
 import { type MoodId } from "@/lib/atmos/moods";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { HumanThread } from "@/app/itinerary/[id]/_shell/HumanThread";
+import { SessionRow } from "@/app/itinerary/[id]/_shell/SessionThread";
 import {
   PeopleCircles,
   type ConciergeChannel,
@@ -138,6 +143,16 @@ function RightRailChatInner({
   // regardless, so switching to Advisor never interrupts an in-flight turn.
   const [channel, setChannel] = useState<ConciergeChannel>("artemis");
 
+  // The basecamp session rail (mirrors the itinerary shell's SessionThread):
+  // the unpinned (itinerary_id NULL) traveler scope holds many resumable
+  // conversations you can browse, start, rename, and archive. Switching
+  // rebinds the SAME store via resetConversation — no remount, so the
+  // channel state and drawer chrome stay put.
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(existingSessionId);
+  const [listOpen, setListOpen] = useState(false);
+  const sessionsSeeded = useRef(false);
+
   const router = useRouter();
   const sessionIdRef = useRef<string | null>(existingSessionId);
   const abortRef = useRef<AbortController | null>(null);
@@ -182,7 +197,9 @@ function RightRailChatInner({
   const { surface, onSurface, opener, close } = useAgentSurface();
 
   const { sendTurn } = useAgentStream({
-    sessionId: sessionIdRef.current ?? "",
+    // Getter form: the bound session changes at runtime (lazy first open,
+    // session switch, New) — a static binding would post to the stale id.
+    getSessionId: () => sessionIdRef.current,
     getAccessToken,
     apiBaseUrl,
     abortRef,
@@ -217,16 +234,112 @@ function RightRailChatInner({
     },
   });
 
-  const ensureSession = useCallback(async (): Promise<string | null> => {
-    if (sessionIdRef.current) return sessionIdRef.current;
+  // Live-token client for the session-rail calls — the SSR accessToken prop
+  // goes stale over a long basecamp sit, so never bake it into a client here.
+  const api = useCallback(async () => {
     const token = await getAccessToken();
     if (!token) return null;
-    const api = createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
-    const result = await createSessionEndpoint(api, { client_id: clientId });
+    return createApiClient({ baseUrl: apiBaseUrl, accessToken: token });
+  }, [apiBaseUrl, getAccessToken]);
+
+  const refetchSessions = useCallback(async (): Promise<SessionSummary[]> => {
+    const client = await api();
+    if (!client) return [];
+    // itineraryId omitted → the unpinned basecamp scope (itinerary_id NULL);
+    // an itinerary's Artemis chat is a different session list entirely.
+    const result = await listSessions(client, {
+      clientId,
+      audience: "traveler",
+    });
+    const rows = result.ok ? result.sessions : [];
+    setSessions(rows);
+    return rows;
+  }, [api, clientId]);
+
+  // Populate the rail's conversation list on mount. The ACTIVE conversation
+  // (id + turns) already arrived server-side, so no turn fetch here.
+  useEffect(() => {
+    if (sessionsSeeded.current) return;
+    sessionsSeeded.current = true;
+    void refetchSessions();
+  }, [refetchSessions]);
+
+  // Rebind the rail to a conversation: kill any in-flight stream, close the
+  // drawer, and swap the store's turn list in place (no remount).
+  const bindConversation = useCallback(
+    (id: string | null, turns: AgentTurnSummary[]) => {
+      abortRef.current?.abort();
+      sessionIdRef.current = id;
+      setActiveId(id);
+      setListOpen(false);
+      close();
+      storeApi.getState().resetConversation(turns);
+    },
+    [close, storeApi],
+  );
+
+  const resume = useCallback(
+    async (id: string) => {
+      const client = await api();
+      if (!client) return;
+      const result = await listTurns(client, id);
+      bindConversation(id, result.ok ? result.turns : []);
+    },
+    [api, bindConversation],
+  );
+
+  const startNew = useCallback(async () => {
+    const client = await api();
+    if (!client) return;
+    const result = await createSessionEndpoint(client, {
+      client_id: clientId,
+      force_new: true,
+    });
+    if (!result.ok) return;
+    void refetchSessions();
+    bindConversation(result.session_id, []);
+  }, [api, clientId, refetchSessions, bindConversation]);
+
+  const rename = useCallback(
+    async (id: string, title: string) => {
+      const client = await api();
+      if (!client) return;
+      await patchSession(client, id, { title });
+      void refetchSessions();
+    },
+    [api, refetchSessions],
+  );
+
+  const archive = useCallback(
+    async (id: string) => {
+      const client = await api();
+      if (!client) return;
+      await patchSession(client, id, { archived: true });
+      const rows = await refetchSessions();
+      if (id === sessionIdRef.current) {
+        // Fall back to the next live conversation, or an empty draft that
+        // lazily opens its own session on the first send (ensureSession).
+        const next = rows.find((s) => s.session_id !== id);
+        if (next) void resume(next.session_id);
+        else bindConversation(null, []);
+      }
+    },
+    [api, refetchSessions, resume, bindConversation],
+  );
+
+  const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    const client = await api();
+    if (!client) return null;
+    const result = await createSessionEndpoint(client, { client_id: clientId });
     if (!result.ok) return null;
     sessionIdRef.current = result.session_id;
+    // A draft lazily opened its own session — surface it in the rail, but
+    // DON'T rebind (the turn is streaming into it right now).
+    setActiveId((prev) => prev ?? result.session_id);
+    void refetchSessions();
     return result.session_id;
-  }, [apiBaseUrl, clientId, getAccessToken]);
+  }, [api, clientId, refetchSessions]);
 
   const onSend = useCallback(
     (content: string) => {
@@ -288,6 +401,9 @@ function RightRailChatInner({
       ref.current?.abort();
     };
   }, []);
+
+  const activeTitle =
+    sessions.find((s) => s.session_id === activeId)?.title ?? null;
 
   // Normalise the basecamp turn model onto the shared ConversationPanel shape.
   // AgentTurnView.role is a superset of ConversationRole (they share
@@ -354,6 +470,72 @@ function RightRailChatInner({
           ) : null
         }
       />
+      {/* Session bar — Artemis channel only (the advisor thread is a single
+          ongoing conversation). Same affordances + testids as the itinerary
+          shell's SessionThread bar: tap the title to browse, New to start a
+          fresh conversation in the basecamp (unpinned) scope. */}
+      {channel === "artemis" ? (
+        <>
+          <div className="flex shrink-0 items-center gap-3 border-b border-ink/10 bg-paper/85 px-4 py-2 backdrop-blur-xs">
+            <button
+              type="button"
+              onClick={() => setListOpen((v) => !v)}
+              data-testid="session-bar"
+              aria-expanded={listOpen}
+              className="flex min-w-0 flex-1 flex-col items-start text-left"
+            >
+              <span className="text-[10px] uppercase tracking-[0.24em] text-ink/55">
+                Conversation
+              </span>
+              <span className="flex w-full min-w-0 items-center gap-1.5">
+                <span className="truncate font-serif text-lg text-ink">
+                  {activeTitle ?? "New conversation"}
+                </span>
+                <span
+                  aria-hidden
+                  className={
+                    "shrink-0 text-ink/40 transition-transform " +
+                    (listOpen ? "rotate-180" : "")
+                  }
+                >
+                  ⌄
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void startNew()}
+              data-testid="session-new"
+              className="h-7 shrink-0 rounded-md border border-ink/20 px-2 font-sans text-[10px] uppercase tracking-[0.16em] text-ink/70 transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              New
+            </button>
+          </div>
+          {listOpen ? (
+            <div
+              data-testid="session-list"
+              className="max-h-56 shrink-0 overflow-y-auto border-b border-ink/10 bg-paper/60"
+            >
+              {sessions.length === 0 ? (
+                <p className="px-3 py-3 font-serif text-[13px] italic text-ink/45">
+                  No conversations yet. Start one below, or tap New.
+                </p>
+              ) : (
+                sessions.map((s) => (
+                  <SessionRow
+                    key={s.session_id}
+                    session={s}
+                    active={s.session_id === activeId}
+                    onResume={() => void resume(s.session_id)}
+                    onRename={(title) => void rename(s.session_id, title)}
+                    onArchive={() => void archive(s.session_id)}
+                  />
+                ))
+              )}
+            </div>
+          ) : null}
+        </>
+      ) : null}
       {/* Both channels share the space below the top nav. The Artemis stream
           body stays mounted (the useAgentStream hook lives at the top of this
           component, so a hidden body never drops an in-flight turn); the

@@ -197,14 +197,17 @@ async def _insert_session(
     audience: str,
     started_at: datetime,
     itinerary_id: uuid.UUID | None = None,
+    archived_at: datetime | None = None,
 ) -> uuid.UUID:
     sid = uuid.uuid4()
     await session.execute(
         text(
             """
             insert into public.agent_sessions
-                (id, client_id, itinerary_id, agentcore_session_id, audience, started_at)
-            values (:id, :client, :itin, :acs, cast(:aud as session_audience), :started)
+                (id, client_id, itinerary_id, agentcore_session_id, audience,
+                 started_at, archived_at)
+            values (:id, :client, :itin, :acs, cast(:aud as session_audience),
+                    :started, :archived)
             """
         ),
         {
@@ -214,6 +217,7 @@ async def _insert_session(
             "acs": str(sid),
             "aud": audience,
             "started": started_at,
+            "archived": archived_at,
         },
     )
     await session.commit()
@@ -526,6 +530,71 @@ async def test_onboarding_session_ignores_itinerary_pinned(
         assert resp.session_id == basecamp_sid
     finally:
         await _cleanup(trip, client_ids=(client_id,), owner=owner)
+        engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("delete from auth.users where id = :i"), {"i": traveler})
+        finally:
+            await engine.dispose()
+
+
+@integration
+@pytest.mark.asyncio
+async def test_onboarding_session_ignores_archived(
+    db_session: AsyncSession,
+) -> None:
+    """Basecamp resumes the newest LIVE basecamp session, skipping archived ones.
+
+    The basecamp session rail hides archived conversations (same as the
+    itinerary shell's SessionThread), so the server's resume target must skip
+    them too — otherwise archiving your latest conversation resumes it
+    invisibly on the next visit.
+    """
+    from app.auth import AuthenticatedUser
+    from app.routers.me import get_my_onboarding_session_endpoint
+
+    owner = uuid.uuid4()
+    traveler = uuid.uuid4()
+    for uid in (owner, traveler):
+        await db_session.execute(
+            text(
+                """
+                insert into auth.users (id, email, aud, role, instance_id)
+                values (:id, :email, 'authenticated', 'authenticated',
+                        '00000000-0000-0000-0000-000000000000')
+                """
+            ),
+            {"id": uid, "email": f"{uid}@x.com"},
+        )
+    await db_session.commit()
+
+    client_id = await _insert_linked_client(db_session, owner, traveler, "archive-traveler")
+    try:
+        live_sid = await _insert_session(
+            db_session,
+            client_id=client_id,
+            audience="traveler",
+            started_at=datetime(2026, 6, 29, 2, 0, 0, tzinfo=UTC),
+        )
+        # Archived session is NEWER — it would win without the archived filter.
+        await _insert_session(
+            db_session,
+            client_id=client_id,
+            audience="traveler",
+            started_at=datetime(2026, 6, 29, 5, 0, 0, tzinfo=UTC),
+            archived_at=datetime(2026, 6, 29, 6, 0, 0, tzinfo=UTC),
+        )
+
+        user = AuthenticatedUser(
+            sub=str(traveler), email=f"{traveler}@x.com", role="authenticated", claims={}
+        )
+        resp = await get_my_onboarding_session_endpoint(user=user, session=db_session)
+        assert resp.session_id == live_sid
+        # Archived sessions still count as "has prior" — the first-touch
+        # prompt must not reappear just because everything was archived.
+        assert resp.has_prior_session is True
+    finally:
+        await _cleanup(client_ids=(client_id,), owner=owner)
         engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=False, future=True)
         try:
             async with engine.begin() as conn:

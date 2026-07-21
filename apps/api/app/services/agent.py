@@ -36,7 +36,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal, cast
 
 import anyio
@@ -680,6 +680,53 @@ async def _campaign_for_itinerary(
     if not campaign_id:
         return None
     return get_campaign(campaign_id)
+
+
+async def _itinerary_length_settled(
+    session: AsyncSession, itinerary_id: uuid.UUID | None
+) -> bool:
+    """Whether the pinned trip already carries a settled length.
+
+    True when the itinerary has an explicit ``duration_nights`` (recorded at
+    intake, or persisted by the campaign kickoff's default) or a pinned
+    start+end date pair. A fork with neither inherits the answer from its
+    baseline — mirroring ``trip_brief_for_itinerary``'s fallback — so an
+    alternative version of a settled trip doesn't get re-asked either.
+    Drives which campaign directive variant threads into the prompt: once
+    settled, the intake "pin down the length" goal is swapped for a
+    do-not-re-ask note (see ``Campaign.directive_for``).
+    """
+    if itinerary_id is None:
+        return False
+
+    def settled(nights: int | None, start: date | None, end: date | None) -> bool:
+        return nights is not None or (start is not None and end is not None)
+
+    row = (
+        await session.execute(
+            select(
+                Itinerary.duration_nights,
+                Itinerary.date_start,
+                Itinerary.date_end,
+                Itinerary.forked_from_id,
+            ).where(Itinerary.id == itinerary_id)
+        )
+    ).first()
+    if row is None:
+        return False
+    duration_nights, date_start, date_end, forked_from_id = row
+    if settled(duration_nights, date_start, date_end):
+        return True
+    if forked_from_id is None:
+        return False
+    base = (
+        await session.execute(
+            select(Itinerary.duration_nights, Itinerary.date_start, Itinerary.date_end).where(
+                Itinerary.id == forked_from_id
+            )
+        )
+    ).first()
+    return base is not None and settled(base[0], base[1], base[2])
 
 
 async def _campaign_reading_chips(
@@ -1410,9 +1457,14 @@ async def stream_turn(
         trip_brief = await trip_brief_for_itinerary(db, agent_session.itinerary_id)
 
         # Campaign-awareness: if the trip was started from a campaign, open
-        # grounded in it (Olympus) without a forked prompt.
+        # grounded in it (Olympus) without a forked prompt. Once the trip
+        # carries a settled length, the directive flips to the variant that
+        # forbids re-asking "how many days do you have?".
         campaign = await _campaign_for_itinerary(db, agent_session.itinerary_id)
-        campaign_directive = campaign.directive if campaign is not None else None
+        campaign_directive = None
+        if campaign is not None:
+            length_settled = await _itinerary_length_settled(db, agent_session.itinerary_id)
+            campaign_directive = campaign.directive_for(length_settled=length_settled)
 
         # Graph digest (AGT-2): the pinned plan's live state — lifecycle status,
         # node counts, totals, uninvoiced remainder — computed fresh per turn and
@@ -2154,7 +2206,10 @@ async def summon_artemis_in_thread(
         fork_baseline_title = await _fork_baseline_title(db, itinerary_id)
         trip_brief = await trip_brief_for_itinerary(db, itinerary_id)
         thread_campaign = await _campaign_for_itinerary(db, itinerary_id)
-        campaign_directive = thread_campaign.directive if thread_campaign is not None else None
+        campaign_directive = None
+        if thread_campaign is not None:
+            thread_length_settled = await _itinerary_length_settled(db, itinerary_id)
+            campaign_directive = thread_campaign.directive_for(length_settled=thread_length_settled)
         traveler_ctx = assemble_traveler_context(
             dossier=ctx_rows.dossier,
             dossier_facts=ctx_rows.dossier_facts,

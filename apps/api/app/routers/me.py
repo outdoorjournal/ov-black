@@ -637,6 +637,10 @@ async def get_my_onboarding_session_endpoint(
         ).scalar_one()
     )
 
+    # archived_at filter: basecamp's session rail (like the itinerary shell's)
+    # hides archived conversations, so the resume target must skip them too —
+    # otherwise archiving your latest conversation resumes it invisibly on the
+    # next visit.
     agent_session = (
         await session.execute(
             select(AgentSession)
@@ -645,6 +649,7 @@ async def get_my_onboarding_session_endpoint(
                 AgentSession.audience == SessionAudience.traveler,
                 AgentSession.itinerary_id.is_(None),
                 AgentSession.ended_at.is_(None),
+                AgentSession.archived_at.is_(None),
             )
             .order_by(AgentSession.started_at.desc())
             .limit(1)

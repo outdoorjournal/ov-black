@@ -26,6 +26,7 @@ export type BasecampChatState = {
   currentMood: MoodId;
   commitUserTurn: (turn: AgentTurnView) => void;
   commitAssistantSeed: (content: string) => void;
+  resetConversation: (turns: AgentTurnSummary[]) => void;
   commitMilestone: () => void;
   startStream: (turnIndex: number) => void;
   appendDelta: (text: string) => void;
@@ -56,6 +57,16 @@ export const basecampChatStore = createStoreContext<
       currentMood: initialMood ?? DEFAULT_MOOD,
       commitUserTurn: (turn) =>
         set((s) => ({ turns: [...s.turns, turn] })),
+      // Rebind the store to a different conversation (basecamp session switch /
+      // New). Replaces the turn list wholesale and drops any in-flight stream
+      // buffer — the caller aborts the fetch itself. initialTurnsCount tracks
+      // the new conversation so the greeting gate stays per-conversation.
+      resetConversation: (turns) =>
+        set({
+          turns: turns.map(fromSummary),
+          streaming: null,
+          initialTurnsCount: turns.length,
+        }),
       commitAssistantSeed: (content) =>
         set((s) => {
           const idx = nextTurnIndex(s.turns);

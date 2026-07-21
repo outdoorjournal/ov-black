@@ -2,8 +2,11 @@
 
 // Inline reading chip. The concierge references a saved read mid-sentence as a
 // markdown link with an `article:` scheme — `[Mt. Olympus…](article:<nodeId>)` —
-// and ProseMessage swaps the anchor for this component. It renders as a
-// restrained pill (a book glyph, the article title) inside the prose.
+// and ProseMessage swaps the anchor for this component. It renders as an
+// editorial reference (a book glyph, the title with a quiet brand underline)
+// that inherits the prose type — NOT the PlaceChip pill: article titles are a
+// dozen words, and a rounded-full pill wrapped over two centered lines reads
+// as a gray slab, not punctuation.
 //
 // Tapping it opens the article flyout beside the chat — the same drawer the
 // basecamp `suggest_reading` surface uses, but for a piece that's ALREADY in the
@@ -56,13 +59,16 @@ export function ArticleChip({ nodeId, label }: ArticleChipProps) {
         })
       }
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 align-baseline",
-        "font-sans text-[0.85em] leading-none text-ink transition-colors",
-        "bg-ink/6 ring-1 ring-inset ring-ink/10 hover:bg-brand/10 hover:ring-brand/30",
+        "inline max-w-full text-left align-baseline font-medium text-ink transition-colors",
+        "underline decoration-brand/40 decoration-1 underline-offset-[3px]",
+        "hover:text-brand hover:decoration-brand",
       )}
     >
-      <BookOpen className="h-3 w-3 text-brand" aria-hidden />
-      <span>{label}</span>
+      <BookOpen
+        className="mr-1 inline-block h-[0.85em] w-[0.85em] -translate-y-px text-brand"
+        aria-hidden
+      />
+      {label}
     </button>
   );
 }
