@@ -66,6 +66,7 @@ import {
 } from "@/app/itinerary/[id]/_shell/dashboardModel";
 import type { UserRole } from "@/lib/role";
 
+import { toItineraryTimeline } from "../adapter/toItineraryTimeline";
 import { offsetHoursOr } from "../model/horizontalTime";
 import type {
   EdgeResponse,
@@ -330,6 +331,9 @@ export type ItineraryGraphState = {
   /** Bump `partyRevision` — the agent changed the travel party, so the roster
    *  fetch keyed off it re-reads. */
   bumpPartyRevision: () => void;
+  /** Re-read the graph and merge the server's fresh kernel-resolved schedules
+   *  into the store — fired on `itinerary_updated` (the trip's dates moved). */
+  refetchGraph: () => void;
 
   // ── staff editing actions (no-op unless editable) ──
   acquireLock: () => void;
@@ -1180,6 +1184,48 @@ export const itineraryGraphStore = createStoreContext<
           set((s) => ({ assemblePulse: s.assemblePulse + 1 })),
         bumpPartyRevision: () =>
           set((s) => ({ partyRevision: s.partyRevision + 1 })),
+        // Re-read the graph and MERGE the server's fresh kernel-resolved
+        // schedule into the store (the `itinerary_updated` path). When the
+        // agent moves the trip's dates (flexible → real), every relative
+        // placement re-resolves server-side — but this store deliberately
+        // survives `router.refresh()`, so its nodes would keep start_times
+        // resolved under the OLD anchor: the Journal's day bucketing then
+        // finds no intersection with the fresh scaffold and renders the
+        // empty-state invite over a full trip until a hard reload. Fresh
+        // resolved views are adopted per node id; store-only nodes (an
+        // accepted proposal, a mid-reveal insert) are kept, and server-only
+        // nodes are NOT added — those arrive through their own
+        // `node_created` frames, preserving the staggered reveal.
+        refetchGraph: () => {
+          const s = get();
+          const c = client();
+          if (!c) return;
+          void getItinerary(c, s.itineraryId).then((result) => {
+            if (!result.ok) return;
+            const fresh = toItineraryTimeline(
+              result.itinerary,
+              result.nodes,
+              result.edges,
+            );
+            const freshById = new Map(fresh.nodes.map((n) => [n.id, n]));
+            set((cur) => ({
+              // `sample` converts a drop's visual dayKey into a kernel
+              // day_index (placementFor), so it must re-anchor too.
+              sample: fresh,
+              nodes: cur.nodes.map((n) => freshById.get(n.id) ?? n),
+              edges: [...fresh.edges],
+              nightlyLodging: result.nightly_lodging,
+              totals: result.totals,
+              displayCurrency: result.display_currency,
+              totalDisplay: result.total_display,
+              // Kernel findings are date-dependent — re-seed them, unless an
+              // advisor-run Analyze owns the list this session.
+              ...(cur.analyzeStatus === "idle"
+                ? { findings: seedFindingsFromGraph(result.findings) }
+                : {}),
+            }));
+          });
+        },
 
         // ── staff editing ───────────────────────────────────────────────
         acquireLock: () => {

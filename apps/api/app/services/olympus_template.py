@@ -3,9 +3,11 @@
 Composes each shipped spine (5 / 7 / 14 nights) from three parts rather than
 slicing one hand-authored day-list (see :mod:`app.seed_data.olympus_itinerary`):
 
-1. **Arrival** — day 1 is a held travel-day placeholder whose note says the
-   day is reserved for the journey in. No inbound flight: we don't know the
-   traveler's origin, so flights are proposed in conversation.
+1. **Arrival** — day 1 is a held travel-day NOTE saying the day is reserved
+   for the journey in. No inbound flight: we don't know the traveler's origin,
+   so flights are proposed in conversation — and because it's a note, not a
+   free_time block, the kernel's flight floor never forces the inbound to
+   land before it.
 2. **The cornerstone** — a single anchor card for the real OV adventure, carrying
    its cover/gallery/price enrichment AND its day-by-day itinerary as a SUBGRAPH.
    It starts on day 2, the morning after the travel day. The subgraph children
@@ -318,9 +320,8 @@ async def build_olympus_template(session: AsyncSession, *, nights: int) -> CardT
             prev_spine = tnode.id
         return tnode.id
 
-    # 1. Arrival — the day-1 travel placeholder (its note says the day is held
-    # for the journey in). No flight is seeded; the traveler's origin is
-    # unknown until they tell us.
+    # 1. Arrival — the day-1 travel note (the day is held for the journey in).
+    # No flight is seeded; the traveler's origin is unknown until they tell us.
     for item in ARRIVAL_ITEMS:
         await add_node_from(
             type_=_node_type_for(item),

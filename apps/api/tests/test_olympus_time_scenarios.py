@@ -288,9 +288,9 @@ async def test_moving_dates_again_keeps_wall_clocks_and_stays_clean(
         )
         assert travel.schedule.start.on == sep_1
 
-        # A pinned spine that only free_time/experience cards make up never
-        # holds or stales — the seed ships no supplier commitments, so date
-        # moves stay frictionless until something is actually booked.
+        # A pinned spine that only note/free_time/experience cards make up
+        # never holds or stales — the seed ships no supplier commitments, so
+        # date moves stay frictionless until something is actually booked.
         for n in _scheduled_roots(view):
             assert n.needs_revalidation is False, n.title
     finally:

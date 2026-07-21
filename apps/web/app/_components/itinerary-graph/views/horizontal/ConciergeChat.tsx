@@ -337,6 +337,12 @@ export function ConciergeChat({
       // The trip's dates changed. Timing is server-rendered onto the timeline
       // prop (not the client store), so re-run the route's RSC to pull the
       // fresh window; the store's in-session graph state survives the refresh.
+      // That survival is also a trap: the store's nodes still carry
+      // start_times resolved under the OLD anchor, which land on none of the
+      // fresh scaffold's days (the Journal would show its empty invite over a
+      // full trip) — so also refetch-and-merge the graph, re-anchoring the
+      // resolved schedules.
+      storeApi.getState().refetchGraph();
       router.refresh();
     },
     // The agent changed the travel party — a new/updated member

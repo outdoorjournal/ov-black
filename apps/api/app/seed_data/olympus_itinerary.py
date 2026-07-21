@@ -5,9 +5,10 @@ composed at build time (:mod:`app.services.olympus_template`) from three parts s
 the mountain is told ONCE — by the real OV cornerstone trip — and never
 double-booked by hand-authored cards:
 
-1. **Arrival** — day 1 is a held travel-day placeholder, nothing else. The
-   card's note tells the traveler the day is reserved for the journey in and
-   that flights are shaped in conversation once we know their origin.
+1. **Arrival** — day 1 is a held travel-day NOTE, nothing else. It tells the
+   traveler the day is reserved for the journey in and that flights are shaped
+   in conversation once we know their origin. A note (not a free_time block)
+   so the kernel never reads it as a commitment the inbound flight must beat.
 2. **The cornerstone** — the real, bookable OV adventure (Path to Symbolism for
    the long spine, the 2-Day Summit push for the short ones). Its day-by-day
    itinerary is materialized as a SUBGRAPH whose children lay across the mountain
@@ -43,6 +44,7 @@ from app.schemas.card_attrs import (
     GalleryImage,
     GeoPoint,
     HotelCardAttrs,
+    NoteCardAttrs,
 )
 from app.seed_data.japan_itinerary import FixtureDay, FixtureItem
 
@@ -93,22 +95,29 @@ def _hotel(name: str, nights: int, loc: GeoPoint, blurb: str) -> HotelCardAttrs:
 
 
 # ── Part 1: arrival (day 1) ────────────────────────────────────────────
-# Day 1 is deliberately EMPTY of itinerary content: a single held placeholder
-# whose note says the day is reserved for travel. We don't know where the
-# traveler flies from, so no inbound flight (or airport transfer) is seeded —
-# the agent proposes those in conversation, and this card says exactly that.
-# The guided ascent begins the next morning (the builder shifts the cornerstone
-# and the extension one day down to make room).
+# Day 1 is deliberately EMPTY of itinerary content: a single margin NOTE
+# saying the day is reserved for travel. We don't know where the traveler
+# flies from, so no inbound flight (or airport transfer) is seeded — the agent
+# proposes those in conversation, and this note says exactly that.
+#
+# Deliberately a ``note``, NOT a ``free_time`` card: notes are annotations,
+# not event commitments, so the kernel's flight floor (``_EVENT_TYPES`` in
+# app/kernel/analysis.py) ignores it. A timed free_time block here made the
+# 09:00 "Travel day" the trip's first commitment and forced every proposed
+# inbound flight to land before it — the day exists to RECEIVE the flight,
+# not to fence it out. Zero duration → the note anchors the day as an
+# open instant, never a block. The guided ascent begins the next morning
+# (the builder shifts the cornerstone and the extension one day down to
+# make room).
 
 ARRIVAL_ITEMS: list[FixtureItem] = [
     FixtureItem(
         id_hint="d01-travel",
         title="Travel day — held for your arrival",
         starts_at=_at("2026-09-14", "09:00"),
-        duration_minutes=540,
+        duration_minutes=0,
         status="pending",
-        attrs=FreeTimeCardAttrs(
-            energy_advice="A day for the journey in — land, exhale, let the mountain wait.",
+        attrs=NoteCardAttrs(
             location=LITOCHORO,
             description=(
                 "This first day is held open for travel. We don't yet know where "

@@ -175,12 +175,15 @@ def _starts_at_lower_upper(
     """Convert a TemplateNode's relative offset + duration to absolute
     range bounds. Returns ``(None, None)`` when the template node has
     no offset (e.g. attached notes) so the SQL CASE-emits a NULL
-    tstzrange.
+    tstzrange. A missing/zero duration leaves the upper bound open —
+    mirroring ``_build_starts_at`` on the live write path; ``upper ==
+    lower`` would make ``tstzrange(lo, lo, '[)')`` collapse to the empty
+    range and silently unschedule the node.
     """
     if offset_minutes is None:
         return None, None
     lower = trip_start_at + timedelta(minutes=offset_minutes)
-    upper = lower + timedelta(minutes=duration_minutes) if duration_minutes is not None else lower
+    upper = lower + timedelta(minutes=duration_minutes) if duration_minutes else None
     return lower, upper
 
 

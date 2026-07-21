@@ -93,9 +93,11 @@ async def test_travel_day_placeholder_leads_the_spine() -> None:
     """Day 1 is a held travel placeholder; everything else shifts down a day.
 
     The traveler needs the first day open to fly in, so the spine leads with a
-    single free_time card whose note says the day is reserved for travel, the
-    cornerstone anchor lands on day 2, and the extension is prefix-sliced one
-    day shorter so the trip still fits its nights.
+    single NOTE saying the day is reserved for travel — a note, not a
+    free_time block, so the kernel's flight floor never forces the inbound
+    flight to land before it. The cornerstone anchor lands on day 2, and the
+    extension is prefix-sliced one day shorter so the trip still fits its
+    nights.
     """
     await _delete_olympus_templates()
     engine = create_async_engine(LOCAL_DB_URL, pool_pre_ping=True, future=True)
@@ -118,7 +120,8 @@ async def test_travel_day_placeholder_leads_the_spine() -> None:
             spine = [n for n in rows if n.parent_id is None]
 
             travel = next(n for n in spine if n.title == "Travel day — held for your arrival")
-            assert travel.type.value == "free_time"
+            assert travel.type.value == "note", "the travel day is an annotation, not an event"
+            assert travel.duration_minutes in (0, None), "a note never occupies a time block"
             assert travel.starts_at_offset_minutes is not None
             assert 0 <= travel.starts_at_offset_minutes < day_minutes, "travel owns day 1"
             assert "held open for travel" in travel.metadata_["description"]
